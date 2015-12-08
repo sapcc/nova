@@ -34,6 +34,7 @@ from oslo_db.sqlalchemy import update_match
 from oslo_db.sqlalchemy import utils as sqlalchemyutils
 from oslo_log import log as logging
 from oslo_utils import excutils
+from oslo_utils import importutils
 from oslo_utils import timeutils
 from oslo_utils import uuidutils
 import six
@@ -70,6 +71,7 @@ from nova.objects import fields
 from nova import quota
 from nova import safe_utils
 
+profiler_sqlalchemy = importutils.try_import('osprofiler.sqlalchemy')
 db_opts = [
     cfg.StrOpt('osapi_compute_unique_server_name_scope',
                default='',
@@ -169,6 +171,14 @@ def _context_manager_from_context(context):
 def configure(conf):
     main_context_manager.configure(**_get_db_conf(conf.database))
     api_context_manager.configure(**_get_db_conf(conf.api_database))
+
+    if profiler_sqlalchemy and CONF.profiler.enabled \
+            and CONF.profiler.trace_sqlalchemy:
+
+        main_context_manager.append_on_engine_create(
+            lambda eng: profiler_sqlalchemy.add_tracing(sa, eng, "db"))
+        api_context_manager.append_on_engine_create(
+            lambda eng: profiler_sqlalchemy.add_tracing(sa, eng, "db"))
 
 
 def create_context_manager(connection=None):

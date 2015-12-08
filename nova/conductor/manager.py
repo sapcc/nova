@@ -37,6 +37,7 @@ from nova import manager
 from nova import network
 from nova import objects
 from nova.objects import base as nova_object
+from nova import profiler
 from nova import rpc
 from nova.scheduler import client as scheduler_client
 from nova.scheduler import utils as scheduler_utils
@@ -147,6 +148,7 @@ class ConductorManager(manager.Manager):
         objects.Service.clear_min_version_cache()
 
 
+@profiler.trace_cls("rpc")
 class ComputeTaskManager(base.Base):
     """Namespace for compute methods.
 

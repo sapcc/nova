@@ -74,6 +74,7 @@ from nova.objects import quotas as quotas_obj
 from nova.objects import security_group as security_group_obj
 from nova.pci import request as pci_request
 import nova.policy
+from nova import profiler
 from nova import rpc
 from nova.scheduler import client as scheduler_client
 from nova.scheduler import utils as scheduler_utils
@@ -206,6 +207,7 @@ def _diff_dict(orig, new):
     return result
 
 
+@profiler.trace_cls("compute_api")
 class API(base.Base):
     """API for interacting with the compute manager."""
 

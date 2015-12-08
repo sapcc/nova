@@ -39,6 +39,7 @@ from nova import objects
 from nova.pci import manager as pci_manager
 from nova.pci import request as pci_request
 from nova.pci import whitelist as pci_whitelist
+from nova import profiler
 
 neutron_opts = [
     cfg.StrOpt('url',
@@ -57,7 +58,6 @@ neutron_opts = [
    ]
 
 NEUTRON_GROUP = 'neutron'
-
 CONF = cfg.CONF
 CONF.register_opts(neutron_opts, NEUTRON_GROUP)
 
@@ -122,6 +122,7 @@ def _load_auth_plugin(conf):
     raise neutron_client_exc.Unauthorized(message=err_msg)
 
 
+@profiler.trace_cls("neutron_api")
 def get_client(context, admin=False):
     # NOTE(dprince): In the case where no auth_token is present we allow use of
     # neutron admin tenant credentials if it is an admin context.  This is to

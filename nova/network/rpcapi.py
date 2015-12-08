@@ -21,6 +21,7 @@ import oslo_messaging as messaging
 from oslo_serialization import jsonutils
 
 from nova.objects import base as objects_base
+from nova import profiler
 from nova import rpc
 
 rpcapi_opts = [
@@ -41,6 +42,7 @@ rpcapi_cap_opt = cfg.StrOpt('network',
 CONF.register_opt(rpcapi_cap_opt, 'upgrade_levels')
 
 
+@profiler.trace_cls("rpc")
 class NetworkAPI(object):
     '''Client side of the network rpc API.
 
