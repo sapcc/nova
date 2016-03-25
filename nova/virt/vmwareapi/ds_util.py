@@ -33,7 +33,8 @@ LOG = logging.getLogger(__name__)
 ALL_SUPPORTED_DS_TYPES = frozenset([constants.DATASTORE_TYPE_VMFS,
                                     constants.DATASTORE_TYPE_NFS,
                                     constants.DATASTORE_TYPE_NFS41,
-                                    constants.DATASTORE_TYPE_VSAN])
+                                    constants.DATASTORE_TYPE_VSAN,
+                                    constants.DATASTORE_TYPE_VVOL])
 
 
 DcInfo = collections.namedtuple('DcInfo',
@@ -205,7 +206,8 @@ def get_available_datastores(session, cluster=None, datastore_regex=None):
 def get_allowed_datastore_types(disk_type):
     if disk_type == constants.DISK_TYPE_STREAM_OPTIMIZED:
         return ALL_SUPPORTED_DS_TYPES
-    return ALL_SUPPORTED_DS_TYPES - frozenset([constants.DATASTORE_TYPE_VSAN])
+    return ALL_SUPPORTED_DS_TYPES - frozenset([constants.DATASTORE_TYPE_VSAN,
+                                               constants.DATASTORE_TYPE_VVOL])
 
 
 def file_delete(session, ds_path, dc_ref):
