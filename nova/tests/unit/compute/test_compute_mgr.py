@@ -4040,8 +4040,10 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 self.requested_networks, None, self.security_groups, None)
         self.mox.ReplayAll()
 
-        self.compute._build_networks_for_instance(self.context, instance,
-                self.requested_networks, self.security_groups)
+        nw_info_obj = self.compute._build_networks_for_instance(self.context,
+                instance, self.requested_networks, self.security_groups)
+
+        self.assertTrue(hasattr(nw_info_obj, 'wait'), "wait must be there")
 
     def test_build_networks_if_allocated_false(self):
         instance = fake_instance.fake_instance_obj(self.context,
@@ -4055,8 +4057,10 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 self.requested_networks, None, self.security_groups, None)
         self.mox.ReplayAll()
 
-        self.compute._build_networks_for_instance(self.context, instance,
-                self.requested_networks, self.security_groups)
+        nw_info_obj = self.compute._build_networks_for_instance(self.context,
+                instance, self.requested_networks, self.security_groups)
+
+        self.assertTrue(hasattr(nw_info_obj, 'wait'), "wait must be there")
 
     def test_return_networks_if_found(self):
         instance = fake_instance.fake_instance_obj(self.context,
@@ -4074,8 +4078,7 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self.compute.network_api.setup_instance_network_on_host(
             self.context, instance, instance.host)
         self.compute.network_api.get_instance_nw_info(
-            self.context, instance).AndReturn(
-            network_model.NetworkInfoAsyncWrapper(fake_network_info))
+            self.context, instance).AndReturn(fake_network_info)
         self.mox.ReplayAll()
 
         self.compute._build_networks_for_instance(self.context, instance,
