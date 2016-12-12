@@ -410,7 +410,14 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
                                      imported_vm_ref)
                 LOG.info(_LI("The imported VM was unregistered"),
                          instance=instance)
-                return vmdk.capacity_in_bytes
+
+
+                try:
+                    return vmdk.capacity_in_bytes, vmdk.path.parent
+                except AttributeError:
+                    from oslo_vmware.objects.datastore import DatastorePath
+                    return vmdk.capacity_in_bytes, DatastorePath.parse(vmdk.path).parent
+
         raise exception.ImageUnacceptable(
             reason=_("Extracting vmdk from OVA failed."),
             image_id=image_ref)
