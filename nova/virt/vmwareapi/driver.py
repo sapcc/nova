@@ -100,6 +100,16 @@ vmwareapi_opts = [
     cfg.BoolOpt('use_linked_clone',
                 default=True,
                 help='Whether to use linked clone'),
+    cfg.IntOpt('connection_pool_size',
+               min=10,
+               default=10,
+               help="""
+    This option sets the http connection pool size
+
+    The connection pool size is the maximum number of connections from nova to
+    vSphere.  It should only be increased if there are warnings indicating that
+    the connection pool is full, otherwise, the default should suffice.
+    """),
     cfg.BoolOpt('use_direct_url',
                 default=False,
                 help='Whether to import via direct-url, if possible'),
@@ -839,7 +849,8 @@ class VMwareAPISession(api.VMwareAPISession):
                  retry_count=CONF.vmware.api_retry_count,
                  scheme="https",
                  cacert=CONF.vmware.ca_file,
-                 insecure=CONF.vmware.insecure):
+                 insecure=CONF.vmware.insecure,
+                 pool_size=CONF.vmware.connection_pool_size):
         super(VMwareAPISession, self).__init__(
                 host=host_ip,
                 port=host_port,
@@ -851,7 +862,8 @@ class VMwareAPISession(api.VMwareAPISession):
                 create_session=True,
                 wsdl_loc=CONF.vmware.wsdl_location,
                 cacert=cacert,
-                insecure=insecure)
+                insecure=insecure,
+                pool_size=pool_size)
 
     def _is_vim_object(self, module):
         """Check if the module is a VIM Object instance."""
