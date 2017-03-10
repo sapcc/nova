@@ -74,7 +74,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
                     'ironic_url': CONF.ironic.api_endpoint,
                     'max_retries': CONF.ironic.api_max_retries,
                     'retry_interval': CONF.ironic.api_retry_interval,
-                    'os_ironic_api_version': '1.8'}
+                    'os_ironic_api_version': '1.20'}
         mock_ir_cli.assert_called_once_with(CONF.ironic.api_version,
                                             **expected)
 
@@ -88,7 +88,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
                     'ironic_url': CONF.ironic.api_endpoint,
                     'max_retries': CONF.ironic.api_max_retries,
                     'retry_interval': CONF.ironic.api_retry_interval,
-                    'os_ironic_api_version': '1.8'}
+                    'os_ironic_api_version': '1.20'}
         mock_ir_cli.assert_called_once_with(CONF.ironic.api_version,
                                             **expected)
 
