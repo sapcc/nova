@@ -31,7 +31,7 @@ CONF = cfg.CONF
 ironic = None
 
 # The API version required by the Ironic driver
-IRONIC_API_VERSION = (1, 8)
+IRONIC_API_VERSION = (1, 20)
 
 
 class IronicClientWrapper(object):
