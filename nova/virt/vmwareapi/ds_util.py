@@ -169,7 +169,10 @@ def _get_allowed_datastores(data_stores, datastore_regex):
                                datastore_regex,
                                ALL_SUPPORTED_DS_TYPES):
             allowed.append(ds_obj.Datastore(ref=obj_content.obj,
-                                            name=propdict['summary.name']))
+                                            name=propdict['summary.name'],
+                                            capacity=propdict['summary.capacity'],
+                                            freespace=propdict['summary.freeSpace'],
+                                            ))
 
     return allowed
 
@@ -188,7 +191,8 @@ def get_available_datastores(session, cluster=None, datastore_regex=None):
             "get_properties_for_a_collection_of_objects",
             "Datastore", data_store_mors,
             ["summary.type", "summary.name", "summary.accessible",
-            "summary.maintenanceMode"])
+             "summary.capacity", "summary.freeSpace",
+             "summary.maintenanceMode"])
 
     allowed = []
     while data_stores:
