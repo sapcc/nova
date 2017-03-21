@@ -111,7 +111,8 @@ class ExtraSpecs(object):
     def __init__(self, cpu_limits=None, hw_version=None,
                  storage_policy=None, cores_per_socket=None,
                  memory_limits=None, disk_io_limits=None,
-                 vif_limits=None, hv_enabled=None, hw_video_ram=None):
+                 vif_limits=None, firmware=None,
+                 hv_enabled=None, hw_video_ram=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -120,6 +121,7 @@ class ExtraSpecs(object):
         self.hw_version = hw_version
         self.storage_policy = storage_policy
         self.cores_per_socket = cores_per_socket
+        self.firmware = firmware
         self.hv_enabled = hv_enabled
         self.hw_video_ram = hw_video_ram
 
@@ -262,6 +264,9 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
         config_spec.memoryAllocation = _get_allocation_info(
             client_factory, extra_specs.memory_limits,
             'ns0:ResourceAllocationInfo')
+
+    if extra_specs.firmware:
+        config_spec.firmware = extra_specs.firmware
 
     devices = []
     for vif_info in vif_infos:

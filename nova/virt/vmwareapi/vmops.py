@@ -53,6 +53,7 @@ from nova import exception
 from nova.i18n import _, _LE, _LI, _LW
 from nova import network
 from nova import objects
+from nova.objects import fields
 from nova import utils
 from nova import version
 from nova.virt import configdrive
@@ -374,6 +375,11 @@ class VMwareVMOps(object):
         extra_specs.memory_limits.validate()
         extra_specs.disk_io_limits.validate()
         extra_specs.vif_limits.validate()
+        hw_firmware_type = image_meta.properties.get('hw_firmware_type')
+        if hw_firmware_type == fields.FirmwareType.UEFI:
+            extra_specs.firmware = 'efi'
+        elif hw_firmware_type == fields.FirmwareType.BIOS:
+            extra_specs.firmware = 'bios'
         hw_version = flavor.extra_specs.get('vmware:hw_version')
         extra_specs.hw_version = hw_version
         hv_enabled = flavor.extra_specs.get('vmware:hv_enabled')
