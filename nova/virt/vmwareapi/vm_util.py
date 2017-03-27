@@ -108,7 +108,7 @@ class ExtraSpecs(object):
     def __init__(self, cpu_limits=None, hw_version=None,
                  storage_policy=None, cores_per_socket=None,
                  memory_limits=None, disk_io_limits=None,
-                 vif_limits=None):
+                 vif_limits=None, hv_enabled=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -117,6 +117,7 @@ class ExtraSpecs(object):
         self.hw_version = hw_version
         self.storage_policy = storage_policy
         self.cores_per_socket = cores_per_socket
+        self.hv_enabled = hv_enabled
 
 
 def vm_refs_cache_reset():
@@ -222,9 +223,8 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     config_spec.version = extra_specs.hw_version
 
     # Allow nested hypervisor instances to host 64 bit VMs.
-    if os_type in ("vmkernel5Guest", "vmkernel6Guest", "windowsHyperVGuest"):
+    if (os_type in ("vmkernel5Guest", "vmkernel6Guest", "windowsHyperVGuest")) or (extra_specs.hv_enabled == "True"):
         config_spec.nestedHVEnabled = "True"
-
     # Append the profile spec
     if profile_spec:
         config_spec.vmProfile = [profile_spec]

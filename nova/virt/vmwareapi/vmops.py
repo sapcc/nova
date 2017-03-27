@@ -347,6 +347,9 @@ class VMwareVMOps(object):
         extra_specs.vif_limits.validate()
         hw_version = flavor.extra_specs.get('vmware:hw_version')
         extra_specs.hw_version = hw_version
+        hv_enabled = flavor.extra_specs.get('vmware:hv_enabled')
+        extra_specs.hv_enabled = hv_enabled
+        
         if CONF.vmware.pbm_enabled:
             storage_policy = flavor.extra_specs.get('vmware:storage_policy',
                     CONF.vmware.pbm_default_policy)
