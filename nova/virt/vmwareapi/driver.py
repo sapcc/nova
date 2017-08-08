@@ -95,10 +95,8 @@ vmwareapi_opts = [
                     'e.g http://<server>/vimService.wsdl. '
                     'Optional over-ride to default location for bug '
                     'work-arounds'),
-    cfg.StrOpt('username', help='The directory where serial logs are '
-                                          'saved'),
-    cfg.StrOpt('password', help='The directory where serial logs are '
-                                          'saved'),
+    cfg.StrOpt('vspc_username', help='Username for Virtual Serial Port Concentrator'),
+    cfg.StrOpt('vspc_password', help='Password for Virtual Serial Port Concentrator'),
     ]
 
 spbm_opts = [
@@ -570,8 +568,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         """ Getting the console output from the instance
         the logs are fetched through REST request
         """
-        username = CONF.vmware.username
-        password = CONF.vmware.password
+        username = CONF.vmware.vspc_username
+        password = CONF.vmware.vspc_password
         proxy_uri = urlparse.urlparse(CONF.vmware.serial_port_proxy_uri)
         host = proxy_uri.netloc
         port = proxy_uri.port
