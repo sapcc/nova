@@ -33,6 +33,9 @@ from oslo_vmware import vim_util
 
 from nova.compute import task_states
 import nova.conf
+import urlparse
+import requests
+from requests.auth import HTTPBasicAuth
 from nova import exception
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
@@ -91,7 +94,11 @@ vmwareapi_opts = [
                help='Optional VIM Service WSDL Location '
                     'e.g http://<server>/vimService.wsdl. '
                     'Optional over-ride to default location for bug '
-                    'work-arounds')
+                    'work-arounds'),
+    cfg.StrOpt('username', help='The directory where serial logs are '
+                                          'saved'),
+    cfg.StrOpt('password', help='The directory where serial logs are '
+                                          'saved'),
     ]
 
 spbm_opts = [
@@ -558,6 +565,26 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Detach an interface from the instance."""
         self._vmops.detach_interface(instance, vif)
 
+    def get_console_output(self, context, instance):
+
+        """ Getting the console output from the instance
+        the logs are fetched through REST request
+        """
+        username = CONF.vmware.username
+        password = CONF.vmware.password
+        proxy_uri = urlparse.urlparse(CONF.vmware.serial_port_proxy_uri)
+        host = proxy_uri.netloc
+        port = proxy_uri.port
+        url = host + ":" + port + "/console_log/" + instance.uuid
+
+        LOG.info('Sending [GET] request to %s', url)
+
+        response = requests.get(url, auth=HTTPBasicAuth(username, password))
+        LOG.debug('Response from get console output: %s', response)
+        if not response.status_code == 200:
+            LOG.error('Error while processing console output. Status code: %s', response.status_code)
+
+        return response.content
 
 class VMwareAPISession(api.VMwareAPISession):
     """Sets up a session with the VC/ESX host and handles all
