@@ -41,6 +41,7 @@ from six.moves import range
 import sqlalchemy as sa
 from sqlalchemy import and_
 from sqlalchemy.exc import NoSuchTableError
+from sqlalchemy.inspection import inspect as sqlalchemyinspect
 from sqlalchemy import MetaData
 from sqlalchemy import or_
 from sqlalchemy.orm import aliased
@@ -1963,6 +1964,119 @@ def instance_destroy(context, instance_uuid, constraint=None):
         resource_id=instance_uuid).delete()
 
     return instance_ref
+
+
+def _related_fks_get(table_name):
+    """For a given table name, return all the tables that have a foreign
+       key relationship to the given table
+
+    :param table_name: The table in which to find related tables
+    :return: A list of Column sqlalchemy objects that represent a foreign
+             key to the given provided table in table_name
+    """
+    engine = get_engine()
+    engine.connect()
+    metadata = MetaData()
+    metadata.bind = engine
+    metadata.reflect(engine)
+
+    ret = []
+    for table in metadata.sorted_tables:
+        for col in table.columns:
+            fkeys = col.foreign_keys or []
+            for fkey in fkeys:
+                if fkey.column.table.name == table_name:
+                    ret.append(col)
+                    break
+    return ret
+
+
+def _purge_records(query, model, context, dry_run, max_number=None):
+    """Performs a deep delete of table records.  This will find each related
+       table, related by foreign key relationships, to the given table provided
+
+    :param query: The query in which to execute
+    :param model: The model in which the query represents
+    :param context: DB context
+    :param dry_run: If true, don't perform an actual delete
+    :param max_number: The maximum number of records for the current request
+    :return:
+    """
+    fks = _related_fks_get(model.__tablename__)
+
+    offset = 0
+    limit = 50
+    while True:
+        if max_number is not None:
+            if offset >= max_number:
+                break
+            elif limit > (max_number - offset):
+                limit = max_number - offset
+
+        q = query.limit(limit)
+        if dry_run:
+            q = q.offset(offset)
+        results = q.all()
+        results_len = len(results)
+        offset += results_len
+        if results_len <= 0:
+            break
+
+        for fk in fks:
+            model_class = None
+            found_model = false
+
+            for model_class in six.itervalues(models.__dict__):
+                if hasattr(model_class, "__tablename__"):
+                    if model_class.__tablename__ == fk.table.name:
+                        found_model = true
+                        break
+
+            if found_model:
+                for referenced_key in fk.foreign_keys:
+                    if (referenced_key.column.table.name ==
+                            model.__tablename__):
+                        fk_ids = [x[referenced_key.column.name] for x
+                                  in results]
+                        # In order for sqlalchemy to produce kosher SQL,
+                        # the actual fk attr needs to be used from the
+                        # sqlalchemy model class.
+                        method_attr = getattr(model_class, fk.name)
+                        related_model_query = model_query(context,
+                                                          model_class).\
+                                                filter(method_attr.in_(fk_ids))
+                        _purge_records(related_model_query, model_class,
+                                       context, dry_run)
+
+        # The original 'query' can't be used for delete because a delete
+        # is not allowed when a limit is set.  Therefore, here I generate a
+        # new query for deletion using the primary keys from the original
+        # result set
+        delete_query = model_query(context, model)
+        pk_columns = [key.name for key in sqlalchemyinspect(model).primary_key]
+
+        for pk_column in pk_columns:
+            pk_attr = getattr(model, pk_column)
+            delete_query = delete_query.filter(
+                pk_attr.in_([x[pk_column] for x in results]))
+
+        if not dry_run:
+            delete_query.delete(synchronize_session='fetch')
+    return offset
+
+
+@require_context
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
+@pick_context_manager_writer
+def instances_purge_deleted(context, dry_run=False, older_than=90,
+                            max_number=None):
+    purge_before = timeutils.utcnow() - datetime.timedelta(days=older_than)
+    instance_query = model_query(context, models.Instance).\
+                         filter(and_(models.Instance.deleted != 0,
+                         models.Instance.deleted_at < purge_before))
+
+    return _purge_records(instance_query, models.Instance, context,
+                          dry_run, max_number)
 
 
 @require_context

@@ -9792,3 +9792,367 @@ class TestInstanceInfoCache(test.TestCase):
         info_cache = db.instance_info_cache_get(self.context, instance_uuid)
         self.assertEqual(network_info, info_cache.network_info)
         self.assertEqual(instance_uuid, info_cache.instance_uuid)
+
+
+
+class TestPurgeDeletedInstances(test.TestCase):
+
+    def setUp(self):
+        super(TestPurgeDeletedInstances, self).setUp()
+        self.user_id = 'fake_user'
+        self.project_id = 'fake_project'
+        self.context = context.RequestContext(self.user_id, self.project_id)
+        self.admin_context = context.get_admin_context(read_deleted='yes')
+
+        engine = sqlalchemy_api.get_engine()
+        dialect = engine.url.get_dialect()
+        if dialect == sqlite.dialect:
+            # We're seeing issues with foreign key support in SQLite 3.6.20
+            # SQLAlchemy doesn't support it at all with < SQLite 3.6.19
+            # It works fine in SQLite 3.7.
+            # So return early to skip this test if running SQLite < 3.7
+            import sqlite3
+            tup = sqlite3.sqlite_version_info
+            if tup[0] < 3 or (tup[0] == 3 and tup[1] < 7):
+                self.skipTest(
+                    'sqlite version too old for reliable SQLA foreign_keys')
+            engine.connect().execute("PRAGMA foreign_keys = ON")
+
+    sample_data = {
+        'project_id': 'fake_project',
+        'hostname': 'example.com',
+        'host': 'h1',
+        'node': 'n1',
+        'metadata': {'mkey1': 'mval1', 'mkey2': 'mval2'},
+        'system_metadata': {'smkey1': 'smval1', 'smkey2': 'smval2'},
+        'info_cache': {'ckey': 'cvalue'}
+    }
+
+    fake_pci_devs = {
+        'id': 3373,
+        'compute_node_id': 1,
+        'address': '0000:0f:08.7',
+        'vendor_id': '8086',
+        'product_id': '1520',
+        'numa_node': 1,
+        'dev_type': 'type-VF',
+        'dev_id': 'pci_0000:0f:08.7',
+        'extra_info': None,
+        'label': 'label_8086_1520',
+        'status': 'available',
+        'instance_uuid': '00000000-0000-0000-0000-000000000010',
+        'request_id': None,
+    }, {
+        'id': 3376,
+        'compute_node_id': 1,
+        'address': '0000:0f:03.7',
+        'vendor_id': '8083',
+        'product_id': '1523',
+        'numa_node': 0,
+        'dev_type': 'type-VF',
+        'dev_id': 'pci_0000:0f:08.7',
+        'extra_info': None,
+        'label': 'label_8086_1520',
+        'status': 'available',
+        'instance_uuid': '00000000-0000-0000-0000-000000000010',
+        'request_id': None,
+    }
+
+    def _create_compute_node(self):
+        return db.compute_node_create(self.admin_context, {
+            'vcpus': 0,
+            'memory_mb': 0,
+            'local_gb': 0,
+            'vcpus_used': 0,
+            'memory_mb_used': 0,
+            'local_gb_used': 0,
+            'hypervisor_type': 'fake',
+            'hypervisor_version': 0,
+            'cpu_info': 'fake',
+        })
+
+    def _create_fake_pci_devs(self, instance_uuid, compute_node_id):
+        v1, v2 = self.fake_pci_devs
+        for i in v1, v2:
+            i['compute_node_id'] = compute_node_id
+            i['instance_uuid'] = instance_uuid
+        db.pci_device_update(self.admin_context, v1['compute_node_id'],
+                             v1['address'], v1)
+        db.pci_device_update(self.admin_context, v2['compute_node_id'],
+                             v2['address'], v2)
+        return (v1, v2)
+
+    def _create_bdm(self, instance_uuid):
+        values = {}
+        values.setdefault('instance_uuid', instance_uuid)
+        values.setdefault('device_name', 'fake_device')
+        values.setdefault('source_type', 'volume')
+        values.setdefault('destination_type', 'volume')
+        block_dev = block_device.BlockDeviceDict(values)
+        return db.block_device_mapping_create(self.admin_context,
+                                              block_dev,
+                                              legacy=False)
+
+    def _create_consoles(self, instance_uuid):
+        pools_data = [
+            {'address': '192.168.10.10',
+             'username': 'user1',
+             'password': 'passwd1',
+             'console_type': 'type1',
+             'public_hostname': 'public_host1',
+             'host': 'host1',
+             'compute_host': 'compute_host1',
+            },
+            {'address': '192.168.10.11',
+             'username': 'user2',
+             'password': 'passwd2',
+             'console_type': 'type2',
+             'public_hostname': 'public_host2',
+             'host': 'host2',
+             'compute_host': 'compute_host2',
+            },
+        ]
+        console_pools = [db.console_pool_create(self.admin_context, val)
+                         for val in pools_data]
+        console_data = [{'instance_name': 'name' + str(x),
+                         'instance_uuid': instance_uuid,
+                         'password': 'pass' + str(x),
+                         'port': 7878 + x,
+                         'pool_id': console_pools[x]['id']}
+                         for x in range(len(pools_data))]
+        consoles = [db.console_create(self.admin_context, val)
+                        for val in console_data]
+        return consoles
+
+    def _create_security_group(self, instance):
+        sec_group = {
+            'name': 'fake_sec_group',
+            'description': 'fake_sec_group_descr',
+            'user_id': 'fake_project',
+            'project_id': 'fake',
+            'instances': [instance]
+        }
+        return db.security_group_create(self.admin_context, sec_group)
+
+    def _create_instance_fault(self, instance_uuid):
+        fault_values = {
+            'message': 'message',
+            'details': 'detail',
+            'instance_uuid': instance_uuid,
+            'code': 404,
+            'host': 'localhost'
+        }
+        return db.instance_fault_create(self.admin_context, fault_values)
+
+    def _create_instance_action(self, instance_uuid):
+        action_values = {
+            'event': 'run_instance',
+            'instance_uuid': instance_uuid,
+            'request_id': self.admin_context.request_id,
+            'start_time': timeutils.utcnow(),
+            'host': 'fake-host',
+            'details': 'fake-details',
+        }
+        return db.action_start(self.admin_context, action_values)
+
+    def _create_instance_action_event(self, action_id, instance_uuid):
+        values = {
+            'event': 'schedule',
+            'instance_uuid': instance_uuid,
+            'request_id': self.admin_context.request_id,
+            'start_time': timeutils.utcnow(),
+            'host': 'fake-host',
+            'details': 'fake-details',
+            'action_id': action_id,
+        }
+        return db.action_event_start(self.admin_context, values)
+
+    def _create_migration(self, instance_uuid):
+        values = {'status': 'migrating',
+                  'source_compute': 'host1',
+                  'source_node': 'a',
+                  'dest_compute': 'host2',
+                  'dest_node': 'b',
+                  'instance_uuid': instance_uuid,
+                  'migration_type': None}
+        return db.migration_create(self.admin_context, values)
+
+    def _create_vif(self, instance_uuid):
+        values = {'address': '192.168.1.5',
+                  'instance_uuid': instance_uuid}
+        return db.virtual_interface_create(self.admin_context, values)
+
+    def _create_instance(self, uid=None):
+        sample_data_copy = self.sample_data.copy()
+        if (uid is not None):
+            sample_data_copy['project_id'] = 'project%s' % uid
+            sample_data_copy['hostname'] = 'example%s.com' % uid
+            sample_data_copy['host'] = 'h%s' % uid
+            sample_data_copy['node'] = 'n%s' % uid
+
+        inst = db.instance_create(self.admin_context, sample_data_copy)
+        return inst
+
+    def test_dry_run(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=91)
+        inst = self._create_instance()
+
+        db.instance_destroy(self.admin_context, inst['uuid'])
+        db.instance_update(self.admin_context, inst['uuid'],
+                           {'deleted_at': past_date})
+        count = db.instances_purge_deleted(self.admin_context, dry_run=True)
+        self.assertEqual(1, count, 'Incorrect count of purged instances')
+
+        instget = db.instance_get_by_uuid(self.admin_context, inst['uuid'])
+        self.assertIsNotNone(instget, 'db instance was purged on dry run')
+
+    def test_purge(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=91)
+        inst = self._create_instance()
+
+        db.instance_destroy(self.admin_context, inst['uuid'])
+        db.instance_update(self.admin_context, inst['uuid'],
+                           {'deleted_at': past_date})
+        count = db.instances_purge_deleted(self.admin_context, dry_run=False)
+        self.assertEqual(1, count, 'Incorrect count of purged instances')
+        self.assertRaises(exception.InstanceNotFound,
+                          db.instance_get_by_uuid,
+                          self.admin_context,
+                          inst['uuid'])
+
+    def test_purge_multiple(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=91)
+        inst_list = []
+
+        for i in range(0, 10):
+            inst_list.append(self._create_instance(i))
+            db.instance_destroy(self.admin_context,
+                                inst_list[len(inst_list) - 1]['uuid'])
+            db.instance_update(self.admin_context,
+                               inst_list[len(inst_list) - 1]['uuid'],
+                               {'deleted_at': past_date})
+
+        count = db.instances_purge_deleted(self.admin_context, dry_run=False)
+        self.assertEqual(10, count, 'Incorrect count of purged instances')
+
+        for inst in inst_list:
+            self.assertRaises(exception.InstanceNotFound,
+                              db.instance_get_by_uuid,
+                              self.admin_context,
+                              inst['uuid'])
+
+    def test_default_older_than(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=91)
+        past_date2 = timeutils.utcnow() - datetime.timedelta(days=80)
+
+        inst1 = self._create_instance(1)
+        inst2 = self._create_instance(2)
+
+        db.instance_destroy(self.admin_context, inst1['uuid'])
+        db.instance_destroy(self.admin_context, inst2['uuid'])
+        db.instance_update(self.admin_context, inst1['uuid'],
+                           {'deleted_at': past_date})
+        db.instance_update(self.admin_context, inst2['uuid'],
+                           {'deleted_at': past_date2})
+        count = db.instances_purge_deleted(self.admin_context, dry_run=False)
+        self.assertEqual(1, count, 'Incorrect count of purged instances')
+
+    def test_supplied_older_than(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=90)
+        past_date2 = timeutils.utcnow() - datetime.timedelta(days=20)
+
+        inst1 = self._create_instance(1)
+        inst2 = self._create_instance(2)
+
+        db.instance_destroy(self.admin_context, inst1['uuid'])
+        db.instance_destroy(self.admin_context, inst2['uuid'])
+        db.instance_update(self.admin_context, inst1['uuid'],
+                           {'deleted_at': past_date})
+        db.instance_update(self.admin_context, inst2['uuid'],
+                           {'deleted_at': past_date2})
+        count = db.instances_purge_deleted(self.admin_context, dry_run=False,
+                                           older_than=60)
+        self.assertEqual(1, count, 'Incorrect count of purged instances')
+
+    def test_purge_max_number(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=91)
+
+        for i in range(0, 50):
+            inst = self._create_instance(i)
+            db.instance_destroy(self.admin_context,
+                                inst['uuid'])
+            db.instance_update(self.admin_context,
+                               inst['uuid'],
+                               {'deleted_at': past_date})
+        count = db.instances_purge_deleted(self.admin_context,
+                                           dry_run=False, max_number=40)
+        self.assertEqual(40, count, 'Incorrect count of purged instances')
+
+    def test_purge_related_data(self):
+        past_date = timeutils.utcnow() - datetime.timedelta(days=91)
+        inst = self._create_instance()
+        db.instance_extra_update_by_uuid(self.admin_context, inst['uuid'],
+                                         {'numa_topology': 'changed'})
+        db.instance_tag_add(self.admin_context, inst['uuid'],
+                            six.text_type('tag1'))
+        compute_node = self._create_compute_node()
+        dev1, dev2 = self._create_fake_pci_devs(inst['uuid'],
+                                                compute_node['id'])
+        self._create_bdm(inst['uuid'])
+        self._create_consoles(inst['uuid'])
+        self._create_security_group(inst)
+        self._create_instance_fault(inst['uuid'])
+        action = self._create_instance_action(inst['uuid'])
+        event = self._create_instance_action_event(action['id'], inst['uuid'])
+        migration = self._create_migration(inst['uuid'])
+        self._create_vif(inst['uuid'])
+
+        db.instance_destroy(self.admin_context, inst['uuid'])
+        db.instance_update(self.admin_context, inst['uuid'],
+                           {'deleted_at': past_date})
+        count = db.instances_purge_deleted(self.admin_context, dry_run=False)
+        self.assertEqual(1, count, 'Incorrect count of purged instances')
+
+        self.assertRaises(exception.InstanceNotFound,
+                          db.instance_get_by_uuid,
+                          self.admin_context,
+                          inst['uuid'])
+        self.assertIsNone(db.instance_info_cache_get(self.admin_context,
+                                                     inst['uuid']))
+        self.assertEqual({}, db.instance_metadata_get(self.admin_context,
+                                                      inst['uuid']))
+        self.assertEqual({}, db.instance_system_metadata_get(
+                                                            self.admin_context,
+                                                            inst['uuid']))
+        self.assertIsNone(db.instance_extra_get_by_instance_uuid(
+                                        self.admin_context, inst['uuid']))
+        self.assertRaises(exception.InstanceNotFound,
+                          db.instance_tag_get_by_instance_uuid,
+                          self.admin_context,
+                          inst['uuid'])
+        self.assertEqual({inst['uuid']: []},
+                         db.instance_fault_get_by_instance_uuids(
+                            self.admin_context, [inst['uuid']]))
+        self.assertIsNone(db.action_event_get_by_id(self.admin_context,
+                                                    action['id'],
+                                                    event['id']))
+        self.assertEqual([], db.actions_get(self.admin_context, inst['uuid']))
+        self.assertRaises(exception.MigrationNotFound,
+                          db.migration_get,
+                          self.admin_context,
+                          migration['id'])
+        self.assertEqual([], db.block_device_mapping_get_all_by_instance(
+                                                            self.admin_context,
+                                                            inst['uuid']))
+        self.assertEqual([], db.console_get_all_by_instance(self.admin_context,
+                                                            inst['uuid']))
+        self.assertEqual([], db.pci_device_get_all_by_instance_uuid(
+                                                            self.admin_context,
+                                                            inst['uuid']))
+        self.assertEqual([], db.security_group_get_by_instance(
+                                                            self.admin_context,
+                                                            inst['uuid']))
+        self.assertRaises(exception.InstanceNotFound,
+                          db.virtual_interface_get_by_instance,
+                          self.admin_context,
+                          inst['uuid'])

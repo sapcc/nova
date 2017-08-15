@@ -691,6 +691,21 @@ def instance_destroy(context, instance_uuid, constraint=None):
     return IMPL.instance_destroy(context, instance_uuid, constraint)
 
 
+def instances_purge_deleted(context, dry_run=False, older_than=90,
+                            max_number=None):
+    """Removes soft deleted instance data
+
+    :param dry_run: If true, prints data that will be deleted without
+            performing an actual delete.
+    :param since: Number of days in the past, from today,
+            to purge instance data
+    :param max_number: Maximum number of instances to consider
+    :returns: number of purged instances.
+    """
+    return IMPL.instances_purge_deleted(context, dry_run, older_than,
+                                        max_number)
+
+
 def instance_get_by_uuid(context, uuid, columns_to_join=None):
     """Get an instance or raise if it does not exist."""
     return IMPL.instance_get_by_uuid(context, uuid, columns_to_join)
