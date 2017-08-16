@@ -30,8 +30,6 @@ from nova.virt.vmwareapi import vm_util
 from oslo_log import log as logging
 from oslo_vmware import vim_util as vutil
 
-LOG = logging.getLogger(__name__)
-
 def _get_ds_capacity_and_freespace(session, cluster=None,
                                    datastore_regex=None):
     capacity = 0
@@ -160,17 +158,15 @@ class VCState(object):
         equal = True
 
         """ Compare found ESX hosts """
-        for i in range(result.__len__()):
-            if i + 1 >= result.__len__():
-                break
+        if result.__len__() > 1:
+            for i in range(result.__len__() - 1):
+                if result[i] == result[i + 1]:
+                    continue
+                else:
+                    equal = False
+                    break
 
-            if result[i] == result[i + 1]:
-                continue
-            else:
-                equal = False
-                break
-
-        if equal is False:
+        if not equal:
             return "CPU's for this cluster have different values!"
 
         return result[0]
