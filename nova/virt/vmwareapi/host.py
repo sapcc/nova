@@ -139,10 +139,9 @@ class VCState(object):
                     cpu_vendor.append(t.vendor)
 
                 for feature in props["config"].featureCapability:
-                    if "." in feature.featureName:
-                        feature.featureName = feature.featureName.split(".")[1].lower()
-                    if  int(feature.value) > 0:
-                        features.append(feature.featureName + " : " + feature.value)
+                    if feature.featureName.startswith("cpuid."):
+                        if  feature.value == "1":
+                            features.append(feature.featureName.split(".", 1)[1].lower())
 
                 features.sort()
                 props["cpu_model"] = processor_type
