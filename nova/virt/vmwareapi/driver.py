@@ -30,6 +30,7 @@ from oslo_vmware import exceptions as vexc
 from oslo_vmware import pbm
 from oslo_vmware import vim
 from oslo_vmware import vim_util
+from oslo_serialization import jsonutils
 
 from nova.compute import task_states
 import nova.conf
@@ -354,7 +355,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
                 # model of the "host"
-               'cpu_info': None,
+               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
                'supported_instances': host_stats['supported_instances'],
                'numa_topology': None,
                }
@@ -541,6 +542,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         msg = _("Multiple hosts may be managed by the VMWare "
                 "vCenter driver; therefore we do not return "
                 "uptime for just one host.")
+
         raise NotImplementedError(msg)
 
     def inject_network_info(self, instance, nw_info):
