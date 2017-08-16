@@ -358,12 +358,25 @@ class VolumeAttachmentController(wsgi.Controller):
         authorize_attach(context, action='update')
 
         old_volume_id = id
+
+        instance = common.get_instance(self.compute_api, context, server_id)
+
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+                context, instance.uuid)
+        if not bdms:
+            msg = _("Instance %s is not attached.") % server_id
+            raise exc.HTTPNotFound(explanation=msg)
+
         try:
             old_volume = self.volume_api.get(context, old_volume_id)
         except exception.VolumeNotFound as e:
+            for bdm in bdms:
+                if bdm.volume_id == volume_id and not bdm.is_root:
+                    bdm.destroy()
             raise exc.HTTPNotFound(explanation=e.format_message())
 
         new_volume_id = body['volumeAttachment']['volumeId']
+
         try:
             new_volume = self.volume_api.get(context, new_volume_id)
         except exception.VolumeNotFound as e:
@@ -376,10 +389,6 @@ class VolumeAttachmentController(wsgi.Controller):
             # NotFound response if that is not existent.
             raise exc.HTTPBadRequest(explanation=e.format_message())
 
-        instance = common.get_instance(self.compute_api, context, server_id)
-
-        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
-                context, instance.uuid)
         found = False
         try:
             for bdm in bdms:
@@ -393,6 +402,7 @@ class VolumeAttachmentController(wsgi.Controller):
                 except exception.VolumeUnattached:
                     # The volume is not attached.  Treat it as NotFound
                     # by falling through.
+                    bdm.destroy()
                     pass
                 except exception.InvalidVolume as e:
                     raise exc.HTTPBadRequest(explanation=e.format_message())
@@ -422,16 +432,21 @@ class VolumeAttachmentController(wsgi.Controller):
                                  vm_states.SHELVED_OFFLOADED):
             _check_request_version(req, '2.20', 'detach_volume',
                                    server_id, instance.vm_state)
-        try:
-            volume = self.volume_api.get(context, volume_id)
-        except exception.VolumeNotFound as e:
-            raise exc.HTTPNotFound(explanation=e.format_message())
 
         bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                 context, instance.uuid)
         if not bdms:
             msg = _("Instance %s is not attached.") % server_id
             raise exc.HTTPNotFound(explanation=msg)
+
+        try:
+            volume = self.volume_api.get(context, volume_id)
+        except exception.VolumeNotFound as e:
+            for bdm in bdms:
+                if bdm.volume_id == volume_id and not bdm.is_root:
+                    bdm.destroy()
+
+            raise exc.HTTPNotFound(explanation=e.format_message())
 
         found = False
         try:
@@ -448,6 +463,9 @@ class VolumeAttachmentController(wsgi.Controller):
                 except exception.VolumeUnattached:
                     # The volume is not attached.  Treat it as NotFound
                     # by falling through.
+
+                    # Fix the block-device-mapping though
+                    bdm.destroy()
                     pass
                 except exception.InvalidVolume as e:
                     raise exc.HTTPBadRequest(explanation=e.format_message())
@@ -485,7 +503,6 @@ class VolumeAttachmentController(wsgi.Controller):
                                             bdm.device_name))
 
         return {'volumeAttachments': results}
-
 
 def _translate_snapshot_detail_view(context, vol):
     """Maps keys for snapshots details view."""
