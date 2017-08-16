@@ -448,6 +448,9 @@ class VolumeAttachmentController(wsgi.Controller):
                 except exception.VolumeUnattached:
                     # The volume is not attached.  Treat it as NotFound
                     # by falling through.
+
+                    # Fix the block-device-mapping though
+                    bdm.soft_delete()
                     pass
                 except exception.InvalidVolume as e:
                     raise exc.HTTPBadRequest(explanation=e.format_message())
