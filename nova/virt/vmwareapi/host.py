@@ -132,7 +132,6 @@ class VCState(object):
                 features = []
 
                 props = {prop.name: prop.val for prop in objContent.propSet}
-                props["model"] = props["hardware"].systemInfo.model
 
                 for t in props["hardware"].cpuPkg:
                     processor_type.append(t.description)
@@ -144,8 +143,8 @@ class VCState(object):
                             features.append(feature.featureName.split(".", 1)[1].lower())
 
                 features.sort()
-                props["cpu_model"] = processor_type
-                props["cpu_vendor"] =cpu_vendor
+                props["model"] = processor_type
+                props["cpu_vendor"] =cpu_vendor[0].title()
                 props["vendor"] = props["hardware"].systemInfo.vendor
                 topology["cores"] = props["hardware"].cpuInfo.numCpuCores
                 topology["sockets"] = props["hardware"].cpuInfo.numCpuPackages
