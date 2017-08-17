@@ -127,15 +127,17 @@ class VCState(object):
         """ Retrieving needed hardware properties from ESX hosts """
         with vutil.WithRetrieval(vim, pc_result) as pc_objects:
             for objContent in pc_objects:
-                processor_type = []
-                cpu_vendor = []
+                processor_type = None
+                cpu_vendor = None
                 features = []
 
                 props = {prop.name: prop.val for prop in objContent.propSet}
+                hardware = props["hardware"]
 
-                for t in props["hardware"].cpuPkg:
-                    processor_type.append(t.description)
-                    cpu_vendor.append(t.vendor)
+                if hardware.cpuPkg:
+                    t = hardware.cpuPkg[0]
+                    processor_type = t.description
+                    cpu_vendor = t.vendor.title()
 
                 for feature in props["config"].featureCapability:
                     if feature.featureName.startswith("cpuid."):
@@ -144,10 +146,10 @@ class VCState(object):
 
                 features.sort()
                 props["model"] = processor_type
-                props["vendor"] = cpu_vendor[0].title()
-                topology["cores"] = props["hardware"].cpuInfo.numCpuCores
-                topology["sockets"] = props["hardware"].cpuInfo.numCpuPackages
-                topology["threads"] = props["hardware"].cpuInfo.numCpuThreads
+                props["vendor"] = cpu_vendor
+                topology["cores"] = hardware.cpuInfo.numCpuCores
+                topology["sockets"] = hardware.cpuInfo.numCpuPackages
+                topology["threads"] = hardware.cpuInfo.numCpuThreads
                 props["topology"] = topology
                 props["features"] = features
                 del props["config"]
