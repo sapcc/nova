@@ -4898,10 +4898,11 @@ class ComputeManager(manager.Manager):
                            'schost': stashed_connector.get('host')})
                 connector = stashed_connector
 
-        self.volume_api.terminate_connection(context, volume_id, connector)
-
         if destroy_bdm:
             bdm.destroy()
+
+        # This will set the volume to available
+        self.volume_api.terminate_connection(context, volume_id, connector)
 
         info = dict(volume_id=volume_id)
         self._notify_about_instance_usage(
