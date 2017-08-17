@@ -144,8 +144,7 @@ class VCState(object):
 
                 features.sort()
                 props["model"] = processor_type
-                props["cpu_vendor"] =cpu_vendor[0].title()
-                props["vendor"] = props["hardware"].systemInfo.vendor
+                props["vendor"] = cpu_vendor[0].title()
                 topology["cores"] = props["hardware"].cpuInfo.numCpuCores
                 topology["sockets"] = props["hardware"].cpuInfo.numCpuPackages
                 topology["threads"] = props["hardware"].cpuInfo.numCpuThreads
