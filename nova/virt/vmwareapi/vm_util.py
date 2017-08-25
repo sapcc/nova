@@ -37,6 +37,8 @@ from nova.i18n import _, _LE, _LI, _LW
 from nova.network import model as network_model
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
+from nova import objects
+from nova.virt.vmwareapi import cluster_util
 
 LOG = logging.getLogger(__name__)
 
@@ -167,6 +169,7 @@ VmdkInfo = collections.namedtuple('VmdkInfo', ['path', 'adapter_type',
                                                'disk_type',
                                                'capacity_in_bytes',
                                                'device'])
+GroupInfo = collections.namedtuple('GroupInfo', ['name', 'policies', 'kind'])
 
 
 def _iface_id_option_value(client_factory, iface_id, port_index):
@@ -1208,6 +1211,42 @@ def get_stats_from_cluster(session, cluster):
                 mem_info['free'] = mem_info['total'] - consumed
     stats = {'vcpus': vcpus, 'mem': mem_info}
     return stats
+
+def _get_vm_group_from_image(context, image_info):
+    group_name = image_info.vm_group
+    #group_name = image_info._get_vm_group_from_image
+
+    vm_group = None
+    if group_name is not None:
+        vm_group = GroupInfo(str(group_name), None, constants.IMAGE_GROUP)
+
+    LOG.debug(vm_group)
+    return vm_group
+
+def _get_server_group(context, instance):
+    server_group_info = None
+    try:
+        LOG.debug(objects.instance_group.InstanceGroup)
+        instance_group_object = objects.instance_group.InstanceGroup
+        server_group = instance_group_object.get_by_instance_uuid(
+            context, instance.uuid)
+        server_group_info = GroupInfo(server_group.name, server_group.policies,
+                                      constants.SERVER_GROUP)
+    except Exception:
+        LOG.debug("Instance is not part of any server group.",
+                  instance=instance)
+
+    return server_group_info
+
+
+def update_cluster_placement(session, context, instance, cluster, vm_ref,
+                             image_info):
+    image_group_info = _get_vm_group_from_image(context, image_info)
+    server_group_info = _get_server_group(context, instance)
+    vm_group_info = server_group_info or image_group_info
+    if vm_group_info is None:
+        return
+    cluster_util.update_placement(session, cluster, vm_ref, vm_group_info)
 
 
 def get_host_ref(session, cluster=None):

@@ -27,6 +27,8 @@ from nova import exception
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
+from nova.virt.vmwareapi import vm_util
+from nova.virt.vmwareapi import cluster_util
 from oslo_log import log as logging
 from oslo_vmware import vim_util as vutil
 
@@ -87,6 +89,7 @@ class VCState(object):
             (arch.I686, hv_type.VMWARE, vm_mode.HVM),
             (arch.X86_64, hv_type.VMWARE, vm_mode.HVM)]
         data["cpu_model"] = self.to_cpu_model()
+        data["resource_scheduling"] = cluster_util._is_drs_enabled(self._session, self._cluster)
 
         self._stats = data
         return data

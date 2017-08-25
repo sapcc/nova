@@ -512,7 +512,8 @@ class LibvirtDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": True,
         "supports_recreate": True,
-        "supports_migrate_to_same_host": False
+        "supports_migrate_to_same_host": False,
+        "resource_scheduling": False
     }
 
     def __init__(self, virtapi, read_only=False):

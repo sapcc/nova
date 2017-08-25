@@ -1465,7 +1465,8 @@ class ComputeManager(manager.Manager):
             group = objects.InstanceGroup.get_by_hint(context, group_hint)
             if 'anti-affinity' in group.policies:
                 group_hosts = group.get_hosts(exclude=[instance.uuid])
-                if self.host in group_hosts:
+                resource_scheduling = self.driver.capabilities.get("resource_schedulling", False)
+                if self.host in group_hosts and not resource_scheduling:
                     msg = _("Anti-affinity instance group policy "
                             "was violated.")
                     raise exception.RescheduledException(
