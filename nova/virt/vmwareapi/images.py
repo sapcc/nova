@@ -60,8 +60,7 @@ class VMwareImage(object):
                  container_format=constants.CONTAINER_FORMAT_BARE,
                  file_type=constants.DEFAULT_DISK_FORMAT,
                  linked_clone=None,
-                 vif_model=constants.DEFAULT_VIF_MODEL,
-                 vm_group="VM_group"):
+                 vif_model=constants.DEFAULT_VIF_MODEL,):
         """VMwareImage holds values for use in building VMs.
 
             image_id (str): uuid of the image
@@ -81,7 +80,6 @@ class VMwareImage(object):
         self.container_format = container_format
         self.disk_type = disk_type
         self.file_type = file_type
-        self.vm_group = vm_group
 
         # NOTE(vui): This should be removed when we restore the
         # descriptor-based validation.

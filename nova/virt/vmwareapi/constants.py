@@ -212,5 +212,4 @@ VALID_OS_TYPES = set([
     'winXPProGuest',
 ])
 
-IMAGE_GROUP = 'image_group'
 SERVER_GROUP = 'server_group'

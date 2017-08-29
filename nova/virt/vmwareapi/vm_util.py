@@ -1212,17 +1212,6 @@ def get_stats_from_cluster(session, cluster):
     stats = {'vcpus': vcpus, 'mem': mem_info}
     return stats
 
-def _get_vm_group_from_image(context, image_info):
-    group_name = image_info.vm_group
-    #group_name = image_info._get_vm_group_from_image
-
-    vm_group = None
-    if group_name is not None:
-        vm_group = GroupInfo(str(group_name), None, constants.IMAGE_GROUP)
-
-    LOG.debug(vm_group)
-    return vm_group
-
 def _get_server_group(context, instance):
     server_group_info = None
     try:
@@ -1239,14 +1228,11 @@ def _get_server_group(context, instance):
     return server_group_info
 
 
-def update_cluster_placement(session, context, instance, cluster, vm_ref,
-                             image_info):
-    image_group_info = _get_vm_group_from_image(context, image_info)
+def update_cluster_placement(session, context, instance, cluster, vm_ref):
     server_group_info = _get_server_group(context, instance)
-    vm_group_info = server_group_info or image_group_info
-    if vm_group_info is None:
+    if server_group_info is None:
         return
-    cluster_util.update_placement(session, cluster, vm_ref, vm_group_info)
+    cluster_util.update_placement(session, cluster, vm_ref, server_group_info)
 
 
 def get_host_ref(session, cluster=None):

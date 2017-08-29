@@ -327,7 +327,7 @@ class VMwareVMOps(object):
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
                                    config_spec, self._root_resource_pool)
-        vm_util.update_cluster_placement(self._session, context, instance, self._cluster, vm_ref, image_info)
+        vm_util.update_cluster_placement(self._session, context, instance, self._cluster, vm_ref)
 
         return vm_ref
 
