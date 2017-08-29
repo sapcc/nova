@@ -169,7 +169,7 @@ VmdkInfo = collections.namedtuple('VmdkInfo', ['path', 'adapter_type',
                                                'disk_type',
                                                'capacity_in_bytes',
                                                'device'])
-GroupInfo = collections.namedtuple('GroupInfo', ['name', 'policies', 'kind'])
+GroupInfo = collections.namedtuple('GroupInfo', ['name', 'policies'])
 
 
 def _iface_id_option_value(client_factory, iface_id, port_index):
@@ -1219,8 +1219,7 @@ def _get_server_group(context, instance):
         instance_group_object = objects.instance_group.InstanceGroup
         server_group = instance_group_object.get_by_instance_uuid(
             context, instance.uuid)
-        server_group_info = GroupInfo(server_group.name, server_group.policies,
-                                      constants.SERVER_GROUP)
+        server_group_info = GroupInfo(server_group.name, server_group.policies)
     except Exception:
         LOG.debug("Instance is not part of any server group.",
                   instance=instance)

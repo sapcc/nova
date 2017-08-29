@@ -165,7 +165,6 @@ class VMwareImage(object):
             'os_distro': 'os_type',
             'hw_disk_type': 'disk_type',
             'hw_vif_model': 'vif_model',
-            #'vmware_vm_group' : 'vm_group'
         }
 
         for k, v in six.iteritems(props_map):

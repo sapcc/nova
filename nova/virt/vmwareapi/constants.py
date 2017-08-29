@@ -211,5 +211,3 @@ VALID_OS_TYPES = set([
     'winXPPro64Guest',
     'winXPProGuest',
 ])
-
-SERVER_GROUP = 'server_group'
