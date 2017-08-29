@@ -53,6 +53,7 @@ class VCState(object):
         self._cluster = cluster
         self._datastore_regex = datastore_regex
         self._stats = {}
+        self._cpu_model = None
         self.update_status()
 
     def get_host_stats(self, refresh=False):
@@ -85,12 +86,15 @@ class VCState(object):
         data["supported_instances"] = [
             (arch.I686, hv_type.VMWARE, vm_mode.HVM),
             (arch.X86_64, hv_type.VMWARE, vm_mode.HVM)]
-        data["cpu_model"] = self.to_cpu_model(self._cluster)
+        data["cpu_model"] = self.to_cpu_model()
 
         self._stats = data
         return data
 
-    def to_cpu_model(self, cluster_obj):
+    def to_cpu_model(self):
+        if self._cpu_model:
+            return self._cpu_model
+
         max_objects = 100
         vim = self._session.vim
         property_collector = vim.service_content.propertyCollector
@@ -105,7 +109,7 @@ class VCState(object):
 
         object_spec = vutil.build_object_spec(
             vim.client.factory,
-            cluster_obj,
+            self._cluster,
             [traversal_spec])
         property_spec = vutil.build_property_spec(
             vim.client.factory,
@@ -160,8 +164,8 @@ class VCState(object):
         equal = True
 
         """ Compare found ESX hosts """
-        if result.__len__() > 1:
-            for i in range(result.__len__() - 1):
+        if len(result) > 1:
+            for i in range(len(result) - 1):
                 if result[i] == result[i + 1]:
                     continue
                 else:
@@ -169,6 +173,8 @@ class VCState(object):
                     break
 
         if not equal:
-            return "CPU's for this cluster have different values!"
+            self._cpu_model = "CPU's for this cluster have different values!"
+        elif result:
+            self._cpu_model = result[0]
 
-        return result[0]
+        return self._cpu_model
