@@ -45,7 +45,6 @@ def _get_vm_group(cluster_config, group_info):
 @utils.synchronized('vmware-vm-group-policy')
 def update_placement(session, cluster, vm_ref, group_info):
     """Updates cluster for vm placement using DRS"""
-    LOG.debug("Updating Placement ===========================================================================")
     cluster_config = session._call_method(
         vutil, "get_object_property", cluster, "configurationEx")
 
@@ -53,9 +52,6 @@ def update_placement(session, cluster, vm_ref, group_info):
         group = _get_vm_group(cluster_config, group_info)
         client_factory = session.vim.client.factory
         config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
-        """if group_info.kind == constants.IMAGE_GROUP and not group:
-            msg = _('VM group %s not found on cluster') % group_info.name
-            raise exception.NotFound(msg)"""
 
         if not group:
             """Creating group"""

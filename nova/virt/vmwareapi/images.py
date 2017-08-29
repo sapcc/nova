@@ -61,7 +61,7 @@ class VMwareImage(object):
                  file_type=constants.DEFAULT_DISK_FORMAT,
                  linked_clone=None,
                  vif_model=constants.DEFAULT_VIF_MODEL,
-                 vm_group="vmware_vm_group"):
+                 vm_group="VM_group"):
         """VMwareImage holds values for use in building VMs.
 
             image_id (str): uuid of the image

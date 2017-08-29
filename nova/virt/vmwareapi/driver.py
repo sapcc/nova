@@ -129,7 +129,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         "has_imagecache": True,
         "supports_recreate": False,
         "supports_migrate_to_same_host": True,
-        "resource_scheduling" : False
+        "resource_scheduling": True
     }
 
     # Legacy nodename is of the form: <mo id>(<cluster name>)
@@ -548,7 +548,6 @@ class VMwareVCDriver(driver.ComputeDriver):
                 "vCenter driver; therefore we do not return "
                 "uptime for just one host.")
 
-        return "1"
         raise NotImplementedError(msg)
 
     def inject_network_info(self, instance, nw_info):
