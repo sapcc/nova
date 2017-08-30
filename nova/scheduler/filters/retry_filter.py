@@ -34,9 +34,6 @@ class RetryFilter(filters.BaseHostFilter):
             LOG.debug("Re-scheduling is disabled")
             return True
 
-        if host_state.hypervisor_type == "VMware vCenter Server":
-            return host_state.host
-
         # TODO(sbauza): Once the HostState is actually a ComputeNode, we could
         # easily get this one...
         host = [host_state.host, host_state.nodename]

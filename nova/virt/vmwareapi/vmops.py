@@ -939,7 +939,7 @@ class VMwareVMOps(object):
         LOG.debug("Creating linked-clone VM from snapshot", instance=instance)
         vm_clone_task = self._session._call_method(
                                 self._session.vim,
-                                    "CloneVM_Task",
+                                "CloneVM_Task",
                                 vm_ref,
                                 folder=dc_info.vmFolder,
                                 name=vm_name,

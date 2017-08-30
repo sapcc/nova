@@ -60,7 +60,7 @@ class VMwareImage(object):
                  container_format=constants.CONTAINER_FORMAT_BARE,
                  file_type=constants.DEFAULT_DISK_FORMAT,
                  linked_clone=None,
-                 vif_model=constants.DEFAULT_VIF_MODEL,):
+                 vif_model=constants.DEFAULT_VIF_MODEL):
         """VMwareImage holds values for use in building VMs.
 
             image_id (str): uuid of the image
@@ -164,7 +164,7 @@ class VMwareImage(object):
         props_map = {
             'os_distro': 'os_type',
             'hw_disk_type': 'disk_type',
-            'hw_vif_model': 'vif_model',
+            'hw_vif_model': 'vif_model'
         }
 
         for k, v in six.iteritems(props_map):

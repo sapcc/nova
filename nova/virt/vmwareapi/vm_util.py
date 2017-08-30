@@ -39,6 +39,7 @@ from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
 from nova import objects
 from nova.virt.vmwareapi import cluster_util
+import nova.exception
 
 LOG = logging.getLogger(__name__)
 
@@ -1219,10 +1220,13 @@ def _get_server_group(context, instance):
         instance_group_object = objects.instance_group.InstanceGroup
         server_group = instance_group_object.get_by_instance_uuid(
             context, instance.uuid)
-        server_group_info = GroupInfo(server_group.name, server_group.policies)
-    except Exception:
-        LOG.debug("Instance is not part of any server group.",
-                  instance=instance)
+
+        if server_group:
+            server_group_info = GroupInfo(server_group.name, server_group.policies)
+
+    except nova.exception.InstanceGroupNotFound as e:
+        LOG.debug('An exception occurred while retrieving the server group: '
+                           '%s ', e)
 
     return server_group_info
 

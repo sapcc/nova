@@ -88,12 +88,6 @@ class _GroupAntiAffinityFilter(filters.BaseHostFilter):
         if self.policy_name not in policies:
             return True
 
-        if host_state.hypervisor_type == "VMware vCenter Server":
-            return host_state.host
-
-        if not host_state.cpu_info:
-            return host_state.host
-
         group_hosts = (spec_obj.instance_group.hosts
                        if spec_obj.instance_group else [])
         LOG.debug("Group anti affinity: check if %(host)s not "
