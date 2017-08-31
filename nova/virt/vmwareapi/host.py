@@ -45,8 +45,6 @@ def _get_ds_capacity_and_freespace(session, cluster=None,
 
     return capacity, freespace
 
-LOG = logging.getLogger(__name__)
-
 class VCState(object):
     """Manages information about the vCenter cluster"""
     def __init__(self, session, host_name, cluster, datastore_regex):
