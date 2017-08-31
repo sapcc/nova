@@ -124,7 +124,8 @@ class FakeDriver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": True,
         "supports_recreate": True,
-        "supports_migrate_to_same_host": True
+        "supports_migrate_to_same_host": True,
+        "resource_scheduling": False
         }
 
     # Since we don't have a real hypervisor, pretend we have lots of
