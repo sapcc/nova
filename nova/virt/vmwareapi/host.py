@@ -117,7 +117,7 @@ class VCState(object):
         property_spec = vutil.build_property_spec(
             vim.client.factory,
             "HostSystem",
-            ["hardware", "config"])
+            ["hardware", "config.featureCapability"])
 
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
@@ -146,10 +146,11 @@ class VCState(object):
                     processor_type = t.description
                     cpu_vendor = t.vendor.title()
 
-                for feature in props["config"].featureCapability:
-                    if feature.featureName.startswith("cpuid."):
-                        if  feature.value == "1":
-                            features.append(feature.featureName.split(".", 1)[1].lower())
+                for featureCapability in props["config.featureCapability"]:
+                    for feature in featureCapability[1]:
+                        if feature.featureName.startswith("cpuid."):
+                            if feature.value == "1":
+                                features.append(feature.featureName.split(".", 1)[1].lower())
 
                 features.sort()
                 props["model"] = processor_type
@@ -159,7 +160,7 @@ class VCState(object):
                 topology["threads"] = hardware.cpuInfo.numCpuThreads
                 props["topology"] = topology
                 props["features"] = features
-                del props["config"]
+                del props["config.featureCapability"]
                 del props["hardware"]
 
                 result.append(props)
