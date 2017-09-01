@@ -1222,10 +1222,8 @@ def _get_server_group(context, instance):
 
         if server_group:
             server_group_info = GroupInfo(server_group.uuid, server_group.policies)
-
     except nova.exception.InstanceGroupNotFound as e:
-        LOG.debug('An exception occurred while retrieving the server group: '
-                           '%s ', e)
+        pass
 
     return server_group_info
 
