@@ -45,6 +45,7 @@ def _get_ds_capacity_and_freespace(session, cluster=None,
 
     return capacity, freespace
 
+
 class VCState(object):
     """Manages information about the vCenter cluster"""
     def __init__(self, session, host_name, cluster, datastore_regex):
@@ -146,8 +147,7 @@ class VCState(object):
                     cpu_vendor = t.vendor.title()
 
                 for featureCapability in props["config.featureCapability"]:
-                    featureCapability = featureCapability[1]
-                    for feature in featureCapability:
+                    for feature in featureCapability[1]:
                         if feature.featureName.startswith("cpuid."):
                             if feature.value == "1":
                                 features.append(feature.featureName.split(".", 1)[1].lower())
