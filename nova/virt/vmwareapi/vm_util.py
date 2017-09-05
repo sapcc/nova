@@ -639,7 +639,7 @@ def _get_device_disk_type(device):
             return constants.DEFAULT_DISK_TYPE
 
 
-def get_vmdk_info(session, vm_ref, uuid=None):
+def get_vmdk_info(session, vm_ref, root_disk=None):
     """Returns information for the primary VMDK attached to the given VM."""
     hardware_devices = session._call_method(vutil,
                                             "get_object_property",
@@ -653,10 +653,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
     capacity_in_bytes = 0
 
     # Determine if we need to get the details of the root disk
-    root_disk = None
     root_device = None
-    if uuid:
-        root_disk = '%s.vmdk' % uuid
     vmdk_device = None
 
     adapter_type_dict = {}
@@ -664,8 +661,8 @@ def get_vmdk_info(session, vm_ref, uuid=None):
         if device.__class__.__name__ == "VirtualDisk":
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
-                path = ds_obj.DatastorePath.parse(device.backing.fileName)
-                if root_disk and path.basename == root_disk:
+                if not root_device or root_device.controllerKey > device.controllerKey or \
+                        root_device.controllerKey == device.controllerKey and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
         elif device.__class__.__name__ == "VirtualLsiLogicController":
