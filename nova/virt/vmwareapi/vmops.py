@@ -1056,6 +1056,24 @@ class VMwareVMOps(object):
         # Destroy a VM instance
         try:
             vm_ref = vm_util.get_vm_ref(self._session, instance)
+            cluster = vim_util.get_object_properties(self._session.vim, None, vm_ref, vm_ref._type, "resourcePool")
+            clusterResult = vim_util.get_object_properties(self._session.vim, None, cluster[0][0].propSet[0].val, cluster[0][0].propSet[0].val._type, "parent")
+
+            clusterConfigEx = vim_util.get_object_properties(self._session.vim, None, clusterResult[0][0].propSet[0].val,
+                                                             clusterResult[0][0].propSet[0].val._type, "configurationEx")
+
+            for key, group in enumerate(clusterConfigEx[0][0].propSet[0].val.group):
+                if hasattr(group, 'vm'):
+                    for vm in group.vm:
+                        if vm.value == vm_ref.value and len(group.vm) == 1:
+                            LOG.debug("Update group: %s", clusterConfigEx[0][0].propSet[0].val.group)
+                            LOG.debug("Found Virtual machine: %s", vm.value)
+                            import cluster_util
+                            cluster_util.delete_vm_group(self._session, clusterConfigEx[0][0].obj, clusterConfigEx[0][0].propSet[0].val.group[key])
+
+
+            LOG.debug("ClusterConfigEx %s", clusterConfigEx[0][0].propSet[0].val.group)
+
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vutil,
