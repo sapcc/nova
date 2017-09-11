@@ -41,6 +41,21 @@ def _get_vm_group(cluster_config, group_info):
         if group.name == group_info.uuid:
             return group
 
+def delete_vm_group(session, cluster, vm_group):
+    """ Add delete impl fro removing group if deleted vm is the last vm in a vm group"""
+    client_factory = session.vim.client.factory
+    group_spec = client_factory.create('ns0:ClusterGroupSpec')
+    groups = []
+
+    group_spec.info = vm_group
+    group_spec.operation = "remove"
+    group_spec.removeKey = vm_group.name
+    groups.append(group_spec)
+
+    config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+    config_spec.groupSpec = groups
+    reconfigure_cluster(session, cluster, config_spec)
+
 
 @utils.synchronized('vmware-vm-group-policy')
 def update_placement(session, cluster, vm_ref, group_info):
