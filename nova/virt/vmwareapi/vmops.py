@@ -1063,14 +1063,17 @@ class VMwareVMOps(object):
                                                              clusterResult[0][0].propSet[0].val._type, "configurationEx")
 
             for key, group in enumerate(clusterConfigEx[0][0].propSet[0].val.group):
-                if hasattr(group, 'vm'):
-                    for vm in group.vm:
-                        if vm.value == vm_ref.value and len(group.vm) == 1:
-                            LOG.debug("Update group: %s", clusterConfigEx[0][0].propSet[0].val.group)
-                            LOG.debug("Found Virtual machine: %s", vm.value)
-                            import cluster_util
-                            cluster_util.delete_vm_group(self._session, clusterConfigEx[0][0].obj, clusterConfigEx[0][0].propSet[0].val.group[key])
+                if not hasattr(group, 'vm'):
+                    continue
 
+                for vm in group.vm:
+                    if vm.value == vm_ref.value and len(group.vm) == 1:
+                        LOG.debug("Update group: %s", clusterConfigEx[0][0].propSet[0].val.group)
+                        LOG.debug("Found Virtual machine: %s", vm.value)
+                        import cluster_util
+                        cluster_util.delete_vm_group(self._session, clusterConfigEx[0][0].obj, clusterConfigEx[0][0].propSet[0].val.group[key])
+                        break
+                break
 
             LOG.debug("ClusterConfigEx %s", clusterConfigEx[0][0].propSet[0].val.group)
 
