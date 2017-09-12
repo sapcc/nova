@@ -24,6 +24,7 @@ import os
 import time
 
 import decorator
+import cluster_util
 from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -1055,29 +1056,21 @@ class VMwareVMOps(object):
     def _destroy_instance(self, context, instance, destroy_disks=True):
         # Destroy a VM instance
         try:
-
             vm_ref = vm_util.get_vm_ref(self._session, instance)
+
             server_group_info = vm_util._get_server_group(context, instance)
             if server_group_info:
+                cluster = cluster_util.validate_vm_group(self._session, vm_ref)
 
-                cluster = vim_util.get_object_properties(self._session.vim, None, vm_ref, vm_ref._type, "resourcePool")
-                clusterResult = vim_util.get_object_properties(self._session.vim, None, cluster[0][0].propSet[0].val, cluster[0][0].propSet[0].val._type, "parent")
-
-                clusterConfigEx = vim_util.get_object_properties(self._session.vim, None, clusterResult[0][0].propSet[0].val,
-                                                                 clusterResult[0][0].propSet[0].val._type, "configurationEx")
-
-                for key, group in enumerate(clusterConfigEx[0][0].propSet[0].val.group):
+                for key, group in enumerate(cluster.propSet[0].val.group):
                     if not hasattr(group, 'vm'):
                         continue
 
                     for vm in group.vm:
                         if vm.value == vm_ref.value and len(group.vm) == 1:
-                            import cluster_util
-                            cluster_util.delete_vm_group(self._session, clusterConfigEx[0][0].obj, clusterConfigEx[0][0].propSet[0].val.group[key])
+                            cluster_util.delete_vm_group(self._session, cluster.obj, cluster.propSet[0].val.group[key])
                             break
                     break
-
-                LOG.debug("ClusterConfigEx %s", clusterConfigEx[0][0].propSet[0].val.group)
 
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
