@@ -22,6 +22,7 @@ Class for VM tasks like spawn, snapshot, suspend, resume etc.
 import collections
 import os
 import time
+import json
 
 import decorator
 import cluster_util
@@ -62,6 +63,8 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
+import OpenSSL
+import ssl
 
 vmops_opts = [
     cfg.StrOpt('cache_prefix',
@@ -298,6 +301,14 @@ class VMwareVMOps(object):
     def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
+
+        service_locator = self._session.vim.client.factory.create('ns0:ServiceLocator')
+        credentials = self._session.vim.client.factory.create('ns0:ServiceLocatorNamePassword')
+        LOG.debug("SERVICEINSTANCE============>")
+        CONF = nova.conf.CONF
+        LOG.debug(ssl.get_server_certificate(CONF.vmware.host_ip))
+        LOG.debug(self._session.vim.service_content.about.instanceUuid)
+
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
@@ -328,6 +339,7 @@ class VMwareVMOps(object):
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
                                    config_spec, self._root_resource_pool)
+
         vm_util.update_cluster_placement(self._session, context, instance, self._cluster, vm_ref)
 
         return vm_ref
@@ -1496,6 +1508,110 @@ class VMwareVMOps(object):
         self._update_instance_progress(context, instance,
                                        step=6,
                                        total_steps=RESIZE_TOTAL_STEPS)
+
+    def _find_esx_host(self, cluster_ref, ds_ref):
+        """Find ESX host in the specified cluster which is also connected to
+        the specified datastore.
+        """
+        cluster_hosts = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'host')
+        ds_hosts = self._session._call_method(vutil, 'get_object_property',
+                                              ds_ref, 'host')
+        for ds_host in ds_hosts.DatastoreHostMount:
+            for cluster_host in cluster_hosts.ManagedObjectReference:
+                if ds_host.key.value == cluster_host.value:
+                    return cluster_host
+
+    def _find_datastore_for_migration(self, instance, vm_ref, cluster_ref,
+                                      datastore_regex):
+        """Find datastore in the specified cluster where the instance will be
+        migrated to. Return the current datastore if it is already connected to
+        the specified cluster.
+        """
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref, uuid=instance.uuid)
+        ds_ref = vmdk.device.backing.datastore
+        cluster_datastores = self._session._call_method(vutil,
+                                                        'get_object_property',
+                                                        cluster_ref,
+                                                        'datastore')
+
+
+        if not cluster_datastores:
+            LOG.warn(_LW('No datastores found in the destination cluster'),
+                     instance=instance)
+            return
+        # check if the current datastore is connected to the destination
+        # cluster
+        for datastore in cluster_datastores.ManagedObjectReference:
+            if datastore.value == ds_ref.value:
+                LOG.debug('Current datastore is connected to the destination '
+                          'cluster')
+                return ds_util.get_datastore_by_ref(self._session, ds_ref)
+        # find the most suitable datastore on the destination cluster
+        return ds_util.get_datastore(self._session, cluster_ref,
+                                     datastore_regex)
+
+    def live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration,
+                       migrate_data):
+        #LOG.debug("Live migration data %s", migrate_data, instance=instance)
+        from vcenter_rpc_client import NovaVcenterConfigClient as nova_vc_client
+
+        client_factory = self._session.vim.client.factory
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        migrate_data = nova_vc_client.call_nova_host()
+        cluster_ref = json.loads(migrate_data['cluster'])
+        res_pool_ref = json.loads(migrate_data['res_pool'])
+        ds_ref = json.loads(migrate_data['datastore'])
+
+        service = client_factory.create('ns0:VirtualMachineRelocateSpec')
+        service.url = 'https://' + migrate_data['url']
+        service.instanceUuid = migrate_data['instance_uuid']
+
+        credentials = client_factory.create('ns0:ServiceLocatorNamePassword')
+        credentials.username = migrate_data['username']
+        credentials.password = migrate_data['password']
+        service.credential = credentials
+
+
+        """cluster_name = migrate_data['cluster_name']
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      cluster_name)
+        if cluster_ref is None:
+            LOG.error(_LE("Cannot find cluster %s"), cluster_name,
+                      instance=instance)
+            raise exception.HostNotFound(host=dest)
+        datastore_regex = migrate_data['datastore_regex']
+        if datastore_regex is not None:
+            datastore_regex = re.compile(datastore_regex)
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        if res_pool_ref is None:
+            LOG.error(_LE("Cannot find resource pool"), instance=instance)
+            raise exception.HostNotFound(host=dest)
+        # find a datastore where the instance will be migrated to
+        ds = self._find_datastore_for_migration(instance, vm_ref, cluster_ref,
+                                                datastore_regex)
+        if ds is None:
+            LOG.error(_LE("Cannot find datastore"), instance=instance)
+            raise exception.HostNotFound(host=dest)
+        LOG.debug("Migrating instance to datastore %s", ds.name,
+                  instance=instance)
+        # find ESX host in the destination cluster which is connected to the
+        # target datastore
+        esx_host = self._find_esx_host(cluster_ref, ds.ref)
+        if esx_host is None:
+            LOG.error(_LE("Cannot find ESX host"), instance=instance)
+            raise exception.HostNotFound(host=dest)"""
+        try:
+            vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
+                                ds_ref)
+            LOG.info(_LI("Migrated instance to host %s"), dest,
+                     instance=instance)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                recover_method(context, instance, dest, block_migration)
+        post_method(context, instance, dest, block_migration)
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""
