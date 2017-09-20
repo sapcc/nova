@@ -8,6 +8,8 @@ from oslo_vmware import vim_util as vutil
 from nova import exception
 from nova.virt.vmwareapi import vim_util
 import json
+import OpenSSL
+import ssl
 
 CONF = nova.conf.CONF
 
@@ -26,6 +28,10 @@ class NovaVcenterConfigEndpoint(object):
         vcenter_mapper['host_username'] = CONF.vmware.host_username
         vcenter_mapper['host_ip'] = CONF.vmware.host_ip
         vcenter_mapper['instance_uuid'] = session.vim.service_content.about.instanceUuid
+
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        vcenter_mapper['thumbprint'] = x509.digest("sha1")
 
         self._cluster_name = CONF.vmware.cluster_name
         self._cluster_ref = vm_util.get_cluster_ref_by_name(session, self._cluster_name)
