@@ -306,9 +306,11 @@ class VMwareVMOps(object):
         credentials = self._session.vim.client.factory.create('ns0:ServiceLocatorNamePassword')
         LOG.debug("SERVICEINSTANCE============>")
         CONF = nova.conf.CONF
-        LOG.debug(ssl.get_server_certificate(CONF.vmware.host_ip))
-        LOG.debug(self._session.vim.service_content.about.instanceUuid)
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        LOG.debug(x509.digest("sha1"))
 
+        LOG.debug(self._session.vim.service_content.about.instanceUuid)
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
@@ -1555,7 +1557,7 @@ class VMwareVMOps(object):
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration,
                        migrate_data):
-        #LOG.debug("Live migration data %s", migrate_data, instance=instance)
+
         from vcenter_rpc_client import NovaVcenterConfigClient as nova_vc_client
 
         client_factory = self._session.vim.client.factory
@@ -1573,36 +1575,8 @@ class VMwareVMOps(object):
         credentials.username = migrate_data['username']
         credentials.password = migrate_data['password']
         service.credential = credentials
+        service.sslThumbprint = migrate_data['thumbprint']
 
-
-        """cluster_name = migrate_data['cluster_name']
-        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
-                                                      cluster_name)
-        if cluster_ref is None:
-            LOG.error(_LE("Cannot find cluster %s"), cluster_name,
-                      instance=instance)
-            raise exception.HostNotFound(host=dest)
-        datastore_regex = migrate_data['datastore_regex']
-        if datastore_regex is not None:
-            datastore_regex = re.compile(datastore_regex)
-        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
-        if res_pool_ref is None:
-            LOG.error(_LE("Cannot find resource pool"), instance=instance)
-            raise exception.HostNotFound(host=dest)
-        # find a datastore where the instance will be migrated to
-        ds = self._find_datastore_for_migration(instance, vm_ref, cluster_ref,
-                                                datastore_regex)
-        if ds is None:
-            LOG.error(_LE("Cannot find datastore"), instance=instance)
-            raise exception.HostNotFound(host=dest)
-        LOG.debug("Migrating instance to datastore %s", ds.name,
-                  instance=instance)
-        # find ESX host in the destination cluster which is connected to the
-        # target datastore
-        esx_host = self._find_esx_host(cluster_ref, ds.ref)
-        if esx_host is None:
-            LOG.error(_LE("Cannot find ESX host"), instance=instance)
-            raise exception.HostNotFound(host=dest)"""
         try:
             vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
                                 ds_ref)
