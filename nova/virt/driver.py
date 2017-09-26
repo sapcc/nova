@@ -956,7 +956,7 @@ class ComputeDriver(object):
         :param context: security context
         :param dest_check_data: result of check_can_live_migrate_destination
         """
-        raise NotImplementedError()
+        LOG.debug("check_can_live_migrate_destination_cleanup called")
 
     def check_can_live_migrate_source(self, context, instance,
                                       dest_check_data, block_device_info=None):
