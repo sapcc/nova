@@ -22,10 +22,13 @@ Class for VM tasks like spawn, snapshot, suspend, resume etc.
 import collections
 import os
 import time
+import re
 import json
+
 
 import decorator
 import cluster_util
+from nova import network
 from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -302,9 +305,6 @@ class VMwareVMOps(object):
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
 
-        service_locator = self._session.vim.client.factory.create('ns0:ServiceLocator')
-        credentials = self._session.vim.client.factory.create('ns0:ServiceLocatorNamePassword')
-        LOG.debug("SERVICEINSTANCE============>")
         CONF = nova.conf.CONF
         cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
         x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
@@ -1531,7 +1531,7 @@ class VMwareVMOps(object):
         migrated to. Return the current datastore if it is already connected to
         the specified cluster.
         """
-        vmdk = vm_util.get_vmdk_info(self._session, vm_ref, uuid=instance.uuid)
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref)
         ds_ref = vmdk.device.backing.datastore
         cluster_datastores = self._session._call_method(vutil,
                                                         'get_object_property',
@@ -1543,49 +1543,94 @@ class VMwareVMOps(object):
             LOG.warn(_LW('No datastores found in the destination cluster'),
                      instance=instance)
             return
-        # check if the current datastore is connected to the destination
-        # cluster
-        for datastore in cluster_datastores.ManagedObjectReference:
-            if datastore.value == ds_ref.value:
-                LOG.debug('Current datastore is connected to the destination '
-                          'cluster')
-                return ds_util.get_datastore_by_ref(self._session, ds_ref)
-        # find the most suitable datastore on the destination cluster
+      
         return ds_util.get_datastore(self._session, cluster_ref,
                                      datastore_regex)
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration,
                        migrate_data):
-
-        from vcenter_rpc_client import NovaVcenterConfigClient as nova_vc_client
-
-        client_factory = self._session.vim.client.factory
+        LOG.debug("Live migration data %s", migrate_data, instance=instance)
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        migrate_data = nova_vc_client.call_nova_host()
-        cluster_ref = json.loads(migrate_data['cluster'])
-        res_pool_ref = json.loads(migrate_data['res_pool'])
-        ds_ref = json.loads(migrate_data['datastore'])
+        cluster_name = migrate_data.cluster_name
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      cluster_name)
+        if cluster_ref is None:
+            LOG.error("Cannot find cluster %s", cluster_name,
+                      instance=instance)
+            raise exception.HostNotFound(host=dest)
+        datastore_regex = migrate_data.datastore_regex
+        if datastore_regex is not None:
+            datastore_regex = re.compile(datastore_regex)
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        if res_pool_ref is None:
+            LOG.error("Cannot find resource pool", instance=instance)
+            raise exception.HostNotFound(hostg24=dest)
+        # find a datastore where the instance will be migrated to
+        ds = self._find_datastore_for_migration(instance, vm_ref, cluster_ref,
+                                                datastore_regex)
+        if ds is None:
+            LOG.error("Cannot find datastore", instance=instance)
+            raise exception.HostNotFound(host=dest)
+        LOG.debug("Migrating instance to datastore %s", ds.name,
+                  instance=instance)
+        # find ESX host in the destination cluster which is connected to the
+        # target datastore
+        esx_host = self._find_esx_host(cluster_ref, ds.ref)
+        if esx_host is None:
+            LOG.error("Cannot find ESX host", instance=instance)
+            raise exception.HostNotFound(host=dest)
 
-        service = client_factory.create('ns0:VirtualMachineRelocateSpec')
-        service.url = 'https://' + migrate_data['url']
-        service.instanceUuid = migrate_data['instance_uuid']
+        # Update networking backings
 
-        credentials = client_factory.create('ns0:ServiceLocatorNamePassword')
-        credentials.username = migrate_data['username']
-        credentials.password = migrate_data['password']
-        service.credential = credentials
-        service.sslThumbprint = migrate_data['thumbprint']
+        self._network_api = network.API()
+        network_info = self._network_api.get_instance_nw_info(context, instance)
+        client_factory = self._session.vim.client.factory
+        devices = []
+        hardware_devices = self._session._call_method(
+            vutil, "get_object_property", vm_ref, "config.hardware.device")
+        image_meta = objects.ImageMeta.from_dict(
+            utils.get_image_from_system_metadata(
+                instance.system_metadata))
+        vif_model = image_meta.properties.get('hw_vif_model',
+                                              constants.DEFAULT_VIF_MODEL)
+        for vif in network_info:
+            vif_info = vmwarevif.get_vif_dict(
+                self._session, cluster_ref, vif_model, utils.is_neutron(), vif)
+            device = vmwarevif.get_network_device(hardware_devices,
+                                                  vif['address'])
+            devices.append(vm_util.update_vif_spec(client_factory, vif_info,
+                                                   device))
+
+        LOG.debug("Migrating instance to cluster '%s', datastore '%s' and "
+                  "ESX host '%s'", cluster_name, ds.name, esx_host,
+                  instance=instance)
+
+        service = self.get_migrate_service_info(migrate_data)
 
         try:
             vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
-                                ds_ref)
-            LOG.info(_LI("Migrated instance to host %s"), dest,
-                     instance=instance)
+                                ds.ref, esx_host)
+            LOG.info("Migrated instance to host %s", dest, instance=instance)
         except Exception:
             with excutils.save_and_reraise_exception():
                 recover_method(context, instance, dest, block_migration)
         post_method(context, instance, dest, block_migration)
+
+    def get_migrate_service_info(self, migrate_data):
+        client_factory = self._session.vim.client.factory
+        LOG.debug("MIGRATE DATA %s", migrate_data)
+        service = client_factory.create('ns0:ServiceLocator')
+        service.url = 'https://' + migrate_data.host_ip
+        service.instanceUuid = migrate_data.instance_uuid
+
+        credentials = client_factory.create('ns0:ServiceLocatorNamePassword')
+        credentials.username = migrate_data.host_username
+        credentials.password = migrate_data.host_password
+        service.credential = credentials
+        service.sslThumbprint = migrate_data.thumbprint
+
+        return service
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""
