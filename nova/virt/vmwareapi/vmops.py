@@ -1543,7 +1543,7 @@ class VMwareVMOps(object):
             LOG.warn(_LW('No datastores found in the destination cluster'),
                      instance=instance)
             return
-      
+
         return ds_util.get_datastore(self._session, cluster_ref,
                                      datastore_regex)
 
@@ -1606,31 +1606,14 @@ class VMwareVMOps(object):
                   "ESX host '%s'", cluster_name, ds.name, esx_host,
                   instance=instance)
 
-        service = self.get_migrate_service_info(migrate_data)
-
         try:
-            vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
+            vm_util.relocate_vm(self._session, vm_ref, res_pool_ref,
                                 ds.ref, esx_host)
             LOG.info("Migrated instance to host %s", dest, instance=instance)
         except Exception:
             with excutils.save_and_reraise_exception():
                 recover_method(context, instance, dest, block_migration)
         post_method(context, instance, dest, block_migration)
-
-    def get_migrate_service_info(self, migrate_data):
-        client_factory = self._session.vim.client.factory
-        LOG.debug("MIGRATE DATA %s", migrate_data)
-        service = client_factory.create('ns0:ServiceLocator')
-        service.url = 'https://' + migrate_data.host_ip
-        service.instanceUuid = migrate_data.instance_uuid
-
-        credentials = client_factory.create('ns0:ServiceLocatorNamePassword')
-        credentials.username = migrate_data.host_username
-        credentials.password = migrate_data.host_password
-        service.credential = credentials
-        service.sslThumbprint = migrate_data.thumbprint
-
-        return service
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""

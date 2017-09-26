@@ -987,7 +987,7 @@ def clone_vm_spec(client_factory, location,
     return clone_spec
 
 
-def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None, host=None,
+def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
                      disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
     """Builds the VM relocation spec."""
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
@@ -998,16 +998,13 @@ def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None, hos
     if devices is not None:
         rel_spec.deviceChange = devices
 
-    if service:
-        rel_spec.service = service
-
     if host:
         rel_spec.host = host
     return rel_spec
 
-def relocate_vm(session, service, vm_ref, res_pool=None, datastore=None, host=None, disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
+def relocate_vm(session, vm_ref, res_pool=None, datastore=None, host=None, disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
     client_factory = session.vim.client.factory
-    rel_spec = relocate_vm_spec(client_factory, service, res_pool, datastore, host, disk_move_type, devices)
+    rel_spec = relocate_vm_spec(client_factory, res_pool, datastore, host, disk_move_type, devices)
 
     relocate_task = session._call_method(session.vim, "RelocateVM_Task", vm_ref, spec=rel_spec)
     session._wait_for_task(relocate_task)

@@ -20,8 +20,6 @@ A connection to the VMware vCenter platform.
 """
 
 import re
-import ssl
-import OpenSSL
 
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -360,13 +358,6 @@ class VMwareVCDriver(driver.ComputeDriver):
         data = objects.VMwareLiveMigrateData()
         data.cluster_name = CONF.vmware.cluster_name
         data.datastore_regex = CONF.vmware.datastore_regex
-        data.host_ip = CONF.vmware.host_ip
-        data.host_username = CONF.vmware.host_username
-        data.host_password = CONF.vmware.host_password
-        data.instance_uuid = self._session.vim.service_content.about.instanceUuid
-        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
-        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
-        data.thumbprint = x509.digest("sha1")
 
         return data
 
