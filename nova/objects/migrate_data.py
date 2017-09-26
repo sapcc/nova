@@ -257,3 +257,12 @@ class XenapiLiveMigrateData(LiveMigrateData):
 @obj_base.NovaObjectRegistry.register
 class HyperVLiveMigrateData(LiveMigrateData):
     VERSION = '1.0'
+
+@obj_base.NovaObjectRegistry.register
+class VMwareLiveMigrateData(LiveMigrateData):
+    VERSION = '1.0'
+
+    fields = {
+        'cluster_name': fields.StringField(nullable=True),
+        'datastore_regex': fields.StringField(nullable=True),
+    }

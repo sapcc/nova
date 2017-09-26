@@ -22,8 +22,13 @@ Class for VM tasks like spawn, snapshot, suspend, resume etc.
 import collections
 import os
 import time
+import re
+import json
+
 
 import decorator
+import cluster_util
+from nova import network
 from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -61,6 +66,8 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
+import OpenSSL
+import ssl
 
 vmops_opts = [
     cfg.StrOpt('cache_prefix',
@@ -297,6 +304,13 @@ class VMwareVMOps(object):
     def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
+
+        CONF = nova.conf.CONF
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        LOG.debug(x509.digest("sha1"))
+
+        LOG.debug(self._session.vim.service_content.about.instanceUuid)
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
@@ -327,6 +341,7 @@ class VMwareVMOps(object):
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
                                    config_spec, self._root_resource_pool)
+
         vm_util.update_cluster_placement(self._session, context, instance, self._cluster, vm_ref)
 
         return vm_ref
@@ -1052,10 +1067,25 @@ class VMwareVMOps(object):
             self._session._wait_for_task(reset_task)
             LOG.debug("Did hard reboot of VM", instance=instance)
 
-    def _destroy_instance(self, instance, destroy_disks=True):
+    def _destroy_instance(self, context, instance, destroy_disks=True):
         # Destroy a VM instance
         try:
             vm_ref = vm_util.get_vm_ref(self._session, instance)
+
+            server_group_info = vm_util._get_server_group(context, instance)
+            if server_group_info:
+                cluster = cluster_util.validate_vm_group(self._session, vm_ref)
+
+                for key, group in enumerate(cluster.propSet[0].val.group):
+                    if not hasattr(group, 'vm'):
+                        continue
+
+                    for vm in group.vm:
+                        if vm.value == vm_ref.value and len(group.vm) == 1:
+                            cluster_util.delete_vm_group(self._session, cluster.obj, cluster.propSet[0].val.group[key])
+                            break
+                    break
+
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vutil,
@@ -1116,7 +1146,7 @@ class VMwareVMOps(object):
         finally:
             vm_util.vm_ref_cache_delete(instance.uuid)
 
-    def destroy(self, instance, destroy_disks=True):
+    def destroy(self, context, instance, destroy_disks=True):
         """Destroy a VM instance.
 
         Steps followed for each VM are:
@@ -1125,7 +1155,7 @@ class VMwareVMOps(object):
         3. Delete the contents of the folder holding the VM related data.
         """
         LOG.debug("Destroying instance", instance=instance)
-        self._destroy_instance(instance, destroy_disks=destroy_disks)
+        self._destroy_instance(context, instance, destroy_disks=destroy_disks)
         LOG.debug("Instance destroyed", instance=instance)
 
     def pause(self, instance):
@@ -1480,6 +1510,110 @@ class VMwareVMOps(object):
         self._update_instance_progress(context, instance,
                                        step=6,
                                        total_steps=RESIZE_TOTAL_STEPS)
+
+    def _find_esx_host(self, cluster_ref, ds_ref):
+        """Find ESX host in the specified cluster which is also connected to
+        the specified datastore.
+        """
+        cluster_hosts = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'host')
+        ds_hosts = self._session._call_method(vutil, 'get_object_property',
+                                              ds_ref, 'host')
+        for ds_host in ds_hosts.DatastoreHostMount:
+            for cluster_host in cluster_hosts.ManagedObjectReference:
+                if ds_host.key.value == cluster_host.value:
+                    return cluster_host
+
+    def _find_datastore_for_migration(self, instance, vm_ref, cluster_ref,
+                                      datastore_regex):
+        """Find datastore in the specified cluster where the instance will be
+        migrated to. Return the current datastore if it is already connected to
+        the specified cluster.
+        """
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref)
+        ds_ref = vmdk.device.backing.datastore
+        cluster_datastores = self._session._call_method(vutil,
+                                                        'get_object_property',
+                                                        cluster_ref,
+                                                        'datastore')
+
+
+        if not cluster_datastores:
+            LOG.warn(_LW('No datastores found in the destination cluster'),
+                     instance=instance)
+            return
+
+        return ds_util.get_datastore(self._session, cluster_ref,
+                                     datastore_regex)
+
+    def live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration,
+                       migrate_data):
+        LOG.debug("Live migration data %s", migrate_data, instance=instance)
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        cluster_name = migrate_data.cluster_name
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      cluster_name)
+        if cluster_ref is None:
+            LOG.error("Cannot find cluster %s", cluster_name,
+                      instance=instance)
+            raise exception.HostNotFound(host=dest)
+        datastore_regex = migrate_data.datastore_regex
+        if datastore_regex is not None:
+            datastore_regex = re.compile(datastore_regex)
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        if res_pool_ref is None:
+            LOG.error("Cannot find resource pool", instance=instance)
+            raise exception.HostNotFound(hostg24=dest)
+        # find a datastore where the instance will be migrated to
+        ds = self._find_datastore_for_migration(instance, vm_ref, cluster_ref,
+                                                datastore_regex)
+        if ds is None:
+            LOG.error("Cannot find datastore", instance=instance)
+            raise exception.HostNotFound(host=dest)
+        LOG.debug("Migrating instance to datastore %s", ds.name,
+                  instance=instance)
+        # find ESX host in the destination cluster which is connected to the
+        # target datastore
+        esx_host = self._find_esx_host(cluster_ref, ds.ref)
+        if esx_host is None:
+            LOG.error("Cannot find ESX host", instance=instance)
+            raise exception.HostNotFound(host=dest)
+
+        # Update networking backings
+
+        self._network_api = network.API()
+        network_info = self._network_api.get_instance_nw_info(context, instance)
+        client_factory = self._session.vim.client.factory
+        devices = []
+        hardware_devices = self._session._call_method(
+            vutil, "get_object_property", vm_ref, "config.hardware.device")
+        image_meta = objects.ImageMeta.from_dict(
+            utils.get_image_from_system_metadata(
+                instance.system_metadata))
+        vif_model = image_meta.properties.get('hw_vif_model',
+                                              constants.DEFAULT_VIF_MODEL)
+        for vif in network_info:
+            vif_info = vmwarevif.get_vif_dict(
+                self._session, cluster_ref, vif_model, utils.is_neutron(), vif)
+            device = vmwarevif.get_network_device(hardware_devices,
+                                                  vif['address'])
+            devices.append(vm_util.update_vif_spec(client_factory, vif_info,
+                                                   device))
+
+        LOG.debug("Migrating instance to cluster '%s', datastore '%s' and "
+                  "ESX host '%s'", cluster_name, ds.name, esx_host,
+                  instance=instance)
+
+        try:
+            vm_util.relocate_vm(self._session, vm_ref, res_pool_ref,
+                                ds.ref, esx_host)
+            LOG.info("Migrated instance to host %s", dest, instance=instance)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                recover_method(context, instance, dest, block_migration)
+        post_method(context, instance, dest, block_migration)
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""
