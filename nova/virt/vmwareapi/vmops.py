@@ -66,8 +66,6 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
-import OpenSSL
-import ssl
 
 vmops_opts = [
     cfg.StrOpt('cache_prefix',
