@@ -304,13 +304,6 @@ class VMwareVMOps(object):
     def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
-
-        CONF = nova.conf.CONF
-        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
-        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
-        LOG.debug(x509.digest("sha1"))
-
-        LOG.debug(self._session.vim.service_content.about.instanceUuid)
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
