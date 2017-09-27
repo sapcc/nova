@@ -304,6 +304,7 @@ class VMwareVMOps(object):
     def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
+
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
