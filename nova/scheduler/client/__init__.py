@@ -17,6 +17,7 @@ import functools
 
 from oslo_utils import importutils
 
+from nova import profiler
 from nova.scheduler import utils
 
 
@@ -37,6 +38,7 @@ class LazyLoader(object):
         return getattr(self.instance, __name)(*args, **kwargs)
 
 
+@profiler.trace_cls("Scheduler_client")
 class SchedulerClient(object):
     """Client library for placing calls to the scheduler."""
 

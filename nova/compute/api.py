@@ -207,7 +207,7 @@ def _diff_dict(orig, new):
     return result
 
 
-@profiler.trace_cls("compute_api")
+@profiler.trace_cls("compute_api", trace_private=True)
 class API(base.Base):
     """API for interacting with the compute manager."""
 

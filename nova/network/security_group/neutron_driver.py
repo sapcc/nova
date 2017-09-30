@@ -25,6 +25,7 @@ from webob import exc
 
 from nova.compute import api as compute_api
 from nova import exception
+from nova import profiler
 from nova.i18n import _, _LE, _LI, _LW
 from nova.network.neutronv2 import api as neutronapi
 from nova.network.security_group import security_group_base
@@ -40,6 +41,7 @@ LOG = logging.getLogger(__name__)
 MAX_SEARCH_IDS = 150
 
 
+@profiler.trace_cls("neutron_api")
 class SecurityGroupAPI(security_group_base.SecurityGroupBase):
 
     id_is_uuid = True

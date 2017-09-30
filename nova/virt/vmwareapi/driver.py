@@ -39,6 +39,7 @@ import requests
 from nova import objects
 from requests.auth import HTTPBasicAuth
 from nova import exception
+from nova import profiler
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
 from nova.virt.vmwareapi import constants
@@ -123,6 +124,7 @@ CONF.register_opts(spbm_opts, 'vmware')
 TIME_BETWEEN_API_CALL_RETRIES = 1.0
 
 
+@profiler.trace_cls("vmwareapi")
 class VMwareVCDriver(driver.ComputeDriver):
     """The VC host connection object."""
 

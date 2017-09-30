@@ -57,6 +57,7 @@ from nova import block_device
 from nova.cells import rpcapi as cells_rpcapi
 from nova.cloudpipe import pipelib
 from nova import compute
+from nova import profiler
 from nova.compute import build_results
 from nova.compute import claims
 from nova.compute import power_state
@@ -602,6 +603,7 @@ class InstanceEvents(object):
                 eventlet_event.send(event)
 
 
+@profiler.trace_cls("compute_virt_api")
 class ComputeVirtAPI(virtapi.VirtAPI):
     def __init__(self, compute):
         super(ComputeVirtAPI, self).__init__()
@@ -672,7 +674,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
                 if decision is False:
                     break
 
-
+@profiler.trace_cls("rpc")
 class ComputeManager(manager.Manager):
     """Manages the running instances from creation to destruction."""
 
