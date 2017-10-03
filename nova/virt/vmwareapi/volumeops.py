@@ -22,6 +22,7 @@ from oslo_log import log as logging
 from oslo_vmware import exceptions as oslo_vmw_exceptions
 from oslo_vmware import vim_util as vutil
 
+from nova import profiler
 from nova import exception
 from nova.i18n import _, _LI, _LW
 from nova.virt.vmwareapi import constants
@@ -30,7 +31,7 @@ from nova.virt.vmwareapi import vm_util
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
-
+@profiler.trace_cls("vmvolumes")
 class VMwareVolumeOps(object):
     """Management class for Volume-related tasks."""
 

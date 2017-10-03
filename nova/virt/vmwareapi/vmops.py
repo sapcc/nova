@@ -41,6 +41,7 @@ from oslo_vmware import exceptions as vexc
 from oslo_vmware.objects import datastore as ds_obj
 from oslo_vmware import vim_util as vutil
 
+from nova import profiler
 from nova.api.metadata import base as instance_metadata
 from nova import compute
 from nova.compute import power_state
@@ -150,6 +151,7 @@ def retry_if_task_in_progress(f, *args, **kwargs):
             pass
 
 
+@profiler.trace_cls("vmops")
 class VMwareVMOps(object):
     """Management class for VM-related tasks."""
 

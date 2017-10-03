@@ -29,6 +29,7 @@ from oslo_utils import units
 from oslo_vmware import rw_handles
 import six
 
+from nova import profiler
 from nova import exception
 from nova.i18n import _, _LI
 from nova import image
@@ -50,7 +51,7 @@ QUEUE_BUFFER_SIZE = 10
 NFC_LEASE_UPDATE_PERIOD = 60  # update NFC lease every 60sec.
 CHUNK_SIZE = 64 * units.Ki  # default chunk size for image transfer
 
-
+@profiler.trace_cls("vmimage")
 class VMwareImage(object):
     def __init__(self, image_id,
                  file_size=0,
