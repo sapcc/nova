@@ -265,4 +265,9 @@ class VMwareLiveMigrateData(LiveMigrateData):
     fields = {
         'cluster_name': fields.StringField(nullable=True),
         'datastore_regex': fields.StringField(nullable=True),
+        'host_ip': fields.StringField(nullable=True),
+        'instance_uuid': fields.StringField(nullable=True),
+        'host_username': fields.StringField(nullable=True),
+        'host_password': fields.StringField(nullable=True),
+        'thumbprint': fields.StringField(nullable=True)
     }
