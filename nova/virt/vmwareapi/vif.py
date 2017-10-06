@@ -165,6 +165,12 @@ def get_vif_dict(session, cluster, vif_model, is_neutron, vif):
     mac = vif['address']
     name = vif['network']['bridge'] or CONF.vmware.integration_bridge
     ref = get_network_ref(session, cluster, vif, is_neutron)
+
+    LOG.debug("MAC: %s", mac)
+    LOG.debug("NAME: %s", name)
+    LOG.debug("REF: %s", ref)
+
+
     return {'network_name': name,
             'mac_address': mac,
             'network_ref': ref,
