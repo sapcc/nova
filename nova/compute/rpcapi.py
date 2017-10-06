@@ -481,6 +481,14 @@ class ComputeAPI(object):
         else:
             return result
 
+    def get_source_server_data(self, ctxt, instance, host):
+        version = '4.8'
+
+        cctxt = self.client.prepare(server=host, version=version)
+        result = cctxt.call(ctxt, 'get_migrate_server_data', instance=instance)
+
+        return result
+
     def check_instance_shared_storage(self, ctxt, instance, data, host=None):
         version = '4.0'
         cctxt = self.client.prepare(server=_compute_host(host, instance),
