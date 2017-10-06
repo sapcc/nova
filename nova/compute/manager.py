@@ -99,7 +99,7 @@ from nova.virt import storage_users
 from nova.virt import virtapi
 from nova import volume
 from nova.volume import encryptors
-
+from nova.virt.vmwareapi import vm_util
 
 compute_opts = [
     cfg.StrOpt('console_host',
@@ -5165,6 +5165,14 @@ class ComputeManager(manager.Manager):
                                                             block_migration,
                                                             disk_over_commit)
 
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def get_migrate_server_data(self, context, instance):
+        data = self.driver.get_server_data(context, instance)
+
+        return data
+
     def _do_check_can_live_migrate_destination(self, ctxt, instance,
                                                block_migration,
                                                disk_over_commit):
@@ -5316,6 +5324,9 @@ class ComputeManager(manager.Manager):
                 self._rollback_live_migration(context, instance, dest,
                                               block_migration, migrate_data)
 
+        server_data = self.compute_rpcapi.get_source_server_data(context, instance, dest)
+        LOG.debug("SERVER DATA: %s", server_data)
+
         self._set_migration_status(migration, 'running')
 
         if migrate_data:
@@ -5325,7 +5336,7 @@ class ComputeManager(manager.Manager):
             self.driver.live_migration(context, instance, dest,
                                        self._post_live_migration,
                                        self._rollback_live_migration,
-                                       block_migration, migrate_data)
+                                       block_migration, migrate_data, server_data)
         except Exception:
             # Executing live migration
             # live_migration might raises exceptions, but

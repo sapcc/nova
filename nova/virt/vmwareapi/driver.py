@@ -50,6 +50,8 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+from nova.virt.vmwareapi import ds_util
+from oslo_vmware import vim_util as vutil
 
 LOG = logging.getLogger(__name__)
 
@@ -341,11 +343,11 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         """Live migration of an instance to another host."""
         self._vmops.live_migration(context, instance, dest, post_method,
                                    recover_method, block_migration,
-                                   migrate_data)
+                                   migrate_data, server_data)
 
     def check_can_live_migrate_source(self, context, instance,
                                       dest_check_data, block_device_info=None):
@@ -369,6 +371,62 @@ class VMwareVCDriver(driver.ComputeDriver):
         data.thumbprint = x509.digest("sha1")
 
         return data
+
+    def get_server_data(self, context, instance):
+
+        data = dict()
+
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      "CL3")
+        cluster_hosts = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'host')
+        cluster_datastores = self._session._call_method(vutil,
+                                                        'get_object_property',
+                                                        cluster_ref,
+                                                        'datastore')
+        LOG.debug("cluster_datastores: %s", cluster_datastores)
+        if not cluster_datastores:
+            LOG.warning('No datastores found in the destination cluster')
+            return None
+        datastore_regex = None
+        ds_hosts = None
+        for ds in cluster_datastores.ManagedObjectReference:
+            ds_hosts = self._session._call_method(vutil, 'get_object_property',
+                                                  ds, 'host')
+            LOG.debug("DS_HOSTS: %s", ds_hosts)
+
+            if ds_hosts:
+                #data['datastore'] = ds_hosts[0][0]
+                break
+        data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
+        #data['datastore'] = ds_util.get_datastore(self._session, cluster_ref,
+                                    #datastore_regex)
+
+        for ds_host in ds_hosts.DatastoreHostMount:
+            for cluster_host in cluster_hosts.ManagedObjectReference:
+                if ds_host.key.value == cluster_host.value:
+                    data['host'] = cluster_host.value
+
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        data['res_pool'] = res_pool_ref.value
+        data['cluster_ref'] = cluster_ref
+        if res_pool_ref is None:
+            LOG.error("Cannot find resource pool", instance=instance)
+            raise exception.HostNotFound()
+
+        LOG.debug("DATA PACKED: %s", data)
+
+        return data
+
+    def is_jsonserializble(self, obj):
+        import json
+        try:
+            json.dumps(obj)
+            return True
+        except:
+            return False
+
 
     def unfilter_instance(self, instance, network_info):
         pass
