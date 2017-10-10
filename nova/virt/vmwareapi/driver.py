@@ -408,6 +408,36 @@ class VMwareVCDriver(driver.ComputeDriver):
                 if ds_host.key.value == cluster_host.value:
                     data['host'] = cluster_host.value
 
+        networks = self._session._call_method(vutil,
+                                   'get_object_property',
+                                              vutil.get_moref(data['host'], "HostSystem"),
+                                   'network')
+
+        LOG.debug("NETWORKS: %s", networks[0])
+        for network in networks[0]:
+            LOG.debug("NETWORK: %s", network)
+            if network._type != 'Network':
+                net = self._session._call_method(vutil,
+                                           'get_object_property',
+                                            network,
+                                           'config')
+                LOG.debug("NET: %s", net.name)
+                if net.name == 'br100':
+                    LOG.debug("PORTGROUP KEY: %s", net.key)
+                    data['portgroup_key'] = net.key
+                    LOG.debug("DVS: %s", vutil.get_moref(net.distributedVirtualSwitch, 'VmwareDistributedVirtualSwitch'))
+
+                    dvs_uuid = self._session._call_method(vutil,
+                                               'get_object_property',
+                                                net.distributedVirtualSwitch,
+                                               'uuid')
+                    data['dvs_uuid'] = dvs_uuid
+
+                    LOG.debug("DVS UUID KEY: %s", dvs_uuid)
+
+
+        data['networks'] = networks
+
         res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
         data['res_pool'] = res_pool_ref.value
         data['cluster_ref'] = cluster_ref
