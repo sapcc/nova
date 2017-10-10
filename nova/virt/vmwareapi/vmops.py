@@ -1590,7 +1590,62 @@ class VMwareVMOps(object):
             raise exception.HostNotFound(host=dest)
 
         # Update networking backings
-        devices = None
+        devices = []
+        self._network_api = network.API()
+        network_info = self._network_api.get_instance_nw_info(context, instance)
+
+        hardware_devices = self._session._call_method(
+            vutil, "get_object_property", vm_ref, "config.hardware.device")
+        LOG.debug("NETWORK: %s", hardware_devices)
+
+        """net_name = None
+        for net in server_data['networks']:
+            LOG.debug("NEtWORK FOUND: %s", net[0])
+            net_ref = vutil.get_moref(net[0], "DistributedVirtualPortgroup")
+            LOG.debug("NETWORK REF: %s", net_ref)
+            if net_ref == "br100":
+                net_name = net_ref"""
+        vds_uuid = None
+        #dvs = self.v_center.get_dvs_by_uuid(dvs_uuid)
+
+        vm_network_adapters = []
+        for hardware_device in hardware_devices:
+            for device in hardware_device[1]:
+                LOG.debug("D: %s", device)
+                if device.deviceInfo.label.find("Network adapter") > -1:
+                    #vds_uuid = device.backing.port.switchUuid
+                    #dvpg_key = device.backing.port.portgroupKey
+
+                    dev = self._session.vim.client.factory.create('ns0:VirtualDeviceConfigSpec')
+                    dev.operation = "edit"
+                    dev.device = device
+                    dev.device.backing = self._session.vim.client.factory.create('ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
+                    dev.device.backing.port = self._session.vim.client.factory.create('ns0:DistributedVirtualSwitchPortConnection')
+                    dev.device.backing.port.switchUuid = server_data['dvs_uuid']
+                    dev.device.backing.port.portgroupKey = server_data['portgroup_key']
+
+
+                    devices.append(dev)
+
+        """for hardware_device in hardware_devices:
+            for device in hardware_device[1]:
+                LOG.debug("D: %s", device)
+                if device.deviceInfo.label.find("Network adapter") > -1:
+                    vds_uuid = device.backing.port.switchUuid
+                    dvpg_key = device.backing.port.portgroupKey
+
+                    dev = self._session.vim.client.factory.create('ns0:VirtualDeviceConfigSpec')
+                    dev.operation = "edit"
+                    dev.device = device
+                    dev.device.backing = self._session.vim.client.factory.create('ns0:VirtualEthernetCardNetworkBackingInfo')
+                    LOG.debug("DEV>DEVICE>BACKING: %s", dev.device.backing)
+                    dev.device.backing.network = net_name
+                    dev.device.backing.deviceName = "br100"
+
+
+                    devices.append(dev)"""
+
+        LOG.debug("DEVICES: %s", devices)
         """self._network_api = network.API()
         network_info = self._network_api.get_instance_nw_info(context, instance)
         client_factory = self._session.vim.client.factory
