@@ -1680,6 +1680,81 @@ class VMwareVMOps(object):
                 recover_method(context, instance, dest, block_migration)
         post_method(context, instance, dest, block_migration)
 
+
+    def cross_vcenter_live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration,
+                       migrate_data, server_data=None):
+        LOG.debug("Live migration data %s", migrate_data, instance=instance)
+        LOG.debug("Live server data %s", server_data, instance=instance)
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        cluster_name = migrate_data.cluster_name
+
+        cluster_ref = server_data['cluster_ref']
+        if cluster_ref is None:
+            LOG.error("Cannot find cluster %s", cluster_name,
+                      instance=instance)
+            raise exception.HostNotFound(host=dest)
+        datastore_regex = migrate_data.datastore_regex
+        if datastore_regex is not None:
+            datastore_regex = re.compile(datastore_regex)
+
+        res_pool_ref = server_data['res_pool']
+        res_pool_ref = vutil.get_moref(res_pool_ref, "ResourcePool")
+        if res_pool_ref is None:
+            LOG.error("Cannot find 1resource pool", instance=instance)
+            raise exception.HostNotFound(hostg24=dest)
+
+        ds = server_data['datastore']
+        ds_ref = vutil.get_moref(ds, "Datastore")
+
+
+        LOG.debug("DS BEFORE RELOCATE: %s", ds)
+        if ds is None:
+            LOG.error("Cannot find datastore", instance=instance)
+            raise exception.HostNotFound(host=dest)
+
+        esx_host = server_data['host']
+        host_ref = vutil.get_moref(esx_host, "HostSystem")
+        LOG.debug("HOST--------->< :%s", server_data['host'])
+        if esx_host is None:
+            LOG.error("Cannot find ESX host", instance=instance)
+            raise exception.HostNotFound(host=dest)
+
+        # Update networking backings
+        devices = []
+
+        hardware_devices = self._session._call_method(
+            vutil, "get_object_property", vm_ref, "config.hardware.device")
+        LOG.debug("NETWORK: %s", hardware_devices)
+
+        for hardware_device in hardware_devices:
+            for device in hardware_device[1]:
+                LOG.debug("D: %s", device)
+                if device.deviceInfo.label.find("Network adapter") > -1:
+                    dev = self._session.vim.client.factory.create('ns0:VirtualDeviceConfigSpec')
+                    dev.operation = "edit"
+                    dev.device = device
+                    dev.device.backing = self._session.vim.client.factory.create('ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
+                    dev.device.backing.port = self._session.vim.client.factory.create('ns0:DistributedVirtualSwitchPortConnection')
+                    dev.device.backing.port.switchUuid = server_data['dvs_uuid']
+                    dev.device.backing.port.portgroupKey = server_data['portgroup_key']
+
+
+                    devices.append(dev)
+
+        LOG.debug("DEVICES: %s", devices)
+
+        service = self.get_migrate_service_info(migrate_data)
+
+        try:
+            vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
+                                ds_ref, host_ref, devices=devices)
+            LOG.info("Migrated instance to host %s", dest, instance=instance)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                recover_method(context, instance, dest, block_migration)
+        post_method(context, instance, dest, block_migration)
+
     def get_migrate_service_info(self, migrate_data):
         client_factory = self._session.vim.client.factory
         LOG.debug("MIGRATE DATA %s", migrate_data)
