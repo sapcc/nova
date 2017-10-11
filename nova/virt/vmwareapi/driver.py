@@ -449,15 +449,6 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         return data
 
-    def is_jsonserializble(self, obj):
-        import json
-        try:
-            json.dumps(obj)
-            return True
-        except:
-            return False
-
-
     def unfilter_instance(self, instance, network_info):
         pass
 
