@@ -416,7 +416,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                             network,
                                            'config')
 
-                if net.name == migrate_data.target_bridge_name:
+                if net.name[:-9] == migrate_data.target_bridge_name:
                     data['portgroup_key'] = net.key
 
                     dvs_uuid = self._session._call_method(vutil,
@@ -424,6 +424,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                                 net.distributedVirtualSwitch,
                                                'uuid')
                     data['dvs_uuid'] = dvs_uuid
+                    break
 
 
         data['networks'] = networks
