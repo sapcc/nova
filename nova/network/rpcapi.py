@@ -249,6 +249,7 @@ class NetworkAPI(object):
     def setup_networks_on_host(self, ctxt, instance_id, host, teardown,
                                instance):
         # NOTE(tr3buchet): the call is just to wait for completion
+        LOG.debug("SETTING NETWORK...")
         version = '1.16'
         kwargs = {}
         if not self.client.can_send_version(version):

@@ -269,5 +269,6 @@ class VMwareLiveMigrateData(LiveMigrateData):
         'instance_uuid': fields.StringField(nullable=True),
         'host_username': fields.StringField(nullable=True),
         'host_password': fields.StringField(nullable=True),
-        'thumbprint': fields.StringField(nullable=True)
+        'thumbprint': fields.StringField(nullable=True),
+        'target_bridge_name': fields.StringField(nullable=False)
     }
