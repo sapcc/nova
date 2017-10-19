@@ -93,6 +93,9 @@ vmwareapi_opts = [
     cfg.BoolOpt('use_linked_clone',
                 default=True,
                 help='Whether to use linked clone'),
+    cfg.BoolOpt('use_direct_url',
+                default=False,
+                help='Whether to import via direct-url, if possible'),
     cfg.StrOpt('wsdl_location',
                help='Optional VIM Service WSDL Location '
                     'e.g http://<server>/vimService.wsdl. '
