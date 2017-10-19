@@ -372,12 +372,12 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         return data
 
-    def get_server_data(self, context, instance):
+    def get_server_data(self, context, instance, migrate_data):
 
         data = dict()
-
+        LOG.debug("Network bridge to be searched: %s", migrate_data.target_bridge_name)
         cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
-                                                      "CL3")
+                                                      CONF.vmware.cluster_name)
         cluster_hosts = self._session._call_method(vutil,
                                                    'get_object_property',
                                                    cluster_ref, 'host')
@@ -389,19 +389,15 @@ class VMwareVCDriver(driver.ComputeDriver):
         if not cluster_datastores:
             LOG.warning('No datastores found in the destination cluster')
             return None
-        datastore_regex = None
+
         ds_hosts = None
         for ds in cluster_datastores.ManagedObjectReference:
             ds_hosts = self._session._call_method(vutil, 'get_object_property',
                                                   ds, 'host')
-            LOG.debug("DS_HOSTS: %s", ds_hosts)
 
             if ds_hosts:
-                #data['datastore'] = ds_hosts[0][0]
                 break
         data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
-        #data['datastore'] = ds_util.get_datastore(self._session, cluster_ref,
-                                    #datastore_regex)
 
         for ds_host in ds_hosts.DatastoreHostMount:
             for cluster_host in cluster_hosts.ManagedObjectReference:
@@ -413,27 +409,21 @@ class VMwareVCDriver(driver.ComputeDriver):
                                               vutil.get_moref(data['host'], "HostSystem"),
                                    'network')
 
-        LOG.debug("NETWORKS: %s", networks[0])
         for network in networks[0]:
-            LOG.debug("NETWORK: %s", network)
             if network._type != 'Network':
                 net = self._session._call_method(vutil,
                                            'get_object_property',
                                             network,
                                            'config')
-                LOG.debug("NET: %s", net.name)
-                if net.name == 'br100':
-                    LOG.debug("PORTGROUP KEY: %s", net.key)
+
+                if net.name == migrate_data.target_bridge_name:
                     data['portgroup_key'] = net.key
-                    LOG.debug("DVS: %s", vutil.get_moref(net.distributedVirtualSwitch, 'VmwareDistributedVirtualSwitch'))
 
                     dvs_uuid = self._session._call_method(vutil,
                                                'get_object_property',
                                                 net.distributedVirtualSwitch,
                                                'uuid')
                     data['dvs_uuid'] = dvs_uuid
-
-                    LOG.debug("DVS UUID KEY: %s", dvs_uuid)
 
 
         data['networks'] = networks
@@ -445,7 +435,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             LOG.error("Cannot find resource pool", instance=instance)
             raise exception.HostNotFound()
 
-        LOG.debug("DATA PACKED: %s", data)
+        LOG.debug("Server data: %s", data)
 
         return data
 
