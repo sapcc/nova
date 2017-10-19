@@ -481,6 +481,7 @@ class API(base_api.NetworkAPI):
         """Setup or teardown the network structures on hosts related to
            instance.
         """
+        LOG.debug("SETTING UP NETWORK ON HOST-----------------------")
         host = host or instance.host
         # NOTE(tr3buchet): host is passed in cases where we need to setup
         # or teardown the networks on a host which has been migrated to/from
@@ -491,6 +492,7 @@ class API(base_api.NetworkAPI):
                 'instance': instance}
 
         self.network_rpcapi.setup_networks_on_host(context, **args)
+
 
     def _get_multi_addresses(self, context, instance):
         try:
