@@ -19,6 +19,7 @@ Client side of the console RPC API.
 from oslo_config import cfg
 import oslo_messaging as messaging
 
+from nova import profiler
 from nova import rpc
 
 rpcapi_opts = [
@@ -35,6 +36,7 @@ rpcapi_cap_opt = cfg.StrOpt('console',
 CONF.register_opt(rpcapi_cap_opt, 'upgrade_levels')
 
 
+@profiler.trace_cls("rpc")
 class ConsoleAPI(object):
     '''Client side of the console rpc API.
 

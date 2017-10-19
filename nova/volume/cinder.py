@@ -36,6 +36,7 @@ import six
 
 from nova import availability_zones as az
 from nova import exception
+from nova import profiler
 from nova.i18n import _
 from nova.i18n import _LE
 from nova.i18n import _LW
@@ -286,6 +287,7 @@ def translate_snapshot_exception(method):
     return translate_cinder_exception(wrapper)
 
 
+@profiler.trace_cls("cinder_api")
 class API(object):
     """API for interacting with the volume manager."""
 

@@ -31,6 +31,7 @@ from nova.network import rpcapi as network_rpcapi
 from nova import objects
 from nova.objects import base as obj_base
 from nova import policy
+from nova import profiler
 from nova import utils
 
 CONF = cfg.CONF
@@ -59,7 +60,7 @@ def check_policy(context, action):
     _action = 'network:%s' % action
     policy.enforce(context, _action, target)
 
-
+@profiler.trace_cls("network_api")
 class API(base_api.NetworkAPI):
     """API for doing networking via the nova-network network manager.
 

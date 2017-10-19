@@ -30,7 +30,6 @@ import nova.conf
 from nova.i18n import _, _LE, _LI
 from nova import utils
 from nova.virt import event as virtevent
-#import nova.virt.vmwareapi.vcenter_rpc_client
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)

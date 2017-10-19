@@ -29,6 +29,7 @@ from oslo_utils import units
 from oslo_vmware import rw_handles
 import six
 
+from nova import profiler
 from nova import exception
 from nova.i18n import _, _LI
 from nova import image
@@ -50,7 +51,7 @@ QUEUE_BUFFER_SIZE = 10
 NFC_LEASE_UPDATE_PERIOD = 60  # update NFC lease every 60sec.
 CHUNK_SIZE = 64 * units.Ki  # default chunk size for image transfer
 
-
+@profiler.trace_cls("vmimage")
 class VMwareImage(object):
     def __init__(self, image_id,
                  file_size=0,
@@ -60,7 +61,8 @@ class VMwareImage(object):
                  container_format=constants.CONTAINER_FORMAT_BARE,
                  file_type=constants.DEFAULT_DISK_FORMAT,
                  linked_clone=None,
-                 vif_model=constants.DEFAULT_VIF_MODEL):
+                 vif_model=constants.DEFAULT_VIF_MODEL,
+                 direct_url=None):
         """VMwareImage holds values for use in building VMs.
 
             image_id (str): uuid of the image
@@ -80,6 +82,7 @@ class VMwareImage(object):
         self.container_format = container_format
         self.disk_type = disk_type
         self.file_type = file_type
+        self.direct_url = direct_url
 
         # NOTE(vui): This should be removed when we restore the
         # descriptor-based validation.

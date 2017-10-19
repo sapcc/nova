@@ -31,6 +31,7 @@ from nova import exception
 from nova.i18n import _, _LW
 from nova import manager
 from nova import objects
+from nova import profiler
 from nova import quota
 
 
@@ -41,6 +42,7 @@ CONF = nova.conf.CONF
 QUOTAS = quota.QUOTAS
 
 
+@profiler.trace_cls("scheduler")
 class SchedulerManager(manager.Manager):
     """Chooses a host to run instances on."""
 

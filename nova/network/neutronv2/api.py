@@ -31,6 +31,7 @@ import six
 from nova.api.openstack import extensions
 from nova.compute import utils as compute_utils
 from nova import exception
+from nova import profiler
 from nova.i18n import _, _LE, _LI, _LW
 from nova.network import base_api
 from nova.network import model as network_model
@@ -39,6 +40,7 @@ from nova import objects
 from nova.pci import manager as pci_manager
 from nova.pci import request as pci_request
 from nova.pci import whitelist as pci_whitelist
+from nova import profiler
 
 neutron_opts = [
     cfg.StrOpt('url',
@@ -57,7 +59,6 @@ neutron_opts = [
    ]
 
 NEUTRON_GROUP = 'neutron'
-
 CONF = cfg.CONF
 CONF.register_opts(neutron_opts, NEUTRON_GROUP)
 
@@ -172,6 +173,7 @@ def _is_not_duplicate(item, items, items_list_name, instance):
     return not present
 
 
+@profiler.trace_cls("neutron_api")
 class API(base_api.NetworkAPI):
     """API for interacting with the neutron 2.x API."""
 
@@ -1203,8 +1205,7 @@ class API(base_api.NetworkAPI):
                 return num_instances
 
             # We only need the port count so only ask for ids back.
-            params = dict(tenant_id=context.project_id, fields=['id'])
-            ports = neutron.list_ports(**params)['ports']
+            ports = []
             free_ports = quotas.get('port') - len(ports)
             if free_ports < 0:
                 msg = (_("The number of defined ports: %(ports)d "

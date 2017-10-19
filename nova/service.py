@@ -43,6 +43,10 @@ from nova import utils
 from nova import version
 from nova import wsgi
 
+osprofiler = importutils.try_import("osprofiler")
+osprofiler_initializer = importutils.try_import("osprofiler.initializer")
+
+
 LOG = logging.getLogger(__name__)
 
 service_opts = [
@@ -151,6 +155,17 @@ def _update_service_ref(service):
         service.save()
 
 
+def setup_profiler(binary, host):
+    if osprofiler and CONF.profiler.enabled:
+        osprofiler.initializer.init_from_conf(
+            conf=CONF,
+            context=context.get_admin_context().to_dict(),
+            project="nova",
+            service=binary,
+            host=host)
+        LOG.info(_LI("OSProfiler is enabled."))
+
+
 class Service(service.Service):
     """Service object for binaries running on hosts.
 
@@ -180,6 +195,7 @@ class Service(service.Service):
         self.backdoor_port = None
         self.conductor_api = conductor.API(use_local=db_allowed)
         self.conductor_api.wait_until_ready(context.get_admin_context())
+        setup_profiler(binary, self.host)
 
     def start(self):
         verstr = version.version_string_with_package()
@@ -384,6 +400,7 @@ class WSGIService(service.Service):
         # Pull back actual port used
         self.port = self.server.port
         self.backdoor_port = None
+        setup_profiler(name, self.host)
 
     def reset(self):
         """Reset server greenpool size to default.

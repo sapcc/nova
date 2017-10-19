@@ -19,6 +19,7 @@ import oslo_messaging as messaging
 from oslo_versionedobjects import base as ovo_base
 
 from nova import baserpc
+from nova import profiler
 from nova.conductor import manager
 from nova.conductor import rpcapi
 import nova.conf
@@ -167,7 +168,7 @@ class API(LocalAPI):
                                 'Reattempting establishment of '
                                 'nova-conductor connection...'))
 
-
+@profiler.trace_cls("conductor")
 class ComputeTaskAPI(object):
     """ComputeTask API that queues up compute tasks for nova-conductor."""
 
