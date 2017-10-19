@@ -1543,8 +1543,6 @@ class VMwareVMOps(object):
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration,
                        migrate_data, server_data=None):
-        LOG.debug("INSTANCE UUID: %s", migrate_data.host_ip)
-        LOG.debug("VCENTER HOST IP: %s", CONF.vmware.host_ip)
 
         if CONF.vmware.host_ip != migrate_data.host_ip:
             self.cross_vcenter_live_migration(context, instance, dest,
