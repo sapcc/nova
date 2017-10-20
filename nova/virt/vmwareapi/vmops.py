@@ -28,7 +28,7 @@ import json
 
 import decorator
 import cluster_util
-from nova import network
+
 from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
