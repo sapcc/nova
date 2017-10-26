@@ -407,6 +407,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         return '%s.%s' % (mo_id, self._vcenter_uuid)
 
     def _get_available_resources(self, host_stats):
+        LOG.debug("Inside GET AVAILABLE RESOURCES: %s", host_stats)
         return {'vcpus': host_stats['vcpus'],
                'memory_mb': host_stats['host_memory_total'],
                'local_gb': host_stats['disk_total'],
@@ -437,6 +438,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """
         host_stats = self._vc_state.get_host_stats(refresh=True)
         stats_dict = self._get_available_resources(host_stats)
+        LOG.debug("STATS DICT: %s", stats_dict)
         return stats_dict
 
     def get_available_nodes(self, refresh=False):

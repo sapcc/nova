@@ -92,3 +92,13 @@ class CPUMonitorBase(MonitorBase):
             fields.MonitorMetricType.CPU_IOWAIT_PERCENT,
             fields.MonitorMetricType.CPU_PERCENT,
         ])
+
+
+class LocalStorageMonitorBase(MonitorBase):
+
+    def get_metric_names(self):
+        return set([
+            fields.MonitorMetricType.LOCAL_STORAGE_PERCENTAGE_USE,
+            fields.MonitorMetricType.LOCAL_STORAGE_TOTAL,
+            fields.MonitorMetricType.LOCAL_STORAGE_USED
+        ])

@@ -455,6 +455,9 @@ class MonitorMetricType(Enum):
     CPU_PERCENT = "cpu.percent"
     NUMA_MEM_BW_MAX = "numa.membw.max"
     NUMA_MEM_BW_CURRENT = "numa.membw.current"
+    LOCAL_STORAGE_PERCENTAGE_USE = "storage.percent.usage"
+    LOCAL_STORAGE_TOTAL = "storage.total"
+    LOCAL_STORAGE_USED = "storage.used"
 
     ALL = (
         CPU_FREQUENCY,
