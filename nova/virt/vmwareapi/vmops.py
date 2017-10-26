@@ -303,7 +303,6 @@ class VMwareVMOps(object):
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
 
-        LOG.debug("CONTEXT: %s", dir(context))
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
@@ -1620,9 +1619,7 @@ class VMwareVMOps(object):
     def cross_vcenter_live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration,
                        migrate_data, server_data=None):
-        LOG.debug("Starting cross vcenter migration...")
         LOG.debug("Live migration data %s", migrate_data, instance=instance)
-        LOG.debug("Live server data %s", server_data, instance=instance)
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         cluster_name = migrate_data.cluster_name
 
@@ -1682,7 +1679,6 @@ class VMwareVMOps(object):
         except Exception:
             with excutils.save_and_reraise_exception():
                 recover_method(context, instance, dest, block_migration)
-        post_method(context, instance, dest, block_migration)
 
     def get_migrate_service_info(self, migrate_data):
         client_factory = self._session.vim.client.factory

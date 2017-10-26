@@ -5252,7 +5252,6 @@ class ComputeManager(manager.Manager):
                             context, instance, refresh_conn_info=True)
 
         network_info = self.network_api.get_instance_nw_info(context, instance)
-        LOG.debug("NETWORK BRIDGE: %s", network_info[0]['network']['bridge'])
         self._notify_about_instance_usage(
                      context, instance, "live_migration.pre.start",
                      network_info=network_info)
@@ -5264,7 +5263,11 @@ class ComputeManager(manager.Manager):
                                        disk,
                                        migrate_data)
 
-        migrate_data.target_bridge_name = network_info[0]['network']['bridge']
+        networks = []
+        for bridge in network_info:
+            networks.append(bridge['network']['bridge'])
+        migrate_data.target_bridge_name = networks
+
         LOG.debug('driver pre_live_migration data is %s' % migrate_data)
 
         # NOTE(tr3buchet): setup networks on destination host

@@ -366,6 +366,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         data.host_username = CONF.vmware.host_username
         data.host_password = CONF.vmware.host_password
         data.instance_uuid = self._session.vim.service_content.about.instanceUuid
+
         cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
         x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
         data.thumbprint = x509.digest("sha1")
@@ -375,7 +376,6 @@ class VMwareVCDriver(driver.ComputeDriver):
     def get_server_data(self, context, instance, migrate_data):
 
         data = dict()
-        LOG.debug("Network bridge to be searched: %s", migrate_data.target_bridge_name)
         cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
                                                       CONF.vmware.cluster_name)
         cluster_hosts = self._session._call_method(vutil,
@@ -415,16 +415,16 @@ class VMwareVCDriver(driver.ComputeDriver):
                                            'get_object_property',
                                             network,
                                            'config')
+                for bridge_name in migrate_data.target_bridge_name:
+                    if net.name == bridge_name:
+                        data['portgroup_key'] = net.key
 
-                if net.name[:-9] == migrate_data.target_bridge_name:
-                    data['portgroup_key'] = net.key
-
-                    dvs_uuid = self._session._call_method(vutil,
-                                               'get_object_property',
-                                                net.distributedVirtualSwitch,
-                                               'uuid')
-                    data['dvs_uuid'] = dvs_uuid
-                    break
+                        dvs_uuid = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                    net.distributedVirtualSwitch,
+                                                   'uuid')
+                        data['dvs_uuid'] = dvs_uuid
+                        break
 
 
         data['networks'] = networks
