@@ -993,7 +993,6 @@ def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None, hos
     rel_spec.datastore = datastore
     rel_spec.pool = res_pool
     rel_spec.diskMoveType = None
-    #rel_spec.folder = "/vmfs/volumes/datastore"
 
     if devices is not None:
         rel_spec.deviceChange = devices
