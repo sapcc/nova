@@ -982,6 +982,7 @@ def clone_vm_spec(client_factory, location,
     if config is not None:
         clone_spec.config = config
     clone_spec.template = template
+
     return clone_spec
 
 

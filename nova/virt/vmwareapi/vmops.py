@@ -76,6 +76,13 @@ vmops_opts = [
                     'be shared between compute nodes. Note: this should only '
                     'be used when the compute nodes have a shared file '
                     'system.'),
+    cfg.BoolOpt('full_clone_snapshots',
+                default=False,
+                help='Use full clones for creating image snapshots instead of linked clones.'
+                     'With the right hardware support, it might be faster, especially on the export'),
+    cfg.BoolOpt('clone_from_snapshot',
+                default=True,
+                help='Create a snapshot of the VM before cloning it'),
     ]
 
 CONF = nova.conf.CONF
@@ -902,12 +909,12 @@ class VMwareVMOps(object):
         LOG.debug("Reconfigured VM instance to attach cdrom %s",
                   file_path, instance=instance)
 
-    def _create_vm_snapshot(self, instance, vm_ref):
+    def _create_vm_snapshot(self, instance, vm_ref, image_id=None):
         LOG.debug("Creating Snapshot of the VM instance", instance=instance)
         snapshot_task = self._session._call_method(
                     self._session.vim,
                     "CreateSnapshot_Task", vm_ref,
-                    name="%s-snapshot" % instance.uuid,
+                    name="%s-snapshot" % (image_id or instance.uuid),
                     description="Taking Snapshot of the VM",
                     memory=False,
                     quiesce=True)
@@ -930,22 +937,68 @@ class VMwareVMOps(object):
         self._session._wait_for_task(delete_snapshot_task)
         LOG.debug("Deleted Snapshot of the VM instance", instance=instance)
 
-    def _create_linked_clone_from_snapshot(self, instance,
-                                           vm_ref, snapshot_ref, dc_info):
-        """Create linked clone VM to be deployed to same ds as source VM
+    def _create_vm_clone(self, instance, vm_ref, snapshot_ref, dc_info,
+                      disk_move_type=None, image_id=None, disks=None):
+        """Clone VM to be deployed to same ds as source VM
         """
+        image_id = image_id or uuidutils.generate_uuid()
+
+        if disks:
+            datastore = disks[0].device.backing.datastore
+            datastore_name = datastore_name = ds_obj.DatastorePath.parse(disks[0].path).datastore
+        else:
+            vm_path_name = self._session._call_method(vutil, 'get_object_property',
+                                                      vm_ref, 'summary.config.vmPathName')
+            datastore_name = ds_obj.DatastorePath.parse(vm_path_name).datastore
+            if disk_move_type == "createNewChildDiskBacking":
+                datastore = None
+            else:
+                datastore = ds_util.get_datastore(self._session, cluster_ref,
+                                     datastore_regex)
+
+
+        vm_name = "%s_%s" % (constants.SNAPSHOT_VM_PREFIX,
+                             image_id)
         client_factory = self._session.vim.client.factory
         rel_spec = vm_util.relocate_vm_spec(
                 client_factory,
-                datastore=None,
+                datastore=datastore,
                 host=None,
-                disk_move_type="createNewChildDiskBacking")
-        clone_spec = vm_util.clone_vm_spec(client_factory, rel_spec,
-                power_on=False, snapshot=snapshot_ref, template=True)
-        vm_name = "%s_%s" % (constants.SNAPSHOT_VM_PREFIX,
-                             uuidutils.generate_uuid())
+                disk_move_type=disk_move_type)
+        config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
+        config_spec.name = vm_name
+        config_spec.annotation = "Created from %s" % (instance.uuid)
+        config_spec.numCPUs = 1
+        config_spec.numCoresPerSocket = 1
+        config_spec.memoryMB = 16
+        config_spec.uuid = image_id # Not instanceUuid,
+                                    # as we need to import the same image in different datastores
 
-        LOG.debug("Creating linked-clone VM from snapshot", instance=instance)
+        if disks:
+            disk_devices = [vmdk_info.device.key for vmdk_info in disks]
+            hardware_devices = self._session._call_method(vutil,
+                                                    "get_object_property",
+                                                    vm_ref,
+                                                    "config.hardware.device")
+            if hardware_devices.__class__.__name__ == "ArrayOfVirtualDevice":
+                hardware_devices = hardware_devices.VirtualDevice
+
+            device_change = []
+            for device in hardware_devices:
+                if getattr(device, 'macAddress', None) or \
+                            device.__class__.__name__ == "VirtualDisk" and not device.key in disk_devices :
+                    removal = client_factory.create('ns0:VirtualDeviceConfigSpec')
+                    removal.device = device
+                    removal.operation = 'remove'
+                    device_change.append(removal)
+
+            config_spec.deviceChange = device_change
+
+        clone_spec = vm_util.clone_vm_spec(client_factory, rel_spec,
+                power_on=False, snapshot=snapshot_ref, template=True,
+                config=config_spec)
+
+        LOG.debug("Cloning VM %s", vm_name, instance=instance)
         vm_clone_task = self._session._call_method(
                                 self._session.vim,
                                 "CloneVM_Task",
@@ -954,13 +1007,14 @@ class VMwareVMOps(object):
                                 name=vm_name,
                                 spec=clone_spec)
         self._session._wait_for_task(vm_clone_task)
-        LOG.info(_LI("Created linked-clone VM from snapshot"),
+        LOG.info(_LI("Cloned VM %s"), vm_name,
                  instance=instance)
         task_info = self._session._call_method(vutil,
                                                "get_object_property",
                                                vm_clone_task,
                                                "info")
         return task_info.result
+
 
     def snapshot(self, context, instance, image_id, update_task_state):
         """Create snapshot from a running VM instance.
@@ -1003,29 +1057,40 @@ class VMwareVMOps(object):
 
         update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD)
 
-        # TODO(vui): convert to creating plain vm clone and uploading from it
-        # instead of using live vm snapshot.
-        snapshot_ref = self._create_vm_snapshot(instance, vm_ref)
-
-        update_task_state(task_state=task_states.IMAGE_UPLOADING,
-                          expected_state=task_states.IMAGE_PENDING_UPLOAD)
+        # Create a temporary VM, then export
+        # the VM's root disk to glance via HttpNfc API
+        snapshot_ref = None
         snapshot_vm_ref = None
-
         try:
-            # Create a temporary VM (linked clone from snapshot), then export
-            # the VM's root disk to glance via HttpNfc API
-            snapshot_vm_ref = self._create_linked_clone_from_snapshot(
-                instance, vm_ref, snapshot_ref, dc_info)
+            # If we do linked clones, we need to have a snapshot
+            if CONF.vmware.clone_from_snapshot or not CONF.vmware.full_clone_snapshots:
+                snapshot_ref = self._create_vm_snapshot(instance, vm_ref, image_id=image_id)
+
+            if not CONF.vmware.full_clone_snapshots:
+                disk_move_type = "createNewChildDiskBacking"
+            else:
+                disk_move_type = None
+
+            snapshot_vm_ref = self._create_vm_clone(instance, vm_ref, snapshot_ref, dc_info,
+                                                    disk_move_type=disk_move_type, image_id=image_id,
+                                                    disks=[vmdk])
+
+            update_task_state(task_state=task_states.IMAGE_UPLOADING,
+                expected_state=task_states.IMAGE_PENDING_UPLOAD)
+
             images.upload_image_stream_optimized(
                 context, image_id, instance, self._session, vm=snapshot_vm_ref,
                 vmdk_size=vmdk.capacity_in_bytes)
         finally:
             if snapshot_vm_ref:
                 vm_util.destroy_vm(self._session, instance, snapshot_vm_ref)
+
             # Deleting the snapshot after destroying the temporary VM created
             # based on it allows the instance vm's disks to be consolidated.
             # TODO(vui) Add handling for when vmdk volume is attached.
-            self._delete_vm_snapshot(instance, vm_ref, snapshot_ref)
+            if snapshot_ref:
+                self._delete_vm_snapshot(instance, vm_ref, snapshot_ref)
+
 
     def reboot(self, instance, network_info, reboot_type="SOFT"):
         """Reboot a VM instance."""
