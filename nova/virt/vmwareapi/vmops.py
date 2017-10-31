@@ -308,6 +308,11 @@ class VMwareVMOps(object):
         # We cannot truncate the 'id' as this is unique across OpenStack.
         return '%s (%s)' % (name[:40], id[:36])
 
+    def _get_project_folder(self, dc_info, project_id=None, type_=None):
+        folder_name = self._get_folder_name('Project', project_id)
+        folder_path = 'OpenStack/%s/%s' % (folder_name, type_)
+        return self._create_folders(dc_info.vmFolder, folder_path)
+
     def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
@@ -334,10 +339,7 @@ class VMwareVMOps(object):
                                                  profile_spec=profile_spec,
                                                  metadata=metadata)
 
-        folder_name = self._get_folder_name('Project',
-                                            instance.project_id)
-        folder_path = 'OpenStack/%s/Instances' % folder_name
-        folder = self._create_folders(dc_info.vmFolder, folder_path)
+        folder = self._get_project_folder(dc_info, project_id=instance.project_id, type_='Instances')
 
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
@@ -425,57 +427,57 @@ class VMwareVMOps(object):
             image_ds_loc.rel_path,
             cookies=cookies)
 
-    def _fetch_image_as_vapp(self, context, vi, image_ds_loc):
+    def _fetch_image_as_vapp(self, context, vi, _):
         """Download stream optimized image to host as a vApp."""
 
-        # The directory of the imported disk is the unique name
-        # of the VM use to import it with.
-        vm_name = image_ds_loc.parent.basename
+        vm_name = '%s (%s)' % (vi.ii.image_id, vi.datastore.name)
 
         LOG.debug("Downloading stream optimized image %(image_id)s to "
-                  "%(file_path)s on the data store "
+                  "%(vm_name)s on the data store "
                   "%(datastore_name)s as vApp",
                   {'image_id': vi.ii.image_id,
-                   'file_path': image_ds_loc,
+                   'vm_name': vm_name,
                    'datastore_name': vi.datastore.name},
                   instance=vi.instance)
 
-        image_size = images.fetch_image_stream_optimized(
+        image_size, src_folder_ds_path = images.fetch_image_stream_optimized(
             context,
             vi.instance,
             self._session,
             vm_name,
             vi.datastore.name,
-            vi.dc_info.vmFolder,
+            self._get_project_folder(vi.dc_info, project_id=vi.ii.owner, type_='Images'),
             self._root_resource_pool)
+
         # The size of the image is different from the size of the virtual disk.
         # We want to use the latter. On vSAN this is the only way to get this
         # size because there is no VMDK descriptor.
         vi.ii.file_size = image_size
+        self._cache_vm_image(vi, src_folder_ds_path)
 
     def _fetch_image_as_ova(self, context, vi, _):
         """Download root disk of an OVA image as streamOptimized."""
 
-        # The directory of the imported disk is the unique name
-        # of the VM use to import it with.
-        vm_name = vi.ii.image_id
+        vm_name = '%s (%s)' % (vi.ii.image_id, vi.datastore.name)
 
         image_size, src_folder_ds_path = images.fetch_image_ova(context,
                                vi.instance,
                                self._session,
                                vm_name,
                                vi.datastore.name,
-                               vi.dc_info.vmFolder,
+                               self._get_project_folder(vi.dc_info, project_id=vi.ii.owner, type_='Images'),
                                self._root_resource_pool)
 
-        self._move_to_cache(vi.dc_info.ref,
-                            src_folder_ds_path,
-                            vi.cache_image_folder)
+        try:
+            ds_util.mkdir(self._session, vi.cache_image_folder, vi.dc_info.ref)
+        except vexc.FileAlreadyExistsException:
+            pass
 
         # The size of the image is different from the size of the virtual disk.
         # We want to use the latter. On vSAN this is the only way to get this
         # size because there is no VMDK descriptor.
         vi.ii.file_size = image_size
+        self._cache_vm_image(vi, src_folder_ds_path)
 
     def _prepare_sparse_image(self, vi):
         tmp_dir_loc = vi.datastore.build_path(
@@ -556,14 +558,20 @@ class VMwareVMOps(object):
                             tmp_image_ds_loc.parent,
                             vi.cache_image_folder)
 
-    def _cache_stream_optimized_image(self, vi, tmp_image_ds_loc):
-        dst_path = vi.cache_image_folder.join("%s.vmdk" % vi.ii.image_id)
-        ds_util.mkdir(self._session, vi.cache_image_folder, vi.dc_info.ref)
+    def _cache_vm_image(self, vi, tmp_image_ds_loc):
         try:
-            ds_util.disk_move(self._session, vi.dc_info.ref,
-                              tmp_image_ds_loc, dst_path)
-        except vexc.FileAlreadyExistsException:
-            pass
+            dst_path = vi.cache_image_folder.join("%s.vmdk" % vi.ii.image_id)
+            try:
+                ds_util.mkdir(self._session, vi.cache_image_folder, vi.dc_info.ref)
+            except vexc.FileAlreadyExistsException:
+                pass
+            try:
+                ds_util.disk_move(self._session, vi.dc_info.ref,
+                                tmp_image_ds_loc, dst_path)
+            except vexc.FileAlreadyExistsException:
+                pass
+        finally:
+            self._delete_datastore_file(str(ds_obj.DatastorePath.parse(tmp_image_ds_loc).parent), vi.dc_info.ref)
 
     def _cache_iso_image(self, vi, tmp_image_ds_loc):
         self._move_to_cache(vi.dc_info.ref,
@@ -606,7 +614,7 @@ class VMwareVMOps(object):
         else:
             image_fetch = self._fetch_image_as_file
 
-        if vi.ii.is_ova:
+        if vi.ii.is_ova or disk_type == constants.DISK_TYPE_STREAM_OPTIMIZED:
             image_prepare = lambda vi: (None, None)
             image_cache   = lambda vi, image_loc: None
         elif vi.ii.is_iso:
@@ -615,9 +623,6 @@ class VMwareVMOps(object):
         elif disk_type == constants.DISK_TYPE_SPARSE:
             image_prepare = self._prepare_sparse_image
             image_cache = self._cache_sparse_image
-        elif disk_type == constants.DISK_TYPE_STREAM_OPTIMIZED:
-            image_prepare = self._prepare_stream_optimized_image
-            image_cache = self._cache_stream_optimized_image
         elif disk_type in constants.SUPPORTED_FLAT_VARIANTS:
             image_prepare = self._prepare_flat_image
             image_cache = self._cache_flat_image
@@ -1003,7 +1008,7 @@ class VMwareVMOps(object):
                                 self._session.vim,
                                 "CloneVM_Task",
                                 vm_ref,
-                                folder=dc_info.vmFolder,
+                                folder=self._get_project_folder(dc_info, project_id=instance.project_id, type_='Images'),
                                 name=vm_name,
                                 spec=clone_spec)
         self._session._wait_for_task(vm_clone_task)
