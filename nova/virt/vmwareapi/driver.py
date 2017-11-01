@@ -414,22 +414,25 @@ class VMwareVCDriver(driver.ComputeDriver):
                                               vutil.get_moref(data['host'], "HostSystem"),
                                    'network')
 
+        data['portgroup_key'] = []
+        data['dvs_uuid'] = []
+        data['portgroup_name'] = []
         for network in networks[0]:
             if network._type != 'Network':
                 net = self._session._call_method(vutil,
                                            'get_object_property',
                                             network,
                                            'config')
-                for bridge_name in migrate_data.target_bridge_name:
-                    if net.name == bridge_name:
-                        data['portgroup_key'] = net.key
 
+                for bridge_name in migrate_data.target_bridge_name:
+                    if net.name[:9] == bridge_name[:9]:
+                        data['portgroup_key'].append(net.key)
+                        data['portgroup_name'].append(net.name)
                         dvs_uuid = self._session._call_method(vutil,
                                                    'get_object_property',
                                                     net.distributedVirtualSwitch,
                                                    'uuid')
-                        data['dvs_uuid'] = dvs_uuid
-                        break
+                        data['dvs_uuid'].append(dvs_uuid)
 
 
         data['networks'] = networks
@@ -440,8 +443,6 @@ class VMwareVCDriver(driver.ComputeDriver):
         if res_pool_ref is None:
             LOG.error("Cannot find resource pool", instance=instance)
             raise exception.HostNotFound()
-
-        LOG.debug("Server data: %s", data)
 
         return data
 
@@ -734,6 +735,21 @@ class VMwareVCDriver(driver.ComputeDriver):
             LOG.error('Error while processing console output. Status code: %s', response.status_code)
 
         return response.content
+
+    def get_instance_network(self, instance):
+        networks = []
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_networks = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 vm_ref, 'network')
+
+        for vm_net in vm_networks[0]:
+            network = self._session._call_method(vutil,
+                                       'get_object_property',
+                                        vm_net, 'name')
+            networks.append(network)
+        return networks
+
 
 class VMwareAPISession(api.VMwareAPISession):
     """Sets up a session with the VC/ESX host and handles all

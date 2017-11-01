@@ -95,7 +95,6 @@ def get_network_with_the_name(session, network_name="vmnet0", cluster=None):
                                        'get_object_properties',
                                        None, cluster,
                                        'ClusterComputeResource', ['network'])
-
     while vm_networks:
         if vm_networks.objects:
             network_obj = _get_network_obj(session, vm_networks.objects,

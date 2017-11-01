@@ -1610,7 +1610,7 @@ class VMwareVMOps(object):
 
             try:
                 vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
-                                    ds.ref, esx_host)
+                                    ds.ref, esx_host, disk_move_type=None)
                 LOG.info("Migrated instance to host %s", dest, instance=instance)
             except Exception:
                 with excutils.save_and_reraise_exception():
@@ -1660,23 +1660,40 @@ class VMwareVMOps(object):
         hardware_devices = self._session._call_method(
             vutil, "get_object_property", vm_ref, "config.hardware.device")
 
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      CONF.vmware.cluster_name)
+        cluster_networks = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'network')
+
         for hardware_device in hardware_devices:
             for device in hardware_device[1]:
-                if device.deviceInfo.label.find("Network adapter") > -1:
-                    dev = self._session.vim.client.factory.create('ns0:VirtualDeviceConfigSpec')
-                    dev.operation = "edit"
-                    dev.device = device
-                    dev.device.backing = self._session.vim.client.factory.create('ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
-                    dev.device.backing.port = self._session.vim.client.factory.create('ns0:DistributedVirtualSwitchPortConnection')
-                    dev.device.backing.port.switchUuid = server_data['dvs_uuid']
-                    dev.device.backing.port.portgroupKey = server_data['portgroup_key']
-                    devices.append(dev)
+                for cn in cluster_networks[0]:
+                    if hasattr(device, 'macAddress'):
+                        if device.backing.port.portgroupKey == cn.value:
+                            portgroup_ref = vutil.get_moref(cn, cn._type)
+                            portgroup = self._session._call_method(vutil,
+                                                       'get_object_property',
+                                                       portgroup_ref.value, 'name')
+                            dev = self._session.vim.client.factory.create('ns0:VirtualDeviceConfigSpec')
+                            dev.operation = "edit"
+                            dev.device = device
+                            dev.device.backing = self._session.vim.client.factory.create(
+                                'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
+                            dev.device.backing.port = self._session.vim.client.factory.create(
+                                'ns0:DistributedVirtualSwitchPortConnection')
+
+                            for key, portgroup_key in enumerate(server_data['portgroup_key']):
+                                if server_data['portgroup_name'][key][:9] == portgroup[:9]:
+                                    dev.device.backing.port.portgroupKey = portgroup_key
+                                    dev.device.backing.port.switchUuid = server_data['dvs_uuid'][key]
+                                    devices.append(dev)
 
         service = self.get_migrate_service_info(migrate_data)
 
         try:
             vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
-                                ds_ref, host_ref, devices=devices)
+                                ds_ref, host_ref, disk_move_type=None, devices=devices)
             LOG.info("Migrated instance to host %s", dest, instance=instance)
         except Exception:
             with excutils.save_and_reraise_exception():

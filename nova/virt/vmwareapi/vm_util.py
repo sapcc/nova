@@ -989,10 +989,9 @@ def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None, hos
                      disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
     """Builds the VM relocation spec."""
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
-    LOG.debug("DATASTORE TO BE USED: %s", datastore)
     rel_spec.datastore = datastore
     rel_spec.pool = res_pool
-    rel_spec.diskMoveType = None
+    rel_spec.diskMoveType = disk_move_type
 
     if devices is not None:
         rel_spec.deviceChange = devices
@@ -1003,7 +1002,6 @@ def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None, hos
     if host:
         rel_spec.host = host
 
-        LOG.debug("RELOCATE SPEC IS: %s", rel_spec)
     return rel_spec
 
 def relocate_vm(session, service, vm_ref, res_pool=None, datastore=None, host=None, disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
