@@ -42,6 +42,7 @@ from nova import exception
 from nova import profiler
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
+from nova.virt.libvirt import driver as libvirt_driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import host
@@ -427,7 +428,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                'numa_topology': None,
                }
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and

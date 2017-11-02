@@ -32,12 +32,11 @@ class Monitor(base.LocalStorageMonitorBase):
 
         # Extract node's CPU statistics.
         try:
-            stats = self.driver.get_host_stats()
+            #stats = self.driver.get_host_stats()
+            stats = self.driver.get_available_resource()
             self._data["storage.percent.usage"] = stats["user"]
-            self._data["cpu.kernel.time"] = stats["kernel"]
-            self._data["cpu.idle.time"] = stats["idle"]
-            self._data["cpu.iowait.time"] = stats["iowait"]
-            self._data["cpu.frequency"] = stats["frequency"]
+            self._data["storage.total"] = stats["local_gb"]
+            self._data["storage.used"] = stats["local_gb_used"]
         except (NotImplementedError, TypeError, KeyError):
             LOG.exception(_LE("Not all properties needed are implemented "
                               "in the compute driver"))
