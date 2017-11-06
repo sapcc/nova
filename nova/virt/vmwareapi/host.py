@@ -135,8 +135,6 @@ class VCState(object):
             for objContent in pc_objects:
                 props_in = {prop.name: prop.val for prop in objContent.propSet}
 
-                print(props_in.keys())
-
                 processor_type = None
                 cpu_vendor = None
                 hardware_cpu_pkg = props_in.get("hardware.cpuPkg", [])[0]
