@@ -352,6 +352,7 @@ class VMwareVMOps(object):
     def _get_extra_specs(self, flavor, image_meta=None):
         image_meta = image_meta or objects.ImageMeta.from_dict({})
         extra_specs = vm_util.ExtraSpecs()
+
         for resource in ['cpu', 'memory', 'disk_io', 'vif']:
             for (key, type) in (('limit', int),
                                 ('reservation', int),
@@ -369,7 +370,15 @@ class VMwareVMOps(object):
         extra_specs.hw_version = hw_version
         hv_enabled = flavor.extra_specs.get('vmware:hv_enabled')
         extra_specs.hv_enabled = hv_enabled
-        
+        video_ram = image_meta.properties.get('hw_video_ram', 0)
+        max_vram = int(flavor.extra_specs.get('hw_video:ram_max_mb', 0))
+
+        if video_ram and video_ram:
+            if video_ram > max_vram:
+                raise exception.RequestedVRamTooHigh(req_vram=video_ram,
+                                                 max_vram=max_vram)
+            extra_specs.hw_video_ram = video_ram * units.Mi / units.Ki
+
         if CONF.vmware.pbm_enabled:
             storage_policy = flavor.extra_specs.get('vmware:storage_policy',
                     CONF.vmware.pbm_default_policy)
@@ -582,7 +591,6 @@ class VMwareVMOps(object):
     def _get_vm_config_info(self, instance, image_info,
                             extra_specs):
         """Captures all relevant information from the spawn parameters."""
-
         if (instance.root_gb != 0 and
                 image_info.file_size > instance.root_gb * units.Gi):
             reason = _("Image disk size greater than requested disk size")
@@ -743,6 +751,7 @@ class VMwareVMOps(object):
         client_factory = self._session.vim.client.factory
         image_info = images.VMwareImage.from_image(instance.image_ref,
                                                    image_meta)
+
         extra_specs = self._get_extra_specs(instance.flavor, image_meta)
 
         vi = self._get_vm_config_info(instance, image_info,
