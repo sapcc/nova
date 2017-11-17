@@ -477,7 +477,6 @@ class ResourceTracker(object):
         metrics_info = {}
         for monitor in self.monitors:
             try:
-                LOG.debug("MMM: %s", monitor)
                 monitor.add_metrics_to_list(metrics)
             except Exception as exc:
                 LOG.warning(_LW("Cannot get the metrics from %(mon)s; "
@@ -600,9 +599,7 @@ class ResourceTracker(object):
             self.compute_node.pci_device_pools = objects.PciDevicePoolList()
 
         self._report_final_resource_view()
-
         metrics = self._get_host_metrics(context, self.nodename)
-
         # TODO(pmurray): metrics should not be a json string in ComputeNode,
         # but it is. This should be changed in ComputeNode
         self.compute_node.metrics = jsonutils.dumps(metrics)

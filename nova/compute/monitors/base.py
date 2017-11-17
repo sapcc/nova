@@ -65,6 +65,7 @@ class MonitorBase(object):
                             plugin should append nova.objects.MonitorMetric
                             objects to.
         """
+
         metric_data = self.get_metrics()
         metrics = []
         for (name, value, timestamp) in metric_data:
@@ -94,11 +95,20 @@ class CPUMonitorBase(MonitorBase):
         ])
 
 
-class LocalStorageMonitorBase(MonitorBase):
+class VmwareMonitorBase(MonitorBase):
 
     def get_metric_names(self):
         return set([
-            fields.MonitorMetricType.LOCAL_STORAGE_PERCENTAGE_USE,
-            fields.MonitorMetricType.LOCAL_STORAGE_TOTAL,
-            fields.MonitorMetricType.LOCAL_STORAGE_USED
+            fields.MonitorMetricType.CLUSTER_STORAGE_TOTAL,
+            fields.MonitorMetricType.CLUSTER_STORAGE_USED,
+            fields.MonitorMetricType.CLUSTER_STORAGE_FREE,
+            fields.MonitorMetricType.CLUSTER_STORAGE_PERCENTAGE_USE,
+            fields.MonitorMetricType.CLUSTER_MEMORY_TOTAL,
+            fields.MonitorMetricType.CLUSTER_MEMORY_FREE,
+            fields.MonitorMetricType.CLUSTER_MEMORY_USED,
+            fields.MonitorMetricType.CLUSTER_MEMORY_PERCENTAGE,
+            fields.MonitorMetricType.CLUSTER_CPU_TOTAL,
+            fields.MonitorMetricType.CLUSTER_CPU_USED,
+            fields.MonitorMetricType.CLUSTER_CPU_FREE,
+            fields.MonitorMetricType.CLUSTER_CPU_PERCENTAGE,
         ])
