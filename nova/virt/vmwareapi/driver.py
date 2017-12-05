@@ -33,6 +33,7 @@ from oslo_vmware import pbm
 from oslo_vmware import vim
 from oslo_vmware import vim_util
 from oslo_serialization import jsonutils
+from oslo_utils import units
 
 from nova.compute import task_states
 import nova.conf
@@ -44,6 +45,7 @@ from nova import exception
 from nova import profiler
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
+from nova.virt.libvirt import driver as libvirt_driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import host
@@ -529,7 +531,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                'numa_topology': None,
                }
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and
@@ -540,7 +542,59 @@ class VMwareVCDriver(driver.ComputeDriver):
         """
         host_stats = self._vc_state.get_host_stats(refresh=True)
         stats_dict = self._get_available_resources(host_stats)
+
         return stats_dict
+
+    def get_cluster_metrics(self):
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session, CONF.vmware.cluster_name)
+
+        lst_properties = ["summary.quickStats"]
+        self.cluster_metrics = {}
+        self.cpu_usage = 0
+        self.memory_usage = 0
+        self.datastore_free_space = 0
+        self.datastore_total = 0
+
+        cluster_data = self._session._call_method(vim_util, 'get_object_properties_dict', cluster_ref, ['host','datastore','summary'])
+
+        for datastore in cluster_data['datastore'][0]:
+            datastore_capacity = self._session._call_method(
+                vim_util,
+                "get_object_properties_dict",
+                datastore,
+                ['summary.freeSpace', 'summary.capacity'])
+            self.datastore_free_space += datastore_capacity['summary.freeSpace']
+            self.datastore_total += datastore_capacity['summary.capacity']
+
+        for host in cluster_data['host'][0]:
+            props = self._session._call_method(vim_util,
+                                               "get_object_properties_dict",
+                                               host,
+                                               lst_properties)
+
+            self.cpu_usage += props['summary.quickStats'].overallCpuUsage
+            self.memory_usage += props['summary.quickStats'].overallMemoryUsage
+
+        self.cluster_metrics['cpu_total'] = cluster_data['summary'].totalCpu
+        self.cluster_metrics['cpu_used'] = self.cpu_usage
+        self.cluster_metrics['cpu_free'] = cluster_data['summary'].totalCpu - self.cpu_usage
+        self.cluster_metrics['memory_total'] = float(cluster_data['summary'].totalMemory / units.Mi)
+        self.cluster_metrics['memory_used'] = self.memory_usage
+        self.cluster_metrics['memory_free'] = self.cluster_metrics['memory_total'] - self.cluster_metrics['memory_used']
+        self.cluster_metrics['datastore_total'] = float(self.datastore_total / units.Gi)
+        self.cluster_metrics['datastore_used'] = float((self.datastore_total - self.datastore_free_space) / units.Gi)
+        self.cluster_metrics['datastore_free'] = self.cluster_metrics['datastore_total'] - self.cluster_metrics['datastore_used']
+
+        perc = float(self.cluster_metrics['cpu_used']) / float(self.cluster_metrics['cpu_total'])
+        self.cluster_metrics['cpu_percent'] = int(perc * 100)
+
+        perc = float(self.cluster_metrics['memory_used'] / self.cluster_metrics['memory_total'])
+        self.cluster_metrics['memory_percent'] = int(perc * 100)
+
+        perc = float(self.cluster_metrics['datastore_used']/units.G) / float(self.cluster_metrics['datastore_total']/units.G)
+        self.cluster_metrics['datastore_percent'] = int(perc * 100)
+
+        return self.cluster_metrics
 
     def get_available_nodes(self, refresh=False):
         """Returns nodenames of all nodes managed by the compute service.
