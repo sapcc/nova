@@ -491,6 +491,11 @@ class ComputeAPI(object):
 
         return result
 
+    def neutron_bind_port(self, ctxt, instance, host):
+        version = '4.8'
+        cctxt = self.client.prepare(server=host, version=version)
+        cctxt.call(ctxt, 'neutron_bind_port', instance=instance, host=host)
+
     def check_instance_shared_storage(self, ctxt, instance, data, host=None):
         version = '4.0'
         cctxt = self.client.prepare(server=_compute_host(host, instance),

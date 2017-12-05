@@ -76,6 +76,7 @@ vmops_opts = [
                     'be shared between compute nodes. Note: this should only '
                     'be used when the compute nodes have a shared file '
                     'system.'),
+    cfg.StrOpt('default_portgroup', help='Default portgroup for migration')
     ]
 
 CONF = nova.conf.CONF
@@ -1684,16 +1685,18 @@ class VMwareVMOps(object):
                                 'ns0:DistributedVirtualSwitchPortConnection')
 
                             for key, portgroup_key in enumerate(server_data['portgroup_key']):
-                                if server_data['portgroup_name'][key][:9] == portgroup[:9]:
+                                if server_data['portgroup_name'][key] == CONF.vmware.default_portgroup:
                                     dev.device.backing.port.portgroupKey = portgroup_key
                                     dev.device.backing.port.switchUuid = server_data['dvs_uuid'][key]
                                     devices.append(dev)
 
-        service = self.get_migrate_service_info(migrate_data)
+        if len(devices) == 0:
+            raise Exception('Devices property required by the relocation spec is empty!')
 
+        service = self.get_migrate_service_info(migrate_data)
         try:
             vm_util.relocate_vm(self._session, service, vm_ref, res_pool_ref,
-                                ds_ref, host_ref, disk_move_type=None, devices=devices)
+                                ds_ref, host_ref, disk_move_type=None, devices=devices[0])
             LOG.info("Migrated instance to host %s", dest, instance=instance)
         except Exception:
             with excutils.save_and_reraise_exception():

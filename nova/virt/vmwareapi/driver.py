@@ -53,6 +53,7 @@ from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
 from nova.virt.vmwareapi import ds_util
 from oslo_vmware import vim_util as vutil
+from nova import network
 
 LOG = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ vmwareapi_opts = [
                     'work-arounds'),
     cfg.StrOpt('vspc_username', help='Username for Virtual Serial Port Concentrator'),
     cfg.StrOpt('vspc_password', help='Password for Virtual Serial Port Concentrator'),
+    cfg.StrOpt('default_portgroup', help='Default portgroup for migration')
     ]
 
 spbm_opts = [
@@ -158,7 +160,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
-
+        self.network_api = network.API()
         if (CONF.vmware.host_ip is None or
             CONF.vmware.host_username is None or
             CONF.vmware.host_password is None):
@@ -346,6 +348,10 @@ class VMwareVCDriver(driver.ComputeDriver):
                                                  dest_check_data):
         pass
 
+    def neutron_bind_port(self, context, instance, host):
+        self.network_api.migrate_instance_finish(context, instance, host)
+
+
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
                        migrate_data=None, server_data=None):
@@ -399,15 +405,21 @@ class VMwareVCDriver(driver.ComputeDriver):
         for ds in cluster_datastores.ManagedObjectReference:
             ds_hosts = self._session._call_method(vutil, 'get_object_property',
                                                   ds, 'host')
-
             if ds_hosts:
                 break
-        data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
 
+        data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
         for ds_host in ds_hosts.DatastoreHostMount:
-            for cluster_host in cluster_hosts.ManagedObjectReference:
-                if ds_host.key.value == cluster_host.value:
-                    data['host'] = cluster_host.value
+            if 'host' not in data:
+                for cluster_host in cluster_hosts.ManagedObjectReference:
+                    if ds_host.key.value == cluster_host.value:
+
+                        if self._check_host_status(cluster_host) == True:
+                            data['host'] = cluster_host.value
+                            break
+                        else:
+                            continue
+
 
         networks = self._session._call_method(vutil,
                                    'get_object_property',
@@ -424,15 +436,14 @@ class VMwareVCDriver(driver.ComputeDriver):
                                             network,
                                            'config')
 
-                for bridge_name in migrate_data.target_bridge_name:
-                    if net.name[:9] == bridge_name[:9]:
-                        data['portgroup_key'].append(net.key)
-                        data['portgroup_name'].append(net.name)
-                        dvs_uuid = self._session._call_method(vutil,
-                                                   'get_object_property',
-                                                    net.distributedVirtualSwitch,
-                                                   'uuid')
-                        data['dvs_uuid'].append(dvs_uuid)
+                if net.name == CONF.vmware.default_portgroup:
+                    data['portgroup_key'].append(net.key)
+                    data['portgroup_name'].append(net.name)
+                    dvs_uuid = self._session._call_method(vutil,
+                                               'get_object_property',
+                                                net.distributedVirtualSwitch,
+                                               'uuid')
+                    data['dvs_uuid'].append(dvs_uuid)
 
 
         data['networks'] = networks
@@ -445,6 +456,18 @@ class VMwareVCDriver(driver.ComputeDriver):
             raise exception.HostNotFound()
 
         return data
+
+    def _check_host_status(self, host):
+        LOG.debug(host)
+        host_status = self._session._call_method(vutil,
+                                   'get_object_property',
+                                   host,
+                                   'runtime')
+
+        if host_status.powerState.lower() != "poweredon" or host_status.connectionState.lower() != 'connected':
+            return False
+        return True
+
 
     def unfilter_instance(self, instance, network_info):
         pass

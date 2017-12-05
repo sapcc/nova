@@ -5177,6 +5177,12 @@ class ComputeManager(manager.Manager):
 
         return data
 
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def neutron_bind_port(self, context, instance, host):
+        self.driver.neutron_bind_port(context, instance, host)
+
     def _do_check_can_live_migrate_destination(self, ctxt, instance,
                                                block_migration,
                                                disk_over_commit):
@@ -5331,7 +5337,6 @@ class ComputeManager(manager.Manager):
                                               block_migration, migrate_data)
 
         server_data = self.compute_rpcapi.get_source_server_data(context, instance, dest, migrate_data)
-
         self._set_migration_status(migration, 'running')
 
         if migrate_data:
@@ -5342,6 +5347,8 @@ class ComputeManager(manager.Manager):
                                        self._post_live_migration,
                                        self._rollback_live_migration,
                                        block_migration, migrate_data, server_data)
+
+            self.compute_rpcapi.neutron_bind_port(context, instance, dest)
         except Exception:
             # Executing live migration
             # live_migration might raises exceptions, but
