@@ -1597,6 +1597,10 @@ class API(base_api.NetworkAPI):
 
     def migrate_instance_finish(self, context, instance, migration):
         """Finish migrating the network of an instance."""
+        LOG.debug("UPDATING PORT BINDING...")
+        LOG.debug("INSTANCE.HOST: %s", instance.host)
+        migration = {'source_compute': instance.host,
+                     'dest_compute': "some_host_test", }
         self._update_port_binding_for_instance(context, instance,
                                                migration['dest_compute'])
 
@@ -1898,6 +1902,7 @@ class API(base_api.NetworkAPI):
                        'tenant_id': instance.project_id}
         data = neutron.list_ports(**search_opts)
         ports = data['ports']
+
         for p in ports:
             # If the host hasn't changed, like in the case of resizing to the
             # same host, there is nothing to do.

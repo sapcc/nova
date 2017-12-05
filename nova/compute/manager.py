@@ -50,6 +50,7 @@ from oslo_service import periodic_task
 from oslo_utils import excutils
 from oslo_utils import strutils
 from oslo_utils import timeutils
+from oslo_vmware import vim_util as vutil
 import six
 from six.moves import range
 
@@ -100,7 +101,8 @@ from nova.virt import storage_users
 from nova.virt import virtapi
 from nova import volume
 from nova.volume import encryptors
-
+from oslo_vmware import vim_util as vutil
+from nova.virt.vmwareapi import vm_util
 
 compute_opts = [
     cfg.StrOpt('console_host',
@@ -5167,6 +5169,20 @@ class ComputeManager(manager.Manager):
                                                             block_migration,
                                                             disk_over_commit)
 
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def get_migrate_server_data(self, context, instance, migrate_data):
+        data = self.driver.get_server_data(context, instance, migrate_data)
+
+        return data
+
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def neutron_bind_port(self, context, instance, host):
+        self.driver.neutron_bind_port(context, instance, host)
+
     def _do_check_can_live_migrate_destination(self, ctxt, instance,
                                                block_migration,
                                                disk_over_commit):
@@ -5224,7 +5240,7 @@ class ComputeManager(manager.Manager):
     @wrap_instance_event
     @wrap_instance_fault
     def pre_live_migration(self, context, instance, block_migration, disk,
-                           migrate_data):
+                           migrate_data, vm_networks):
         """Preparations for live migration at dest host.
 
         :param context: security context
@@ -5256,12 +5272,14 @@ class ComputeManager(manager.Manager):
                                        network_info,
                                        disk,
                                        migrate_data)
+
+        migrate_data.target_bridge_name = vm_networks
+
         LOG.debug('driver pre_live_migration data is %s' % migrate_data)
 
         # NOTE(tr3buchet): setup networks on destination host
         self.network_api.setup_networks_on_host(context, instance,
                                                          self.host)
-
         # Creating filters to hypervisors and firewalls.
         # An example is that nova-instance-instance-xxx,
         # which is written to libvirt.xml(Check "virsh nwfilter-list")
@@ -5289,7 +5307,6 @@ class ComputeManager(manager.Manager):
         # done on source/destination. For now, this is just here for status
         # reporting
         self._set_migration_status(migration, 'preparing')
-
         got_migrate_data_object = isinstance(migrate_data,
                                              migrate_data_obj.LiveMigrateData)
         if not got_migrate_data_object:
@@ -5307,9 +5324,10 @@ class ComputeManager(manager.Manager):
             else:
                 disk = None
 
+            vm_networks = self.driver.get_instance_network(instance)
             migrate_data = self.compute_rpcapi.pre_live_migration(
                 context, instance,
-                block_migration, disk, dest, migrate_data)
+                block_migration, disk, dest, migrate_data, vm_networks)
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception(_LE('Pre live migration failed at %s'),
@@ -5318,6 +5336,7 @@ class ComputeManager(manager.Manager):
                 self._rollback_live_migration(context, instance, dest,
                                               block_migration, migrate_data)
 
+        server_data = self.compute_rpcapi.get_source_server_data(context, instance, dest, migrate_data)
         self._set_migration_status(migration, 'running')
 
         if migrate_data:
@@ -5327,7 +5346,9 @@ class ComputeManager(manager.Manager):
             self.driver.live_migration(context, instance, dest,
                                        self._post_live_migration,
                                        self._rollback_live_migration,
-                                       block_migration, migrate_data)
+                                       block_migration, migrate_data, server_data)
+
+            self.compute_rpcapi.neutron_bind_port(context, instance, dest)
         except Exception:
             # Executing live migration
             # live_migration might raises exceptions, but

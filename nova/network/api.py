@@ -492,6 +492,7 @@ class API(base_api.NetworkAPI):
 
         self.network_rpcapi.setup_networks_on_host(context, **args)
 
+
     def _get_multi_addresses(self, context, instance):
         try:
             fixed_ips = objects.FixedIPList.get_by_instance_uuid(

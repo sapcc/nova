@@ -20,6 +20,8 @@ A connection to the VMware vCenter platform.
 """
 
 import re
+import ssl
+import OpenSSL
 
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -51,6 +53,9 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+from nova.virt.vmwareapi import ds_util
+from oslo_vmware import vim_util as vutil
+from nova import network
 
 LOG = logging.getLogger(__name__)
 
@@ -105,6 +110,7 @@ vmwareapi_opts = [
                     'work-arounds'),
     cfg.StrOpt('vspc_username', help='Username for Virtual Serial Port Concentrator'),
     cfg.StrOpt('vspc_password', help='Password for Virtual Serial Port Concentrator'),
+    cfg.StrOpt('default_portgroup', help='Default portgroup for migration')
     ]
 
 spbm_opts = [
@@ -156,7 +162,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
-
+        self.network_api = network.API()
         if (CONF.vmware.host_ip is None or
             CONF.vmware.host_username is None or
             CONF.vmware.host_password is None):
@@ -344,13 +350,17 @@ class VMwareVCDriver(driver.ComputeDriver):
                                                  dest_check_data):
         pass
 
+    def neutron_bind_port(self, context, instance, host):
+        self.network_api.migrate_instance_finish(context, instance, host)
+
+
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         """Live migration of an instance to another host."""
         self._vmops.live_migration(context, instance, dest, post_method,
                                    recover_method, block_migration,
-                                   migrate_data)
+                                   migrate_data, server_data)
 
     def check_can_live_migrate_source(self, context, instance,
                                       dest_check_data, block_device_info=None):
@@ -365,8 +375,101 @@ class VMwareVCDriver(driver.ComputeDriver):
         data = objects.VMwareLiveMigrateData()
         data.cluster_name = CONF.vmware.cluster_name
         data.datastore_regex = CONF.vmware.datastore_regex
+        data.host_ip = CONF.vmware.host_ip
+        data.host_username = CONF.vmware.host_username
+        data.host_password = CONF.vmware.host_password
+        data.instance_uuid = self._session.vim.service_content.about.instanceUuid
+
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        data.thumbprint = x509.digest("sha1")
 
         return data
+
+    def get_server_data(self, context, instance, migrate_data):
+
+        data = dict()
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      CONF.vmware.cluster_name)
+        cluster_hosts = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'host')
+        cluster_datastores = self._session._call_method(vutil,
+                                                        'get_object_property',
+                                                        cluster_ref,
+                                                        'datastore')
+        LOG.debug("cluster_datastores: %s", cluster_datastores)
+        if not cluster_datastores:
+            LOG.warning('No datastores found in the destination cluster')
+            return None
+
+        ds_hosts = None
+        for ds in cluster_datastores.ManagedObjectReference:
+            ds_hosts = self._session._call_method(vutil, 'get_object_property',
+                                                  ds, 'host')
+            if ds_hosts:
+                break
+
+        data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
+        for ds_host in ds_hosts.DatastoreHostMount:
+            if 'host' not in data:
+                for cluster_host in cluster_hosts.ManagedObjectReference:
+                    if ds_host.key.value == cluster_host.value:
+
+                        if self._check_host_status(cluster_host) == True:
+                            data['host'] = cluster_host.value
+                            break
+                        else:
+                            continue
+
+
+        networks = self._session._call_method(vutil,
+                                   'get_object_property',
+                                              vutil.get_moref(data['host'], "HostSystem"),
+                                   'network')
+
+        data['portgroup_key'] = []
+        data['dvs_uuid'] = []
+        data['portgroup_name'] = []
+        for network in networks[0]:
+            if network._type != 'Network':
+                net = self._session._call_method(vutil,
+                                           'get_object_property',
+                                            network,
+                                           'config')
+
+                if net.name == CONF.vmware.default_portgroup:
+                    data['portgroup_key'].append(net.key)
+                    data['portgroup_name'].append(net.name)
+                    dvs_uuid = self._session._call_method(vutil,
+                                               'get_object_property',
+                                                net.distributedVirtualSwitch,
+                                               'uuid')
+                    data['dvs_uuid'].append(dvs_uuid)
+
+
+        data['networks'] = networks
+
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        data['res_pool'] = res_pool_ref.value
+        data['cluster_ref'] = cluster_ref
+        if res_pool_ref is None:
+            LOG.error("Cannot find resource pool", instance=instance)
+            raise exception.HostNotFound()
+
+        return data
+
+    def _check_host_status(self, host):
+        LOG.debug(host)
+        host_status = self._session._call_method(vutil,
+                                   'get_object_property',
+                                   host,
+                                   'runtime')
+
+        if host_status.powerState.lower() != "poweredon" or host_status.connectionState.lower() != 'connected':
+            return False
+        return True
+
 
     def unfilter_instance(self, instance, network_info):
         pass
@@ -709,6 +812,21 @@ class VMwareVCDriver(driver.ComputeDriver):
             LOG.error('Error while processing console output. Status code: %s', response.status_code)
 
         return response.content
+
+    def get_instance_network(self, instance):
+        networks = []
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_networks = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 vm_ref, 'network')
+
+        for vm_net in vm_networks[0]:
+            network = self._session._call_method(vutil,
+                                       'get_object_property',
+                                        vm_net, 'name')
+            networks.append(network)
+        return networks
+
 
 class VMwareAPISession(api.VMwareAPISession):
     """Sets up a session with the VC/ESX host and handles all

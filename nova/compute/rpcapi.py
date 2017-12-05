@@ -483,6 +483,19 @@ class ComputeAPI(object):
         else:
             return result
 
+    def get_source_server_data(self, ctxt, instance, host, migrate_data):
+        version = '4.8'
+
+        cctxt = self.client.prepare(server=host, version=version)
+        result = cctxt.call(ctxt, 'get_migrate_server_data', instance=instance, migrate_data=migrate_data)
+
+        return result
+
+    def neutron_bind_port(self, ctxt, instance, host):
+        version = '4.8'
+        cctxt = self.client.prepare(server=host, version=version)
+        cctxt.call(ctxt, 'neutron_bind_port', instance=instance, host=host)
+
     def check_instance_shared_storage(self, ctxt, instance, data, host=None):
         version = '4.0'
         cctxt = self.client.prepare(server=_compute_host(host, instance),
@@ -681,7 +694,7 @@ class ComputeAPI(object):
             instance=instance, block_migration=block_migration)
 
     def pre_live_migration(self, ctxt, instance, block_migration, disk,
-            host, migrate_data=None):
+            host, migrate_data=None, vm_networks=None):
         migrate_data_orig = migrate_data
         version = '4.8'
         if not self.client.can_send_version(version):
@@ -692,7 +705,7 @@ class ComputeAPI(object):
         result = cctxt.call(ctxt, 'pre_live_migration',
                             instance=instance,
                             block_migration=block_migration,
-                            disk=disk, migrate_data=migrate_data)
+                            disk=disk, migrate_data=migrate_data, vm_networks=vm_networks)
         if isinstance(result, migrate_data_obj.LiveMigrateData):
             return result
         elif migrate_data_orig and result:
