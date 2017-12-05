@@ -316,7 +316,9 @@ class API(base.Base):
 
         # Determine requested cores and ram
         req_cores = max_count * instance_type['vcpus']
-        vram_mb = int(instance_type.get('extra_specs', {}).get(VIDEO_RAM, 0))
+        # That should depend on the underlying hypervisor, and apparently the quota is leaking
+        # vram_mb = int(instance_type.get('extra_specs', {}).get(VIDEO_RAM, 0))
+        vram_mb = 0
         req_ram = max_count * (instance_type['memory_mb'] + vram_mb)
 
         # Check the quota
