@@ -50,7 +50,6 @@ from oslo_service import periodic_task
 from oslo_utils import excutils
 from oslo_utils import strutils
 from oslo_utils import timeutils
-from oslo_vmware import vim_util as vutil
 import six
 from six.moves import range
 
@@ -101,8 +100,6 @@ from nova.virt import storage_users
 from nova.virt import virtapi
 from nova import volume
 from nova.volume import encryptors
-from oslo_vmware import vim_util as vutil
-from nova.virt.vmwareapi import vm_util
 
 compute_opts = [
     cfg.StrOpt('console_host',

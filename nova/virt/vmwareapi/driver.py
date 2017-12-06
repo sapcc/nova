@@ -21,31 +21,26 @@ A connection to the VMware vCenter platform.
 
 import re
 import ssl
-import OpenSSL
+import urlparse
 
+import OpenSSL
+import requests
 from oslo_config import cfg
 from oslo_log import log as logging
-from oslo_utils import excutils
-from oslo_utils import versionutils as v_utils
-from oslo_vmware import api
-from oslo_vmware import exceptions as vexc
-from oslo_vmware import pbm
-from oslo_vmware import vim
-from oslo_vmware import vim_util
 from oslo_serialization import jsonutils
+from oslo_utils import excutils
 from oslo_utils import units
-
-from nova.compute import task_states
-import nova.conf
-import urlparse
-import requests
-from nova import objects
+from oslo_utils import versionutils as v_utils
 from requests.auth import HTTPBasicAuth
+
+import nova.conf
 from nova import exception
+from nova import network
+from nova import objects
 from nova import profiler
+from nova.compute import task_states
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
-from nova.virt.libvirt import driver as libvirt_driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import host
@@ -53,9 +48,12 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
-from nova.virt.vmwareapi import ds_util
+from oslo_vmware import api
+from oslo_vmware import exceptions as vexc
+from oslo_vmware import pbm
+from oslo_vmware import vim
+from oslo_vmware import vim_util
 from oslo_vmware import vim_util as vutil
-from nova import network
 
 LOG = logging.getLogger(__name__)
 
@@ -121,7 +119,7 @@ vmwareapi_opts = [
     cfg.StrOpt('vspc_username', help='Username for Virtual Serial Port Concentrator'),
     cfg.StrOpt('vspc_password', help='Password for Virtual Serial Port Concentrator'),
     cfg.StrOpt('default_portgroup', help='Default portgroup for migration')
-    ]
+]
 
 spbm_opts = [
     cfg.BoolOpt('pbm_enabled',
@@ -136,7 +134,7 @@ spbm_opts = [
                help='The PBM default policy. If pbm_wsdl_location is set and '
                     'there is no defined storage policy for the specific '
                     'request then this policy will be used.'),
-    ]
+]
 
 CONF = nova.conf.CONF
 CONF.register_opts(vmwareapi_opts, 'vmware')
@@ -174,8 +172,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         super(VMwareVCDriver, self).__init__(virtapi)
         self.network_api = network.API()
         if (CONF.vmware.host_ip is None or
-            CONF.vmware.host_username is None or
-            CONF.vmware.host_password is None):
+                CONF.vmware.host_username is None or
+                CONF.vmware.host_password is None):
             raise Exception(_("Must specify host_ip, host_username and "
                               "host_password to use vmwareapi.VMwareVCDriver"))
 
@@ -185,8 +183,8 @@ class VMwareVCDriver(driver.ComputeDriver):
                 self._datastore_regex = re.compile(CONF.vmware.datastore_regex)
             except re.error:
                 raise exception.InvalidInput(reason=
-                    _("Invalid Regular Expression %s")
-                    % CONF.vmware.datastore_regex)
+                                             _("Invalid Regular Expression %s")
+                                             % CONF.vmware.datastore_regex)
 
         self._session = VMwareAPISession(scheme=scheme)
 
@@ -254,8 +252,8 @@ class VMwareVCDriver(driver.ComputeDriver):
             if not CONF.vmware.pbm_default_policy:
                 raise error_util.PbmDefaultPolicyUnspecified()
             if not pbm.get_profile_id_by_name(
-                            self._session,
-                            CONF.vmware.pbm_default_policy):
+                    self._session,
+                    CONF.vmware.pbm_default_policy):
                 raise error_util.PbmDefaultPolicyDoesNotExist()
             if CONF.vmware.datastore_regex:
                 LOG.warning(_LW(
@@ -363,7 +361,6 @@ class VMwareVCDriver(driver.ComputeDriver):
     def neutron_bind_port(self, context, instance, host):
         self.network_api.migrate_instance_finish(context, instance, host)
 
-
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
                        migrate_data=None, server_data=None):
@@ -432,11 +429,10 @@ class VMwareVCDriver(driver.ComputeDriver):
                         else:
                             continue
 
-
         networks = self._session._call_method(vutil,
-                                   'get_object_property',
+                                              'get_object_property',
                                               vutil.get_moref(data['host'], "HostSystem"),
-                                   'network')
+                                              'network')
 
         data['portgroup_key'] = []
         data['dvs_uuid'] = []
@@ -444,19 +440,18 @@ class VMwareVCDriver(driver.ComputeDriver):
         for network in networks[0]:
             if network._type != 'Network':
                 net = self._session._call_method(vutil,
-                                           'get_object_property',
-                                            network,
-                                           'config')
+                                                 'get_object_property',
+                                                 network,
+                                                 'config')
 
                 if net.name == CONF.vmware.default_portgroup:
                     data['portgroup_key'].append(net.key)
                     data['portgroup_name'].append(net.name)
                     dvs_uuid = self._session._call_method(vutil,
-                                               'get_object_property',
-                                                net.distributedVirtualSwitch,
-                                               'uuid')
+                                                          'get_object_property',
+                                                          net.distributedVirtualSwitch,
+                                                          'uuid')
                     data['dvs_uuid'].append(dvs_uuid)
-
 
         data['networks'] = networks
 
@@ -472,14 +467,13 @@ class VMwareVCDriver(driver.ComputeDriver):
     def _check_host_status(self, host):
         LOG.debug(host)
         host_status = self._session._call_method(vutil,
-                                   'get_object_property',
-                                   host,
-                                   'runtime')
+                                                 'get_object_property',
+                                                 host,
+                                                 'runtime')
 
         if host_status.powerState.lower() != "poweredon" or host_status.connectionState.lower() != 'connected':
             return False
         return True
-
 
     def unfilter_instance(self, instance, network_info):
         pass
@@ -523,23 +517,23 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def _get_available_resources(self, host_stats):
         return {'vcpus': host_stats['vcpus'],
-               'memory_mb': host_stats['host_memory_total'],
-               'local_gb': host_stats['disk_total'],
-               'vcpus_used': 0,
-               'memory_mb_used': host_stats['host_memory_total'] -
-                                 host_stats['host_memory_free'],
-               'local_gb_used': host_stats['disk_used'],
-               'hypervisor_type': host_stats['hypervisor_type'],
-               'hypervisor_version': host_stats['hypervisor_version'],
-               'hypervisor_hostname': host_stats['hypervisor_hostname'],
+                'memory_mb': host_stats['host_memory_total'],
+                'local_gb': host_stats['disk_total'],
+                'vcpus_used': 0,
+                'memory_mb_used': host_stats['host_memory_total'] -
+                                  host_stats['host_memory_free'],
+                'local_gb_used': host_stats['disk_used'],
+                'hypervisor_type': host_stats['hypervisor_type'],
+                'hypervisor_version': host_stats['hypervisor_version'],
+                'hypervisor_hostname': host_stats['hypervisor_hostname'],
                 # The VMWare driver manages multiple hosts, so there are
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
                 # model of the "host"
-               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
-               'supported_instances': host_stats['supported_instances'],
-               'numa_topology': None,
-               }
+                'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
+                'supported_instances': host_stats['supported_instances'],
+                'numa_topology': None,
+                }
 
     def get_available_resource(self, nodename=None):
         """Retrieve resource info.
@@ -565,7 +559,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         self.datastore_free_space = 0
         self.datastore_total = 0
 
-        cluster_data = self._session._call_method(vim_util, 'get_object_properties_dict', cluster_ref, ['host','datastore','summary'])
+        cluster_data = self._session._call_method(vim_util, 'get_object_properties_dict', cluster_ref,
+                                                  ['host', 'datastore', 'summary'])
 
         for datastore in cluster_data['datastore'][0]:
             datastore_capacity = self._session._call_method(
@@ -593,7 +588,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         self.cluster_metrics['memory_free'] = self.cluster_metrics['memory_total'] - self.cluster_metrics['memory_used']
         self.cluster_metrics['datastore_total'] = float(self.datastore_total / units.Gi)
         self.cluster_metrics['datastore_used'] = float((self.datastore_total - self.datastore_free_space) / units.Gi)
-        self.cluster_metrics['datastore_free'] = self.cluster_metrics['datastore_total'] - self.cluster_metrics['datastore_used']
+        self.cluster_metrics['datastore_free'] = self.cluster_metrics['datastore_total'] - self.cluster_metrics[
+            'datastore_used']
 
         perc = float(self.cluster_metrics['cpu_used']) / float(self.cluster_metrics['cpu_total'])
         self.cluster_metrics['cpu_percent'] = int(perc * 100)
@@ -601,7 +597,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         perc = float(self.cluster_metrics['memory_used'] / self.cluster_metrics['memory_total'])
         self.cluster_metrics['memory_percent'] = int(perc * 100)
 
-        perc = float(self.cluster_metrics['datastore_used']/units.G) / float(self.cluster_metrics['datastore_total']/units.G)
+        perc = float(self.cluster_metrics['datastore_used'] / units.G) / float(
+            self.cluster_metrics['datastore_total'] / units.G)
         self.cluster_metrics['datastore_percent'] = int(perc * 100)
 
         return self.cluster_metrics
@@ -832,8 +829,8 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         for vm_net in vm_networks[0]:
             network = self._session._call_method(vutil,
-                                       'get_object_property',
-                                        vm_net, 'name')
+                                                 'get_object_property',
+                                                 vm_net, 'name')
             networks.append(network)
         return networks
 
@@ -842,6 +839,7 @@ class VMwareAPISession(api.VMwareAPISession):
     """Sets up a session with the VC/ESX host and handles all
     the calls made to the host.
     """
+
     def __init__(self, host_ip=CONF.vmware.host_ip,
                  host_port=CONF.vmware.host_port,
                  username=CONF.vmware.host_username,
@@ -852,18 +850,18 @@ class VMwareAPISession(api.VMwareAPISession):
                  insecure=CONF.vmware.insecure,
                  pool_size=CONF.vmware.connection_pool_size):
         super(VMwareAPISession, self).__init__(
-                host=host_ip,
-                port=host_port,
-                server_username=username,
-                server_password=password,
-                api_retry_count=retry_count,
-                task_poll_interval=CONF.vmware.task_poll_interval,
-                scheme=scheme,
-                create_session=True,
-                wsdl_loc=CONF.vmware.wsdl_location,
-                cacert=cacert,
-                insecure=insecure,
-                pool_size=pool_size)
+            host=host_ip,
+            port=host_port,
+            server_username=username,
+            server_password=password,
+            api_retry_count=retry_count,
+            task_poll_interval=CONF.vmware.task_poll_interval,
+            scheme=scheme,
+            create_session=True,
+            wsdl_loc=CONF.vmware.wsdl_location,
+            cacert=cacert,
+            insecure=insecure,
+            pool_size=pool_size)
 
     def _is_vim_object(self, module):
         """Check if the module is a VIM Object instance."""
