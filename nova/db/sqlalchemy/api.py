@@ -411,9 +411,26 @@ def convert_objects_related_datetimes(values, *datetime_keys):
 
 
 def _sync_instances(context, project_id, user_id):
-    return dict(zip(('instances', 'cores', 'ram'),
-                    _instance_data_get_for_user(context, project_id, user_id)))
-
+    query = '''
+      SELECT instance_type_id, COUNT(id), SUM(vcpus), SUM(memory_mb),
+        EXISTS(SELECT instance_type_id
+               FROM instance_type_extra_specs
+               WHERE instance_type_id = instances.instance_type_id
+               AND key = 'quota:separate' AND value = 'true')
+      FROM instances WHERE project_id = :pid AND user_id = :uid AND deleted = 0
+      GROUP BY instance_type_id
+    '''
+    stats = context.session.execute(query, { 'pid': project_id, 'uid': user_id })
+    output = { "instances": 0, "cores": 0, "ram": 0 }
+    for flavor_id, count, vcpus, memory_mb, separate in result:
+        output["cores"] += vcpus
+        output["ram"]   += memory_mb
+        if separate:
+            key = "instances_" + flavor_id
+            output[key] = output.get(key, 0) + count
+        else:
+            output["instances"] += count
+    return
 
 def _sync_floating_ips(context, project_id, user_id):
     return dict(floating_ips=_floating_ip_count_by_project(

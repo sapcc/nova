@@ -24,6 +24,7 @@ from oslo_utils import importutils
 from oslo_utils import timeutils
 import six
 
+from nova import context
 from nova import db
 from nova import exception
 from nova.i18n import _LE
@@ -966,7 +967,7 @@ class NoopQuotaDriver(object):
 class BaseResource(object):
     """Describe a single resource for quota checking."""
 
-    def __init__(self, name, flag=None):
+    def __init__(self, name, flag=None, default=None):
         """Initializes a Resource.
 
         :param name: The name of the resource, i.e., "instances".
@@ -977,6 +978,7 @@ class BaseResource(object):
 
         self.name = name
         self.flag = flag
+        self.default = default
 
     def quota(self, driver, context, **kwargs):
         """Given a driver and context, obtain the quota for this
@@ -1028,14 +1030,15 @@ class BaseResource(object):
     def default(self):
         """Return the default value of the quota."""
 
-        return CONF[self.flag] if self.flag else -1
+        return CONF[self.flag] if self.flag else \
+            (self.default if self.default is not None else -1)
 
 
 class ReservableResource(BaseResource):
     """Describe a reservable resource."""
     valid_method = 'reserve'
 
-    def __init__(self, name, sync, flag=None):
+    def __init__(self, name, sync, flag=None, default=None):
         """Initializes a ReservableResource.
 
         Reservable resources are those resources which directly
@@ -1065,7 +1068,7 @@ class ReservableResource(BaseResource):
                      which specifies the default value of the quota
                      for this resource.
         """
-        super(ReservableResource, self).__init__(name, flag=flag)
+        super(ReservableResource, self).__init__(name, flag=flag, default=default)
         self.sync = sync
 
 
@@ -1461,6 +1464,7 @@ def _server_group_count_members_by_user(context, group, user_id):
 QUOTAS = QuotaEngine()
 
 
+# these resources are always there
 resources = [
     ReservableResource('instances', '_sync_instances', 'quota_instances'),
     ReservableResource('cores', '_sync_instances', 'quota_cores'),
@@ -1488,7 +1492,32 @@ resources = [
                       'quota_server_group_members'),
     ]
 
+# construct resources for each flavor that has a separate quota
+# (also for deleted flavors that still have running instances)
+if ctxt is None:
+    ctxt = context.get_admin_context()
+query = '''
+    SELECT s.instance_type_id FROM instance_type_extra_specs s
+    WHERE s.key = 'quota:separate' AND s.value = 'true'
+      AND (s.deleted = 0 OR EXISTS(
+        SELECT 1 FROM instances i
+        WHERE i.deleted = 0 AND i.instance_type_id = s.instance_type_id
+      ))
+'''
+for flavor_id in ctxt.session.execute(query):
+    a.append(ReservableResource(
+        'instances_' + flavor_id,
+        '_sync_instances',
+        flag=None, default=0,
+    ))
 
+# NOTE: An earlier version of this code included the capability to reload the
+# resources list when flavors were changed by a user. I removed this since it
+# would only trigger on the nova-api pod where the request comes in, so the
+# other pods would not be updated and the API pods would become inconsistent
+# with each other. Without the automatic reloading logic, all API pods need to
+# be restarted when a flavor's "quota:separate" extra-spec is changed, but at
+# least that behavior is deterministic and consistent.
 QUOTAS.register_resources(resources)
 
 
