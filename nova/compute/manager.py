@@ -899,11 +899,10 @@ class ComputeManager(manager.Manager):
         instance.destroy()
         bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                 context, instance.uuid)
-        quotas = objects.Quotas(context=context)
         project_id, user_id = objects.quotas.ids_from_instance(context,
                                                                instance)
-        quotas.reserve(project_id=project_id, user_id=user_id, instances=-1,
-                       cores=-instance.vcpus, ram=-instance.memory_mb)
+
+        quotas = self._create_reservations(context, instance, project_id, user_id)
         self._complete_deletion(context,
                                 instance,
                                 bdms,
@@ -930,12 +929,16 @@ class ComputeManager(manager.Manager):
         vcpus = instance.vcpus
         mem_mb = instance.memory_mb
 
+        quota_key_instances = 'instances'
+        if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
+            quota_key_instances = 'instances_' + instance.flavor.flavorid
+        deltas = {
+            quota_key_instances: -1,
+            'cores': -vcpus,
+            'ram': -mem_mb,
+        }
         quotas = objects.Quotas(context=context)
-        quotas.reserve(project_id=project_id,
-                       user_id=user_id,
-                       instances=-1,
-                       cores=-vcpus,
-                       ram=-mem_mb)
+        quotas.reserve(project_id=project_id, user_id=user_id, **deltas)
         return quotas
 
     def _init_instance(self, context, instance):
