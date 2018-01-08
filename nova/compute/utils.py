@@ -438,7 +438,12 @@ def resize_quota_delta(context, new_flavor, old_flavor, sense, compare):
                     -1 indicates negative deltas
     """
     def _quota_delta(resource):
-        return sense * (new_flavor[resource] - old_flavor[resource])
+        old_reserve = old_flavor['extra_specs'].get('quota:no_reserve_cpu_ram', 'false') != 'true'
+        new_reserve = new_flavor['extra_specs'].get('quota:no_reserve_cpu_ram', 'false') != 'true'
+        old_factor = 1 if old_reserve else 0
+        new_factor = 1 if new_reserve else 0
+        return sense * (new_flavor[resource] * new_factor - old_flavor[resource] * old_factor)
+
 
     deltas = {}
     if compare * _quota_delta('vcpus') > 0:

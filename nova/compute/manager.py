@@ -932,11 +932,10 @@ class ComputeManager(manager.Manager):
         quota_key_instances = 'instances'
         if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
             quota_key_instances = 'instances_' + instance.flavor.flavorid
-        deltas = {
-            quota_key_instances: -1,
-            'cores': -vcpus,
-            'ram': -mem_mb,
-        }
+        deltas = { quota_key_instances: -1 }
+        if instance.flavor.extra_specs.get('quota:no_reserve_cpu_ram', 'false') != 'true':
+            deltas.update(cores=-vcpus, ram=-mem_mb)
+
         quotas = objects.Quotas(context=context)
         quotas.reserve(project_id=project_id, user_id=user_id, **deltas)
         return quotas
