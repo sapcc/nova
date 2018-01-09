@@ -56,6 +56,15 @@ class UsedLimitsController(wsgi.Controller):
                             if self._reserved(req) else 0)
                 used_limits[display_name] = quotas[key]['in_use'] + reserved
 
+        # extension to report per-flavor instance quota usage
+        per_flavor_used_limits = {}
+        for key, stat in quotas:
+            if key.startswith('instances_'):
+                flavorname = key[10:]
+                reserved = stat['reserved'] if self._reserved(req) else 0
+                per_flavor_used_limits[flavorname] = stat['in_use'] + value
+        used_limits['totalInstancesUsedPerFlavor'] = per_flavor_used_limits
+
         resp_obj.obj['limits']['absolute'].update(used_limits)
 
     def _project_id(self, context, req):

@@ -58,11 +58,19 @@ class ViewBuilder(object):
         For example: {"ram": 512, "gigabytes": 1024}.
 
         """
+        per_flavor_limits = {}
         limits = {}
         for name, value in six.iteritems(absolute_limits):
             if name in self.limit_names and value is not None:
                 for limit_name in self.limit_names[name]:
                     limits[limit_name] = value
+
+            # extension to report per-flavor instance quotas
+            elif name.startswith('instances_'):
+                flavorname = name[10:]
+                per_flavor_limits[flavorname] = value
+
+        limits['maxTotalInstancesPerFlavor'] = per_flavor_limits
         return limits
 
     def _build_rate_limits(self, rate_limits):
