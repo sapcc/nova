@@ -323,7 +323,7 @@ class API(base.Base):
 
         quota_key_instances = 'instances'
         if instance_type['extra_specs'].get('quota:separate', 'false') == 'true':
-            quota_key_instances = 'instances_' + instance_type['flavorid']
+            quota_key_instances = 'instances_' + instance_type['name']
         deltas = { quota_key_instances: max_count }
         reserve_cpu_ram = instance_type['extra_specs'].get('quota:no_reserve_cpu_ram', 'false') != 'true'
         if reserve_cpu_ram:
@@ -1780,13 +1780,13 @@ class API(base.Base):
             vram_mb = old_flavor.extra_specs.get('hw_video:ram_max_mb', 0)
             instance_memory_mb = old_flavor.memory_mb + vram_mb
             if old_flavor.extra_specs.get('quota:separate', 'false') == 'true':
-                quota_key_instances = 'instances_' + old_flavor.flavorid
+                quota_key_instances = 'instances_' + old_flavor.name
             reserve_cpu_ram = old_flavor.extra_specs.get('quota:no_reserve_cpu_ram', 'false') != 'true'
         else:
             instance_vcpus = instance.vcpus
             instance_memory_mb = instance.memory_mb
             if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
-                quota_key_instances = 'instances_' + instance.flavor.flavorid
+                quota_key_instances = 'instances_' + instance.flavor.name
             reserve_cpu_ram = instance.flavor.extra_specs.get('quota:no_reserve_cpu_ram', 'false') != 'true'
 
         deltas = { quota_key_instances: -1 }

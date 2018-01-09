@@ -1497,7 +1497,7 @@ resources = [
 if ctxt is None:
     ctxt = context.get_admin_context()
 query = '''
-    SELECT DISTINCT t.flavorid FROM instance_types t
+    SELECT DISTINCT t.name FROM instance_types t
     JOIN instance_type_extra_specs s ON t.id = s.instance_type_id
     WHERE s.key = 'quota:separate' AND s.value = 'true'
       AND (s.deleted = 0 OR EXISTS(
@@ -1507,7 +1507,7 @@ query = '''
 '''
 for flavor_id in ctxt.session.execute(query):
     a.append(ReservableResource(
-        'instances_' + flavor_id,
+        'instances_' + flavor_name,
         '_sync_instances',
         flag=None, default=0,
     ))

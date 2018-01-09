@@ -454,14 +454,14 @@ def resize_quota_delta(context, new_flavor, old_flavor, sense, compare):
     old_separate = old_flavor['extra_specs'].get('quota:separate', 'false') == 'true'
     new_separate = new_flavor['extra_specs'].get('quota:separate', 'false') == 'true'
     if old_separate and not new_separate:
-        deltas['instances_' + old_flavor['flavorid']] = -1 * sense
+        deltas['instances_' + old_flavor['name']] = -1 * sense
         deltas['instances'] = +1 * sense
     if not old_separate and new_separate:
         deltas['instances'] = -1 * sense
-        deltas['instances_' + new_flavor['flavorid']] = +1 * sense
+        deltas['instances_' + new_flavor['name']] = +1 * sense
     if old_separate and new_separate:
-        deltas['instances_' + old_flavor['flavorid']] = -1 * sense
-        deltas['instances_' + new_flavor['flavorid']] = +1 * sense
+        deltas['instances_' + old_flavor['name']] = -1 * sense
+        deltas['instances_' + new_flavor['name']] = +1 * sense
 
     return deltas
 
