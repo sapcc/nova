@@ -933,7 +933,7 @@ class ComputeManager(manager.Manager):
         if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
             quota_key_instances = 'instances_' + instance.flavor.name
         deltas = { quota_key_instances: -1 }
-        if instance.flavor.extra_specs.get('quota:no_reserve_cpu_ram', 'false') != 'true':
+        if instance.flavor.extra_specs.get('quota:instance_only', 'false') != 'true':
             deltas.update(cores=-vcpus, ram=-mem_mb)
 
         quotas = objects.Quotas(context=context)

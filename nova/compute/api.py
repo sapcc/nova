@@ -325,7 +325,7 @@ class API(base.Base):
         if instance_type['extra_specs'].get('quota:separate', 'false') == 'true':
             quota_key_instances = 'instances_' + instance_type['name']
         deltas = { quota_key_instances: max_count }
-        reserve_cpu_ram = instance_type['extra_specs'].get('quota:no_reserve_cpu_ram', 'false') != 'true'
+        reserve_cpu_ram = instance_type['extra_specs'].get('quota:instance_only', 'false') != 'true'
         if reserve_cpu_ram:
             deltas.update(cores=req_cores, ram=req_ram)
         # TODO: adjust _get_headroom() to not fail when cores/ram/instances keys are missing
@@ -1781,13 +1781,13 @@ class API(base.Base):
             instance_memory_mb = old_flavor.memory_mb + vram_mb
             if old_flavor.extra_specs.get('quota:separate', 'false') == 'true':
                 quota_key_instances = 'instances_' + old_flavor.name
-            reserve_cpu_ram = old_flavor.extra_specs.get('quota:no_reserve_cpu_ram', 'false') != 'true'
+            reserve_cpu_ram = old_flavor.extra_specs.get('quota:instance_only', 'false') != 'true'
         else:
             instance_vcpus = instance.vcpus
             instance_memory_mb = instance.memory_mb
             if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
                 quota_key_instances = 'instances_' + instance.flavor.name
-            reserve_cpu_ram = instance.flavor.extra_specs.get('quota:no_reserve_cpu_ram', 'false') != 'true'
+            reserve_cpu_ram = instance.flavor.extra_specs.get('quota:instance_only', 'false') != 'true'
 
         deltas = { quota_key_instances: -1 }
         if reserve_cpu_ram:
