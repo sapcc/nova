@@ -25,6 +25,7 @@ class ExtendedLimitsController(wsgi.Controller):
     def index(self, req, resp_obj):
 
         context = req.environ['nova.context']
+        QUOTAS.initialize()
         quotas = QUOTAS.get_project_quotas(context, context.project_id,
                                            usages=False)
         abs = resp_obj.obj.get('limits', {}).get('absolute', {})

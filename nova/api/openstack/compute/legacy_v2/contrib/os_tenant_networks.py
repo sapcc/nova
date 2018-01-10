@@ -112,6 +112,7 @@ class NetworkController(object):
         reservation = None
         try:
             if CONF.enable_network_quota:
+                QUOTAS.initialize()
                 reservation = QUOTAS.reserve(context, networks=-1)
         except Exception:
             reservation = None
@@ -179,6 +180,7 @@ class NetworkController(object):
         networks = []
         try:
             if CONF.enable_network_quota:
+                QUOTAS.initialize()
                 reservation = QUOTAS.reserve(context, networks=1)
         except exception.OverQuota:
             msg = _("Quota exceeded, too many networks.")

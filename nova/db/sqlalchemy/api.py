@@ -1113,6 +1113,7 @@ def floating_ip_bulk_destroy(context, ips):
     # been committed first.
     for project_id, count in project_id_to_quota_count.items():
         try:
+            quota.QUOTAS.initialize()
             reservations = quota.QUOTAS.reserve(context,
                                                 project_id=project_id,
                                                 floating_ips=count)

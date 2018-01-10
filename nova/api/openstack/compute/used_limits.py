@@ -40,6 +40,7 @@ class UsedLimitsController(wsgi.Controller):
     def index(self, req, resp_obj):
         context = req.environ['nova.context']
         project_id = self._project_id(context, req)
+        QUOTAS.initialize()
         quotas = QUOTAS.get_project_quotas(context, project_id, usages=True)
         quota_map = {
             'totalRAMUsed': 'ram',

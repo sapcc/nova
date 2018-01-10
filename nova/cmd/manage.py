@@ -257,6 +257,7 @@ class ProjectCommands(object):
         """
 
         ctxt = context.get_admin_context()
+        QUOTAS.initialize()
         if user_id:
             quota = QUOTAS.get_user_quotas(ctxt, project_id, user_id)
         else:

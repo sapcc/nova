@@ -46,6 +46,7 @@ class QuotaSetsController(wsgi.Controller):
 
     def __init__(self, ext_mgr):
         self.ext_mgr = ext_mgr
+        QUOTAS.initialize()
         self.supported_quotas = QUOTAS.resources
         for resource, extension in EXTENDED_QUOTAS.items():
             if not self.ext_mgr.is_loaded(extension):
@@ -94,6 +95,7 @@ class QuotaSetsController(wsgi.Controller):
             raise webob.exc.HTTPBadRequest(explanation=msg)
 
     def _get_quotas(self, context, id, user_id=None, usages=False):
+        QUOTAS.initialize()
         if user_id:
             values = QUOTAS.get_user_quotas(context, id, user_id,
                                             usages=usages)
@@ -155,6 +157,7 @@ class QuotaSetsController(wsgi.Controller):
             # NOTE(alex_xu): back-compatible with db layer hard-code admin
             # permission checks.
             nova.context.authorize_project_context(context, id)
+            QUOTAS.initialize()
             settable_quotas = QUOTAS.get_settable_quotas(context, project_id,
                                                          user_id=user_id)
         except exception.Forbidden:
@@ -223,6 +226,7 @@ class QuotaSetsController(wsgi.Controller):
     def defaults(self, req, id):
         context = req.environ['nova.context']
         authorize_show(context)
+        QUOTAS.initialize()
         values = QUOTAS.get_defaults(context)
         return self._format_quota_set(id, values)
 
@@ -242,6 +246,7 @@ class QuotaSetsController(wsgi.Controller):
                 # only admins can call this method while the policy could be
                 # changed.
                 nova.context.require_admin_context(context)
+                QUOTAS.initialize()
                 if user_id:
                     QUOTAS.destroy_all_by_project_and_user(context,
                                                            id, user_id)

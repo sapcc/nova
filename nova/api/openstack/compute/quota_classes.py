@@ -42,6 +42,7 @@ class QuotaClassSetsController(wsgi.Controller):
     supported_quotas = []
 
     def __init__(self, **kwargs):
+        QUOTAS.initialize()
         self.supported_quotas = QUOTAS.resources
         extension_info = kwargs.pop('extension_info').get_extensions()
         for resource, extension in EXTENDED_QUOTAS.items():
@@ -66,6 +67,7 @@ class QuotaClassSetsController(wsgi.Controller):
     def show(self, req, id):
         context = req.environ['nova.context']
         authorize(context, action='show', target={'quota_class': id})
+        QUOTAS.initialize()
         values = QUOTAS.get_class_quotas(context, id)
         return self._format_quota_set(id, values)
 
@@ -89,6 +91,7 @@ class QuotaClassSetsController(wsgi.Controller):
             except exception.QuotaClassNotFound:
                 db.quota_class_create(context, quota_class, key, value)
 
+        QUOTAS.initialize()
         values = QUOTAS.get_class_quotas(context, quota_class)
         return self._format_quota_set(None, values)
 

@@ -86,6 +86,7 @@ class Quotas(base.NovaObject):
     @base.remotable
     def reserve(self, expire=None, project_id=None, user_id=None,
                 **deltas):
+        quota.QUOTAS.initialize()
         reservations = quota.QUOTAS.reserve(self._context, expire=expire,
                                             project_id=project_id,
                                             user_id=user_id,
@@ -99,6 +100,7 @@ class Quotas(base.NovaObject):
     def commit(self):
         if not self.reservations:
             return
+        quota.QUOTAS.initialize()
         quota.QUOTAS.commit(self._context, self.reservations,
                             project_id=self.project_id,
                             user_id=self.user_id)
@@ -110,6 +112,7 @@ class Quotas(base.NovaObject):
         """Rollback quotas."""
         if not self.reservations:
             return
+        quota.QUOTAS.initialize()
         quota.QUOTAS.rollback(self._context, self.reservations,
                               project_id=self.project_id,
                               user_id=self.user_id)
@@ -119,12 +122,14 @@ class Quotas(base.NovaObject):
     @base.remotable_classmethod
     def limit_check(cls, context, project_id=None, user_id=None, **values):
         """Check quota limits."""
+        quota.QUOTAS.initialize()
         return quota.QUOTAS.limit_check(
             context, project_id=project_id, user_id=user_id, **values)
 
     @base.remotable_classmethod
     def count(cls, context, resource, *args, **kwargs):
         """Count a resource."""
+        quota.QUOTAS.initialize()
         return quota.QUOTAS.count(
             context, resource, *args, **kwargs)
 
