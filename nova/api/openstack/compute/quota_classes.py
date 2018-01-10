@@ -39,15 +39,16 @@ authorize = extensions.os_compute_authorizer(ALIAS)
 
 class QuotaClassSetsController(wsgi.Controller):
 
-    supported_quotas = []
-
     def __init__(self, **kwargs):
+        self.__extension_info = kwargs.pop('extension_info').get_extensions()
+
+    def _supported_quotas(self):
         QUOTAS.initialize()
-        self.supported_quotas = QUOTAS.resources
-        extension_info = kwargs.pop('extension_info').get_extensions()
+        result = QUOTAS.resources
         for resource, extension in EXTENDED_QUOTAS.items():
             if extension not in extension_info:
-                self.supported_quotas.remove(resource)
+                result.remove(resource)
+        return result
 
     def _format_quota_set(self, quota_class, quota_set):
         """Convert the quota object to a result dict."""
@@ -57,7 +58,7 @@ class QuotaClassSetsController(wsgi.Controller):
         else:
             result = {}
 
-        for resource in self.supported_quotas:
+        for resource in self._supported_quotas():
             if resource in quota_set:
                 result[resource] = quota_set[resource]
 

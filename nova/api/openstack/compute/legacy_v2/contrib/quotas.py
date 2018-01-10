@@ -42,15 +42,16 @@ authorize_delete = extensions.extension_authorizer('compute', 'quotas:delete')
 
 class QuotaSetsController(wsgi.Controller):
 
-    supported_quotas = []
-
     def __init__(self, ext_mgr):
         self.ext_mgr = ext_mgr
+
+    def _supported_quotas(self):
         QUOTAS.initialize()
-        self.supported_quotas = QUOTAS.resources
+        result = QUOTAS.resources
         for resource, extension in EXTENDED_QUOTAS.items():
             if not self.ext_mgr.is_loaded(extension):
-                self.supported_quotas.remove(resource)
+                result.remove(resource)
+        return result
 
     def _format_quota_set(self, project_id, quota_set):
         """Convert the quota object to a result dict."""
@@ -60,7 +61,7 @@ class QuotaSetsController(wsgi.Controller):
         else:
             result = {}
 
-        for resource in self.supported_quotas:
+        for resource in self._supported_quotas():
             if resource in quota_set:
                 result[resource] = quota_set[resource]
 
@@ -171,8 +172,9 @@ class QuotaSetsController(wsgi.Controller):
         # NOTE(dims): Pass #1 - In this loop for quota_set.items(), we figure
         # out if we have bad keys or if we need to forcibly set quotas or
         # if some of the values for the quotas can be converted to integers.
+        supported_quotas = self._supported_quotas()
         for key, value in quota_set.items():
-            if (key not in self.supported_quotas
+            if (key not in supported_quotas
                 and key not in NON_QUOTA_KEYS):
                 bad_keys.append(key)
                 continue
