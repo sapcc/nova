@@ -7103,4 +7103,5 @@ def get_flavornames_with_separate_quota(context):
             WHERE i.deleted = 0 AND i.instance_type_id = t.id
           ))
     '''
-    return list(context.session.execute(query))
+    result = context.session.execute(query)
+    return [x[0] for x in result]

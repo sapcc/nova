@@ -1159,7 +1159,7 @@ class QuotaEngine(object):
             # (also for deleted flavors that still have running instances)
             ctxt = context.get_admin_context()
             for flavor_name in db.get_flavornames_with_separate_quota(ctxt):
-                a.append(ReservableResource(
+                resources.append(ReservableResource(
                     'instances_' + flavor_name,
                     '_sync_instances',
                     flag=None, default=0,
