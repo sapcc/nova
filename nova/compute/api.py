@@ -328,7 +328,6 @@ class API(base.Base):
         reserve_cpu_ram = instance_type['extra_specs'].get('quota:instance_only', 'false') != 'true'
         if reserve_cpu_ram:
             deltas.update(cores=req_cores, ram=req_ram)
-        # TODO: adjust _get_headroom() to not fail when cores/ram/instances keys are missing
 
         # Check the quota
         try:
@@ -343,10 +342,10 @@ class API(base.Base):
 
             allowed = headroom[quota_key_instances]
             # Reduce 'allowed' instances in line with the cores & ram headroom
-            if instance_type['vcpus']:
+            if instance_type['vcpus'] and 'cores' in headroom:
                 allowed = min(allowed,
                               headroom['cores'] // instance_type['vcpus'])
-            if instance_type['memory_mb']:
+            if instance_type['memory_mb'] and 'ram' in headroom:
                 allowed = min(allowed,
                               headroom['ram'] // (instance_type['memory_mb'] +
                                                   vram_mb))
@@ -364,8 +363,9 @@ class API(base.Base):
 
             num_instances = (str(min_count) if min_count == max_count else
                 "%s-%s" % (min_count, max_count))
-            requested = dict(instances=num_instances, cores=req_cores,
-                             ram=req_ram)
+            requested = { quota_key_instances: num_instances }
+            if reserve_cpu_ram:
+                requested.update(cores=req_cores, ram=req_ram)
             (overs, reqs, total_alloweds, useds) = self._get_over_quota_detail(
                 headroom, overs, quotas, requested)
             params = {'overs': overs, 'pid': context.project_id,

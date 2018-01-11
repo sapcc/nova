@@ -422,7 +422,7 @@ def _sync_instances(context, project_id, user_id):
     '''
     stats = context.session.execute(query, { 'pid': project_id, 'uid': user_id })
     output = { "instances": 0, "cores": 0, "ram": 0 }
-    for flavor_name, count, vcpus, memory_mb, separate in result:
+    for flavor_name, count, vcpus, memory_mb, separate in stats:
         output["cores"] += vcpus
         output["ram"]   += memory_mb
         if separate:
