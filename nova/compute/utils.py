@@ -446,22 +446,24 @@ def resize_quota_delta(context, new_flavor, old_flavor, sense, compare):
 
 
     deltas = {}
-    if compare * _quota_delta('vcpus') > 0:
-        deltas['cores'] = _quota_delta('vcpus')
-    if compare * _quota_delta('memory_mb') > 0:
-        deltas['ram'] = _quota_delta('memory_mb')
+    def add_delta(resource, delta):
+        if compare * delta > 0:
+            deltas[resource] = delta
+
+    add_delta('cores', _quota_delta('vcpus'))
+    add_delta('ram', _quota_delta('memory_mb'))
 
     old_separate = old_flavor['extra_specs'].get('quota:separate', 'false') == 'true'
     new_separate = new_flavor['extra_specs'].get('quota:separate', 'false') == 'true'
     if old_separate and not new_separate:
-        deltas['instances_' + old_flavor['name']] = -1 * sense
-        deltas['instances'] = +1 * sense
+        add_delta('instances_' + old_flavor['name'], -1 * sense)
+        add_delta('instances', +1 * sense)
     if not old_separate and new_separate:
-        deltas['instances'] = -1 * sense
-        deltas['instances_' + new_flavor['name']] = +1 * sense
+        add_delta('instances', -1 * sense)
+        add_delta('instances_' + new_flavor['name'], +1 * sense)
     if old_separate and new_separate:
-        deltas['instances_' + old_flavor['name']] = -1 * sense
-        deltas['instances_' + new_flavor['name']] = +1 * sense
+        add_delta('instances_' + old_flavor['name'], -1 * sense)
+        add_delta('instances_' + new_flavor['name'], +1 * sense)
 
     return deltas
 
