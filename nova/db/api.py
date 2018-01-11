@@ -2031,3 +2031,6 @@ def instance_tag_delete_all(context, instance_uuid):
 def instance_tag_exists(context, instance_uuid, tag):
     """Check if specified tag exist on the instance."""
     return IMPL.instance_tag_exists(context, instance_uuid, tag)
+
+def get_flavornames_with_separate_quota(context):
+    return IMPL.get_flavornames_with_separate_quota(context)

@@ -7091,3 +7091,16 @@ def instance_tag_exists(context, instance_uuid, tag):
     q = context.session.query(models.Tag).filter_by(
         resource_id=instance_uuid, tag=tag)
     return context.session.query(q.exists()).scalar()
+
+@main_context_manager.reader
+def get_flavornames_with_separate_quota(context):
+    query = '''
+        SELECT DISTINCT t.name FROM instance_types t
+        JOIN instance_type_extra_specs s ON t.id = s.instance_type_id
+        WHERE s.key = 'quota:separate' AND s.value = 'true'
+          AND (s.deleted = 0 OR EXISTS(
+            SELECT 1 FROM instances i
+            WHERE i.deleted = 0 AND i.instance_type_id = t.id
+          ))
+    '''
+    return list(context.session.execute(query))

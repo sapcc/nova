@@ -1157,16 +1157,8 @@ class QuotaEngine(object):
 
             # construct resources for each flavor that has a separate quota
             # (also for deleted flavors that still have running instances)
-            query = '''
-                SELECT DISTINCT t.name FROM instance_types t
-                JOIN instance_type_extra_specs s ON t.id = s.instance_type_id
-                WHERE s.key = 'quota:separate' AND s.value = 'true'
-                  AND (s.deleted = 0 OR EXISTS(
-                    SELECT 1 FROM instances i
-                    WHERE i.deleted = 0 AND i.instance_type_id = t.id
-                  ))
-            '''
-            for flavor_id in context.get_admin_context().session.execute(query):
+            ctxt = context.get_admin_context()
+            for flavor_name in db.get_flavornames_with_separate_quota(ctxt):
                 a.append(ReservableResource(
                     'instances_' + flavor_name,
                     '_sync_instances',
