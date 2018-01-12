@@ -1000,8 +1000,8 @@ def clone_vm_spec(client_factory, location,
     return clone_spec
 
 
-def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None, host=None,
-                     disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
+def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
+                     disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None, service=None):
     """Builds the VM relocation spec."""
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
     rel_spec.datastore = datastore
