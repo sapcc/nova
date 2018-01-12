@@ -57,6 +57,8 @@ class UsedLimitsController(wsgi.Controller):
                             if self._reserved(req) else 0)
                 used_limits[display_name] = quotas[key]['in_use'] + reserved
 
+        resp_obj.obj['limits']['absolute'].update(used_limits)
+
         # extension to report per-flavor instance quota usage
         per_flavor = resp_obj.obj['limits']['absolutePerFlavor']
         for key, stat in six.iteritems(quotas):
