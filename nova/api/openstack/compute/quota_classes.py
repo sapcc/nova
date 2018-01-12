@@ -46,7 +46,7 @@ class QuotaClassSetsController(wsgi.Controller):
         QUOTAS.initialize()
         result = QUOTAS.resources
         for resource, extension in EXTENDED_QUOTAS.items():
-            if extension not in extension_info:
+            if extension not in self.__extension_info:
                 result.remove(resource)
         return result
 
