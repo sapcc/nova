@@ -5,7 +5,7 @@ def _build_constraint(migrate_engine):
     meta = MetaData()
     meta.bind = migrate_engine
     table = Table('quota_usages', meta, autoload=True)
-    cons = UniqueConstraint(
+    return UniqueConstraint(
         'project_id', 'user_id', 'resource', 'deleted',
         table=table,
     )
