@@ -18,7 +18,6 @@ import six
 
 from nova import utils
 
-
 class ViewBuilder(object):
     """OpenStack API base limits view builder."""
 
@@ -40,12 +39,14 @@ class ViewBuilder(object):
 
     def build(self, rate_limits, absolute_limits):
         rate_limits = self._build_rate_limits(rate_limits)
+        per_flavor_limits = self._build_absolute_limits_per_flavor(absolute_limits)
         absolute_limits = self._build_absolute_limits(absolute_limits)
 
         output = {
             "limits": {
                 "rate": rate_limits,
                 "absolute": absolute_limits,
+                "absolutePerFlavor": per_flavor_limits,
             },
         }
 
@@ -63,6 +64,16 @@ class ViewBuilder(object):
             if name in self.limit_names and value is not None:
                 for limit_name in self.limit_names[name]:
                     limits[limit_name] = value
+
+        return limits
+
+    def _build_absolute_limits_per_flavor(self, absolute_limits):
+        limits = {}
+        for name, value in six.iteritems(absolute_limits):
+            if name.startswith('instances_'):
+                flavorname = name[10:]
+                limits[flavorname] = { 'maxTotalInstances': value }
+
         return limits
 
     def _build_rate_limits(self, rate_limits):

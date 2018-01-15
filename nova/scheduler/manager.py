@@ -80,6 +80,7 @@ class SchedulerManager(manager.Manager):
 
     @periodic_task.periodic_task
     def _expire_reservations(self, context):
+        QUOTAS.initialize()
         QUOTAS.expire(context)
 
     @periodic_task.periodic_task(spacing=CONF.scheduler_driver_task_period,

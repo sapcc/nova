@@ -36,14 +36,16 @@ authorize = extensions.extension_authorizer('compute', 'quota_classes')
 
 class QuotaClassSetsController(wsgi.Controller):
 
-    supported_quotas = []
-
     def __init__(self, ext_mgr):
         self.ext_mgr = ext_mgr
-        self.supported_quotas = QUOTAS.resources
+
+    def _supported_quotas(self):
+        QUOTAS.initialize()
+        result = QUOTAS.resources
         for resource, extension in EXTENDED_QUOTAS.items():
             if not self.ext_mgr.is_loaded(extension):
-                self.supported_quotas.remove(resource)
+                result.remove(resource)
+        return result
 
     def _format_quota_set(self, quota_class, quota_set):
         """Convert the quota object to a result dict."""
@@ -53,7 +55,7 @@ class QuotaClassSetsController(wsgi.Controller):
         else:
             result = {}
 
-        for resource in self.supported_quotas:
+        for resource in self._supported_quotas():
             if resource in quota_set:
                 result[resource] = quota_set[resource]
 
@@ -64,6 +66,7 @@ class QuotaClassSetsController(wsgi.Controller):
         authorize(context)
         try:
             nova.context.authorize_quota_class_context(context, id)
+            QUOTAS.initialize()
             values = QUOTAS.get_class_quotas(context, id)
             return self._format_quota_set(id, values)
         except exception.Forbidden:
@@ -86,8 +89,9 @@ class QuotaClassSetsController(wsgi.Controller):
             msg = _("quota_class_set not specified")
             raise webob.exc.HTTPBadRequest(explanation=msg)
         quota_class_set = body['quota_class_set']
+        supported_quotas = self._supported_quotas()
         for key in quota_class_set.keys():
-            if key not in self.supported_quotas:
+            if key not in supported_quotas:
                 bad_keys.append(key)
                 continue
             try:
@@ -116,6 +120,7 @@ class QuotaClassSetsController(wsgi.Controller):
             except exception.QuotaClassNotFound:
                 db.quota_class_create(context, quota_class, key, value)
 
+        QUOTAS.initialize()
         values = QUOTAS.get_class_quotas(context, quota_class)
         return self._format_quota_set(None, values)
 

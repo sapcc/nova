@@ -24,6 +24,7 @@ from oslo_utils import importutils
 from oslo_utils import timeutils
 import six
 
+from nova import context
 from nova import db
 from nova import exception
 from nova.i18n import _LE
@@ -966,7 +967,7 @@ class NoopQuotaDriver(object):
 class BaseResource(object):
     """Describe a single resource for quota checking."""
 
-    def __init__(self, name, flag=None):
+    def __init__(self, name, flag=None, default=None):
         """Initializes a Resource.
 
         :param name: The name of the resource, i.e., "instances".
@@ -977,6 +978,7 @@ class BaseResource(object):
 
         self.name = name
         self.flag = flag
+        self.default_value = default
 
     def quota(self, driver, context, **kwargs):
         """Given a driver and context, obtain the quota for this
@@ -1028,14 +1030,15 @@ class BaseResource(object):
     def default(self):
         """Return the default value of the quota."""
 
-        return CONF[self.flag] if self.flag else -1
+        return CONF[self.flag] if self.flag else \
+            (self.default_value if self.default_value is not None else -1)
 
 
 class ReservableResource(BaseResource):
     """Describe a reservable resource."""
     valid_method = 'reserve'
 
-    def __init__(self, name, sync, flag=None):
+    def __init__(self, name, sync, flag=None, default=None):
         """Initializes a ReservableResource.
 
         Reservable resources are those resources which directly
@@ -1065,7 +1068,7 @@ class ReservableResource(BaseResource):
                      which specifies the default value of the quota
                      for this resource.
         """
-        super(ReservableResource, self).__init__(name, flag=flag)
+        super(ReservableResource, self).__init__(name, flag=flag, default=default)
         self.sync = sync
 
 
@@ -1120,6 +1123,59 @@ class QuotaEngine(object):
         self._resources = {}
         self._driver_cls = quota_driver_class
         self.__driver = None
+        self._initialized = False
+
+    def initialize(self):
+        if not self._initialized:
+            # these resources are always there
+            resources = [
+                ReservableResource('instances', '_sync_instances', 'quota_instances'),
+                ReservableResource('cores', '_sync_instances', 'quota_cores'),
+                ReservableResource('ram', '_sync_instances', 'quota_ram'),
+                ReservableResource('security_groups', '_sync_security_groups',
+                                   'quota_security_groups'),
+                ReservableResource('floating_ips', '_sync_floating_ips',
+                                   'quota_floating_ips'),
+                ReservableResource('fixed_ips', '_sync_fixed_ips', 'quota_fixed_ips'),
+                AbsoluteResource('metadata_items', 'quota_metadata_items'),
+                AbsoluteResource('injected_files', 'quota_injected_files'),
+                AbsoluteResource('injected_file_content_bytes',
+                                 'quota_injected_file_content_bytes'),
+                AbsoluteResource('injected_file_path_bytes',
+                                 'quota_injected_file_path_length'),
+                CountableResource('security_group_rules',
+                                  db.security_group_rule_count_by_group,
+                                  'quota_security_group_rules'),
+                CountableResource('key_pairs', _keypair_get_count_by_user,
+                                  'quota_key_pairs'),
+                ReservableResource('server_groups', '_sync_server_groups',
+                                  'quota_server_groups'),
+                CountableResource('server_group_members',
+                                  _server_group_count_members_by_user,
+                                  'quota_server_group_members'),
+                ]
+
+            # construct resources for each flavor that has a separate quota
+            # (also for deleted flavors that still have running instances)
+            ctxt = context.get_admin_context()
+            for flavor_name in db.get_flavornames_with_separate_quota(ctxt):
+                resources.append(ReservableResource(
+                    'instances_' + flavor_name,
+                    '_sync_instances',
+                    flag=None, default=0,
+                ))
+
+            # NOTE: An earlier version of this code included the capability to
+            # reload the resources list when flavors were changed by a user. I
+            # removed this since it would only trigger on the nova-api pod
+            # where the request comes in, so the other pods would not be
+            # updated and the API pods would become inconsistent with each
+            # other. Without the automatic reloading logic, all API pods need
+            # to be restarted when a flavor's "quota:separate" extra-spec is
+            # changed, but at least that behavior is deterministic and
+            # consistent.
+            self.register_resources(resources)
+            self._initialized = True
 
     @property
     def _driver(self):
@@ -1460,39 +1516,8 @@ def _server_group_count_members_by_user(context, group, user_id):
 
 QUOTAS = QuotaEngine()
 
-
-resources = [
-    ReservableResource('instances', '_sync_instances', 'quota_instances'),
-    ReservableResource('cores', '_sync_instances', 'quota_cores'),
-    ReservableResource('ram', '_sync_instances', 'quota_ram'),
-    ReservableResource('security_groups', '_sync_security_groups',
-                       'quota_security_groups'),
-    ReservableResource('floating_ips', '_sync_floating_ips',
-                       'quota_floating_ips'),
-    ReservableResource('fixed_ips', '_sync_fixed_ips', 'quota_fixed_ips'),
-    AbsoluteResource('metadata_items', 'quota_metadata_items'),
-    AbsoluteResource('injected_files', 'quota_injected_files'),
-    AbsoluteResource('injected_file_content_bytes',
-                     'quota_injected_file_content_bytes'),
-    AbsoluteResource('injected_file_path_bytes',
-                     'quota_injected_file_path_length'),
-    CountableResource('security_group_rules',
-                      db.security_group_rule_count_by_group,
-                      'quota_security_group_rules'),
-    CountableResource('key_pairs', _keypair_get_count_by_user,
-                      'quota_key_pairs'),
-    ReservableResource('server_groups', '_sync_server_groups',
-                      'quota_server_groups'),
-    CountableResource('server_group_members',
-                      _server_group_count_members_by_user,
-                      'quota_server_group_members'),
-    ]
-
-
-QUOTAS.register_resources(resources)
-
-
 def _valid_method_call_check_resource(name, method):
+    QUOTAS.initialize()
     if name not in QUOTAS:
         raise exception.InvalidQuotaMethodUsage(method=method, res=name)
     res = QUOTAS[name]

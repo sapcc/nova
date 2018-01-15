@@ -42,14 +42,16 @@ authorize_delete = extensions.extension_authorizer('compute', 'quotas:delete')
 
 class QuotaSetsController(wsgi.Controller):
 
-    supported_quotas = []
-
     def __init__(self, ext_mgr):
         self.ext_mgr = ext_mgr
-        self.supported_quotas = QUOTAS.resources
+
+    def _supported_quotas(self):
+        QUOTAS.initialize()
+        result = QUOTAS.resources
         for resource, extension in EXTENDED_QUOTAS.items():
             if not self.ext_mgr.is_loaded(extension):
-                self.supported_quotas.remove(resource)
+                result.remove(resource)
+        return result
 
     def _format_quota_set(self, project_id, quota_set):
         """Convert the quota object to a result dict."""
@@ -59,7 +61,7 @@ class QuotaSetsController(wsgi.Controller):
         else:
             result = {}
 
-        for resource in self.supported_quotas:
+        for resource in self._supported_quotas():
             if resource in quota_set:
                 result[resource] = quota_set[resource]
 
@@ -94,6 +96,7 @@ class QuotaSetsController(wsgi.Controller):
             raise webob.exc.HTTPBadRequest(explanation=msg)
 
     def _get_quotas(self, context, id, user_id=None, usages=False):
+        QUOTAS.initialize()
         if user_id:
             values = QUOTAS.get_user_quotas(context, id, user_id,
                                             usages=usages)
@@ -155,6 +158,7 @@ class QuotaSetsController(wsgi.Controller):
             # NOTE(alex_xu): back-compatible with db layer hard-code admin
             # permission checks.
             nova.context.authorize_project_context(context, id)
+            QUOTAS.initialize()
             settable_quotas = QUOTAS.get_settable_quotas(context, project_id,
                                                          user_id=user_id)
         except exception.Forbidden:
@@ -168,8 +172,9 @@ class QuotaSetsController(wsgi.Controller):
         # NOTE(dims): Pass #1 - In this loop for quota_set.items(), we figure
         # out if we have bad keys or if we need to forcibly set quotas or
         # if some of the values for the quotas can be converted to integers.
+        supported_quotas = self._supported_quotas()
         for key, value in quota_set.items():
-            if (key not in self.supported_quotas
+            if (key not in supported_quotas
                 and key not in NON_QUOTA_KEYS):
                 bad_keys.append(key)
                 continue
@@ -223,6 +228,7 @@ class QuotaSetsController(wsgi.Controller):
     def defaults(self, req, id):
         context = req.environ['nova.context']
         authorize_show(context)
+        QUOTAS.initialize()
         values = QUOTAS.get_defaults(context)
         return self._format_quota_set(id, values)
 
@@ -242,6 +248,7 @@ class QuotaSetsController(wsgi.Controller):
                 # only admins can call this method while the policy could be
                 # changed.
                 nova.context.require_admin_context(context)
+                QUOTAS.initialize()
                 if user_id:
                     QUOTAS.destroy_all_by_project_and_user(context,
                                                            id, user_id)

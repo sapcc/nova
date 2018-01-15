@@ -227,6 +227,7 @@ class FloatingIP(object):
         # called into from other places
         try:
             if use_quota:
+                QUOTAS.initialize()
                 reservations = QUOTAS.reserve(context, floating_ips=1,
                                               project_id=project_id)
         except exception.OverQuota:
@@ -282,6 +283,7 @@ class FloatingIP(object):
         # Get reservations...
         try:
             if use_quota:
+                QUOTAS.initialize()
                 reservations = QUOTAS.reserve(context,
                                               project_id=project_id,
                                               floating_ips=-1)

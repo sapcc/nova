@@ -411,9 +411,26 @@ def convert_objects_related_datetimes(values, *datetime_keys):
 
 
 def _sync_instances(context, project_id, user_id):
-    return dict(zip(('instances', 'cores', 'ram'),
-                    _instance_data_get_for_user(context, project_id, user_id)))
-
+    query = '''
+      SELECT t.name, COUNT(i.id), SUM(i.vcpus), SUM(i.memory_mb),
+        EXISTS(SELECT 1 FROM instance_type_extra_specs
+               WHERE instance_type_id = t.id
+               AND key = 'quota:separate' AND value = 'true')
+      FROM instances i JOIN instance_types t ON t.id = i.instance_type_id
+      WHERE i.project_id = :pid AND i.user_id = :uid AND i.deleted = 0
+      GROUP BY t.name, t.id
+    '''
+    stats = context.session.execute(query, { 'pid': project_id, 'uid': user_id })
+    output = { "instances": 0, "cores": 0, "ram": 0 }
+    for flavor_name, count, vcpus, memory_mb, separate in stats:
+        output["cores"] += vcpus
+        output["ram"]   += memory_mb
+        if separate:
+            key = "instances_" + flavor_name
+            output[key] = output.get(key, 0) + count
+        else:
+            output["instances"] += count
+    return output
 
 def _sync_floating_ips(context, project_id, user_id):
     return dict(floating_ips=_floating_ip_count_by_project(
@@ -1096,6 +1113,7 @@ def floating_ip_bulk_destroy(context, ips):
     # been committed first.
     for project_id, count in project_id_to_quota_count.items():
         try:
+            quota.QUOTAS.initialize()
             reservations = quota.QUOTAS.reserve(context,
                                                 project_id=project_id,
                                                 floating_ips=count)
@@ -7073,3 +7091,17 @@ def instance_tag_exists(context, instance_uuid, tag):
     q = context.session.query(models.Tag).filter_by(
         resource_id=instance_uuid, tag=tag)
     return context.session.query(q.exists()).scalar()
+
+@main_context_manager.reader
+def get_flavornames_with_separate_quota(context):
+    query = '''
+        SELECT DISTINCT t.name FROM instance_types t
+        JOIN instance_type_extra_specs s ON t.id = s.instance_type_id
+        WHERE s.key = 'quota:separate' AND s.value = 'true'
+          AND (s.deleted = 0 OR EXISTS(
+            SELECT 1 FROM instances i
+            WHERE i.deleted = 0 AND i.instance_type_id = t.id
+          ))
+    '''
+    result = context.session.execute(query)
+    return [x[0] for x in result]
