@@ -347,9 +347,9 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
             break
         except vexc.DuplicateName:
             vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
-            session._call_method(session.vim, "Destroy_Task", imported_vm_ref)
+            destroy_task = session._call_method(session.vim, "Destroy_Task", vm_ref)
+            session._wait_for_task(destroy_task)
             vm_util.vm_ref_cache_delete(vm_name)
-
 
     image_transfer(read_handle, write_handle)
 
