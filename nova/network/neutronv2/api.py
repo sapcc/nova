@@ -1597,10 +1597,6 @@ class API(base_api.NetworkAPI):
 
     def migrate_instance_finish(self, context, instance, migration):
         """Finish migrating the network of an instance."""
-        LOG.debug("UPDATING PORT BINDING...")
-        LOG.debug("INSTANCE.HOST: %s", instance.host)
-        migration = {'source_compute': instance.host,
-                     'dest_compute': "some_host_test", }
         self._update_port_binding_for_instance(context, instance,
                                                migration['dest_compute'])
 
