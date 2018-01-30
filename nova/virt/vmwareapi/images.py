@@ -335,7 +335,8 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     read_iter = IMAGE_API.download(context, image_ref)
     read_handle = rw_handles.ImageReadHandle(read_iter)
 
-    for i in six.moves.xrange(2):
+    # retry in order to handle conflicts in case of parallel execution (multiple agents)
+    while True:
         try:
             write_handle = rw_handles.VmdkWriteHandle(session,
                                                       session._host,
@@ -344,16 +345,24 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
                                                       vm_folder_ref,
                                                       vm_import_spec,
                                                       file_size)
+            image_transfer(read_handle, write_handle)
+            imported_vm_ref = write_handle.get_imported_vm()
             break
         except vexc.DuplicateName:
+            LOG.debug("Handling name duplication during import of VM %s", vm_name)
             vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
-            destroy_task = session._call_method(session.vim, "Destroy_Task", vm_ref)
-            session._wait_for_task(destroy_task)
-            vm_util.vm_ref_cache_delete(vm_name)
-
-    image_transfer(read_handle, write_handle)
-
-    imported_vm_ref = write_handle.get_imported_vm()
+            waited_for_ongoing_import = _wait_for_import_task(session, vm_ref)
+            if waited_for_ongoing_import:
+                imported_vm_ref = vm_ref
+                break
+            else:
+                try:
+                    destroy_task = session._call_method(session.vim, "Destroy_Task", vm_ref)
+                    session._wait_for_task(destroy_task)
+                    vm_util.vm_ref_cache_delete(vm_name)
+                except vexc.ManagedObjectNotFoundException:
+                    # another agent destroyed the VM in the meantime
+                    pass
 
     LOG.info(_LI("Downloaded image file data %(image_ref)s"),
              {'image_ref': instance.image_ref}, instance=instance)
@@ -362,6 +371,38 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     LOG.info(_LI("The imported VM '%s' was unregistered"), vm_name, instance=instance)
     return vmdk.capacity_in_bytes, vmdk.path
 
+def _wait_for_import_task(session, vm_ref):
+    client_factory = session.vim.client.factory
+    task_filter_spec = client_factory.create('ns0:TaskFilterSpec')
+    task_filter_spec.entity = client_factory.create('ns0:TaskFilterSpecByEntity')
+    task_filter_spec.entity.entity = vm_ref
+    task_filter_spec.entity.recursion = "self"
+    task_filter_spec.state = ["queued", "running"]
+    
+    waited = False
+    
+    try:
+        task_collector = session._call_method(session.vim, "CreateCollectorForTasks", session.vim.service_content.taskManager, filter=task_filter_spec)
+    
+        while True:
+            page_tasks = session._call_method(session.vim, "ReadNextTasks", task_collector, maxCount=10)
+            if len(page_tasks) == 0:
+                break
+            
+            for ti in page_tasks:
+                if ti.descriptionId == "ResourcePool.ImportVAppLRO":
+                    try:
+                        session._wait_for_task(ti.task)
+                        waited = True
+                    except vexc.VimException as e:
+                        LOG.debug("Awaiting previous import on VM %s failed with %s", vm_ref, e)
+                        
+                    return waited
+    finally:
+        if task_collector:
+            session._call_method(session.vim, "DestroyCollector", task_collector)
+    
+    return waited
 
 def get_vmdk_name_from_ovf(xmlstr):
     """Parse the OVA descriptor to extract the vmdk name."""
