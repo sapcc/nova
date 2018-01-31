@@ -135,6 +135,8 @@ class QuotaSetsController(wsgi.Controller):
         for key, value in six.iteritems(body['quota_set']):
             if key == 'force' or (not value and value != 0):
                 continue
+            if key not in settable_quotas:
+                continue
             # validate whether already used and reserved exceeds the new
             # quota, this check will be ignored if admin want to force
             # update
