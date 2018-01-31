@@ -336,7 +336,9 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     read_handle = rw_handles.ImageReadHandle(read_iter)
 
     # retry in order to handle conflicts in case of parallel execution (multiple agents)
-    while True:
+    # or previously failed import of the same image
+    max_attempts = 3
+    for i in six.moves.xrange(max_attempts):
         try:
             write_handle = rw_handles.VmdkWriteHandle(session,
                                                       session._host,
@@ -363,6 +365,9 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
                 except vexc.ManagedObjectNotFoundException:
                     # another agent destroyed the VM in the meantime
                     pass
+    
+    if not imported_vm_ref:
+        raise vexc.VMwareDriverException("Could not import image %s within %d attempts." % (vm_name, max_attempts))
 
     LOG.info(_LI("Downloaded image file data %(image_ref)s"),
              {'image_ref': instance.image_ref}, instance=instance)
