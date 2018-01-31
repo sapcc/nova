@@ -1016,16 +1016,14 @@ def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
 
     if host:
         rel_spec.host = host
-
     return rel_spec
+
 
 def relocate_vm(session, service, vm_ref, res_pool=None, datastore=None, host=None, disk_move_type="moveAllDiskBackingsAndAllowSharing", devices=None):
     client_factory = session.vim.client.factory
     rel_spec = relocate_vm_spec(client_factory, service, res_pool, datastore, host, disk_move_type, devices)
-    LOG.debug("REL_SPEC: %s", rel_spec)
     relocate_task = session._call_method(session.vim, "RelocateVM_Task", vm_ref, spec=rel_spec)
     session._wait_for_task(relocate_task)
-
 
 
 def get_machine_id_change_spec(client_factory, machine_id_str):
