@@ -1001,7 +1001,6 @@ class API(base_api.NetworkAPI):
 
         zone = 'compute:%s' % instance.availability_zone
         search_opts = {'device_id': instance.uuid,
-                       'device_owner': zone,
                        'network_id': network_id}
         data = neutron.list_ports(**search_opts)
         ports = data['ports']
@@ -1029,7 +1028,6 @@ class API(base_api.NetworkAPI):
         neutron = get_client(context)
         zone = 'compute:%s' % instance.availability_zone
         search_opts = {'device_id': instance.uuid,
-                       'device_owner': zone,
                        'fixed_ips': 'ip_address=%s' % address}
         data = neutron.list_ports(**search_opts)
         ports = data['ports']
@@ -1236,8 +1234,7 @@ class API(base_api.NetworkAPI):
                                       instance, address):
         """Return port_id from a fixed address."""
         zone = 'compute:%s' % instance.availability_zone
-        search_opts = {'device_id': instance.uuid,
-                       'device_owner': zone}
+        search_opts = {'device_id': instance.uuid}
         data = client.list_ports(**search_opts)
         ports = data['ports']
         port_id = None
