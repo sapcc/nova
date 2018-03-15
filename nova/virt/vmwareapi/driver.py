@@ -49,6 +49,7 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+from oslo_serialization import jsonutils
 
 LOG = logging.getLogger(__name__)
 
@@ -321,7 +322,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
                 # model of the "host"
-               'cpu_info': None,
+               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
                'supported_instances': host_stats['supported_instances'],
                'numa_topology': None,
                }
@@ -336,6 +337,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         """
         host_stats = self._vc_state.get_host_stats(refresh=True)
+        LOG.debug("HOST STATS: %s" % host_stats)
         stats_dict = self._get_available_resources(host_stats)
         return stats_dict
 

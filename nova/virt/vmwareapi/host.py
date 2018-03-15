@@ -30,6 +30,8 @@ from nova.objects import fields as obj_fields
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
+from oslo_log import log as logging
+from oslo_vmware import vim_util as vutil
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -101,6 +103,7 @@ class VCState(object):
             (obj_fields.Architecture.X86_64,
              obj_fields.HVType.VMWARE,
              obj_fields.VMMode.HVM)]
+        data["cpu_model"] = self.to_cpu_model(self._cluster)
 
         self._stats = data
         if self._auto_service_disabled:
@@ -115,3 +118,87 @@ class VCState(object):
         service.disabled_reason = 'set by vmwareapi host_state'
         service.save()
         self._auto_service_disabled = service.disabled
+
+    def to_cpu_model(self, cluster_obj):
+        max_objects = 100
+        vim = self._session.vim
+        property_collector = vim.service_content.propertyCollector
+
+        traversal_spec = vutil.build_traversal_spec(
+            vim.client.factory,
+            "c_to_h",
+            "ComputeResource",
+            "host",
+            False,
+            [])
+
+        object_spec = vutil.build_object_spec(
+            vim.client.factory,
+            cluster_obj,
+            [traversal_spec])
+        property_spec = vutil.build_property_spec(
+            vim.client.factory,
+            "HostSystem",
+            ["hardware", "config.featureCapability"])
+
+        property_filter_spec = vutil.build_property_filter_spec(
+            vim.client.factory,
+            [property_spec],
+            [object_spec])
+        options = vim.client.factory.create('ns0:RetrieveOptions')
+        options.maxObjects = max_objects
+
+        pc_result = vim.RetrievePropertiesEx(property_collector, specSet=[property_filter_spec], options=options)
+
+        result = []
+        topology = dict()
+
+        """ Retrieving needed hardware properties from ESX hosts """
+        with vutil.WithRetrieval(vim, pc_result) as pc_objects:
+            for objContent in pc_objects:
+                processor_type = []
+                cpu_vendor = []
+                features = []
+
+                props = {prop.name: prop.val for prop in objContent.propSet}
+                props["model"] = props["hardware"].systemInfo.model
+
+                for t in props["hardware"].cpuPkg:
+                    processor_type.append(t.description)
+                    cpu_vendor.append(t.vendor)
+
+                for featureCapability in props["config.featureCapability"]:
+                    for feature in featureCapability[1]:
+                        if feature.featureName.startswith("cpuid."):
+                            if feature.value == "1":
+                                features.append(feature.featureName.split(".", 1)[1].lower())
+
+                features.sort()
+                props["cpu_model"] = processor_type
+                props["cpu_vendor"] = cpu_vendor
+                props["vendor"] = props["hardware"].systemInfo.vendor
+                topology["cores"] = props["hardware"].cpuInfo.numCpuCores
+                topology["sockets"] = props["hardware"].cpuInfo.numCpuPackages
+                topology["threads"] = props["hardware"].cpuInfo.numCpuThreads
+                props["topology"] = topology
+                props["features"] = features
+                del props["config.featureCapability"]
+                del props["hardware"]
+
+                result.append(props)
+
+        equal = True
+
+        """ Compare found ESX hosts """
+        if result.__len__() > 1:
+            for i in range(result.__len__() - 1):
+                if result[i] == result[i + 1]:
+                    continue
+                else:
+                    equal = False
+                    break
+
+        if not equal:
+            return "CPU's for this cluster have different values!"
+
+        return result[0]
