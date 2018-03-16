@@ -337,7 +337,6 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         """
         host_stats = self._vc_state.get_host_stats(refresh=True)
-        LOG.debug("HOST STATS: %s" % host_stats)
         stats_dict = self._get_available_resources(host_stats)
         return stats_dict
 
