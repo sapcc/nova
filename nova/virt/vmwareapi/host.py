@@ -140,7 +140,7 @@ class VCState(object):
         property_spec = vutil.build_property_spec(
             vim.client.factory,
             "HostSystem",
-            ["hardware", "config.featureCapability"])
+            ["hardware.cpuPkg", "hardware.cpuInfo", "config.featureCapability"])
 
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
@@ -157,40 +157,36 @@ class VCState(object):
         """ Retrieving needed hardware properties from ESX hosts """
         with vutil.WithRetrieval(vim, pc_result) as pc_objects:
             for objContent in pc_objects:
+                props_in = {prop.name: prop.val for prop in objContent.propSet}
                 processor_type = None
                 cpu_vendor = None
-                features = []
+                hardware_cpu_pkg = props_in.get("hardware.cpuPkg", [])[0]
 
-                props = {prop.name: prop.val for prop in objContent.propSet}
-                hardware = props["hardware"]
-                props["model"] = props["hardware"].systemInfo.model
-
-                if hardware.cpuPkg:
-                    t = hardware.cpuPkg[0]
+                if hardware_cpu_pkg and hardware_cpu_pkg[0]:
+                    t = hardware_cpu_pkg[0]
                     processor_type = t.description
                     cpu_vendor = t.vendor.title()
 
-                for featureCapability in props["config.featureCapability"]:
+                features = []
+                for featureCapability in props_in.get("config.featureCapability", []):
                     for feature in featureCapability[1]:
                         if feature.featureName.startswith("cpuid."):
                             if feature.value == "1":
                                 features.append(feature.featureName.split(".", 1)[1].lower())
 
-                features.sort()
-                props["cpu_model"] = processor_type
-                props["cpu_vendor"] = cpu_vendor
-                props["vendor"] = props["hardware"].systemInfo.vendor
-                topology["cores"] = props["hardware"].cpuInfo.numCpuCores
-                topology["sockets"] = props["hardware"].cpuInfo.numCpuPackages
-                topology["threads"] = props["hardware"].cpuInfo.numCpuThreads
-                props["vendor"] = cpu_vendor
-                topology["cores"] = hardware.cpuInfo.numCpuCores
-                topology["sockets"] = hardware.cpuInfo.numCpuPackages
-                topology["threads"] = hardware.cpuInfo.numCpuThreads
-                props["topology"] = topology
-                props["features"] = features
-                del props["config.featureCapability"]
-                del props["hardware"]
+                props = {
+                    "model": processor_type,
+                    "vendor": cpu_vendor,
+                    "features": sorted(features)
+                    }
+
+                hardware_cpu_info = props_in.get("hardware.cpuInfo", None)
+                if hardware_cpu_info:
+                    props["topology"] = {
+                        "cores": hardware_cpu_info.numCpuCores,
+                        "sockets": hardware_cpu_info.numCpuPackages,
+                        "threads": hardware_cpu_info.numCpuThreads
+                    }
 
                 result.append(props)
 
