@@ -56,6 +56,7 @@ class VCState(object):
         self._cluster = cluster
         self._datastore_regex = datastore_regex
         self._stats = {}
+        self._cpu_model = None
         self._auto_service_disabled = False
         self.update_status()
 
@@ -103,7 +104,7 @@ class VCState(object):
             (obj_fields.Architecture.X86_64,
              obj_fields.HVType.VMWARE,
              obj_fields.VMMode.HVM)]
-        data["cpu_model"] = self.to_cpu_model(self._cluster)
+        data["cpu_model"] = self.to_cpu_model()
 
         self._stats = data
         if self._auto_service_disabled:
@@ -119,7 +120,7 @@ class VCState(object):
         service.save()
         self._auto_service_disabled = service.disabled
 
-    def to_cpu_model(self, cluster_obj):
+    def to_cpu_model(self):
         max_objects = 100
         vim = self._session.vim
         property_collector = vim.service_content.propertyCollector
@@ -134,7 +135,7 @@ class VCState(object):
 
         object_spec = vutil.build_object_spec(
             vim.client.factory,
-            cluster_obj,
+            self._cluster,
             [traversal_spec])
         property_spec = vutil.build_property_spec(
             vim.client.factory,
@@ -156,16 +157,18 @@ class VCState(object):
         """ Retrieving needed hardware properties from ESX hosts """
         with vutil.WithRetrieval(vim, pc_result) as pc_objects:
             for objContent in pc_objects:
-                processor_type = []
-                cpu_vendor = []
+                processor_type = None
+                cpu_vendor = None
                 features = []
 
                 props = {prop.name: prop.val for prop in objContent.propSet}
+                hardware = props["hardware"]
                 props["model"] = props["hardware"].systemInfo.model
 
-                for t in props["hardware"].cpuPkg:
-                    processor_type.append(t.description)
-                    cpu_vendor.append(t.vendor)
+                if hardware.cpuPkg:
+                    t = hardware.cpuPkg[0]
+                    processor_type = t.description
+                    cpu_vendor = t.vendor.title()
 
                 for featureCapability in props["config.featureCapability"]:
                     for feature in featureCapability[1]:
@@ -180,6 +183,10 @@ class VCState(object):
                 topology["cores"] = props["hardware"].cpuInfo.numCpuCores
                 topology["sockets"] = props["hardware"].cpuInfo.numCpuPackages
                 topology["threads"] = props["hardware"].cpuInfo.numCpuThreads
+                props["vendor"] = cpu_vendor
+                topology["cores"] = hardware.cpuInfo.numCpuCores
+                topology["sockets"] = hardware.cpuInfo.numCpuPackages
+                topology["threads"] = hardware.cpuInfo.numCpuThreads
                 props["topology"] = topology
                 props["features"] = features
                 del props["config.featureCapability"]
@@ -190,8 +197,8 @@ class VCState(object):
         equal = True
 
         """ Compare found ESX hosts """
-        if result.__len__() > 1:
-            for i in range(result.__len__() - 1):
+        if len(result) > 1:
+            for i in range(len(result) - 1):
                 if result[i] == result[i + 1]:
                     continue
                 else:
@@ -199,6 +206,8 @@ class VCState(object):
                     break
 
         if not equal:
-            return "CPU's for this cluster have different values!"
+            self._cpu_model = "CPU's for this cluster have different values!"
+        elif result:
+            self._cpu_model = result[0]
 
-        return result[0]
+        return self._cpu_model
