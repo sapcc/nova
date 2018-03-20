@@ -301,6 +301,7 @@ class LibvirtDriver(driver.ComputeDriver):
         "has_imagecache": True,
         "supports_evacuate": True,
         "supports_migrate_to_same_host": False,
+        "resource_scheduling": False,
         "supports_attach_interface": True,
         "supports_device_tagging": True,
         "supports_tagged_attach_interface": True,
