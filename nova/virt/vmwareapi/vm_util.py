@@ -37,6 +37,8 @@ from nova.i18n import _
 from nova.network import model as network_model
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
+from nova import objects
+from nova.virt.vmwareapi import cluster_util
 
 LOG = logging.getLogger(__name__)
 
@@ -151,6 +153,8 @@ VmdkInfo = collections.namedtuple('VmdkInfo', ['path', 'adapter_type',
                                                'disk_type',
                                                'capacity_in_bytes',
                                                'device'])
+
+GroupInfo = collections.namedtuple('GroupInfo', ['name', 'policies'])
 
 
 def _iface_id_option_value(client_factory, iface_id, port_index):
@@ -1204,6 +1208,26 @@ def get_stats_from_cluster(session, cluster):
                      'max_mem_mb_per_host': max_mem_mb_per_host}}
     return stats
 
+def _get_server_group(context, instance):
+    server_group_info = None
+    try:
+        LOG.debug(objects.instance_group.InstanceGroup)
+        instance_group_object = objects.instance_group.InstanceGroup
+        server_group = instance_group_object.get_by_instance_uuid(
+            context, instance.uuid)
+        if server_group:
+            server_group_info = GroupInfo(server_group.name, server_group.policies)
+    except nova.exception.InstanceGroupNotFound as e:
+        LOG.debug('An exception occurred while retrieving the server group: ' + '%s ', e)
+
+    return server_group_info
+
+
+def update_cluster_placement(session, context, instance, cluster, vm_ref):
+    server_group_info = _get_server_group(context, instance)
+    if server_group_info is None:
+        return
+    cluster_util.update_placement(session, cluster, vm_ref, server_group_info)
 
 def get_host_ref(session, cluster=None):
     """Get reference to a host within the cluster specified."""
