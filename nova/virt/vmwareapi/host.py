@@ -32,6 +32,7 @@ from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
 from oslo_log import log as logging
 from oslo_vmware import vim_util as vutil
+from nova.virt.vmwareapi import cluster_util
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ class VCState(object):
              obj_fields.HVType.VMWARE,
              obj_fields.VMMode.HVM)]
         data["cpu_model"] = self.to_cpu_model()
+        data["resource_scheduling"] = cluster_util._is_drs_enabled(self._session, self._cluster)
 
         self._stats = data
         if self._auto_service_disabled:
