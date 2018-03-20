@@ -1455,7 +1455,6 @@ class ComputeManager(manager.Manager):
                 evacuated_instances)
             self._error_out_instances_whose_build_was_interrupted(
                 context, already_handled, nodes_by_uuid.keys())
-
         finally:
             if instances:
                 # We only send the instance info to the scheduler on startup
@@ -1688,7 +1687,10 @@ class ComputeManager(manager.Manager):
                     max_server = rules['max_server_per_host']
                 else:
                     max_server = 1
-                if len(members_on_host) >= max_server:
+                resource_scheduling = self.driver.capabilities.get(
+                                        "resource_scheduling", False)
+                if len(members_on_host) >= max_server and not \
+                        resource_scheduling:
                     msg = _("Anti-affinity instance group policy "
                             "was violated.")
                     raise exception.RescheduledException(
