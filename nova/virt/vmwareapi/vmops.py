@@ -325,6 +325,16 @@ class VMwareVMOps(object):
             extra_specs.firmware = 'bios'
         hw_version = flavor.extra_specs.get('vmware:hw_version')
         extra_specs.hw_version = hw_version
+
+        video_ram = image_meta.properties.get('hw_video_ram', 0)
+        max_vram = int(flavor.extra_specs.get('hw_video:ram_max_mb', 0))
+
+        if video_ram and video_ram:
+            if video_ram > max_vram:
+                raise exception.RequestedVRamTooHigh(req_vram=video_ram,
+                                                     max_vram=max_vram)
+            extra_specs.hw_video_ram = video_ram * units.Mi / units.Ki
+
         if CONF.vmware.pbm_enabled:
             storage_policy = flavor.extra_specs.get('vmware:storage_policy',
                     CONF.vmware.pbm_default_policy)
@@ -724,6 +734,7 @@ class VMwareVMOps(object):
         image_info = images.VMwareImage.from_image(context,
                                                    instance.image_ref,
                                                    image_meta)
+
         extra_specs = self._get_extra_specs(instance.flavor, image_meta)
 
         vi = self._get_vm_config_info(instance, image_info,
