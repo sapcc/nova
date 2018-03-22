@@ -133,6 +133,9 @@ compute_opts = [
     cfg.IntOpt('max_concurrent_builds',
                default=10,
                help='Maximum number of instance builds to run concurrently'),
+    cfg.IntOpt('max_concurrent_builds_per_project',
+               default=0,
+               help='Maximum number of instance builds to run concurrently per project'),
     cfg.IntOpt('max_concurrent_live_migrations',
                default=1,
                help='Maximum number of live migrations to run concurrently. '
@@ -708,12 +711,19 @@ class ComputeManager(manager.Manager):
         self._sync_power_pool = eventlet.GreenPool()
         self._syncs_in_progress = {}
         self.send_instance_updates = CONF.scheduler_tracks_instance_changes
-        if CONF.max_concurrent_builds != 0:
+        if CONF.max_concurrent_builds > 0:
             self._build_semaphore = eventlet.semaphore.Semaphore(
                 CONF.max_concurrent_builds)
         else:
             self._build_semaphore = compute_utils.UnlimitedSemaphore()
-        if max(CONF.max_concurrent_live_migrations, 0) != 0:
+
+        if CONF.max_concurrent_builds_per_project > 0:
+            self._per_project_build_semaphore = nova.utils.Semaphores(
+                semaphore_default=lambda: eventlet.semaphore.Semaphore(CONF.max_concurrent_builds_per_project))
+        else:
+            self._per_project_build_semaphore = nova.utils.Semaphores(compute_utils.UnlimitedSemaphore)
+
+        if CONF.max_concurrent_live_migrations > 0:
             self._live_migration_semaphore = eventlet.semaphore.Semaphore(
                 CONF.max_concurrent_live_migrations)
         else:
@@ -1875,8 +1885,9 @@ class ComputeManager(manager.Manager):
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
-            with self._build_semaphore:
-                self._do_build_and_run_instance(*args, **kwargs)
+            with self._per_project_build_semaphore.get(instance.project_id):
+                with self._build_semaphore:
+                    self._do_build_and_run_instance(*args, **kwargs)
 
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
