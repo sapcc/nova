@@ -438,8 +438,8 @@ def resize_quota_delta(context, new_flavor, old_flavor, sense, compare):
                     -1 indicates negative deltas
     """
     def _quota_delta(resource):
-        old_reserve = old_flavor['extra_specs'].get('quota:instance_only', 'false') != 'true'
-        new_reserve = new_flavor['extra_specs'].get('quota:instance_only', 'false') != 'true'
+        old_reserve = old_flavor.get('extra_specs', {}).get('quota:instance_only', 'false') != 'true'
+        new_reserve = new_flavor.get('extra_specs', {}).get('quota:instance_only', 'false') != 'true'
         old_factor = 1 if old_reserve else 0
         new_factor = 1 if new_reserve else 0
         return sense * (new_flavor[resource] * new_factor - old_flavor[resource] * old_factor)
@@ -453,8 +453,8 @@ def resize_quota_delta(context, new_flavor, old_flavor, sense, compare):
     add_delta('cores', _quota_delta('vcpus'))
     add_delta('ram', _quota_delta('memory_mb'))
 
-    old_separate = old_flavor['extra_specs'].get('quota:separate', 'false') == 'true'
-    new_separate = new_flavor['extra_specs'].get('quota:separate', 'false') == 'true'
+    old_separate = old_flavor.get('extra_specs', {}).get('quota:separate', 'false') == 'true'
+    new_separate = new_flavor.get('extra_specs', {}).get('quota:separate', 'false') == 'true'
     if old_separate and not new_separate:
         add_delta('instances_' + old_flavor['name'], -1 * sense)
         add_delta('instances', +1 * sense)
