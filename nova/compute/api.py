@@ -3322,6 +3322,8 @@ class API(base.Base):
 
         if not CONF.allow_resize_to_same_host:
             filter_properties['ignore_hosts'].append(instance.host)
+        else:
+            filter_properties['force_nodes'] = [instance.node]
 
         if self.cell_type == 'api':
             # Create migration record.
