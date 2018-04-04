@@ -657,7 +657,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
     capacity_in_bytes = 0
 
     # Determine if we need to get the details of the root disk
-    root_disk = None
+    root_disk = not uuid is None
     root_device = None
     if uuid:
         root_disk = '%s.vmdk' % uuid
@@ -668,8 +668,8 @@ def get_vmdk_info(session, vm_ref, uuid=None):
         if device.__class__.__name__ == "VirtualDisk":
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
-                path = ds_obj.DatastorePath.parse(device.backing.fileName)
-                if root_disk and path.basename == root_disk:
+                if not root_device or root_device.controllerKey > device.controllerKey or \
+                                        root_device.controllerKey == device.controllerKey and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
         elif device.__class__.__name__ == "VirtualLsiLogicController":
@@ -683,7 +683,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
         elif device.__class__.__name__ == "ParaVirtualSCSIController":
             adapter_type_dict[device.key] = constants.ADAPTER_TYPE_PARAVIRTUAL
 
-    if root_disk:
+    if uuid:
         vmdk_device = root_device
 
     if vmdk_device:
