@@ -24,6 +24,7 @@ from oslo_log import log as logging
 
 from nova.compute import power_state
 import nova.conf
+from nova.virt.libvirt import config as vconfig
 
 LOG = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def get_updated_guest_xml(guest, migrate_data, get_volume_config):
     xml_doc = _update_serial_xml(xml_doc, migrate_data)
     xml_doc = _update_volume_xml(xml_doc, migrate_data, get_volume_config)
     xml_doc = _update_perf_events_xml(xml_doc, migrate_data)
-    return etree.tostring(xml_doc)
+    return etree.tostring(xml_doc, encoding='unicode')
 
 
 def _update_graphics_xml(xml_doc, migrate_data):
@@ -148,6 +149,15 @@ def _update_volume_xml(xml_doc, migrate_data, get_volume_config):
             continue
         conf = get_volume_config(
             bdm_info.connection_info, bdm_info.as_disk_info())
+
+        if bdm_info.obj_attr_is_set('encryption_secret_uuid'):
+            conf.encryption = vconfig.LibvirtConfigGuestDiskEncryption()
+            conf.encryption.format = 'luks'
+            secret = vconfig.LibvirtConfigGuestDiskEncryptionSecret()
+            secret.type = 'passphrase'
+            secret.uuid = bdm_info.encryption_secret_uuid
+            conf.encryption.secret = secret
+
         xml_doc2 = etree.XML(conf.to_xml(), parser)
         serial_dest = xml_doc2.findtext('serial')
 
@@ -161,15 +171,20 @@ def _update_volume_xml(xml_doc, migrate_data, get_volume_config):
                 # If source and destination have same item, update
                 # the item using destination value.
                 for item_dst in xml_doc2.findall(item_src.tag):
-                    disk_dev.remove(item_src)
-                    item_dst.tail = None
-                    disk_dev.insert(cnt, item_dst)
+                    if item_dst.tag != 'address':
+                        # hw address presented to guest must never change,
+                        # especially during live migration as it can be fatal
+                        disk_dev.remove(item_src)
+                        item_dst.tail = None
+                        disk_dev.insert(cnt, item_dst)
 
             # If destination has additional items, thses items should be
             # added here.
             for item_dst in list(xml_doc2):
-                item_dst.tail = None
-                disk_dev.insert(cnt, item_dst)
+                if item_dst.tag != 'address':
+                    # again, hw address presented to guest must never change
+                    item_dst.tail = None
+                    disk_dev.insert(cnt, item_dst)
     return xml_doc
 
 

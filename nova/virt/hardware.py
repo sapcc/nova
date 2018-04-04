@@ -197,24 +197,15 @@ def get_number_of_serial_ports(flavor, image_meta):
 
 class InstanceInfo(object):
 
-    def __init__(self, state=None, max_mem_kb=0, mem_kb=0, num_cpu=0,
-                 cpu_time_ns=0, id=None):
+    def __init__(self, state, internal_id=None):
         """Create a new Instance Info object
 
-        :param state: the running state, one of the power_state codes
-        :param max_mem_kb: (int) the maximum memory in KBytes allowed
-        :param mem_kb: (int) the memory in KBytes used by the instance
-        :param num_cpu: (int) the number of virtual CPUs for the
-                        instance
-        :param cpu_time_ns: (int) the CPU time used in nanoseconds
-        :param id: a unique ID for the instance
+        :param state: Required. The running state, one of the power_state codes
+        :param internal_id: Optional. A unique ID for the instance. Need not be
+                            related to the Instance.uuid.
         """
         self.state = state
-        self.max_mem_kb = max_mem_kb
-        self.mem_kb = mem_kb
-        self.num_cpu = num_cpu
-        self.cpu_time_ns = cpu_time_ns
-        self.id = id
+        self.internal_id = internal_id
 
     def __eq__(self, other):
         return (self.__class__ == other.__class__ and
@@ -928,9 +919,11 @@ def _numa_fit_instance_cell_with_pinning(host_cell, instance_cell,
     if host_cell.avail_memory < instance_cell.memory:
         LOG.debug('Not enough available memory to schedule instance. '
                   'Oversubscription is not possible with pinned instances. '
-                  'Required: %(required)s, actual: %(actual)s',
+                  'Required: %(required)s, available: %(available)s, '
+                  'total: %(total)s. ',
                   {'required': instance_cell.memory,
-                   'actual': host_cell.memory})
+                   'available': host_cell.avail_memory,
+                   'total': host_cell.memory})
         return
 
     if host_cell.siblings:
@@ -1034,6 +1027,11 @@ def _numa_fit_instance_cell(host_cell, instance_cell, limit_cell=None,
             LOG.debug('Host does not support requested memory pagesize. '
                       'Requested: %d kB', instance_cell.pagesize)
             return
+        LOG.debug('Selected memory pagesize: %(selected_mem_pagesize)d kB. '
+                  'Requested memory pagesize: %(requested_mem_pagesize)d '
+                   '(small = -1, large = -2, any = -3)',
+                  {'selected_mem_pagesize': pagesize,
+                   'requested_mem_pagesize': instance_cell.pagesize})
 
     instance_cell.id = host_cell.id
     instance_cell.pagesize = pagesize
@@ -1110,57 +1108,45 @@ def _numa_get_pagesize_constraints(flavor, image_meta):
     return pagesize
 
 
-def _numa_get_flavor_cpu_map_list(flavor):
-    hw_numa_cpus = []
-    extra_specs = flavor.get("extra_specs", {})
+def _numa_get_flavor_numa_map(flavor, key, func):
+    hw_numa_map = []
+    extra_specs = flavor.get('extra_specs', {})
     for cellid in range(objects.ImageMetaProps.NUMA_NODES_MAX):
-        cpuprop = "hw:numa_cpus.%d" % cellid
-        if cpuprop not in extra_specs:
+        prop = '%s.%d' % (key, cellid)
+        if prop not in extra_specs:
             break
-        hw_numa_cpus.append(
-            parse_cpu_spec(extra_specs[cpuprop]))
+        hw_numa_map.append(func(extra_specs[prop]))
 
-    if hw_numa_cpus:
-        return hw_numa_cpus
+    return hw_numa_map or None
 
 
 def _numa_get_cpu_map_list(flavor, image_meta):
-    flavor_cpu_list = _numa_get_flavor_cpu_map_list(flavor)
-    image_cpu_list = image_meta.properties.get("hw_numa_cpus", None)
+    flavor_cpu_list = _numa_get_flavor_numa_map(flavor, 'hw:numa_cpus',
+                                                parse_cpu_spec)
+    image_cpu_list = image_meta.properties.get('hw_numa_cpus', None)
 
     if flavor_cpu_list is None:
         return image_cpu_list
-    else:
-        if image_cpu_list is not None:
-            raise exception.ImageNUMATopologyForbidden(
-                name='hw_numa_cpus')
-        return flavor_cpu_list
 
+    if image_cpu_list is not None:
+        raise exception.ImageNUMATopologyForbidden(
+            name='hw_numa_cpus')
 
-def _numa_get_flavor_mem_map_list(flavor):
-    hw_numa_mem = []
-    extra_specs = flavor.get("extra_specs", {})
-    for cellid in range(objects.ImageMetaProps.NUMA_NODES_MAX):
-        memprop = "hw:numa_mem.%d" % cellid
-        if memprop not in extra_specs:
-            break
-        hw_numa_mem.append(int(extra_specs[memprop]))
-
-    if hw_numa_mem:
-        return hw_numa_mem
+    return flavor_cpu_list
 
 
 def _numa_get_mem_map_list(flavor, image_meta):
-    flavor_mem_list = _numa_get_flavor_mem_map_list(flavor)
-    image_mem_list = image_meta.properties.get("hw_numa_mem", None)
+    flavor_mem_list = _numa_get_flavor_numa_map(flavor, 'hw:numa_mem', int)
+    image_mem_list = image_meta.properties.get('hw_numa_mem', None)
 
     if flavor_mem_list is None:
         return image_mem_list
-    else:
-        if image_mem_list is not None:
-            raise exception.ImageNUMATopologyForbidden(
-                name='hw_numa_mem')
-        return flavor_mem_list
+
+    if image_mem_list is not None:
+        raise exception.ImageNUMATopologyForbidden(
+            name='hw_numa_mem')
+
+    return flavor_mem_list
 
 
 def _get_cpu_policy_constraints(flavor, image_meta):
@@ -1538,20 +1524,22 @@ def numa_get_reserved_huge_pages():
     :returns: a list of dict ordered by NUMA node ids; keys of dict
               are pages size and values of the number reserved.
     """
-    bucket = {}
-    if CONF.reserved_huge_pages:
-        try:
-            bucket = collections.defaultdict(dict)
-            for cfg in CONF.reserved_huge_pages:
-                try:
-                    pagesize = int(cfg['size'])
-                except ValueError:
-                    pagesize = strutils.string_to_bytes(
-                        cfg['size'], return_int=True) / units.Ki
-                bucket[int(cfg['node'])][pagesize] = int(cfg['count'])
-        except (ValueError, TypeError, KeyError):
-            raise exception.InvalidReservedMemoryPagesOption(
-                conf=CONF.reserved_huge_pages)
+    if not CONF.reserved_huge_pages:
+        return {}
+
+    try:
+        bucket = collections.defaultdict(dict)
+        for cfg in CONF.reserved_huge_pages:
+            try:
+                pagesize = int(cfg['size'])
+            except ValueError:
+                pagesize = strutils.string_to_bytes(
+                    cfg['size'], return_int=True) / units.Ki
+            bucket[int(cfg['node'])][pagesize] = int(cfg['count'])
+    except (ValueError, TypeError, KeyError):
+        raise exception.InvalidReservedMemoryPagesOption(
+            conf=CONF.reserved_huge_pages)
+
     return bucket
 
 
@@ -1600,44 +1588,48 @@ def numa_usage_from_instances(host, instances, free=False):
 
         for instance in instances:
             for cellid, instancecell in enumerate(instance.cells):
-                if instancecell.id == hostcell.id:
-                    memory_usage = (
-                            memory_usage + sign * instancecell.memory)
-                    cpu_usage_diff = len(instancecell.cpuset)
-                    if (instancecell.cpu_thread_policy ==
-                            fields.CPUThreadAllocationPolicy.ISOLATE and
-                            hostcell.siblings):
-                        cpu_usage_diff *= max(map(len, hostcell.siblings))
-                    cpu_usage += sign * cpu_usage_diff
+                if instancecell.id != hostcell.id:
+                    continue
 
-                    if (cellid == 0
-                        and instance.emulator_threads_isolated):
-                        # The emulator threads policy when defined
-                        # with 'isolate' makes the instance to consume
-                        # an additional pCPU as overhead. That pCPU is
-                        # mapped on the host NUMA node related to the
-                        # guest NUMA node 0.
-                        cpu_usage += sign * len(instancecell.cpuset_reserved)
+                memory_usage = memory_usage + sign * instancecell.memory
+                cpu_usage_diff = len(instancecell.cpuset)
+                if (instancecell.cpu_thread_policy ==
+                        fields.CPUThreadAllocationPolicy.ISOLATE and
+                        hostcell.siblings):
+                    cpu_usage_diff *= max(map(len, hostcell.siblings))
+                cpu_usage += sign * cpu_usage_diff
 
-                    if instancecell.pagesize and instancecell.pagesize > 0:
-                        newcell.mempages = _numa_pagesize_usage_from_cell(
-                            hostcell, instancecell, sign)
-                    if instance.cpu_pinning_requested:
-                        pinned_cpus = set(instancecell.cpu_pinning.values())
-                        if instancecell.cpuset_reserved:
-                            pinned_cpus |= instancecell.cpuset_reserved
-                        if free:
-                            if (instancecell.cpu_thread_policy ==
-                                    fields.CPUThreadAllocationPolicy.ISOLATE):
-                                newcell.unpin_cpus_with_siblings(pinned_cpus)
-                            else:
-                                newcell.unpin_cpus(pinned_cpus)
+                if (cellid == 0
+                    and instance.emulator_threads_isolated):
+                    # The emulator threads policy when defined
+                    # with 'isolate' makes the instance to consume
+                    # an additional pCPU as overhead. That pCPU is
+                    # mapped on the host NUMA node related to the
+                    # guest NUMA node 0.
+                    cpu_usage += sign * len(instancecell.cpuset_reserved)
+
+                if instancecell.pagesize and instancecell.pagesize > 0:
+                    newcell.mempages = _numa_pagesize_usage_from_cell(
+                        hostcell, instancecell, sign)
+
+                if instance.cpu_pinning_requested:
+                    pinned_cpus = set(instancecell.cpu_pinning.values())
+
+                    if instancecell.cpuset_reserved:
+                        pinned_cpus |= instancecell.cpuset_reserved
+
+                    if free:
+                        if (instancecell.cpu_thread_policy ==
+                                fields.CPUThreadAllocationPolicy.ISOLATE):
+                            newcell.unpin_cpus_with_siblings(pinned_cpus)
                         else:
-                            if (instancecell.cpu_thread_policy ==
-                                    fields.CPUThreadAllocationPolicy.ISOLATE):
-                                newcell.pin_cpus_with_siblings(pinned_cpus)
-                            else:
-                                newcell.pin_cpus(pinned_cpus)
+                            newcell.unpin_cpus(pinned_cpus)
+                    else:
+                        if (instancecell.cpu_thread_policy ==
+                                fields.CPUThreadAllocationPolicy.ISOLATE):
+                            newcell.pin_cpus_with_siblings(pinned_cpus)
+                        else:
+                            newcell.pin_cpus(pinned_cpus)
 
         newcell.cpu_usage = max(0, cpu_usage)
         newcell.memory_usage = max(0, memory_usage)

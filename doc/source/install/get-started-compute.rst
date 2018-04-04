@@ -18,7 +18,6 @@ download images to launch instances.
 OpenStack Compute consists of the following areas and their components:
 
 ``nova-api`` service
-
   Accepts and responds to end user compute API calls. The service supports the
   OpenStack Compute API.  It enforces some policies and initiates most
   orchestration activities, such as running an instance.
@@ -26,9 +25,8 @@ OpenStack Compute consists of the following areas and their components:
 ``nova-api-metadata`` service
   Accepts metadata requests from instances. The ``nova-api-metadata`` service
   is generally used when you run in multi-host mode with ``nova-network``
-  installations. For details, see `Metadata service
-  <https://docs.openstack.org/admin-guide/compute-networking-nova.html#metadata-service>`__
-  in the OpenStack Administrator Guide.
+  installations. For details, see :ref:`metadata-service`
+  in the Compute Administrator Guide.
 
 ``nova-compute`` service
   A worker daemon that creates and terminates virtual machine instances through
@@ -45,8 +43,8 @@ OpenStack Compute consists of the following areas and their components:
   instance and updating its state in the database.
 
 ``nova-placement-api`` service
-  Tracks the inventory and usage of each provider. For details, see `Placement
-  API <https://docs.openstack.org/developer/nova/placement.html>`__.
+  Tracks the inventory and usage of each provider. For details, see
+  :doc:`/user/placement`.
 
 ``nova-scheduler`` service
   Takes a virtual machine instance request from the queue and determines on
@@ -57,16 +55,15 @@ OpenStack Compute consists of the following areas and their components:
   It eliminates direct accesses to the cloud database made by the
   ``nova-compute`` service. The ``nova-conductor`` module scales horizontally.
   However, do not deploy it on nodes where the ``nova-compute`` service runs.
-  For more information, see `Configuration Reference Guide
-  <https://docs.openstack.org/ocata/config-reference/compute/config-options.html#nova-conductor>`__.
+  For more information, see the ``conductor`` section in the
+  :doc:`/configuration/config`.
 
 ``nova-consoleauth`` daemon
   Authorizes tokens for users that console proxies provide. See
   ``nova-novncproxy`` and ``nova-xvpvncproxy``. This service must be running
   for console proxies to work. You can run proxies of either type against a
   single nova-consoleauth service in a cluster configuration. For information,
-  see `About nova-consoleauth
-  <https://docs.openstack.org/admin-guide/compute-remote-console-access.html#about-nova-consoleauth>`__.
+  see :ref:`about-nova-consoleauth`.
 
 ``nova-novncproxy`` daemon
   Provides a proxy for accessing running instances through a VNC connection.

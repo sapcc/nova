@@ -109,10 +109,6 @@ class InterfaceFullstackWithNeutron(test_servers.ServersTestBase):
     api_major_version = 'v2.1'
     USE_NEUTRON = True
 
-    def setUp(self):
-        super(InterfaceFullstackWithNeutron, self).setUp()
-        self.useFixture(nova_fixtures.NeutronFixture(self))
-
     def test_detach_interface_negative_invalid_state(self):
         # Create server with network
         image = self.api.get_images()[0]['id']
@@ -123,6 +119,13 @@ class InterfaceFullstackWithNeutron(test_servers.ServersTestBase):
         created_server_id = created_server['id']
         found_server = self._wait_for_state_change(created_server, 'BUILD')
         self.assertEqual('ACTIVE', found_server['status'])
+
+        post = {
+            'interfaceAttachment': {
+                'net_id': "3cb9bc59-5699-4588-a4b1-b87f96708bc6"
+            }
+        }
+        self.api.attach_interface(created_server_id, post)
 
         response = self.api.get_port_interfaces(created_server_id)[0]
         port_id = response['port_id']

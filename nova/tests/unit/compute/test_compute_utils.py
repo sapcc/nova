@@ -18,9 +18,9 @@
 
 import copy
 import string
-import uuid
 
 import mock
+from oslo_utils import uuidutils
 import six
 
 from nova.compute import flavors
@@ -87,11 +87,12 @@ class ComputeValidateDeviceTestCase(test.NoDBTestCase):
         # check if test name includes "xen"
         if 'xen' in self.id():
             self.flags(compute_driver='xenapi.XenAPIDriver')
-            self.instance = objects.Instance(uuid=uuid.uuid4().hex,
-                root_device_name=None,
-                default_ephemeral_device=None)
+            self.instance = objects.Instance(
+                uuid=uuidutils.generate_uuid(dashed=False),
+                root_device_name=None, default_ephemeral_device=None)
         else:
-            self.instance = objects.Instance(uuid=uuid.uuid4().hex,
+            self.instance = objects.Instance(
+                uuid=uuidutils.generate_uuid(dashed=False),
                 root_device_name='/dev/vda',
                 default_ephemeral_device='/dev/vdb')
 
@@ -448,10 +449,10 @@ class UsageInfoTestCase(test.TestCase):
                           "Key %s not in payload" % attr)
         self.assertEqual(payload['image_meta'],
                 {'md_key1': 'val1', 'md_key2': 'val2'})
-        image_ref_url = "%s/images/%s" % (glance.generate_glance_url(),
-                                          uuids.fake_image_ref)
+        image_ref_url = "%s/images/%s" % (
+            glance.generate_glance_url(self.context), uuids.fake_image_ref)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [])
 
     def test_notify_usage_exists_deleted_instance(self):
         # Ensure 'exists' notification generates appropriate usage data.
@@ -462,7 +463,7 @@ class UsageInfoTestCase(test.TestCase):
                         'other_data': 'meow'}
         instance.system_metadata.update(sys_metadata)
         instance.save()
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [])
         compute_utils.notify_usage_exists(
             rpc.get_notifier('compute'), self.context, instance)
         msg = fake_notifier.NOTIFICATIONS[-1]
@@ -484,19 +485,29 @@ class UsageInfoTestCase(test.TestCase):
             self.assertIn(attr, payload, "Key %s not in payload" % attr)
         self.assertEqual(payload['image_meta'],
                 {'md_key1': 'val1', 'md_key2': 'val2'})
-        image_ref_url = "%s/images/%s" % (glance.generate_glance_url(),
-                                          uuids.fake_image_ref)
+        image_ref_url = "%s/images/%s" % (
+            glance.generate_glance_url(self.context), uuids.fake_image_ref)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
 
     def test_notify_about_instance_action(self):
         instance = create_instance(self.context)
+        bdms = block_device_obj.block_device_make_list(
+            self.context,
+            [fake_block_device.FakeDbBlockDeviceDict(
+                {'source_type': 'volume',
+                 'device_name': '/dev/vda',
+                 'instance_uuid': 'f8000000-0000-0000-0000-000000000000',
+                 'destination_type': 'volume',
+                 'boot_index': 0,
+                 'volume_id': 'de8836ac-d75e-11e2-8271-5254009297d6'})])
 
         compute_utils.notify_about_instance_action(
             self.context,
             instance,
             host='fake-compute',
             action='delete',
-            phase='start')
+            phase='start',
+            bdms=bdms)
 
         self.assertEqual(len(fake_notifier.VERSIONED_NOTIFICATIONS), 1)
         notification = fake_notifier.VERSIONED_NOTIFICATIONS[0]
@@ -521,6 +532,15 @@ class UsageInfoTestCase(test.TestCase):
             self.assertIn(attr, payload, "Key %s not in payload" % attr)
 
         self.assertEqual(payload['image_uuid'], uuids.fake_image_ref)
+        self.assertEqual(1, len(payload['block_devices']))
+        payload_bdm = payload['block_devices'][0]['nova_object.data']
+        self.assertEqual(
+            {'boot_index': 0,
+             'delete_on_termination': False,
+             'device_name': '/dev/vda',
+             'tag': None,
+             'volume_id': 'de8836ac-d75e-11e2-8271-5254009297d6'},
+            payload_bdm)
 
     def test_notify_about_instance_create(self):
         keypair = objects.KeyPair(name='my-key', user_id='fake', type='ssh',
@@ -734,10 +754,81 @@ class UsageInfoTestCase(test.TestCase):
         self.assertEqual('nova.tests.unit.compute.test_compute_utils',
                          exception_payload['module_name'])
 
+    def test_notify_about_instance_rescue_action(self):
+        instance = create_instance(self.context)
+
+        compute_utils.notify_about_instance_rescue_action(
+            self.context,
+            instance,
+            'fake-compute',
+            uuids.rescue_image_ref,
+            action='rescue',
+            phase='start')
+
+        self.assertEqual(len(fake_notifier.VERSIONED_NOTIFICATIONS), 1)
+        notification = fake_notifier.VERSIONED_NOTIFICATIONS[0]
+
+        self.assertEqual(notification['priority'], 'INFO')
+        self.assertEqual(notification['event_type'], 'instance.rescue.start')
+        self.assertEqual(notification['publisher_id'],
+                         'nova-compute:fake-compute')
+
+        payload = notification['payload']['nova_object.data']
+        self.assertEqual(payload['tenant_id'], self.project_id)
+        self.assertEqual(payload['user_id'], self.user_id)
+        self.assertEqual(payload['uuid'], instance['uuid'])
+
+        flavorid = flavors.get_flavor_by_name('m1.tiny')['flavorid']
+        flavor = payload['flavor']['nova_object.data']
+        self.assertEqual(str(flavor['flavorid']), flavorid)
+
+        for attr in ('display_name', 'created_at', 'launched_at',
+                     'state', 'task_state', 'display_description', 'locked',
+                     'auto_disk_config', 'key_name'):
+            self.assertIn(attr, payload, "Key %s not in payload" % attr)
+
+        self.assertEqual(payload['image_uuid'], uuids.fake_image_ref)
+        self.assertEqual(payload['rescue_image_ref'], uuids.rescue_image_ref)
+
+    def test_notify_about_resize_prep_instance(self):
+        instance = create_instance(self.context)
+
+        new_flavor = flavors.get_flavor_by_name('m1.small')
+
+        compute_utils.notify_about_resize_prep_instance(
+            self.context, instance, 'fake-compute', 'start', new_flavor)
+
+        self.assertEqual(len(fake_notifier.VERSIONED_NOTIFICATIONS), 1)
+        notification = fake_notifier.VERSIONED_NOTIFICATIONS[0]
+
+        self.assertEqual(notification['priority'], 'INFO')
+        self.assertEqual(notification['event_type'],
+                         'instance.resize_prep.start')
+        self.assertEqual(notification['publisher_id'],
+                         'nova-compute:fake-compute')
+
+        payload = notification['payload']['nova_object.data']
+        self.assertEqual(payload['tenant_id'], self.project_id)
+        self.assertEqual(payload['user_id'], self.user_id)
+        self.assertEqual(payload['uuid'], instance['uuid'])
+
+        flavorid = flavors.get_flavor_by_name('m1.tiny')['flavorid']
+        flavor = payload['flavor']['nova_object.data']
+        self.assertEqual(str(flavor['flavorid']), flavorid)
+
+        for attr in ('display_name', 'created_at', 'launched_at',
+                     'state', 'task_state', 'display_description', 'locked',
+                     'auto_disk_config', 'key_name'):
+            self.assertIn(attr, payload, "Key %s not in payload" % attr)
+
+        self.assertEqual(payload['image_uuid'], uuids.fake_image_ref)
+        self.assertEqual(payload['new_flavor']['nova_object.data'][
+            'flavorid'], new_flavor.flavorid)
+
     def test_notify_usage_exists_instance_not_found(self):
         # Ensure 'exists' notification generates appropriate usage data.
         instance = create_instance(self.context)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [])
         compute_utils.notify_usage_exists(
             rpc.get_notifier('compute'), self.context, instance)
         msg = fake_notifier.NOTIFICATIONS[-1]
@@ -758,8 +849,8 @@ class UsageInfoTestCase(test.TestCase):
                      'audit_period_ending', 'image_meta'):
             self.assertIn(attr, payload, "Key %s not in payload" % attr)
         self.assertEqual(payload['image_meta'], {})
-        image_ref_url = "%s/images/%s" % (glance.generate_glance_url(),
-                                          uuids.fake_image_ref)
+        image_ref_url = "%s/images/%s" % (
+            glance.generate_glance_url(self.context), uuids.fake_image_ref)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
 
     def test_notify_about_instance_usage(self):
@@ -794,10 +885,10 @@ class UsageInfoTestCase(test.TestCase):
         self.assertEqual(payload['image_meta'],
                 {'md_key1': 'val1', 'md_key2': 'val2'})
         self.assertEqual(payload['image_name'], 'fake_name')
-        image_ref_url = "%s/images/%s" % (glance.generate_glance_url(),
-                                          uuids.fake_image_ref)
+        image_ref_url = "%s/images/%s" % (
+            glance.generate_glance_url(self.context), uuids.fake_image_ref)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [])
 
     def test_notify_about_aggregate_update_with_id(self):
         # Set aggregate payload
@@ -854,6 +945,23 @@ class ComputeUtilsGetValFromSysMetadata(test.NoDBTestCase):
         result = compute_utils.get_value_from_system_metadata(
                    instance, 'not_int', int, 0)
         self.assertEqual(0, result)
+
+
+class ComputeUtilsRefreshInfoCacheForInstance(test.NoDBTestCase):
+    def test_instance_info_cache_not_found(self):
+        inst = fake_instance.fake_instance_obj('fake-context')
+        net_info = model.NetworkInfo([])
+        info_cache = objects.InstanceInfoCache(network_info=net_info)
+        inst.info_cache = info_cache
+        with mock.patch.object(inst.info_cache, 'refresh',
+                        side_effect=exception.InstanceInfoCacheNotFound(
+                            instance_uuid=inst.uuid)):
+            # we expect that the raised exception is ok
+            with mock.patch.object(compute_utils.LOG, 'debug') as log_mock:
+                compute_utils.refresh_info_cache_for_instance(None, inst)
+                log_mock.assert_called_once_with(
+                    'Can not refresh info_cache because instance '
+                    'was not found', instance=inst)
 
 
 class ComputeUtilsGetRebootTypes(test.NoDBTestCase):
@@ -969,6 +1077,49 @@ class ComputeUtilsTestCase(test.NoDBTestCase):
         mock_notify_usage.assert_has_calls(expected_notify_calls)
 
 
+class ServerGroupTestCase(test.TestCase):
+    def setUp(self):
+        super(ServerGroupTestCase, self).setUp()
+        fake_notifier.stub_notifier(self)
+        self.addCleanup(fake_notifier.reset)
+        self.user_id = 'fake'
+        self.project_id = 'fake'
+        self.context = context.RequestContext(self.user_id, self.project_id)
+
+    def test_notify_about_server_group_action(self):
+        uuid = uuids.instance
+        group = objects.InstanceGroup(context=self.context,
+                                      id=1,
+                                      uuid=uuid,
+                                      user_id=self.user_id,
+                                      project_id=self.project_id,
+                                      name="test-server-group",
+                                      policies=["anti-affinity"])
+        compute_utils.notify_about_server_group_action(self.context,
+                                                       group, 'create')
+        self.assertEqual(len(fake_notifier.VERSIONED_NOTIFICATIONS), 1)
+        notification = fake_notifier.VERSIONED_NOTIFICATIONS[0]
+        expected = {'priority': 'INFO',
+                    'event_type': u'server_group.create',
+                    'publisher_id': u'nova-api:fake-mini',
+                    'payload': {
+                        'nova_object.data': {
+                            'name': u'test-server-group',
+                            'policies': [u'anti-affinity'],
+                            'project_id': u'fake',
+                            'user_id': u'fake',
+                            'uuid': uuid,
+                            'hosts': None,
+                            'members': None
+                        },
+                        'nova_object.name': 'ServerGroupPayload',
+                        'nova_object.namespace': 'nova',
+                        'nova_object.version': '1.0'
+                   }
+            }
+        self.assertEqual(notification, expected)
+
+
 class ComputeUtilsQuotaTestCase(test.TestCase):
     def setUp(self):
         super(ComputeUtilsQuotaTestCase, self).setUp()
@@ -1016,25 +1167,6 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
 
         deltas = compute_utils.reverse_upsize_quota_delta(self.context, inst)
         self.assertEqual(expected_deltas, deltas)
-
-    @mock.patch.object(objects.Quotas, 'reserve')
-    @mock.patch.object(objects.quotas, 'ids_from_instance')
-    def test_reserve_quota_delta(self, mock_ids_from_instance,
-                                 mock_reserve):
-        quotas = objects.Quotas(context=context)
-        inst = create_instance(self.context, params=None)
-        inst.old_flavor = flavors.get_flavor_by_name('m1.tiny')
-        inst.new_flavor = flavors.get_flavor_by_name('m1.medium')
-
-        mock_ids_from_instance.return_value = (inst.project_id, inst.user_id)
-        mock_reserve.return_value = quotas
-
-        deltas = compute_utils.upsize_quota_delta(self.context,
-                                                  inst.new_flavor,
-                                                  inst.old_flavor)
-        compute_utils.reserve_quota_delta(self.context, deltas, inst)
-        mock_reserve.assert_called_once_with(project_id=inst.project_id,
-                                             user_id=inst.user_id, **deltas)
 
     @mock.patch('nova.objects.Quotas.count_as_dict')
     def test_check_instance_quota_exceeds_with_multiple_resources(self,

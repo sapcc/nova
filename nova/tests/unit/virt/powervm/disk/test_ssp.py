@@ -35,7 +35,7 @@ FAKE_INST_UUID = uuidutils.generate_uuid(dashed=True)
 FAKE_INST_UUID_PVM = vm.get_pvm_uuid(mock.Mock(uuid=FAKE_INST_UUID))
 
 
-class TestSSPDiskAdapter(test.TestCase):
+class TestSSPDiskAdapter(test.NoDBTestCase):
     """Unit Tests for the LocalDisk storage driver."""
 
     def setUp(self):
@@ -212,7 +212,7 @@ class TestSSPDiskAdapter(test.TestCase):
         self.pvm_uuid.assert_called_once_with(self.inst)
         self.assertEqual(1, self.mock_wtsk.add_functor_subtask.call_count)
 
-    @mock.patch('pypowervm.tasks.storage.rm_tier_storage')
+    @mock.patch('pypowervm.tasks.storage.rm_tier_storage', autospec=True)
     def test_delete_disks(self, mock_rm_tstor):
         self.ssp_drv.delete_disks(['disk1', 'disk2'])
         mock_rm_tstor.assert_called_once_with(['disk1', 'disk2'],

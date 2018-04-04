@@ -38,8 +38,10 @@ import six
 from six.moves import range
 import sqlalchemy as sa
 from sqlalchemy import and_
+from sqlalchemy import Boolean
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import Integer
 from sqlalchemy import MetaData
 from sqlalchemy import or_
 from sqlalchemy.orm import aliased
@@ -51,6 +53,7 @@ from sqlalchemy.orm import undefer
 from sqlalchemy.schema import Table
 from sqlalchemy import sql
 from sqlalchemy.sql.expression import asc
+from sqlalchemy.sql.expression import cast
 from sqlalchemy.sql.expression import desc
 from sqlalchemy.sql.expression import UpdateBase
 from sqlalchemy.sql import false
@@ -80,22 +83,9 @@ api_context_manager = enginefacade.transaction_context()
 
 
 def _get_db_conf(conf_group, connection=None):
-    kw = dict(
-        connection=connection or conf_group.connection,
-        slave_connection=conf_group.slave_connection,
-        sqlite_fk=False,
-        __autocommit=True,
-        expire_on_commit=False,
-        mysql_sql_mode=conf_group.mysql_sql_mode,
-        idle_timeout=conf_group.idle_timeout,
-        connection_debug=conf_group.connection_debug,
-        max_pool_size=conf_group.max_pool_size,
-        max_overflow=conf_group.max_overflow,
-        pool_timeout=conf_group.pool_timeout,
-        sqlite_synchronous=conf_group.sqlite_synchronous,
-        connection_trace=conf_group.connection_trace,
-        max_retries=conf_group.max_retries,
-        retry_interval=conf_group.retry_interval)
+    kw = dict(conf_group.items())
+    if connection is not None:
+        kw['connection'] = connection
     return kw
 
 
@@ -348,37 +338,6 @@ def convert_objects_related_datetimes(values, *datetime_keys):
             values[key] = values[key].replace(tzinfo=None)
     return values
 
-
-def _sync_instances(context, project_id, user_id):
-    return dict(zip(('instances', 'cores', 'ram'),
-                    _instance_data_get_for_user(context, project_id, user_id)))
-
-
-def _sync_floating_ips(context, project_id, user_id):
-    return dict(floating_ips=_floating_ip_count_by_project(
-                context, project_id))
-
-
-def _sync_fixed_ips(context, project_id, user_id):
-    return dict(fixed_ips=_fixed_ip_count_by_project(context, project_id))
-
-
-def _sync_security_groups(context, project_id, user_id):
-    return dict(security_groups=_security_group_count_by_project_and_user(
-                context, project_id, user_id))
-
-
-def _sync_server_groups(context, project_id, user_id):
-    return dict(server_groups=_instance_group_count_by_project_and_user(
-                context, project_id, user_id))
-
-QUOTA_SYNC_FUNCTIONS = {
-    '_sync_instances': _sync_instances,
-    '_sync_floating_ips': _sync_floating_ips,
-    '_sync_fixed_ips': _sync_fixed_ips,
-    '_sync_security_groups': _sync_security_groups,
-    '_sync_server_groups': _sync_server_groups,
-}
 
 ###################
 
@@ -921,8 +880,7 @@ def floating_ip_get_pools(context):
 
 
 @require_context
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True,
-                           retry_on_request=True)
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
 @pick_context_manager_writer
 def floating_ip_allocate_address(context, project_id, pool,
                                  auto_assigned=False):
@@ -1250,8 +1208,7 @@ def dnsdomain_get_all(context):
 ###################
 
 
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True,
-                           retry_on_request=True)
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
 @pick_context_manager_writer
 def fixed_ip_associate(context, address, instance_uuid, network_id=None,
                        reserved=False, virtual_interface_id=None):
@@ -1300,8 +1257,7 @@ def fixed_ip_associate(context, address, instance_uuid, network_id=None,
     return fixed_ip_ref
 
 
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True,
-                           retry_on_request=True)
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
 @pick_context_manager_writer
 def fixed_ip_associate_pool(context, network_id, instance_uuid=None,
                             host=None, virtual_interface_id=None):
@@ -1829,6 +1785,11 @@ def instance_create(context, values):
     # create the instance uuid to ec2_id mapping entry for instance
     ec2_instance_create(context, instance_ref['uuid'])
 
+    # Parity with the return value of instance_get_all_by_filters_sort()
+    # Obviously a newly-created instance record can't already have a fault
+    # record because of the FK constraint, so this is fine.
+    instance_ref.fault = None
+
     return instance_ref
 
 
@@ -1890,7 +1851,7 @@ def instance_destroy(context, instance_uuid, constraint=None):
             filter_by(instance_uuid=instance_uuid).\
             soft_delete()
     # NOTE(snikitin): We can't use model_query here, because there is no
-    # column 'deleted' in 'tags' table.
+    # column 'deleted' in 'tags' or 'console_auth_tokens' tables.
     context.session.query(models.Tag).filter_by(
         resource_id=instance_uuid).delete()
     context.session.query(models.ConsoleAuthToken).filter_by(
@@ -1991,6 +1952,12 @@ def _instances_fill_metadata(context, instances, manual_joins=None):
         for row in _instance_pcidevs_get_multi(context, uuids):
             pcidevs[row['instance_uuid']].append(row)
 
+    if 'fault' in manual_joins:
+        faults = instance_fault_get_by_instance_uuids(context, uuids,
+                                                      latest=True)
+    else:
+        faults = {}
+
     filled_instances = []
     for inst in instances:
         inst = dict(inst)
@@ -1998,6 +1965,8 @@ def _instances_fill_metadata(context, instances, manual_joins=None):
         inst['metadata'] = meta[inst['uuid']]
         if 'pci_devices' in manual_joins:
             inst['pci_devices'] = pcidevs[inst['uuid']]
+        inst_faults = faults.get(inst['uuid'])
+        inst['fault'] = inst_faults and inst_faults[0] or None
         filled_instances.append(inst)
 
     return filled_instances
@@ -2006,7 +1975,7 @@ def _instances_fill_metadata(context, instances, manual_joins=None):
 def _manual_join_columns(columns_to_join):
     """Separate manually joined columns from columns_to_join
 
-    If columns_to_join contains 'metadata', 'system_metadata', or
+    If columns_to_join contains 'metadata', 'system_metadata', 'fault', or
     'pci_devices' those columns are removed from columns_to_join and added
     to a manual_joins list to be used with the _instances_fill_metadata method.
 
@@ -2019,7 +1988,7 @@ def _manual_join_columns(columns_to_join):
     """
     manual_joins = []
     columns_to_join_new = copy.copy(columns_to_join)
-    for column in ('metadata', 'system_metadata', 'pci_devices'):
+    for column in ('metadata', 'system_metadata', 'pci_devices', 'fault'):
         if column in columns_to_join_new:
             columns_to_join_new.remove(column)
             manual_joins.append(column)
@@ -2273,6 +2242,102 @@ def instance_get_all_by_filters_sort(context, filters, limit=None, marker=None,
         raise exception.InvalidSortKey()
 
     return _instances_fill_metadata(context, query_prefix.all(), manual_joins)
+
+
+@require_context
+@pick_context_manager_reader_allow_async
+def instance_get_by_sort_filters(context, sort_keys, sort_dirs, values):
+    """Attempt to get a single instance based on a combination of sort
+    keys, directions and filter values. This is used to try to find a
+    marker instance when we don't have a marker uuid.
+
+    This returns just a uuid of the instance that matched.
+    """
+
+    model = models.Instance
+    return _model_get_uuid_by_sort_filters(context, model, sort_keys,
+                                           sort_dirs, values)
+
+
+def _model_get_uuid_by_sort_filters(context, model, sort_keys, sort_dirs,
+                                    values):
+    query = context.session.query(model.uuid)
+
+    # NOTE(danms): Below is a re-implementation of our
+    # oslo_db.sqlalchemy.utils.paginate_query() utility. We can't use that
+    # directly because it does not return the marker and we need it to.
+    # The below is basically the same algorithm, stripped down to just what
+    # we need, and augmented with the filter criteria required for us to
+    # get back the instance that would correspond to our query.
+
+    # This is our position in sort_keys,sort_dirs,values for the loop below
+    key_index = 0
+
+    # We build a list of criteria to apply to the query, which looks
+    # approximately like this (assuming all ascending):
+    #
+    #  OR(row.key1 > val1,
+    #     AND(row.key1 == val1, row.key2 > val2),
+    #     AND(row.key1 == val1, row.key2 == val2, row.key3 >= val3),
+    #  )
+    #
+    # The final key is compared with the "or equal" variant so that
+    # a complete match instance is still returned.
+    criteria = []
+
+    for skey, sdir, val in zip(sort_keys, sort_dirs, values):
+        # Apply ordering to our query for the key, direction we're processing
+        if sdir == 'desc':
+            query = query.order_by(desc(getattr(model, skey)))
+        else:
+            query = query.order_by(asc(getattr(model, skey)))
+
+        # Build a list of equivalence requirements on keys we've already
+        # processed through the loop. In other words, if we're adding
+        # key2 > val2, make sure that key1 == val1
+        crit_attrs = []
+        for equal_attr in range(0, key_index):
+            crit_attrs.append(
+                (getattr(model, sort_keys[equal_attr]) == values[equal_attr]))
+
+        model_attr = getattr(model, skey)
+        if isinstance(model_attr.type, Boolean):
+            model_attr = cast(model_attr, Integer)
+            val = int(val)
+
+        if skey == sort_keys[-1]:
+            # If we are the last key, then we should use or-equal to
+            # allow a complete match to be returned
+            if sdir == 'asc':
+                crit = (model_attr >= val)
+            else:
+                crit = (model_attr <= val)
+        else:
+            # If we're not the last key, then strict greater or less than
+            # so we order strictly.
+            if sdir == 'asc':
+                crit = (model_attr > val)
+            else:
+                crit = (model_attr < val)
+
+        # AND together all the above
+        crit_attrs.append(crit)
+        criteria.append(and_(*crit_attrs))
+        key_index += 1
+
+    # OR together all the ANDs
+    query = query.filter(or_(*criteria))
+
+    # We can't raise InstanceNotFound because we don't have a uuid to
+    # be looking for, so just return nothing if no match.
+    result = query.limit(1).first()
+    if result:
+        # We're querying for a single column, which means we get back a
+        # tuple of one thing. Strip that out and just return the uuid
+        # for our caller.
+        return result[0]
+    else:
+        return result
 
 
 def _db_connection_type(db_connection):
@@ -3283,8 +3348,7 @@ def network_get_all_by_host(context, host):
     return _network_get_query(context).filter(host_filter).all()
 
 
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True,
-                           retry_on_request=True)
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
 @pick_context_manager_writer
 def network_set_host(context, network_id, host_id):
     network_ref = _network_get_query(context).\
@@ -3493,494 +3557,9 @@ def quota_class_update(context, class_name, resource, limit):
 ###################
 
 
-@require_context
-@pick_context_manager_reader
-def quota_usage_get(context, project_id, resource, user_id=None):
-    query = model_query(context, models.QuotaUsage, read_deleted="no").\
-                     filter_by(project_id=project_id).\
-                     filter_by(resource=resource)
-    if user_id:
-        if resource not in PER_PROJECT_QUOTAS:
-            result = query.filter_by(user_id=user_id).first()
-        else:
-            result = query.filter_by(user_id=None).first()
-    else:
-        result = query.first()
-
-    if not result:
-        raise exception.QuotaUsageNotFound(project_id=project_id)
-
-    return result
-
-
-def _quota_usage_get_all(context, project_id, user_id=None):
-    query = model_query(context, models.QuotaUsage, read_deleted="no").\
-                   filter_by(project_id=project_id)
-    result = {'project_id': project_id}
-    if user_id:
-        query = query.filter(or_(models.QuotaUsage.user_id == user_id,
-                                 models.QuotaUsage.user_id == null()))
-        result['user_id'] = user_id
-
-    rows = query.all()
-    for row in rows:
-        if row.resource in result:
-            result[row.resource]['in_use'] += row.in_use
-            result[row.resource]['reserved'] += row.reserved
-        else:
-            result[row.resource] = dict(in_use=row.in_use,
-                                        reserved=row.reserved)
-
-    return result
-
-
-@require_context
-@pick_context_manager_reader
-def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
-    return _quota_usage_get_all(context, project_id, user_id=user_id)
-
-
-@require_context
-@pick_context_manager_reader
-def quota_usage_get_all_by_project(context, project_id):
-    return _quota_usage_get_all(context, project_id)
-
-
-def _quota_usage_create(project_id, user_id, resource, in_use,
-                        reserved, until_refresh, session):
-    quota_usage_ref = models.QuotaUsage()
-    quota_usage_ref.project_id = project_id
-    quota_usage_ref.user_id = user_id
-    quota_usage_ref.resource = resource
-    quota_usage_ref.in_use = in_use
-    quota_usage_ref.reserved = reserved
-    quota_usage_ref.until_refresh = until_refresh
-    # updated_at is needed for judgement of max_age
-    quota_usage_ref.updated_at = timeutils.utcnow()
-
-    quota_usage_ref.save(session)
-
-    return quota_usage_ref
-
-
-@pick_context_manager_writer
-def quota_usage_update(context, project_id, user_id, resource, **kwargs):
-    updates = {}
-
-    for key in ['in_use', 'reserved', 'until_refresh']:
-        if key in kwargs:
-            updates[key] = kwargs[key]
-
-    result = model_query(context, models.QuotaUsage, read_deleted="no").\
-                     filter_by(project_id=project_id).\
-                     filter_by(resource=resource).\
-                     filter(or_(models.QuotaUsage.user_id == user_id,
-                                models.QuotaUsage.user_id == null())).\
-                     update(updates)
-
-    if not result:
-        raise exception.QuotaUsageNotFound(project_id=project_id)
-
-
-###################
-
-
-def _reservation_create(uuid, usage, project_id, user_id, resource,
-                        delta, expire, session):
-    reservation_ref = models.Reservation()
-    reservation_ref.uuid = uuid
-    reservation_ref.usage_id = usage['id']
-    reservation_ref.project_id = project_id
-    reservation_ref.user_id = user_id
-    reservation_ref.resource = resource
-    reservation_ref.delta = delta
-    reservation_ref.expire = expire
-    reservation_ref.save(session)
-    return reservation_ref
-
-
-###################
-
-
-# NOTE(johannes): The quota code uses SQL locking to ensure races don't
-# cause under or over counting of resources. To avoid deadlocks, this
-# code always acquires the lock on quota_usages before acquiring the lock
-# on reservations.
-
-def _get_project_user_quota_usages(context, project_id, user_id):
-    rows = model_query(context, models.QuotaUsage,
-                       read_deleted="no").\
-        filter_by(project_id=project_id).\
-        order_by(models.QuotaUsage.id.asc()).\
-        with_lockmode('update').\
-        all()
-    proj_result = dict()
-    user_result = dict()
-    # Get the total count of in_use,reserved
-    for row in rows:
-        proj_result.setdefault(row.resource,
-                               dict(in_use=0, reserved=0, total=0))
-        proj_result[row.resource]['in_use'] += row.in_use
-        proj_result[row.resource]['reserved'] += row.reserved
-        proj_result[row.resource]['total'] += (row.in_use + row.reserved)
-        if row.user_id is None or row.user_id == user_id:
-            user_result[row.resource] = row
-    return proj_result, user_result
-
-
-def _create_quota_usage_if_missing(user_usages, resource, until_refresh,
-                                   project_id, user_id, session):
-    """Creates a QuotaUsage record and adds to user_usages if not present.
-
-    :param user_usages:   dict of resource keys to QuotaUsage records. This is
-                          updated if resource is not in user_usages yet or
-                          until_refresh is not None.
-    :param resource:      The resource being checked for quota usage.
-    :param until_refresh: Count of reservations until usage is refreshed,
-                          int or None
-    :param project_id:    The project being checked for quota usage.
-    :param user_id:       The user being checked for quota usage.
-    :param session:       DB session holding a transaction lock.
-    :return:              True if a new QuotaUsage record was created and added
-                          to user_usages, False otherwise.
-    """
-    new_usage = None
-    if resource not in user_usages:
-        user_id_to_use = user_id
-        if resource in PER_PROJECT_QUOTAS:
-            user_id_to_use = None
-        new_usage = _quota_usage_create(project_id, user_id_to_use, resource,
-                                        0, 0, until_refresh or None, session)
-        user_usages[resource] = new_usage
-    return new_usage is not None
-
-
-def _is_quota_refresh_needed(quota_usage, max_age):
-    """Determines if a quota usage refresh is needed.
-
-    :param quota_usage:   A QuotaUsage object for a given resource.
-    :param max_age:       Number of seconds between subsequent usage refreshes.
-    :return:              True if a refresh is needed, False otherwise.
-    """
-    refresh = False
-    if quota_usage.in_use < 0:
-        # Negative in_use count indicates a desync, so try to
-        # heal from that...
-        LOG.debug('in_use has dropped below 0; forcing refresh for '
-                  'QuotaUsage: %s', dict(quota_usage))
-        refresh = True
-    elif quota_usage.until_refresh is not None:
-        quota_usage.until_refresh -= 1
-        if quota_usage.until_refresh <= 0:
-            refresh = True
-    elif max_age and (timeutils.utcnow() -
-            quota_usage.updated_at).seconds >= max_age:
-        refresh = True
-
-    return refresh
-
-
-def _refresh_quota_usages(quota_usage, until_refresh, in_use):
-    """Refreshes quota usage for the given resource.
-
-    :param quota_usage:   A QuotaUsage object for a given resource.
-    :param until_refresh: Count of reservations until usage is refreshed,
-                          int or None
-    :param in_use:        Actual quota usage for the resource.
-    """
-    if quota_usage.in_use != in_use:
-        LOG.info('quota_usages out of sync, updating. '
-                 'project_id: %(project_id)s, '
-                 'user_id: %(user_id)s, '
-                 'resource: %(res)s, '
-                 'tracked usage: %(tracked_use)s, '
-                 'actual usage: %(in_use)s',
-                 {'project_id': quota_usage.project_id,
-                  'user_id': quota_usage.user_id,
-                  'res': quota_usage.resource,
-                  'tracked_use': quota_usage.in_use,
-                  'in_use': in_use})
-    else:
-        LOG.debug('QuotaUsage has not changed, refresh is unnecessary for: %s',
-                  dict(quota_usage))
-
-    # Update the usage
-    quota_usage.in_use = in_use
-    quota_usage.until_refresh = until_refresh or None
-
-
-def _refresh_quota_usages_if_needed(user_usages, context, resources, keys,
-                                    project_id, user_id, until_refresh,
-                                    max_age, force_refresh=False):
-    elevated = context.elevated()
-
-    # Handle usage refresh
-    work = set(keys)
-    while work:
-        resource = work.pop()
-
-        # Do we need to refresh the usage?
-        created = _create_quota_usage_if_missing(user_usages, resource,
-                                                 until_refresh, project_id,
-                                                 user_id, context.session)
-
-        refresh = force_refresh
-        if not refresh:
-            refresh = created or \
-                      _is_quota_refresh_needed(user_usages[resource], max_age)
-
-        # OK, refresh the usage
-        if refresh:
-            # Grab the sync routine
-            sync = QUOTA_SYNC_FUNCTIONS[resources[resource].sync]
-
-            updates = sync(elevated, project_id, user_id)
-            for res, in_use in updates.items():
-                # Make sure we have a destination for the usage!
-                _create_quota_usage_if_missing(user_usages, res,
-                                               until_refresh, project_id,
-                                               user_id, context.session)
-                _refresh_quota_usages(user_usages[res], until_refresh,
-                                      in_use)
-
-                # Because more than one resource may be refreshed
-                # by the call to the sync routine, and we don't
-                # want to double-sync, we make sure all refreshed
-                # resources are dropped from the work set.
-                work.discard(res)
-
-                # NOTE(Vek): We make the assumption that the sync
-                #            routine actually refreshes the
-                #            resources that it is the sync routine
-                #            for.  We don't check, because this is
-                #            a best-effort mechanism.
-
-
-def _calculate_overquota(project_quotas, user_quotas, deltas,
-                         project_usages, user_usages):
-    """Checks if any resources will go over quota based on the request.
-
-    :param project_quotas: dict of resource quotas (limits) for the project.
-    :param user_quotas:    dict of resource quotas (limits) for the user.
-    :param deltas:         dict of resource keys to positive/negative quota
-                           changes for the resources in a given operation.
-    :param project_usages: dict of resource keys to QuotaUsage records for the
-                           project.
-    :param user_usages:    dict of resource keys to QuotaUsage records for the
-                           user.
-    :return:               list of resources that are over-quota for the
-                           operation.
-    """
-    overs = []
-    for res, delta in deltas.items():
-        # We can't go over-quota if we're not reserving anything.
-        if delta >= 0:
-            # We can't go over-quota if we have unlimited quotas.
-            # over if the project usage + delta is more than project quota
-            if 0 <= project_quotas[res] < delta + project_usages[res]['total']:
-                LOG.debug('Request is over project quota for resource '
-                          '"%(res)s". Project limit: %(limit)s, delta: '
-                          '%(delta)s, current total project usage: %(total)s',
-                          {'res': res, 'limit': project_quotas[res],
-                           'delta': delta,
-                           'total': project_usages[res]['total']})
-                overs.append(res)
-            # We can't go over-quota if we have unlimited quotas.
-            # over if the user usage + delta is more than user quota
-            elif 0 <= user_quotas[res] < delta + user_usages[res]['total']:
-                LOG.debug('Request is over user quota for resource '
-                          '"%(res)s". User limit: %(limit)s, delta: '
-                          '%(delta)s, current total user usage: %(total)s',
-                          {'res': res, 'limit': user_quotas[res],
-                           'delta': delta, 'total': user_usages[res]['total']})
-                overs.append(res)
-    return overs
-
-
-@require_context
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
-@pick_context_manager_writer
-def quota_usage_refresh(context, resources, keys, until_refresh, max_age,
-                        project_id=None, user_id=None):
-    if project_id is None:
-        project_id = context.project_id
-    if user_id is None:
-        user_id = context.user_id
-
-    # Get the current usages
-    project_usages, user_usages = _get_project_user_quota_usages(
-            context, project_id, user_id)
-
-    # Force refresh of the usages
-    _refresh_quota_usages_if_needed(user_usages, context, resources, keys,
-                                    project_id, user_id, until_refresh,
-                                    max_age, force_refresh=True)
-
-
-@require_context
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
-@pick_context_manager_writer
-def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
-                  expire, until_refresh, max_age, project_id=None,
-                  user_id=None):
-    if project_id is None:
-        project_id = context.project_id
-    if user_id is None:
-        user_id = context.user_id
-
-    # Get the current usages
-    project_usages, user_usages = _get_project_user_quota_usages(
-            context, project_id, user_id)
-
-    _refresh_quota_usages_if_needed(user_usages, context, resources,
-                                    deltas.keys(), project_id, user_id,
-                                    until_refresh, max_age)
-
-    # Check for deltas that would go negative
-    unders = [res for res, delta in deltas.items()
-              if delta < 0 and
-              delta + user_usages[res].in_use < 0]
-
-    # Now, let's check the quotas
-    # NOTE(Vek): We're only concerned about positive increments.
-    #            If a project has gone over quota, we want them to
-    #            be able to reduce their usage without any
-    #            problems.
-    for key, value in user_usages.items():
-        if key not in project_usages:
-            LOG.debug('Copying QuotaUsage for resource "%(key)s" from '
-                      'user_usages into project_usages: %(value)s',
-                      {'key': key, 'value': dict(value)})
-            project_usages[key] = value
-
-    overs = _calculate_overquota(project_quotas, user_quotas, deltas,
-                                 project_usages, user_usages)
-
-    # NOTE(Vek): The quota check needs to be in the transaction,
-    #            but the transaction doesn't fail just because
-    #            we're over quota, so the OverQuota raise is
-    #            outside the transaction.  If we did the raise
-    #            here, our usage updates would be discarded, but
-    #            they're not invalidated by being over-quota.
-
-    # Create the reservations
-    if not overs:
-        reservations = []
-        for res, delta in deltas.items():
-            reservation = _reservation_create(
-                                             uuidutils.generate_uuid(),
-                                             user_usages[res],
-                                             project_id,
-                                             user_id,
-                                             res, delta, expire,
-                                             context.session)
-            reservations.append(reservation.uuid)
-
-            # Also update the reserved quantity
-            # NOTE(Vek): Again, we are only concerned here about
-            #            positive increments.  Here, though, we're
-            #            worried about the following scenario:
-            #
-            #            1) User initiates resize down.
-            #            2) User allocates a new instance.
-            #            3) Resize down fails or is reverted.
-            #            4) User is now over quota.
-            #
-            #            To prevent this, we only update the
-            #            reserved value if the delta is positive.
-            if delta > 0:
-                user_usages[res].reserved += delta
-
-    # Apply updates to the usages table
-    for usage_ref in user_usages.values():
-        context.session.add(usage_ref)
-
-    if unders:
-        LOG.warning("Change will make usage less than 0 for the following "
-                    "resources: %s", unders)
-
-    if overs:
-        if project_quotas == user_quotas:
-            usages = project_usages
-        else:
-            # NOTE(mriedem): user_usages is a dict of resource keys to
-            # QuotaUsage sqlalchemy dict-like objects and doesn't log well
-            # so convert the user_usages values to something useful for
-            # logging. Remove this if we ever change how
-            # _get_project_user_quota_usages returns the user_usages values.
-            user_usages = {k: dict(in_use=v['in_use'], reserved=v['reserved'],
-                                   total=v['total'])
-                      for k, v in user_usages.items()}
-            usages = user_usages
-        usages = {k: dict(in_use=v['in_use'], reserved=v['reserved'])
-                  for k, v in usages.items()}
-        LOG.debug('Raise OverQuota exception because: '
-                  'project_quotas: %(project_quotas)s, '
-                  'user_quotas: %(user_quotas)s, deltas: %(deltas)s, '
-                  'overs: %(overs)s, project_usages: %(project_usages)s, '
-                  'user_usages: %(user_usages)s',
-                  {'project_quotas': project_quotas,
-                   'user_quotas': user_quotas,
-                   'overs': overs, 'deltas': deltas,
-                   'project_usages': project_usages,
-                   'user_usages': user_usages})
-        raise exception.OverQuota(overs=sorted(overs), quotas=user_quotas,
-                                  usages=usages)
-
-    return reservations
-
-
-def _quota_reservations_query(context, reservations):
-    """Return the relevant reservations."""
-
-    # Get the listed reservations
-    return model_query(context, models.Reservation, read_deleted="no").\
-        filter(models.Reservation.uuid.in_(reservations)).\
-        with_lockmode('update')
-
-
-@require_context
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
-@pick_context_manager_writer
-def reservation_commit(context, reservations, project_id=None, user_id=None):
-    _project_usages, user_usages = _get_project_user_quota_usages(
-            context, project_id, user_id)
-    reservation_query = _quota_reservations_query(context, reservations)
-    for reservation in reservation_query.all():
-        usage = user_usages[reservation.resource]
-        if reservation.delta >= 0:
-            usage.reserved -= reservation.delta
-        usage.in_use += reservation.delta
-    reservation_query.soft_delete(synchronize_session=False)
-
-
-@require_context
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
-@pick_context_manager_writer
-def reservation_rollback(context, reservations, project_id=None, user_id=None):
-    _project_usages, user_usages = _get_project_user_quota_usages(
-            context, project_id, user_id)
-    reservation_query = _quota_reservations_query(context, reservations)
-    for reservation in reservation_query.all():
-        usage = user_usages[reservation.resource]
-        if reservation.delta >= 0:
-            usage.reserved -= reservation.delta
-    reservation_query.soft_delete(synchronize_session=False)
-
-
 @pick_context_manager_writer
 def quota_destroy_all_by_project_and_user(context, project_id, user_id):
     model_query(context, models.ProjectUserQuota, read_deleted="no").\
-        filter_by(project_id=project_id).\
-        filter_by(user_id=user_id).\
-        soft_delete(synchronize_session=False)
-
-    model_query(context, models.QuotaUsage, read_deleted="no").\
-        filter_by(project_id=project_id).\
-        filter_by(user_id=user_id).\
-        soft_delete(synchronize_session=False)
-
-    model_query(context, models.Reservation, read_deleted="no").\
         filter_by(project_id=project_id).\
         filter_by(user_id=user_id).\
         soft_delete(synchronize_session=False)
@@ -3995,30 +3574,6 @@ def quota_destroy_all_by_project(context, project_id):
     model_query(context, models.ProjectUserQuota, read_deleted="no").\
         filter_by(project_id=project_id).\
         soft_delete(synchronize_session=False)
-
-    model_query(context, models.QuotaUsage, read_deleted="no").\
-        filter_by(project_id=project_id).\
-        soft_delete(synchronize_session=False)
-
-    model_query(context, models.Reservation, read_deleted="no").\
-        filter_by(project_id=project_id).\
-        soft_delete(synchronize_session=False)
-
-
-@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
-@pick_context_manager_writer
-def reservation_expire(context):
-    current_time = timeutils.utcnow()
-    reservation_query = model_query(
-        context, models.Reservation, read_deleted="no").\
-        filter(models.Reservation.expire < current_time)
-
-    for reservation in reservation_query.join(models.QuotaUsage).all():
-        if reservation.delta >= 0:
-            reservation.usage.reserved -= reservation.delta
-            context.session.add(reservation.usage)
-
-    return reservation_query.soft_delete(synchronize_session=False)
 
 
 ###################
@@ -4146,12 +3701,27 @@ def _from_legacy_values(values, legacy, allow_updates=False):
         return values
 
 
+def _set_or_validate_uuid(values):
+    uuid = values.get('uuid')
+
+    # values doesn't contain uuid, or it's blank
+    if not uuid:
+        values['uuid'] = uuidutils.generate_uuid()
+
+    # values contains a uuid
+    else:
+        if not uuidutils.is_uuid_like(uuid):
+            raise exception.InvalidUUID(uuid=uuid)
+
+
 @require_context
 @pick_context_manager_writer
 def block_device_mapping_create(context, values, legacy=True):
     _scrub_empty_str_values(values, ['volume_size'])
     values = _from_legacy_values(values, legacy)
     convert_objects_related_datetimes(values)
+
+    _set_or_validate_uuid(values)
 
     bdm_ref = models.BlockDeviceMapping()
     bdm_ref.update(values)
@@ -4173,14 +3743,25 @@ def block_device_mapping_update(context, bdm_id, values, legacy=True):
 
 @pick_context_manager_writer
 def block_device_mapping_update_or_create(context, values, legacy=True):
+    # TODO(mdbooth): Remove this method entirely. Callers should know whether
+    # they require update or create, and call the appropriate method.
+
     _scrub_empty_str_values(values, ['volume_size'])
     values = _from_legacy_values(values, legacy, allow_updates=True)
     convert_objects_related_datetimes(values)
 
     result = None
-    # NOTE(xqueralt): Only update a BDM when device_name was provided. We
-    # allow empty device names so they will be set later by the manager.
-    if values['device_name']:
+    # NOTE(xqueralt,danms): Only update a BDM when device_name or
+    # uuid was provided. Prefer the uuid, if available, but fall
+    # back to device_name if no uuid is provided, which can happen
+    # for BDMs created before we had a uuid. We allow empty device
+    # names so they will be set later by the manager.
+    if 'uuid' in values:
+        query = _block_device_mapping_get_query(context)
+        result = query.filter_by(instance_uuid=values['instance_uuid'],
+                                 uuid=values['uuid']).one_or_none()
+
+    if not result and values['device_name']:
         query = _block_device_mapping_get_query(context)
         result = query.filter_by(instance_uuid=values['instance_uuid'],
                                  device_name=values['device_name']).first()
@@ -4188,8 +3769,9 @@ def block_device_mapping_update_or_create(context, values, legacy=True):
     if result:
         result.update(values)
     else:
-        # Either the device_name doesn't exist in the database yet, or no
-        # device_name was provided. Both cases mean creating a new BDM.
+        # Either the device_name or uuid doesn't exist in the database yet, or
+        # neither was provided. Both cases mean creating a new BDM.
+        _set_or_validate_uuid(values)
         result = models.BlockDeviceMapping(**values)
         result.save(context.session)
 
@@ -4467,20 +4049,6 @@ def _security_group_ensure_default(context):
                   'user_id': context.user_id,
                   'project_id': context.project_id}
         default_group = security_group_create(context, values)
-        usage = model_query(context, models.QuotaUsage, read_deleted="no").\
-            filter_by(project_id=context.project_id).\
-            filter_by(user_id=context.user_id).\
-            filter_by(resource='security_groups')
-        # Create quota usage for auto created default security group
-        if not usage.first():
-            _quota_usage_create(context.project_id,
-                                context.user_id,
-                                'security_groups',
-                                1, 0,
-                                CONF.quota.until_refresh,
-                                context.session)
-        else:
-            usage.update({'in_use': int(usage.first().in_use) + 1})
 
         default_rules = _security_group_rule_get_default_query(context).all()
         for default_rule in default_rules:
@@ -4722,6 +4290,18 @@ def migration_get(context, id):
 
 
 @pick_context_manager_reader
+def migration_get_by_uuid(context, migration_uuid):
+    result = model_query(context, models.Migration, read_deleted="yes").\
+                     filter_by(uuid=migration_uuid).\
+                     first()
+
+    if not result:
+        raise exception.MigrationNotFound(migration_id=migration_uuid)
+
+    return result
+
+
+@pick_context_manager_reader
 def migration_get_by_id_and_instance(context, id, instance_uuid):
     result = model_query(context, models.Migration).\
                      filter_by(id=id).\
@@ -4764,7 +4344,15 @@ def migration_get_unconfirmed_by_dest_compute(context, confirm_window,
 
 @pick_context_manager_reader
 def migration_get_in_progress_by_host_and_node(context, host, node):
-
+    # TODO(mriedem): Tracking what various code flows set for
+    # migration status is nutty, since it happens all over the place
+    # and several of the statuses are redundant (done and completed).
+    # We need to define these in an enum somewhere and just update
+    # that one central place that defines what "in progress" means.
+    # NOTE(mriedem): The 'finished' status is not in this list because
+    # 'finished' means a resize is finished on the destination host
+    # and the instance is in VERIFY_RESIZE state, so the end state
+    # for a resize is actually 'confirmed' or 'reverted'.
     return model_query(context, models.Migration).\
             filter(or_(and_(models.Migration.source_compute == host,
                             models.Migration.source_node == node),
@@ -4773,7 +4361,7 @@ def migration_get_in_progress_by_host_and_node(context, host, node):
             filter(~models.Migration.status.in_(['accepted', 'confirmed',
                                                  'reverted', 'error',
                                                  'failed', 'completed',
-                                                 'cancelled'])).\
+                                                 'cancelled', 'done'])).\
             options(joinedload_all('instance.system_metadata')).\
             all()
 
@@ -4796,8 +4384,23 @@ def migration_get_in_progress_by_instance(context, instance_uuid,
 
 
 @pick_context_manager_reader
-def migration_get_all_by_filters(context, filters):
+def migration_get_all_by_filters(context, filters,
+                                 sort_keys=None, sort_dirs=None,
+                                 limit=None, marker=None):
+    if limit == 0:
+        return []
+
     query = model_query(context, models.Migration)
+    if "uuid" in filters:
+        # The uuid filter is here for the MigrationLister and multi-cell
+        # paging support in the compute API.
+        uuid = filters["uuid"]
+        uuid = [uuid] if isinstance(uuid, six.string_types) else uuid
+        query = query.filter(models.Migration.uuid.in_(uuid))
+    if 'changes-since' in filters:
+        changes_since = timeutils.normalize_time(filters['changes-since'])
+        query = query. \
+            filter(models.Migration.updated_at >= changes_since)
     if "status" in filters:
         status = filters["status"]
         status = [status] if isinstance(status, six.string_types) else status
@@ -4816,9 +4419,58 @@ def migration_get_all_by_filters(context, filters):
         hidden = filters["hidden"]
         query = query.filter(models.Migration.hidden == hidden)
     if "instance_uuid" in filters:
-        uuid = filters["instance_uuid"]
-        query = query.filter(models.Migration.instance_uuid == uuid)
-    return query.all()
+        instance_uuid = filters["instance_uuid"]
+        query = query.filter(models.Migration.instance_uuid == instance_uuid)
+    if marker:
+        try:
+            marker = migration_get_by_uuid(context, marker)
+        except exception.MigrationNotFound:
+            raise exception.MarkerNotFound(marker=marker)
+    if limit or marker or sort_keys or sort_dirs:
+        # Default sort by desc(['created_at', 'id'])
+        sort_keys, sort_dirs = process_sort_params(sort_keys, sort_dirs,
+                                                   default_dir='desc')
+        return sqlalchemyutils.paginate_query(query,
+                                              models.Migration,
+                                              limit=limit,
+                                              sort_keys=sort_keys,
+                                              marker=marker,
+                                              sort_dirs=sort_dirs).all()
+    else:
+        return query.all()
+
+
+@require_context
+@pick_context_manager_reader_allow_async
+def migration_get_by_sort_filters(context, sort_keys, sort_dirs, values):
+    """Attempt to get a single migration based on a combination of sort
+    keys, directions and filter values. This is used to try to find a
+    marker migration when we don't have a marker uuid.
+
+    This returns just a uuid of the migration that matched.
+    """
+    model = models.Migration
+    return _model_get_uuid_by_sort_filters(context, model, sort_keys,
+                                           sort_dirs, values)
+
+
+@pick_context_manager_writer
+def migration_migrate_to_uuid(context, count):
+    # Avoid circular import
+    from nova import objects
+
+    db_migrations = model_query(context, models.Migration).filter_by(
+        uuid=None).limit(count).all()
+
+    done = 0
+    for db_migration in db_migrations:
+        mig = objects.Migration(context)
+        mig._from_db_object(context, mig, db_migration)
+        done += 1
+
+    # We don't have any situation where we can (detectably) not
+    # migrate a thing, so report anything that matched as "completed".
+    return done, done
 
 
 ##################
@@ -6080,7 +5732,7 @@ def instance_fault_get_by_instance_uuids(context, instance_uuids,
 
 @pick_context_manager_writer
 def action_start(context, values):
-    convert_objects_related_datetimes(values, 'start_time')
+    convert_objects_related_datetimes(values, 'start_time', 'updated_at')
     action_ref = models.InstanceAction()
     action_ref.update(values)
     action_ref.save(context.session)
@@ -6089,7 +5741,8 @@ def action_start(context, values):
 
 @pick_context_manager_writer
 def action_finish(context, values):
-    convert_objects_related_datetimes(values, 'start_time', 'finish_time')
+    convert_objects_related_datetimes(values, 'start_time', 'finish_time',
+                                      'updated_at')
     query = model_query(context, models.InstanceAction).\
                         filter_by(instance_uuid=values['instance_uuid']).\
                         filter_by(request_id=values['request_id'])
@@ -6101,12 +5754,30 @@ def action_finish(context, values):
 
 
 @pick_context_manager_reader
-def actions_get(context, instance_uuid):
-    """Get all instance actions for the provided uuid."""
-    actions = model_query(context, models.InstanceAction).\
-                          filter_by(instance_uuid=instance_uuid).\
-                          order_by(desc("created_at"), desc("id")).\
-                          all()
+def actions_get(context, instance_uuid, limit=None, marker=None,
+                filters=None):
+    """Get all instance actions for the provided uuid and filters."""
+    if limit == 0:
+        return []
+
+    sort_keys = ['created_at', 'id']
+    sort_dirs = ['desc', 'desc']
+
+    query_prefix = model_query(context, models.InstanceAction).\
+        filter_by(instance_uuid=instance_uuid)
+    if filters and 'changes-since' in filters:
+        changes_since = timeutils.normalize_time(filters['changes-since'])
+        query_prefix = query_prefix. \
+            filter(models.InstanceAction.updated_at >= changes_since)
+
+    if marker is not None:
+        marker = action_get_by_request_id(context, instance_uuid, marker)
+        if not marker:
+            raise exception.MarkerNotFound(marker=marker)
+    actions = sqlalchemyutils.paginate_query(query_prefix,
+                                             models.InstanceAction, limit,
+                                             sort_keys, marker=marker,
+                                             sort_dirs=sort_dirs).all()
     return actions
 
 
@@ -6121,6 +5792,7 @@ def _action_get_by_request_id(context, instance_uuid, request_id):
     result = model_query(context, models.InstanceAction).\
                          filter_by(instance_uuid=instance_uuid).\
                          filter_by(request_id=request_id).\
+                         order_by(desc("created_at"), desc("id")).\
                          first()
     return result
 
@@ -6133,6 +5805,7 @@ def _action_get_last_created_by_instance_uuid(context, instance_uuid):
     return result
 
 
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
 @pick_context_manager_writer
 def action_event_start(context, values):
     """Start an event on an instance action."""
@@ -6145,9 +5818,13 @@ def action_event_start(context, values):
     # according to request_id. Try to get the last created action so that
     # init_instance can continue to finish the recovery action, like:
     # powering_off, unpausing, and so on.
+    update_action = True
     if not action and not context.project_id:
         action = _action_get_last_created_by_instance_uuid(
             context, values['instance_uuid'])
+        # If we couldn't find an action by the request_id, we don't want to
+        # update this action since it likely represents an inactive action.
+        update_action = False
 
     if not action:
         raise exception.InstanceActionNotFound(
@@ -6159,9 +5836,19 @@ def action_event_start(context, values):
     event_ref = models.InstanceActionEvent()
     event_ref.update(values)
     context.session.add(event_ref)
+
+    # Update action updated_at.
+    if update_action:
+        action.update({'updated_at': values['start_time']})
+        action.save(context.session)
+
     return event_ref
 
 
+# NOTE: We need the retry_on_deadlock decorator for cases like resize where
+# a lot of events are happening at once between multiple hosts trying to
+# update the same action record in a small time window.
+@oslo_db_api.wrap_db_retry(max_retries=5, retry_on_deadlock=True)
 @pick_context_manager_writer
 def action_event_finish(context, values):
     """Finish an event on an instance action."""
@@ -6174,9 +5861,13 @@ def action_event_finish(context, values):
     # according to request_id. Try to get the last created action so that
     # init_instance can continue to finish the recovery action, like:
     # powering_off, unpausing, and so on.
+    update_action = True
     if not action and not context.project_id:
         action = _action_get_last_created_by_instance_uuid(
             context, values['instance_uuid'])
+        # If we couldn't find an action by the request_id, we don't want to
+        # update this action since it likely represents an inactive action.
+        update_action = False
 
     if not action:
         raise exception.InstanceActionNotFound(
@@ -6195,6 +5886,11 @@ def action_event_finish(context, values):
 
     if values['result'].lower() == 'error':
         action.update({'message': 'Error'})
+
+    # Update action updated_at.
+    if update_action:
+        action.update({'updated_at': values['finish_time']})
+        action.save(context.session)
 
     return event_ref
 
@@ -6404,11 +6100,12 @@ def _archive_deleted_rows_for_table(tablename, max_rows):
 
     shadow_tablename = _SHADOW_TABLE_PREFIX + tablename
     rows_archived = 0
+    deleted_instance_uuids = []
     try:
         shadow_table = Table(shadow_tablename, metadata, autoload=True)
     except NoSuchTableError:
         # No corresponding shadow table; skip it.
-        return rows_archived
+        return rows_archived, deleted_instance_uuids
 
     if tablename == "dns_domains":
         # We have one table (dns_domains) where the key is called
@@ -6452,29 +6149,39 @@ def _archive_deleted_rows_for_table(tablename, max_rows):
 
         conn.execute(update_statement)
 
-    insert = shadow_table.insert(inline=True).\
-        from_select(columns,
-                    sql.select([table],
-                               deleted_column != deleted_column.default.arg).
-                    order_by(column).limit(max_rows))
-    query_delete = sql.select([column],
-                          deleted_column != deleted_column.default.arg).\
-                          order_by(column).limit(max_rows)
+    select = sql.select([column],
+                        deleted_column != deleted_column.default.arg).\
+                        order_by(column).limit(max_rows)
+    rows = conn.execute(select).fetchall()
+    records = [r[0] for r in rows]
 
-    delete_statement = DeleteFromSelect(table, query_delete, column)
-    try:
-        # Group the insert and delete in a transaction.
-        with conn.begin():
-            conn.execute(insert)
-            result_delete = conn.execute(delete_statement)
-        rows_archived = result_delete.rowcount
-    except db_exc.DBReferenceError as ex:
-        # A foreign key constraint keeps us from deleting some of
-        # these rows until we clean up a dependent table.  Just
-        # skip this table for now; we'll come back to it later.
-        LOG.warning("IntegrityError detected when archiving table "
-                    "%(tablename)s: %(error)s",
-                    {'tablename': tablename, 'error': six.text_type(ex)})
+    if records:
+        insert = shadow_table.insert(inline=True).\
+                from_select(columns, sql.select([table], column.in_(records)))
+        delete = table.delete().where(column.in_(records))
+        # NOTE(tssurya): In order to facilitate the deletion of records from
+        # instance_mappings and request_specs tables in the nova_api DB, the
+        # rows of deleted instances from the instances table are stored prior
+        # to their deletion. Basically the uuids of the archived instances
+        # are queried and returned.
+        if tablename == "instances":
+            query_select = sql.select([table.c.uuid], table.c.id.in_(records))
+            rows = conn.execute(query_select).fetchall()
+            deleted_instance_uuids = [r[0] for r in rows]
+
+        try:
+            # Group the insert and delete in a transaction.
+            with conn.begin():
+                conn.execute(insert)
+                result_delete = conn.execute(delete)
+            rows_archived = result_delete.rowcount
+        except db_exc.DBReferenceError as ex:
+            # A foreign key constraint keeps us from deleting some of
+            # these rows until we clean up a dependent table.  Just
+            # skip this table for now; we'll come back to it later.
+            LOG.warning("IntegrityError detected when archiving table "
+                        "%(tablename)s: %(error)s",
+                        {'tablename': tablename, 'error': six.text_type(ex)})
 
     if ((max_rows is None or rows_archived < max_rows)
             and 'instance_uuid' in columns):
@@ -6484,7 +6191,7 @@ def _archive_deleted_rows_for_table(tablename, max_rows):
                                              conn, limit)
         rows_archived += extra
 
-    return rows_archived
+    return rows_archived, deleted_instance_uuids
 
 
 def archive_deleted_rows(max_rows=None):
@@ -6504,26 +6211,31 @@ def archive_deleted_rows(max_rows=None):
 
     """
     table_to_rows_archived = {}
+    deleted_instance_uuids = []
     total_rows_archived = 0
     meta = MetaData(get_engine(use_slave=True))
     meta.reflect()
     # Reverse sort the tables so we get the leaf nodes first for processing.
     for table in reversed(meta.sorted_tables):
         tablename = table.name
+        rows_archived = 0
         # skip the special sqlalchemy-migrate migrate_version table and any
         # shadow tables
         if (tablename == 'migrate_version' or
                 tablename.startswith(_SHADOW_TABLE_PREFIX)):
             continue
-        rows_archived = _archive_deleted_rows_for_table(
-            tablename, max_rows=max_rows - total_rows_archived)
+        rows_archived,\
+        deleted_instance_uuid = _archive_deleted_rows_for_table(
+                tablename, max_rows=max_rows - total_rows_archived)
         total_rows_archived += rows_archived
+        if tablename == 'instances':
+            deleted_instance_uuids = deleted_instance_uuid
         # Only report results for tables that had updates.
         if rows_archived:
             table_to_rows_archived[tablename] = rows_archived
         if total_rows_archived >= max_rows:
             break
-    return table_to_rows_archived
+    return table_to_rows_archived, deleted_instance_uuids
 
 
 @pick_context_manager_writer
@@ -6969,13 +6681,15 @@ def console_auth_token_create(context, values):
 
 
 @pick_context_manager_reader
-def console_auth_token_get_valid(context, token_hash, instance_uuid):
-    _check_instance_exists_in_project(context, instance_uuid)
-    return context.session.query(models.ConsoleAuthToken).\
-        filter_by(token_hash=token_hash).\
-        filter_by(instance_uuid=instance_uuid).\
-        filter(models.ConsoleAuthToken.expires > timeutils.utcnow_ts()).\
-        first()
+def console_auth_token_get_valid(context, token_hash, instance_uuid=None):
+    if instance_uuid is not None:
+        _check_instance_exists_in_project(context, instance_uuid)
+    query = context.session.query(models.ConsoleAuthToken).\
+        filter_by(token_hash=token_hash)
+    if instance_uuid is not None:
+        query = query.filter_by(instance_uuid=instance_uuid)
+    return query.filter(
+        models.ConsoleAuthToken.expires > timeutils.utcnow_ts()).first()
 
 
 @pick_context_manager_writer

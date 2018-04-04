@@ -429,12 +429,39 @@ class TestSecurityGroupsV21(test.TestCase):
     def test_get_security_group_by_instance(self):
         groups = []
         for i, name in enumerate(['default', 'test']):
-            sg = security_group_template(id=i + 1,
-                                         name=name,
-                                         description=name + '-desc',
-                                         rules=[])
+            # Create two rules per group to test that we don't perform
+            # redundant group lookups. For the default group, the rule group_id
+            # is the group itself. For the test group, the rule group_id points
+            # to a non-existent group.
+            group_id = i + 1 if name == 'default' else 'HAS_BEEN_DELETED'
+            rule1 = security_group_rule_template(
+                cidr='10.2.3.125/24', parent_group_id=1, id=99, protocol='TCP',
+                group_id=group_id)
+            rule2 = security_group_rule_template(
+                cidr='10.2.3.126/24', parent_group_id=1, id=77, protocol='UDP',
+                group_id=group_id)
+            sg = security_group_template(
+                id=i + 1, name=name, description=name + '-desc',
+                rules=[rule1, rule2], tenant_id='fake')
             groups.append(sg)
-        expected = {'security_groups': groups}
+
+        # An expected rule here needs to be created as the api returns
+        # different attributes on the rule for a response than what was
+        # passed in.
+        expected_rule1 = security_group_rule_template(
+            ip_range={}, parent_group_id=1, ip_protocol='TCP',
+            group={'name': 'default', 'tenant_id': 'fake'}, id=99)
+        expected_rule2 = security_group_rule_template(
+            ip_range={}, parent_group_id=1, ip_protocol='UDP',
+            group={'name': 'default', 'tenant_id': 'fake'}, id=77)
+        expected_group1 = security_group_template(
+            id=1, name='default', description='default-desc',
+            rules=[expected_rule1, expected_rule2], tenant_id='fake')
+        expected_group2 = security_group_template(
+            id=2, name='test', description='test-desc', rules=[],
+            tenant_id='fake')
+
+        expected = {'security_groups': [expected_group1, expected_group2]}
 
         def return_instance(context, server_id,
                             columns_to_join=None, use_slave=False):
@@ -451,9 +478,24 @@ class TestSecurityGroupsV21(test.TestCase):
         self.stub_out('nova.db.security_group_get_by_instance',
                       return_security_groups)
 
+        # Stub out the security group API get() method to assert that we only
+        # call it at most once per group ID.
+        original_sg_get = self.server_controller.security_group_api.get
+        queried_group_ids = []
+
+        def fake_security_group_api_get(_self, context, name=None, id=None,
+                                        map_exception=False):
+            if id in queried_group_ids:
+                self.fail('Queried security group %s more than once.' % id)
+            queried_group_ids.append(id)
+            return original_sg_get(context, id=id)
+
+        self.stub_out('nova.compute.api.SecurityGroupAPI.get',
+                      fake_security_group_api_get)
+
         res_dict = self.server_controller.index(self.req, FAKE_UUID1)
 
-        self.assertEqual(res_dict, expected)
+        self.assertEqual(expected, res_dict)
 
     @mock.patch('nova.db.instance_get_by_uuid')
     @mock.patch('nova.db.security_group_get_by_instance', return_value=[])
@@ -615,6 +657,66 @@ class TestSecurityGroupsV21(test.TestCase):
 
         self.assertRaises(webob.exc.HTTPBadRequest, self.controller.delete,
                           self.req, '1')
+
+    def _test_list_with_invalid_filter(
+        self, url, expected_exception=exception.ValidationError):
+        prefix = '/os-security-groups'
+        req = fakes.HTTPRequest.blank(prefix + url)
+        self.assertRaises(expected_exception,
+                          self.controller.index, req)
+
+    def test_list_with_invalid_non_int_limit(self):
+        self._test_list_with_invalid_filter('?limit=-9')
+
+    def test_list_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter('?limit=abc')
+
+    def test_list_duplicate_query_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter(
+            '?limit=1&limit=abc')
+
+    def test_list_with_invalid_non_int_offset(self):
+        self._test_list_with_invalid_filter('?offset=-9')
+
+    def test_list_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter('?offset=abc')
+
+    def test_list_duplicate_query_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter(
+            '?offset=1&offset=abc')
+
+    def test_list_duplicate_query_parameters_validation(self):
+        params = {
+            'limit': 1,
+            'offset': 1,
+            'all_tenants': 1
+        }
+
+        for param, value in params.items():
+            req = fakes.HTTPRequest.blank(
+                '/os-security-groups' + '?%s=%s&%s=%s' %
+                (param, value, param, value))
+            self.controller.index(req)
+
+    def test_list_with_additional_filter(self):
+        req = fakes.HTTPRequest.blank(
+            '/os-security-groups?limit=1&offset=1&additional=something')
+        self.controller.index(req)
+
+    def test_list_all_tenants_filter_as_string(self):
+        req = fakes.HTTPRequest.blank(
+            '/os-security-groups?all_tenants=abc')
+        self.controller.index(req)
+
+    def test_list_all_tenants_filter_as_positive_int(self):
+        req = fakes.HTTPRequest.blank(
+            '/os-security-groups?all_tenants=1')
+        self.controller.index(req)
+
+    def test_list_all_tenants_filter_as_negative_int(self):
+        req = fakes.HTTPRequest.blank(
+            '/os-security-groups?all_tenants=-1')
+        self.controller.index(req)
 
     def test_associate_by_non_existing_security_group_name(self):
         self.stub_out('nova.db.instance_get', return_server)

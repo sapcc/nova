@@ -166,29 +166,41 @@ class APIValidationTestCase(test.NoDBTestCase):
 
 class FormatCheckerTestCase(test.NoDBTestCase):
 
-    def test_format_checker_failed(self):
+    def _format_checker(self, format, value, error_message):
         format_checker = validators.FormatChecker()
         exc = self.assertRaises(jsonschema_exc.FormatError,
-                                format_checker.check, "   ", "name")
+                                format_checker.check, value, format)
         self.assertIsInstance(exc.cause, exception.InvalidName)
-        self.assertEqual("An invalid 'name' value was provided. The name must "
-                         "be: printable characters. "
-                         "Can not start or end with whitespace.",
+        self.assertEqual(error_message,
                          exc.cause.format_message())
 
-    def test_format_checker_failed_with_non_string(self):
-        checks = ["name", "name_with_leading_trailing_spaces",
-                  "cell_name", "cell_name_with_leading_trailing_spaces"]
-        format_checker = validators.FormatChecker()
+    def test_format_checker_failed_with_non_string_name(self):
+        error_message = ("An invalid 'name' value was provided. The name must "
+                         "be: printable characters. "
+                         "Can not start or end with whitespace.")
+        self._format_checker("name", "   ", error_message)
+        self._format_checker("name", None, error_message)
 
-        for check in checks:
-            exc = self.assertRaises(jsonschema_exc.FormatError,
-                                    format_checker.check, None, "name")
-            self.assertIsInstance(exc.cause, exception.InvalidName)
-            self.assertEqual("An invalid 'name' value was provided. The name "
-                             "must be: printable characters. "
-                             "Can not start or end with whitespace.",
-                             exc.cause.format_message())
+    def test_format_checker_failed_with_non_string_cell_name(self):
+        error_message = ("An invalid 'name' value was provided. "
+                         "The name must be: printable characters except "
+                         "!, ., @. Can not start or end with whitespace.")
+        self._format_checker("cell_name", None, error_message)
+
+    def test_format_checker_failed_name_with_leading_trailing_spaces(self):
+        error_message = ("An invalid 'name' value was provided. "
+                         "The name must be: printable characters with at "
+                         "least one non space character")
+        self._format_checker("name_with_leading_trailing_spaces",
+                             None, error_message)
+
+    def test_format_checker_failed_cell_name_with_leading_trailing_spaces(
+            self):
+        error_message = ("An invalid 'name' value was provided. "
+                         "The name must be: printable characters except"
+                         " !, ., @, with at least one non space character")
+        self._format_checker("cell_name_with_leading_trailing_spaces",
+                             None, error_message)
 
 
 class MicroversionsSchemaTestCase(APIValidationTestCase):
@@ -973,6 +985,43 @@ class NoneTypeTestCase(APIValidationTestCase):
                   "{'key': 'val'}. {'key': 'val'} is not one of "
                   "['None', None, {}]")
         self.check_validation_error(self.post, body={'foo': {'key': 'val'}},
+                                    expected_detail=detail)
+
+
+class NameOrNoneTestCase(APIValidationTestCase):
+
+    post_schema = {
+        'type': 'object',
+        'properties': {
+            'foo': parameter_types.name_or_none
+        }
+    }
+
+    def test_valid(self):
+        self.assertEqual('Validation succeeded.',
+                         self.post(body={'foo': None},
+                                   req=FakeRequest()))
+        self.assertEqual('Validation succeeded.',
+                         self.post(body={'foo': '1'},
+                                   req=FakeRequest()))
+
+    def test_validate_fails(self):
+        detail = ("Invalid input for field/attribute foo. Value: 1234. 1234 "
+                  "is not valid under any of the given schemas")
+        self.check_validation_error(self.post, body={'foo': 1234},
+                                    expected_detail=detail)
+
+        detail = ("Invalid input for field/attribute foo. Value: . '' "
+                  "is not valid under any of the given schemas")
+        self.check_validation_error(self.post, body={'foo': ''},
+                                    expected_detail=detail)
+
+        too_long_name = 256 * "k"
+        detail = ("Invalid input for field/attribute foo. Value: %s. "
+                  "'%s' is not valid under any of the "
+                  "given schemas") % (too_long_name, too_long_name)
+        self.check_validation_error(self.post,
+                                    body={'foo': too_long_name},
                                     expected_detail=detail)
 
 

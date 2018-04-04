@@ -74,7 +74,7 @@ Update traits
 Insert a new custom trait. If traits already exists 204 will be returned.
 
 There are two kinds of traits: the standard traits and the custom traits.
-The standard traits are interoperable across different Openstack cloud
+The standard traits are interoperable across different OpenStack cloud
 deployments. The definition of standard traits comes from the `os-traits`
 library. The standard traits are read-only in the placement API which means
 that the user can't modify any standard traits through API.
@@ -99,6 +99,10 @@ Request
 Response
 --------
 
+.. rest_parameters:: parameters.yaml
+
+  - Location: location
+
 No body content is returned on a successful PUT.
 
 Delete traits
@@ -116,7 +120,7 @@ Error response codes: badRequest(400), itemNotFound(404), conflict(409)
 * `400 BadRequest` if the name to delete is standard trait.
 * `404 Not Found` if no such trait exists.
 * `409 Conflict` if the name to delete has associations with any
-   ResourceProvider.
+  ResourceProvider.
 
 Request
 -------

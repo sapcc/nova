@@ -83,27 +83,6 @@ class HostTestCase(test.NoDBTestCase):
         self.host.get_connection()
         self.assertTrue(self.close_callback)
 
-    @mock.patch.object(fakelibvirt.virConnect, "registerCloseCallback")
-    def test_close_callback_bad_signature(self, mock_close):
-        '''Validates that a connection to libvirt exist,
-           even when registerCloseCallback method has a different
-           number of arguments in the libvirt python library.
-        '''
-        mock_close.side_effect = TypeError('dd')
-        connection = self.host.get_connection()
-        self.assertTrue(connection)
-
-    @mock.patch.object(fakelibvirt.virConnect, "registerCloseCallback")
-    def test_close_callback_not_defined(self, mock_close):
-        '''Validates that a connection to libvirt exist,
-           even when registerCloseCallback method missing from
-           the libvirt python library.
-        '''
-        mock_close.side_effect = AttributeError('dd')
-
-        connection = self.host.get_connection()
-        self.assertTrue(connection)
-
     @mock.patch.object(fakelibvirt.virConnect, "getLibVersion")
     def test_broken_connection(self, mock_ver):
         for (error, domain) in (
@@ -429,7 +408,7 @@ class HostTestCase(test.NoDBTestCase):
         instance = objects.Instance(id="124", uuid=uuid)
         fake_lookup.return_value = dom
 
-        self.assertEqual(dom, self.host.get_domain(instance))
+        self.assertEqual(dom, self.host._get_domain(instance))
         fake_lookup.assert_called_once_with(uuid)
 
     @mock.patch.object(fakelibvirt.virConnect, "lookupByUUIDString")
@@ -443,7 +422,7 @@ class HostTestCase(test.NoDBTestCase):
             error_domain=fakelibvirt.VIR_FROM_QEMU)
 
         with testtools.ExpectedException(exception.InstanceNotFound):
-            self.host.get_domain(instance)
+            self.host._get_domain(instance)
 
         fake_lookup.assert_called_once_with(uuids.instance)
 
@@ -796,6 +775,31 @@ Active:          8381604 kB
         mock_defineXML.assert_called_once_with(fake_dom_xml)
         self.assertIsInstance(guest, libvirt_guest.Guest)
 
+    def test_write_instance_config_unicode(self):
+        fake_dom_xml = u"""
+                <domain type='kvm'>
+                  <uuid>cef19ce0-0ca2-11df-855d-b19fbce37686</uuid>
+                  <devices>
+                    <disk type='file'>
+                      <source file='\u4e2d\u6587'/>
+                    </disk>
+                  </devices>
+                </domain>
+            """
+
+        def emulate_defineXML(xml):
+            conn = self.host.get_connection()
+            # Emulate the decoding behavior of defineXML in Python2
+            if six.PY2:
+                xml = xml.decode("utf-8")
+            dom = fakelibvirt.Domain(conn, xml, False)
+            return dom
+        with mock.patch.object(fakelibvirt.virConnect, "defineXML"
+                               ) as mock_defineXML:
+            mock_defineXML.side_effect = emulate_defineXML
+            guest = self.host.write_instance_config(fake_dom_xml)
+            self.assertIsInstance(guest, libvirt_guest.Guest)
+
     @mock.patch.object(fakelibvirt.virConnect, "nodeDeviceLookupByName")
     def test_device_lookup_by_name(self, mock_nodeDeviceLookupByName):
         self.host.device_lookup_by_name("foo")
@@ -805,6 +809,37 @@ Active:          8381604 kB
     def test_list_pci_devices(self, mock_listDevices):
         self.host.list_pci_devices(8)
         mock_listDevices.assert_called_once_with('pci', 8)
+
+    def test_list_mdev_capable_devices(self):
+        with mock.patch.object(self.host, "_list_devices") as mock_listDevices:
+            self.host.list_mdev_capable_devices(8)
+        mock_listDevices.assert_called_once_with('mdev_types', flags=8)
+
+    def test_list_mediated_devices(self):
+        with mock.patch.object(self.host, "_list_devices") as mock_listDevices:
+            self.host.list_mediated_devices(8)
+        mock_listDevices.assert_called_once_with('mdev', flags=8)
+
+    @mock.patch.object(fakelibvirt.virConnect, "listDevices")
+    def test_list_devices(self, mock_listDevices):
+        self.host._list_devices('mdev', 8)
+        mock_listDevices.assert_called_once_with('mdev', 8)
+
+    @mock.patch.object(fakelibvirt.virConnect, "listDevices")
+    def test_list_devices_unsupported(self, mock_listDevices):
+        not_supported_exc = fakelibvirt.make_libvirtError(
+                fakelibvirt.libvirtError,
+                'this function is not supported by the connection driver:'
+                ' listDevices',
+                error_code=fakelibvirt.VIR_ERR_NO_SUPPORT)
+        mock_listDevices.side_effect = not_supported_exc
+        self.assertEqual([], self.host._list_devices('mdev', 8))
+
+    @mock.patch.object(fakelibvirt.virConnect, "listDevices")
+    def test_list_devices_other_exc(self, mock_listDevices):
+        mock_listDevices.side_effect = fakelibvirt.libvirtError('test')
+        self.assertRaises(fakelibvirt.libvirtError,
+                          self.host._list_devices, 'mdev', 8)
 
     @mock.patch.object(fakelibvirt.virConnect, "compareCPU")
     def test_compare_cpu(self, mock_compareCPU):

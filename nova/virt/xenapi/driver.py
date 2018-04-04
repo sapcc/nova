@@ -36,6 +36,7 @@ import six.moves.urllib.parse as urlparse
 import nova.conf
 from nova import exception
 from nova.i18n import _
+from nova.objects import fields
 from nova.virt import driver
 from nova.virt.xenapi import host
 from nova.virt.xenapi import pool
@@ -72,6 +73,7 @@ class XenAPIDriver(driver.ComputeDriver):
         "supports_migrate_to_same_host": False,
         "supports_attach_interface": True,
         "supports_device_tagging": True,
+        "supports_multiattach": False
     }
 
     def __init__(self, virtapi, read_only=False):
@@ -167,11 +169,65 @@ class XenAPIDriver(driver.ComputeDriver):
         """
         return self._vmops.list_instance_uuids()
 
+    def _is_vgpu_allocated(self, allocations):
+        # check if allocated vGPUs
+        if not allocations:
+            # If no allocations, there is no vGPU request.
+            return False
+        RC_VGPU = fields.ResourceClass.VGPU
+        for rp in allocations:
+            res = allocations[rp]['resources']
+            if res and RC_VGPU in res and res[RC_VGPU] > 0:
+                return True
+        return False
+
+    def _get_vgpu_info(self, allocations):
+        """Get vGPU info basing on the allocations.
+
+        :param allocations: Information about resources allocated to the
+                            instance via placement, of the form returned by
+                            SchedulerReportClient.get_allocations_for_consumer.
+        :returns: Dictionary describing vGPU info if any vGPU allocated;
+                  None otherwise.
+        :raises: exception.ComputeResourcesUnavailable if there is no
+                 available vGPUs.
+        """
+        if not self._is_vgpu_allocated(allocations):
+            return None
+
+        # NOTE(jianghuaw): At the moment, we associate all vGPUs resource to
+        # the compute node regardless which GPU group the vGPUs belong to, so
+        # we need search all GPU groups until we got one group which has
+        # remaining capacity to supply one vGPU. Once we switch to the
+        # nested resource providers, the allocations will contain the resource
+        # provider which represents a particular GPU group. It's able to get
+        # the GPU group and vGPU type directly by using the resource provider's
+        # uuid. Then we can consider moving this function to vmops, as there is
+        # no need to query host stats to get all GPU groups.
+        host_stats = self.host_state.get_host_stats(refresh=True)
+        vgpu_stats = host_stats['vgpu_stats']
+        for grp_uuid in vgpu_stats:
+            if vgpu_stats[grp_uuid]['remaining'] > 0:
+                # NOTE(jianghuaw): As XenServer only supports single vGPU per
+                # VM, we've restricted the inventory data having `max_unit` as
+                # 1. If it reached here, surely only one GPU is allocated.
+                # So just return the GPU group uuid and vGPU type uuid once
+                # we got one group which still has remaining vGPUs.
+                return dict(gpu_grp_uuid=grp_uuid,
+                            vgpu_type_uuid=vgpu_stats[grp_uuid]['uuid'])
+        # No remaining vGPU available: e.g. the vGPU resource has been used by
+        # other instance or the vGPU has been changed to be disabled.
+        raise exception.ComputeResourcesUnavailable(
+            reason='vGPU resource is not available')
+
     def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, network_info=None, block_device_info=None):
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
         """Create VM instance."""
+        vgpu_info = self._get_vgpu_info(allocations)
         self._vmops.spawn(context, instance, image_meta, injected_files,
-                          admin_password, network_info, block_device_info)
+                          admin_password, network_info, block_device_info,
+                          vgpu_info)
 
     def confirm_migration(self, context, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
@@ -401,6 +457,63 @@ class XenAPIDriver(driver.ComputeDriver):
         return {'address': xs_url.netloc,
                 'username': CONF.xenserver.connection_username,
                 'password': CONF.xenserver.connection_password}
+
+    def _get_vgpu_total(self, vgpu_stats):
+        # NOTE(jianghuaw): Now we only enable one vGPU type in one
+        # compute node. So normally vgpu_stats should contain only
+        # one GPU group. If there are multiple GPU groups, they
+        # must contain the same vGPU type. So just add them up.
+        total = 0
+        for grp_id in vgpu_stats:
+            total += vgpu_stats[grp_id]['total']
+        return total
+
+    def get_inventory(self, nodename):
+        """Return a dict, keyed by resource class, of inventory information for
+        the supplied node.
+        """
+        host_stats = self.host_state.get_host_stats(refresh=True)
+
+        vcpus = host_stats['host_cpu_info']['cpu_count']
+        memory_mb = int(host_stats['host_memory_total'] / units.Mi)
+        disk_gb = int(host_stats['disk_total'] / units.Gi)
+        vgpus = self._get_vgpu_total(host_stats['vgpu_stats'])
+
+        result = {
+            fields.ResourceClass.VCPU: {
+                'total': vcpus,
+                'min_unit': 1,
+                'max_unit': vcpus,
+                'step_size': 1,
+            },
+            fields.ResourceClass.MEMORY_MB: {
+                'total': memory_mb,
+                'min_unit': 1,
+                'max_unit': memory_mb,
+                'step_size': 1,
+            },
+            fields.ResourceClass.DISK_GB: {
+                'total': disk_gb,
+                'min_unit': 1,
+                'max_unit': disk_gb,
+                'step_size': 1,
+            },
+        }
+        if vgpus > 0:
+            # Only create inventory for vGPU when driver can supply vGPUs.
+            # At the moment, XenAPI can support up to one vGPU per VM,
+            # so max_unit is 1.
+            result.update(
+                {
+                    fields.ResourceClass.VGPU: {
+                        'total': vgpus,
+                        'min_unit': 1,
+                        'max_unit': 1,
+                        'step_size': 1,
+                    }
+                }
+            )
+        return result
 
     def get_available_resource(self, nodename):
         """Retrieve resource information.

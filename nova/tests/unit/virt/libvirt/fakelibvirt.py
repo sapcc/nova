@@ -776,6 +776,9 @@ class Domain(object):
     def migrateSetMaxDowntime(self, downtime):
         pass
 
+    def migrateSetMaxSpeed(self, bandwidth):
+        pass
+
     def attachDevice(self, xml):
         disk_info = _parse_disk_info(etree.fromstring(xml))
         disk_info['_attached'] = True
@@ -806,12 +809,17 @@ class Domain(object):
     def XMLDesc(self, flags):
         disks = ''
         for disk in self._def['devices']['disks']:
+            if disk['type'] == 'file':
+                source_attr = 'file'
+            else:
+                source_attr = 'dev'
+
             disks += '''<disk type='%(type)s' device='%(device)s'>
       <driver name='%(driver_name)s' type='%(driver_type)s'/>
-      <source file='%(source)s'/>
+      <source %(source_attr)s='%(source)s'/>
       <target dev='%(target_dev)s' bus='%(target_bus)s'/>
       <address type='drive' controller='0' bus='0' unit='0'/>
-    </disk>''' % disk
+    </disk>''' % dict(source_attr=source_attr, **disk)
 
         nics = ''
         for nic in self._def['devices']['nics']:

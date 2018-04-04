@@ -29,6 +29,7 @@ This document is trying to describe how we can achieve that.
 Once we have introduced the key concepts relating to upgrade, we will
 introduce the process needed for a no downtime upgrade of nova.
 
+.. _minimal_downtime_upgrade:
 
 Minimal Downtime Upgrade Process
 --------------------------------
@@ -79,6 +80,13 @@ same time.
 
 #. During maintenance window:
 
+   * Several nova services rely on the external placement service, and while
+     efforts are made for the nova code to work with older versions of the
+     placement API, it is generally best to upgrade placement before any nova
+     services. See the
+     :ref:`placement upgrade notes <placement-upgrade-notes>` for more
+     details on upgrading the placement service.
+
    * For maximum safety (no failed API operations), gracefully shutdown all
      the services (i.e. SIG_TERM) except nova-compute.
 
@@ -125,11 +133,11 @@ same time.
 
    * This process can put significant extra write load on the
      database.  Complete all online data migrations using:
-     ``nova-manage db online_data_migrations --limit <number>``. Note
-     that you can use the limit argument to reduce the load this
+     ``nova-manage db online_data_migrations --max-count <number>``. Note
+     that you can use the ``--max-count`` argument to reduce the load this
      operation will place on the database, which allows you to run a
      small chunk of the migrations until all of the work is done. Each
-     time it is run, it will show summary of completed and remaining
+     time it is run, it will show a summary of completed and remaining
      records. You run this command until you see completed and
      remaining records as zeros. The chunk size you should use depend
      on your infrastructure and how much additional load you can
@@ -180,7 +188,9 @@ An example of online data migrations are the flavor migrations done as part
 of Nova object version 1.18. This included a transient migration of flavor
 storage from one database location to another.
 
-:emphasis:`Note: Database downgrades are not supported.`
+.. note::
+
+  Database downgrades are not supported.
 
 Migration policy:
 '''''''''''''''''
@@ -278,8 +288,11 @@ Graceful service shutdown
     new workers before the graceful shutdown of the old workers. In the case
     of singleton services, like nova-compute, some actions could be delayed
     during the restart, but ideally no actions should fail due to the restart.
-    NOTE: while this is true for the RabbitMQ RPC backend, we need to confirm
-    what happens for other RPC backends.
+
+    .. note::
+
+      While this is true for the RabbitMQ RPC backend, we need to confirm
+      what happens for other RPC backends.
 
 API load balancer draining
     When upgrading API nodes, you can make your load balancer only send new

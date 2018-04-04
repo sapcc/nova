@@ -23,7 +23,6 @@ from nova.compute import flavors
 from nova.compute import utils as compute_utils
 from nova import exception
 from nova import objects
-from nova import rpc
 from nova.scheduler import utils as scheduler_utils
 from nova import test
 from nova.tests.unit import fake_instance
@@ -43,8 +42,7 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
 
         with mock.patch.object(flavors, 'extract_flavor') as mock_extract:
             mock_extract.return_value = instance_type
-            request_spec = scheduler_utils.build_request_spec(self.context,
-                                                              None,
+            request_spec = scheduler_utils.build_request_spec(None,
                                                               [instance])
             mock_extract.assert_called_once_with({'uuid': uuids.instance})
         self.assertEqual({}, request_spec['image'])
@@ -55,25 +53,24 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
 
         with mock.patch.object(instance, 'get_flavor') as mock_get:
             mock_get.return_value = instance_type
-            request_spec = scheduler_utils.build_request_spec(self.context,
-                                                              None,
+            request_spec = scheduler_utils.build_request_spec(None,
                                                               [instance])
             mock_get.assert_called_once_with()
         self.assertIsInstance(request_spec['instance_properties'], dict)
 
-    @mock.patch.object(rpc, 'get_notifier', return_value=mock.Mock())
+    @mock.patch('nova.rpc.LegacyValidatingNotifier')
     @mock.patch.object(compute_utils, 'add_instance_fault_from_exc')
     @mock.patch.object(objects.Instance, 'save')
-    def test_set_vm_state_and_notify(self, mock_save, mock_add, mock_get):
+    def _test_set_vm_state_and_notify(self, mock_save, mock_add, mock_notifier,
+                                      request_spec, payload_request_spec):
         expected_uuid = uuids.instance
-        request_spec = dict(instance_properties=dict(uuid='other-uuid'))
         updates = dict(vm_state='fake-vm-state')
         service = 'fake-service'
         method = 'fake-method'
         exc_info = 'exc_info'
 
-        payload = dict(request_spec=request_spec,
-                       instance_properties=request_spec.get(
+        payload = dict(request_spec=payload_request_spec,
+                       instance_properties=payload_request_spec.get(
                            'instance_properties', {}),
                        instance_id=expected_uuid,
                        state='fake-vm-state',
@@ -93,9 +90,37 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
                                          exc_info, mock.ANY)
         self.assertIsInstance(mock_add.call_args[0][1], objects.Instance)
         self.assertIsInstance(mock_add.call_args[0][3], tuple)
-        mock_get.return_value.error.assert_called_once_with(self.context,
-                                                            event_type,
-                                                            payload)
+        mock_notifier.return_value.error.assert_called_once_with(self.context,
+                                                                 event_type,
+                                                                 payload)
+
+    def test_set_vm_state_and_notify_request_spec_dict(self):
+        """Tests passing a legacy dict format request spec to
+        set_vm_state_and_notify.
+        """
+        request_spec = dict(instance_properties=dict(uuid=uuids.instance))
+        # The request_spec in the notification payload should be unchanged.
+        self._test_set_vm_state_and_notify(
+            request_spec=request_spec, payload_request_spec=request_spec)
+
+    def test_set_vm_state_and_notify_request_spec_object(self):
+        """Tests passing a RequestSpec object to set_vm_state_and_notify."""
+        request_spec = objects.RequestSpec.from_primitives(
+            self.context, dict(instance_properties=dict(uuid=uuids.instance)),
+            filter_properties=dict())
+        # The request_spec in the notification payload should be converted
+        # to the legacy format.
+        self._test_set_vm_state_and_notify(
+            request_spec=request_spec,
+            payload_request_spec=request_spec.to_legacy_request_spec_dict())
+
+    def test_set_vm_state_and_notify_request_spec_none(self):
+        """Tests passing None for the request_spec to set_vm_state_and_notify.
+        """
+        # The request_spec in the notification payload should be changed to
+        # just an empty dict.
+        self._test_set_vm_state_and_notify(
+            request_spec=None, payload_request_spec={})
 
     def test_build_filter_properties(self):
         sched_hints = {'hint': ['over-there']}
@@ -121,10 +146,11 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
         self.assertNotIn('forced_host', filt_props)
         self.assertNotIn('forced_node', filt_props)
 
-    def _test_populate_filter_props(self, host_state_obj=True,
+    def _test_populate_filter_props(self, selection_obj=True,
                                     with_retry=True,
                                     force_hosts=None,
-                                    force_nodes=None):
+                                    force_nodes=None,
+                                    no_limits=None):
         if force_hosts is None:
             force_hosts = []
         if force_nodes is None:
@@ -143,30 +169,35 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
         else:
             filter_properties = dict()
 
-        if host_state_obj:
-            class host_state(object):
-                host = 'fake-host'
-                nodename = 'fake-node'
-                limits = 'fake-limits'
+        if no_limits:
+            fake_limits = None
         else:
-            host_state = dict(host='fake-host',
-                              nodename='fake-node',
-                              limits='fake-limits')
+            fake_limits = objects.SchedulerLimits(vcpu=1, disk_gb=2,
+                    memory_mb=3, numa_topology=None)
+        selection = objects.Selection(service_host="fake-host",
+                nodename="fake-node", limits=fake_limits)
+        if not selection_obj:
+            selection = selection.to_dict()
+            fake_limits = fake_limits.to_dict()
 
         scheduler_utils.populate_filter_properties(filter_properties,
-                                                   host_state)
+                                                   selection)
 
         enable_retry_force_hosts = not force_hosts or len(force_hosts) > 1
         enable_retry_force_nodes = not force_nodes or len(force_nodes) > 1
         if with_retry or enable_retry_force_hosts or enable_retry_force_nodes:
             # So we can check for 2 hosts
             scheduler_utils.populate_filter_properties(filter_properties,
-                                                       host_state)
+                                                       selection)
 
         if force_hosts:
             expected_limits = None
+        elif no_limits:
+            expected_limits = {}
+        elif isinstance(fake_limits, objects.SchedulerLimits):
+            expected_limits = fake_limits.to_dict()
         else:
-            expected_limits = 'fake-limits'
+            expected_limits = fake_limits
         self.assertEqual(expected_limits,
                          filter_properties.get('limits'))
 
@@ -182,7 +213,7 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
         self._test_populate_filter_props()
 
     def test_populate_filter_props_host_dict(self):
-        self._test_populate_filter_props(host_state_obj=False)
+        self._test_populate_filter_props(selection_obj=False)
 
     def test_populate_filter_props_no_retry(self):
         self._test_populate_filter_props(with_retry=False)
@@ -200,6 +231,9 @@ class SchedulerUtilsTestCase(test.NoDBTestCase):
     def test_populate_filter_props_multi_force_nodes_with_retry(self):
         self._test_populate_filter_props(force_nodes=['force-node1',
                                                       'force-node2'])
+
+    def test_populate_filter_props_no_limits(self):
+        self._test_populate_filter_props(no_limits=True)
 
     def test_populate_retry_exception_at_max_attempts(self):
         self.flags(max_attempts=2, group='scheduler')

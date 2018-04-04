@@ -33,7 +33,8 @@ class ServersSampleBase(api_sample_base.ApiSampleTestBaseV21):
 
     common_req_names = [
         (None, '2.36', 'server-create-req'),
-        ('2.37', None, 'server-create-req-v237')
+        ('2.37', '2.56', 'server-create-req-v237'),
+        ('2.57', None, 'server-create-req-v257')
     ]
 
     def _get_request_name(self, use_common):
@@ -456,6 +457,45 @@ class ServersActionsJson226Test(ServersSampleBase):
         subs = params.copy()
         del subs['uuid']
         self._verify_response('server-action-rebuild-resp', subs, resp, 202)
+
+
+class ServersActionsJson254Test(ServersSampleBase):
+    microversion = '2.54'
+    sample_dir = 'servers'
+    scenarios = [('v2_54', {'api_major_version': 'v2.1'})]
+
+    def _create_server(self):
+        return self._post_server()
+
+    def test_server_rebuild(self):
+        fakes.stub_out_key_pair_funcs(self)
+        uuid = self._create_server()
+        image = fake.get_valid_image_id()
+        params = {
+            'uuid': image,
+            'name': 'foobar',
+            'key_name': 'new-key',
+            'description': 'description of foobar',
+            'pass': 'seekr3t',
+            'hostid': '[a-f0-9]+',
+            'access_ip_v4': '1.2.3.4',
+            'access_ip_v6': '80fe::',
+        }
+
+        resp = self._do_post('servers/%s/action' % uuid,
+                             'server-action-rebuild', params)
+        subs = params.copy()
+        del subs['uuid']
+        self._verify_response('server-action-rebuild-resp', subs, resp, 202)
+
+
+class ServersActionsJson257Test(ServersActionsJson254Test):
+    """Tests rebuilding a server with new user_data."""
+    microversion = '2.57'
+    scenarios = [('v2_57', {'api_major_version': 'v2.1'})]
+
+    def _create_server(self):
+        return self._post_server(use_common_server_api_samples=False)
 
 
 class ServersCreateImageJsonTest(ServersSampleBase,

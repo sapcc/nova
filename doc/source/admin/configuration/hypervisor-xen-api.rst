@@ -4,6 +4,15 @@
 XenServer (and other XAPI based Xen variants)
 =============================================
 
+.. todo::
+
+  os-xenapi version is 0.3.1 currently.
+  This document should be modified according to the new version.
+  This todo has been reported as `bug 1718606`_.
+
+.. _bug 1718606: https://bugs.launchpad.net/nova/+bug/1718606
+
+
 This section describes XAPI managed hypervisors, and how to use them with
 OpenStack.
 
@@ -352,10 +361,10 @@ Networking configuration
 
 The Networking service in the Compute node is running
 ``neutron-openvswitch-agent``, this manages dom0's OVS. You can refer
-Networking `openvswitch_agent.ini.sample <https://github.com/openstack/
-openstack-manuals/blob/master/doc/config-reference/source/samples/neutron/
-openvswitch_agent.ini.sample>`_ for details, however there are several specific
-items to look out for.
+Networking `openvswitch_agent.ini sample`__ for details,
+however there are several specific items to look out for.
+
+__ https://docs.openstack.org/neutron/latest/configuration/samples/openvswitch-agent.html
 
 .. code-block:: ini
 
@@ -397,7 +406,7 @@ VNC proxy address
 
 Assuming you are talking to XAPI through a management network, and XenServer is
 on the address: 10.10.1.34 specify the same address for the vnc proxy address:
-``vncserver_proxyclient_address=10.10.1.34``
+``server_proxyclient_address=10.10.1.34``
 
 Storage
 -------

@@ -19,6 +19,7 @@ import datetime
 import mock
 from oslo_serialization import jsonutils
 from oslo_utils import encodeutils
+import six
 from six.moves import urllib
 import webob
 from webob import exc
@@ -71,7 +72,8 @@ def fake_get_volume(self, context, id):
     return {'id': id, 'status': status, 'attach_status': attach_status}
 
 
-def fake_attach_volume(self, context, instance, volume_id, device, tag=None):
+def fake_attach_volume(self, context, instance, volume_id, device, tag=None,
+                       supports_multiattach=False):
     pass
 
 
@@ -338,6 +340,84 @@ class VolumeApiTestV21(test.NoDBTestCase):
         self.assertIn('Volume 456 could not be found.',
                       encodeutils.safe_decode(resp.body))
 
+    def _test_list_with_invalid_filter(self, url):
+        prefix = '/os-volumes'
+        req = fakes.HTTPRequest.blank(prefix + url)
+        self.assertRaises(exception.ValidationError,
+                          volumes_v21.VolumeController().index,
+                          req)
+
+    def test_list_with_invalid_non_int_limit(self):
+        self._test_list_with_invalid_filter('?limit=-9')
+
+    def test_list_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter('?limit=abc')
+
+    def test_list_duplicate_query_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter(
+            '?limit=1&limit=abc')
+
+    def test_detail_list_with_invalid_non_int_limit(self):
+        self._test_list_with_invalid_filter('/detail?limit=-9')
+
+    def test_detail_list_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter('/detail?limit=abc')
+
+    def test_detail_list_duplicate_query_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter(
+            '/detail?limit=1&limit=abc')
+
+    def test_list_with_invalid_non_int_offset(self):
+        self._test_list_with_invalid_filter('?offset=-9')
+
+    def test_list_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter('?offset=abc')
+
+    def test_list_duplicate_query_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter(
+            '?offset=1&offset=abc')
+
+    def test_detail_list_with_invalid_non_int_offset(self):
+        self._test_list_with_invalid_filter('/detail?offset=-9')
+
+    def test_detail_list_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter('/detail?offset=abc')
+
+    def test_detail_list_duplicate_query_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter(
+            '/detail?offset=1&offset=abc')
+
+    def _test_list_duplicate_query_parameters_validation(self, url):
+        params = {
+            'limit': 1,
+            'offset': 1
+        }
+        for param, value in params.items():
+            req = fakes.HTTPRequest.blank(
+                self.url_prefix + url + '?%s=%s&%s=%s' %
+                (param, value, param, value))
+            resp = req.get_response(self.app)
+            self.assertEqual(200, resp.status_int)
+
+    def test_list_duplicate_query_parameters_validation(self):
+        self._test_list_duplicate_query_parameters_validation('/os-volumes')
+
+    def test_detail_list_duplicate_query_parameters_validation(self):
+        self._test_list_duplicate_query_parameters_validation(
+            '/os-volumes/detail')
+
+    def test_list_with_additional_filter(self):
+        req = fakes.HTTPRequest.blank(self.url_prefix +
+            '/os-volumes?limit=1&offset=1&additional=something')
+        resp = req.get_response(self.app)
+        self.assertEqual(200, resp.status_int)
+
+    def test_detail_list_with_additional_filter(self):
+        req = fakes.HTTPRequest.blank(self.url_prefix +
+            '/os-volumes/detail?limit=1&offset=1&additional=something')
+        resp = req.get_response(self.app)
+        self.assertEqual(200, resp.status_int)
+
 
 class VolumeAttachTestsV21(test.NoDBTestCase):
     validation_error = exception.ValidationError
@@ -554,7 +634,8 @@ class VolumeAttachTestsV21(test.NoDBTestCase):
     def test_attach_volume_to_locked_server(self):
         def fake_attach_volume_to_locked_server(self, context, instance,
                                                 volume_id, device=None,
-                                                tag=None):
+                                                tag=None,
+                                                supports_multiattach=False):
             raise exception.InstanceIsLocked(instance_uuid=instance['uuid'])
 
         self.stubs.Set(compute_api.API,
@@ -700,6 +781,58 @@ class VolumeAttachTestsV21(test.NoDBTestCase):
                           self.attachments,
                           fake_func=fake_swap_volume_for_bdm_not_found)
 
+    def _test_list_with_invalid_filter(self, url):
+        prefix = '/servers/id/os-volume_attachments'
+        req = fakes.HTTPRequest.blank(prefix + url)
+        self.assertRaises(exception.ValidationError,
+                          self.attachments.index,
+                          req,
+                          FAKE_UUID)
+
+    def test_list_with_invalid_non_int_limit(self):
+        self._test_list_with_invalid_filter('?limit=-9')
+
+    def test_list_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter('?limit=abc')
+
+    def test_list_duplicate_query_with_invalid_string_limit(self):
+        self._test_list_with_invalid_filter(
+            '?limit=1&limit=abc')
+
+    def test_list_with_invalid_non_int_offset(self):
+        self._test_list_with_invalid_filter('?offset=-9')
+
+    def test_list_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter('?offset=abc')
+
+    def test_list_duplicate_query_with_invalid_string_offset(self):
+        self._test_list_with_invalid_filter(
+            '?offset=1&offset=abc')
+
+    @mock.patch.object(objects.BlockDeviceMappingList,
+                       'get_by_instance_uuid')
+    def test_list_duplicate_query_parameters_validation(self, mock_get):
+        fake_bdms = objects.BlockDeviceMappingList()
+        mock_get.return_value = fake_bdms
+        params = {
+            'limit': 1,
+            'offset': 1
+        }
+        for param, value in params.items():
+            req = fakes.HTTPRequest.blank(
+                '/servers/id/os-volume_attachments' + '?%s=%s&%s=%s' %
+                (param, value, param, value))
+            self.attachments.index(req, FAKE_UUID)
+
+    @mock.patch.object(objects.BlockDeviceMappingList,
+                       'get_by_instance_uuid')
+    def test_list_with_additional_filter(self, mock_get):
+        fake_bdms = objects.BlockDeviceMappingList()
+        mock_get.return_value = fake_bdms
+        req = fakes.HTTPRequest.blank(
+            '/servers/id/os-volume_attachments?limit=1&additional=something')
+        self.attachments.index(req, FAKE_UUID)
+
 
 class VolumeAttachTestsV249(test.NoDBTestCase):
     validation_error = exception.ValidationError
@@ -740,6 +873,90 @@ class VolumeAttachTestsV249(test.NoDBTestCase):
                                      'device': '/dev/fake',
                                      'tag': 'foo'}}
         self.attachments.create(self.req, FAKE_UUID, body=body)
+
+
+class VolumeAttachTestsV260(test.NoDBTestCase):
+    """Negative tests for attaching a multiattach volume with version 2.60."""
+    def setUp(self):
+        super(VolumeAttachTestsV260, self).setUp()
+        self.controller = volumes_v21.VolumeAttachmentController()
+        get_instance = mock.patch('nova.compute.api.API.get')
+        get_instance.side_effect = fake_get_instance
+        get_instance.start()
+        self.addCleanup(get_instance.stop)
+
+    def _post_attach(self, version=None):
+        body = {'volumeAttachment': {'volumeId': FAKE_UUID_A}}
+        req = fakes.HTTPRequestV21.blank(
+            '/servers/%s/os-volume_attachments' % FAKE_UUID,
+            version=version or '2.60')
+        req.body = jsonutils.dump_as_bytes(body)
+        req.method = 'POST'
+        req.headers['content-type'] = 'application/json'
+        return self.controller.create(req, FAKE_UUID, body=body)
+
+    def test_attach_with_multiattach_fails_old_microversion(self):
+        """Tests the case that the user tries to attach with a
+        multiattach volume but before using microversion 2.60.
+        """
+        with mock.patch.object(
+                self.controller.compute_api, 'attach_volume',
+                side_effect=
+                exception.MultiattachNotSupportedOldMicroversion) as attach:
+            ex = self.assertRaises(webob.exc.HTTPBadRequest,
+                                   self._post_attach, '2.59')
+        create_kwargs = attach.call_args[1]
+        self.assertFalse(create_kwargs['supports_multiattach'])
+        self.assertIn('Multiattach volumes are only supported starting with '
+                      'compute API version 2.60', six.text_type(ex))
+
+    def test_attach_with_multiattach_fails_not_available(self):
+        """Tests the case that the user tries to attach with a
+        multiattach volume but before the compute hosting the instance
+        is upgraded. This would come from reserve_block_device_name in
+        the compute RPC API client.
+        """
+        with mock.patch.object(
+                self.controller.compute_api, 'attach_volume',
+                side_effect=
+                exception.MultiattachSupportNotYetAvailable) as attach:
+            ex = self.assertRaises(webob.exc.HTTPConflict, self._post_attach)
+        create_kwargs = attach.call_args[1]
+        self.assertTrue(create_kwargs['supports_multiattach'])
+        self.assertIn('Multiattach volume support is not yet available',
+                      six.text_type(ex))
+
+    def test_attach_with_multiattach_fails_not_supported_by_driver(self):
+        """Tests the case that the user tries to attach with a
+        multiattach volume but the compute hosting the instance does
+        not support multiattach volumes. This would come from
+        reserve_block_device_name via RPC call to the compute service.
+        """
+        with mock.patch.object(
+                self.controller.compute_api, 'attach_volume',
+                side_effect=
+                exception.MultiattachNotSupportedByVirtDriver(
+                    volume_id=FAKE_UUID_A)) as attach:
+            ex = self.assertRaises(webob.exc.HTTPConflict, self._post_attach)
+        create_kwargs = attach.call_args[1]
+        self.assertTrue(create_kwargs['supports_multiattach'])
+        self.assertIn("has 'multiattach' set, which is not supported for "
+                      "this instance", six.text_type(ex))
+
+    def test_attach_with_multiattach_fails_for_shelved_offloaded_server(self):
+        """Tests the case that the user tries to attach with a
+        multiattach volume to a shelved offloaded server which is
+        not supported.
+        """
+        with mock.patch.object(
+                self.controller.compute_api, 'attach_volume',
+                side_effect=
+                exception.MultiattachToShelvedNotSupported) as attach:
+            ex = self.assertRaises(webob.exc.HTTPBadRequest, self._post_attach)
+        create_kwargs = attach.call_args[1]
+        self.assertTrue(create_kwargs['supports_multiattach'])
+        self.assertIn('Attaching multiattach volumes is not supported for '
+                      'shelved-offloaded instances.', six.text_type(ex))
 
 
 class CommonBadRequestTestCase(object):
@@ -950,6 +1167,43 @@ class AssistedSnapshotDeleteTestCaseV21(test.NoDBTestCase):
     def test_assisted_delete_instance_not_ready(self):
         api_error = exception.InstanceNotReady(instance_id=FAKE_UUID)
         self._test_assisted_delete_instance_conflict(api_error)
+
+    def test_delete_additional_query_parameters(self):
+        params = {
+            'delete_info': jsonutils.dumps({'volume_id': '1'}),
+            'additional': 123
+        }
+        req = fakes.HTTPRequest.blank(
+                '/v2/fake/os-assisted-volume-snapshots?%s' %
+                urllib.parse.urlencode(params))
+        req.method = 'DELETE'
+        self.controller.delete(req, '5')
+
+    def test_delete_duplicate_query_parameters_validation(self):
+        params = {
+            'delete_info': jsonutils.dumps({'volume_id': '1'}),
+            'delete_info': jsonutils.dumps({'volume_id': '2'})
+        }
+        req = fakes.HTTPRequest.blank(
+                '/v2/fake/os-assisted-volume-snapshots?%s' %
+                urllib.parse.urlencode(params))
+        req.method = 'DELETE'
+        self.controller.delete(req, '5')
+
+    def test_assisted_delete_missing_volume_id(self):
+        params = {
+            'delete_info': jsonutils.dumps({'something_else': '1'}),
+        }
+        req = fakes.HTTPRequest.blank(
+                '/v2/fake/os-assisted-volume-snapshots?%s' %
+                urllib.parse.urlencode(params))
+
+        req.method = 'DELETE'
+        ex = self.assertRaises(webob.exc.HTTPBadRequest,
+                               self.controller.delete, req, '5')
+        # This is the result of a KeyError but the only thing in the message
+        # is the missing key.
+        self.assertIn('volume_id', six.text_type(ex))
 
 
 class TestAssistedVolumeSnapshotsPolicyEnforcementV21(test.NoDBTestCase):

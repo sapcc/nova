@@ -13,36 +13,16 @@
 
 from oslo_serialization import jsonutils
 from oslo_utils import encodeutils
+from oslo_utils import timeutils
 import webob
 
 from nova.api.openstack.placement import microversion
+from nova.api.openstack.placement.schemas import usage as schema
 from nova.api.openstack.placement import util
 from nova.api.openstack.placement import wsgi_wrapper
 from nova import exception
 from nova.i18n import _
-from nova import objects
-
-
-# Represents the allowed query string parameters to GET /usages
-GET_USAGES_SCHEMA_1_9 = {
-    "type": "object",
-    "properties": {
-        "project_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 255,
-        },
-        "user_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 255,
-        },
-    },
-    "required": [
-        "project_id"
-     ],
-    "additionalProperties": False,
-}
+from nova.objects import resource_provider as rp_obj
 
 
 def _serialize_usages(resource_provider, usage):
@@ -64,6 +44,7 @@ def list_usages(req):
     """
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
 
     # Resource provider object needed for two things: If it is
     # NotFound we'll get a 404 here, which needs to happen because
@@ -71,20 +52,28 @@ def list_usages(req):
     # It is also needed for the generation, used in the outgoing
     # representation.
     try:
-        resource_provider = objects.ResourceProvider.get_by_uuid(
+        resource_provider = rp_obj.ResourceProvider.get_by_uuid(
             context, uuid)
     except exception.NotFound as exc:
         raise webob.exc.HTTPNotFound(
             _("No resource provider with uuid %(uuid)s found: %(error)s") %
              {'uuid': uuid, 'error': exc})
 
-    usage = objects.UsageList.get_all_by_resource_provider_uuid(
+    usage = rp_obj.UsageList.get_all_by_resource_provider_uuid(
         context, uuid)
 
     response = req.response
     response.body = encodeutils.to_utf8(jsonutils.dumps(
         _serialize_usages(resource_provider, usage)))
     req.response.content_type = 'application/json'
+    if want_version.matches((1, 15)):
+        req.response.cache_control = 'no-cache'
+        # While it would be possible to generate a last-modified time
+        # based on the collection of allocations that result in a usage
+        # value (with some spelunking in the SQL) that doesn't align with
+        # the question that is being asked in a request for usages: What
+        # is the usage, now? So the last-modified time is set to utcnow.
+        req.response.last_modified = timeutils.utcnow(with_timezone=True)
     return req.response
 
 
@@ -99,20 +88,27 @@ def get_total_usages(req):
     Return 404 Not Found if the wanted microversion does not match.
     """
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
 
-    schema = GET_USAGES_SCHEMA_1_9
-
-    util.validate_query_params(req, schema)
+    util.validate_query_params(req, schema.GET_USAGES_SCHEMA_1_9)
 
     project_id = req.GET.get('project_id')
     user_id = req.GET.get('user_id')
 
-    usages = objects.UsageList.get_all_by_project_user(context, project_id,
-                                                       user_id=user_id)
+    usages = rp_obj.UsageList.get_all_by_project_user(context, project_id,
+                                                      user_id=user_id)
 
     response = req.response
     usages_dict = {'usages': {resource.resource_class: resource.usage
                    for resource in usages}}
     response.body = encodeutils.to_utf8(jsonutils.dumps(usages_dict))
     req.response.content_type = 'application/json'
+    if want_version.matches((1, 15)):
+        req.response.cache_control = 'no-cache'
+        # While it would be possible to generate a last-modified time
+        # based on the collection of allocations that result in a usage
+        # value (with some spelunking in the SQL) that doesn't align with
+        # the question that is being asked in a request for usages: What
+        # is the usage, now? So the last-modified time is set to utcnow.
+        req.response.last_modified = timeutils.utcnow(with_timezone=True)
     return req.response

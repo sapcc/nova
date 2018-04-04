@@ -10,6 +10,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_log import log as logging
 
@@ -26,9 +27,9 @@ class LibvirtDRBDVolumeDriver(libvirt_volume.LibvirtVolumeDriver):
     def __init__(self, host):
         super(LibvirtDRBDVolumeDriver, self).__init__(host)
         self.connector = connector.InitiatorConnector.factory(
-            connector.DRBD, utils.get_root_helper())
+            initiator.DRBD, utils.get_root_helper())
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         """Connect the volume.
 
         Sets the connection_info['data']['device_path'] value upon successful
@@ -37,7 +38,6 @@ class LibvirtDRBDVolumeDriver(libvirt_volume.LibvirtVolumeDriver):
         :param connection_info: dict of connection information for the backend
             storage when a connection was initiated with Cinder. Expects
             connection_info['data']['device'] to be set.
-        :param disk_info: dict of block device information (not used).
         :param instance: The nova.objects.Instance that is having a volume
             connected to it.
         """
@@ -46,16 +46,14 @@ class LibvirtDRBDVolumeDriver(libvirt_volume.LibvirtVolumeDriver):
         LOG.debug("Attached DRBD volume %s", device_info, instance=instance)
         connection_info['data']['device_path'] = device_info['path']
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         """Disconnect the volume.
 
         :param connection_info: dict of connection information for the backend
             storage when a connection was initiated with Cinder.
-        :param disk_dev: The block device mountpoint device name (not path).
-            This is currently not used by this method.
         :param instance: The nova.objects.Instance that is having a volume
             disconnected from it.
         """
         LOG.debug("Calling os-brick to detach DRBD Volume.", instance=instance)
         self.connector.disconnect_volume(connection_info['data'], None)
-        LOG.debug("Disconnected DRBD Volume %s", disk_dev, instance=instance)
+        LOG.debug("Disconnected DRBD Volume", instance=instance)

@@ -62,6 +62,7 @@ from nova import policy
 from nova import test
 from nova.tests import fixtures as nova_fixtures
 from nova.tests.unit.api.openstack import fakes
+from nova.tests.unit import fake_flavor
 from nova.tests.unit import fake_instance
 from nova.tests.unit import fake_network
 from nova.tests.unit.image import fake
@@ -701,6 +702,20 @@ class ServersControllerTest(ControllerTest):
                        use_admin_context=True)
         self.assertRaises(exception.ValidationError,
                           self.controller.index, req)
+
+    def test_get_servers_with_empty_regex_filter_param(self):
+        empty_string = ''
+        req = self.req('/fake/servers?flavor=%s' % empty_string,
+                       use_admin_context=True)
+        self.assertRaises(exception.ValidationError,
+                          self.controller.index, req)
+
+    def test_get_servers_detail_with_empty_regex_filter_param(self):
+        empty_string = ''
+        req = self.req('/fake/servers/detail?flavor=%s' % empty_string,
+                       use_admin_context=True)
+        self.assertRaises(exception.ValidationError,
+                          self.controller.detail, req)
 
     def test_get_servers_invalid_sort_key(self):
         req = self.req('/fake/servers?sort_key=foo&sort_dir=desc')
@@ -1688,7 +1703,26 @@ class ServerControllerTestV247(ControllerTest):
 
         req = fakes.HTTPRequest.blank('/fake/servers/detail',
                                       version=self.wsgi_api_version)
-        res_dict = self.controller.detail(req)
+
+        hits = []
+        real_auth = policy.authorize
+
+        # Wrapper for authorize to count the number of times
+        # we authorize for extra-specs
+        def fake_auth(context, action, target):
+            if 'extra-specs' in action:
+                hits.append(1)
+            return real_auth(context, action, target)
+
+        with mock.patch('nova.policy.authorize') as mock_auth:
+            mock_auth.side_effect = fake_auth
+            res_dict = self.controller.detail(req)
+
+        # We should have found more than one servers, but only hit the
+        # policy check once
+        self.assertGreater(len(res_dict['servers']), 1)
+        self.assertEqual(1, len(hits))
+
         for i, s in enumerate(res_dict['servers']):
             self.assertEqual(s['flavor'], expected_flavor)
 
@@ -2022,6 +2056,10 @@ class ServersControllerRebuildInstanceTest(ControllerTest):
                               self.req, FAKE_UUID, body=self.body)
 
     def test_rebuild_bad_personality(self):
+        # Personality files have been deprecated as of v2.57
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.56')
+
         body = {
             "rebuild": {
                 "imageRef": self.image_uuid,
@@ -2037,6 +2075,10 @@ class ServersControllerRebuildInstanceTest(ControllerTest):
                           self.req, FAKE_UUID, body=body)
 
     def test_rebuild_personality(self):
+        # Personality files have been deprecated as of v2.57
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.56')
+
         body = {
             "rebuild": {
                 "imageRef": self.image_uuid,
@@ -2125,6 +2167,240 @@ class ServersControllerRebuildInstanceTest(ControllerTest):
         body = dict(stop="")
         self.assertRaises(webob.exc.HTTPNotFound,
             self.controller._stop_server, req, 'test_inst', body)
+
+
+class ServersControllerRebuildTestV254(ServersControllerRebuildInstanceTest):
+
+    def setUp(self):
+        super(ServersControllerRebuildTestV254, self).setUp()
+        fakes.stub_out_key_pair_funcs(self)
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.54')
+
+    def _test_set_key_name_rebuild(self, set_key_name=True):
+        key_name = "key"
+        fake_get = fakes.fake_compute_get(vm_state=vm_states.ACTIVE,
+                                          key_name=key_name,
+                                          project_id=self.req_project_id,
+                                          user_id=self.req_user_id)
+        with mock.patch.object(compute_api.API, 'get',
+                               side_effect=fake_get):
+            if set_key_name:
+                self.body['rebuild']['key_name'] = key_name
+            self.req.body = jsonutils.dump_as_bytes(self.body)
+            server = self.controller._action_rebuild(
+                self.req, FAKE_UUID,
+                body=self.body).obj['server']
+            self.assertEqual(server['id'], FAKE_UUID)
+            self.assertEqual(server['key_name'], key_name)
+
+    def test_rebuild_accepted_with_keypair_name(self):
+        self._test_set_key_name_rebuild()
+
+    def test_rebuild_key_not_changed(self):
+        self._test_set_key_name_rebuild(set_key_name=False)
+
+    def test_rebuild_invalid_microversion_253(self):
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.53')
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "key_name": "key"
+            },
+        }
+        excpt = self.assertRaises(exception.ValidationError,
+                                  self.controller._action_rebuild,
+                                  self.req, FAKE_UUID, body=body)
+        self.assertIn('key_name', six.text_type(excpt))
+
+    def test_rebuild_with_not_existed_keypair_name(self):
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "key_name": "nonexistentkey"
+            },
+        }
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller._action_rebuild,
+                          self.req, FAKE_UUID, body=body)
+
+    def test_rebuild_user_has_no_key_pair(self):
+        def no_key_pair(context, user_id, name):
+            raise exception.KeypairNotFound(user_id=user_id, name=name)
+        self.stub_out('nova.db.key_pair_get', no_key_pair)
+        fake_get = fakes.fake_compute_get(vm_state=vm_states.ACTIVE,
+                                          key_name=None,
+                                          project_id=self.req_project_id,
+                                          user_id=self.req_user_id)
+        with mock.patch.object(compute_api.API, 'get',
+                               side_effect=fake_get):
+            self.body['rebuild']['key_name'] = "a-key-name"
+            self.assertRaises(webob.exc.HTTPBadRequest,
+                              self.controller._action_rebuild,
+                              self.req, FAKE_UUID, body=self.body)
+
+    def test_rebuild_with_non_string_keypair_name(self):
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "key_name": 12345
+            },
+        }
+        self.assertRaises(exception.ValidationError,
+                          self.controller._action_rebuild,
+                          self.req, FAKE_UUID, body=body)
+
+    def test_rebuild_with_invalid_keypair_name(self):
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "key_name": "123\0d456"
+            },
+        }
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller._action_rebuild,
+                          self.req, FAKE_UUID, body=body)
+
+    def test_rebuild_with_empty_keypair_name(self):
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "key_name": ''
+            },
+        }
+        self.assertRaises(exception.ValidationError,
+                          self.controller._action_rebuild,
+                          self.req, FAKE_UUID, body=body)
+
+    def test_rebuild_with_none_keypair_name(self):
+        key_name = None
+        fake_get = fakes.fake_compute_get(vm_state=vm_states.ACTIVE,
+                                          key_name=key_name,
+                                          project_id=self.req_project_id,
+                                          user_id=self.req_user_id)
+        with mock.patch.object(compute_api.API, 'get',
+                               side_effect=fake_get):
+            with mock.patch.object(objects.KeyPair, 'get_by_name') as key_get:
+                self.body['rebuild']['key_name'] = key_name
+                self.req.body = jsonutils.dump_as_bytes(self.body)
+                self.controller._action_rebuild(
+                    self.req, FAKE_UUID,
+                    body=self.body)
+                # NOTE: because the api will call _get_server twice. The server
+                # response will always be the same one. So we just use
+                # objects.KeyPair.get_by_name to verify test.
+                key_get.assert_not_called()
+
+    def test_rebuild_with_too_large_keypair_name(self):
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "key_name": 256 * "k"
+            },
+        }
+        self.assertRaises(exception.ValidationError,
+                          self.controller._action_rebuild,
+                          self.req, FAKE_UUID, body=body)
+
+
+class ServersControllerRebuildTestV257(ServersControllerRebuildTestV254):
+    """Tests server rebuild at microversion 2.57 where user_data can be
+    provided and personality files are no longer accepted.
+    """
+
+    def setUp(self):
+        super(ServersControllerRebuildTestV257, self).setUp()
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.57')
+
+    def test_rebuild_personality(self):
+        """Tests that trying to rebuild with personality files fails."""
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "personality": [{
+                    "path": "/path/to/file",
+                    "contents": base64.encode_as_text("Test String"),
+                }]
+            }
+        }
+        ex = self.assertRaises(exception.ValidationError,
+                               self.controller._action_rebuild,
+                               self.req, FAKE_UUID, body=body)
+        self.assertIn('personality', six.text_type(ex))
+
+    def test_rebuild_user_data_old_version(self):
+        """Tests that trying to rebuild with user_data before 2.57 fails."""
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "user_data": "ZWNobyAiaGVsbG8gd29ybGQi"
+            }
+        }
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.55')
+        ex = self.assertRaises(exception.ValidationError,
+                               self.controller._action_rebuild,
+                               self.req, FAKE_UUID, body=body)
+        self.assertIn('user_data', six.text_type(ex))
+
+    def test_rebuild_user_data_malformed(self):
+        """Tests that trying to rebuild with malformed user_data fails."""
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "user_data": b'invalid'
+            }
+        }
+        ex = self.assertRaises(exception.ValidationError,
+                               self.controller._action_rebuild,
+                               self.req, FAKE_UUID, body=body)
+        self.assertIn('user_data', six.text_type(ex))
+
+    def test_rebuild_user_data_too_large(self):
+        """Tests that passing user_data to rebuild that is too large fails."""
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "user_data": ('MQ==' * 16384)
+            }
+        }
+        ex = self.assertRaises(exception.ValidationError,
+                               self.controller._action_rebuild,
+                               self.req, FAKE_UUID, body=body)
+        self.assertIn('user_data', six.text_type(ex))
+
+    @mock.patch.object(context.RequestContext, 'can')
+    @mock.patch.object(compute_api.API, 'get')
+    @mock.patch('nova.db.instance_update_and_get_original')
+    def test_rebuild_reset_user_data(self, mock_update, mock_get, mock_policy):
+        """Tests that passing user_data=None resets the user_data on the
+        instance.
+        """
+        body = {
+            "rebuild": {
+                "imageRef": self.image_uuid,
+                "user_data": None
+            }
+        }
+
+        mock_get.return_value = fakes.stub_instance_obj(
+            context.RequestContext(self.req_user_id, self.req_project_id),
+            user_data='ZWNobyAiaGVsbG8gd29ybGQi')
+
+        def fake_instance_update_and_get_original(
+                ctxt, instance_uuid, values, **kwargs):
+            # save() is called twice and the second one has system_metadata
+            # in the updates, so we can ignore that one.
+            if 'system_metadata' not in values:
+                self.assertIn('user_data', values)
+                self.assertIsNone(values['user_data'])
+            return instance_update_and_get_original(
+                ctxt, instance_uuid, values, **kwargs)
+        mock_update.side_effect = fake_instance_update_and_get_original
+        self.controller._action_rebuild(self.req, FAKE_UUID, body=body)
+        self.assertEqual(2, mock_update.call_count)
 
 
 class ServersControllerRebuildTestV219(ServersControllerRebuildInstanceTest):
@@ -2640,13 +2916,10 @@ class ServersControllerCreateTest(test.TestCase):
                 'metadata': {
                     'hello': 'world',
                     'open': 'stack',
-                    },
-                'personality': [
-                    {
-                        "path": "/etc/banner.txt",
-                        "contents": "MQ==",
-                    },
-                ],
+                },
+                'networks': [{
+                    'uuid': 'ff608d40-75e9-48cb-b745-77bb55b5eaf2'
+                }],
             },
         }
         self.bdm = [{'delete_on_termination': 1,
@@ -2852,14 +3125,13 @@ class ServersControllerCreateTest(test.TestCase):
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self._test_create_extra, params)
 
-    @mock.patch.object(compute_api.API, 'create')
-    def test_create_instance_raise_user_data_too_large(self, mock_create):
-        mock_create.side_effect = exception.InstanceUserDataTooLarge(
-            maxsize=1, length=2)
-
-        self.assertRaises(webob.exc.HTTPBadRequest,
-                          self.controller.create,
-                          self.req, body=self.body)
+    def test_create_instance_raise_user_data_too_large(self):
+        self.body['server']['user_data'] = (b'1' * 65536)
+        ex = self.assertRaises(exception.ValidationError,
+                               self.controller.create,
+                               self.req, body=self.body)
+        # Make sure the failure was about user_data and not something else.
+        self.assertIn('user_data', six.text_type(ex))
 
     def test_create_instance_with_network_with_no_subnet(self):
         network = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
@@ -3572,6 +3844,10 @@ class ServersControllerCreateTest(test.TestCase):
 
     @mock.patch.object(compute_api.API, 'create')
     def test_create_instance_invalid_personality(self, mock_create):
+        # Personality files have been deprecated as of v2.57
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.56')
+
         codec = 'utf8'
         content = encodeutils.safe_encode(
                 'b25zLiINCg0KLVJpY2hhcmQgQ$$%QQmFjaA==')
@@ -3593,8 +3869,11 @@ class ServersControllerCreateTest(test.TestCase):
                           self.controller.create, self.req, body=self.body)
 
     def test_create_instance_without_personality_should_get_empty_list(self):
+        # Personality files have been deprecated as of v2.57
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.56')
+
         old_create = compute_api.API.create
-        del self.body['server']['personality']
 
         def create(*args, **kwargs):
             self.assertEqual([], kwargs['injected_files'])
@@ -3605,6 +3884,10 @@ class ServersControllerCreateTest(test.TestCase):
         self._test_create_instance()
 
     def test_create_instance_with_extra_personality_arg(self):
+        # Personality files have been deprecated as of v2.57
+        self.req.api_version_request = \
+            api_version_request.APIVersionRequest('2.56')
+
         self.body['server']['personality'] = [
             {
                 "path": "/etc/banner.txt",
@@ -3929,6 +4212,100 @@ class ServersControllerCreateTestV252(test.NoDBTestCase):
             exception.ValidationError, self._create_server, tags)
 
 
+class ServersControllerCreateTestV257(test.NoDBTestCase):
+    """Tests that trying to create a server with personality files using
+    microversion 2.57 fails.
+    """
+    def test_create_server_with_personality_fails(self):
+        controller = servers.ServersController()
+        body = {
+            'server': {
+                'name': 'no-personality-files',
+                'imageRef': '6b0edabb-8cde-4684-a3f4-978960a51378',
+                'flavorRef': '2',
+                'networks': 'auto',
+                'personality': [{
+                    'path': '/path/to/file',
+                    'contents': 'ZWNobyAiaGVsbG8gd29ybGQi'
+                }]
+            }
+        }
+        req = fakes.HTTPRequestV21.blank('/servers', version='2.57')
+        req.body = jsonutils.dump_as_bytes(body)
+        req.method = 'POST'
+        req.headers['content-type'] = 'application/json'
+        ex = self.assertRaises(
+            exception.ValidationError, controller.create, req, body=body)
+        self.assertIn('personality', six.text_type(ex))
+
+
+@mock.patch('nova.compute.utils.check_num_instances_quota',
+            new=lambda *args, **kwargs: 1)
+class ServersControllerCreateTestV260(test.NoDBTestCase):
+    """Negative tests for creating a server with a multiattach volume."""
+    def setUp(self):
+        super(ServersControllerCreateTestV260, self).setUp()
+        self.useFixture(nova_fixtures.NoopQuotaDriverFixture())
+        self.controller = servers.ServersController()
+        get_flavor_mock = mock.patch(
+            'nova.compute.flavors.get_flavor_by_flavor_id',
+            return_value=fake_flavor.fake_flavor_obj(
+                context.get_admin_context(), flavorid='1'))
+        get_flavor_mock.start()
+        self.addCleanup(get_flavor_mock.stop)
+        reqspec_create_mock = mock.patch(
+            'nova.objects.RequestSpec.create')
+        reqspec_create_mock.start()
+        self.addCleanup(reqspec_create_mock.stop)
+        volume_get_mock = mock.patch(
+            'nova.volume.cinder.API.get',
+            return_value={'id': uuids.fake_volume_id, 'multiattach': True})
+        volume_get_mock.start()
+        self.addCleanup(volume_get_mock.stop)
+
+    def _post_server(self, version=None):
+        body = {
+            'server': {
+                'name': 'multiattach',
+                'flavorRef': '1',
+                'networks': 'none',
+                'block_device_mapping_v2': [{
+                    'uuid': uuids.fake_volume_id,
+                    'source_type': 'volume',
+                    'destination_type': 'volume',
+                    'boot_index': 0,
+                    'delete_on_termination': True}]
+            }
+        }
+        req = fakes.HTTPRequestV21.blank(
+            '/servers', version=version or '2.60')
+        req.body = jsonutils.dump_as_bytes(body)
+        req.method = 'POST'
+        req.headers['content-type'] = 'application/json'
+        return self.controller.create(req, body=body)
+
+    def test_create_server_with_multiattach_fails_old_microversion(self):
+        """Tests the case that the user tries to boot from volume with a
+        multiattach volume but before using microversion 2.60.
+        """
+        self.useFixture(nova_fixtures.AllServicesCurrent())
+        ex = self.assertRaises(webob.exc.HTTPBadRequest,
+                               self._post_server, '2.59')
+        self.assertIn('Multiattach volumes are only supported starting with '
+                      'compute API version 2.60', six.text_type(ex))
+
+    @mock.patch('nova.objects.service.get_minimum_version_all_cells',
+                return_value=compute_api.MIN_COMPUTE_MULTIATTACH - 1)
+    def test_create_server_with_multiattach_fails_not_available(
+            self, mock_get_min_version_all_cells):
+        """Tests the case that the user tries to boot from volume with a
+        multiattach volume but before the deployment is fully upgraded.
+        """
+        ex = self.assertRaises(webob.exc.HTTPConflict, self._post_server)
+        self.assertIn('Multiattach volume support is not yet available',
+                      six.text_type(ex))
+
+
 class ServersControllerCreateTestWithMock(test.TestCase):
     image_uuid = '76fa36fc-c930-4bf3-8c8a-ea2a2420deb6'
     flavor_ref = 'http://localhost/123/flavors/3'
@@ -4079,7 +4456,8 @@ class ServersViewBuilderTest(test.TestCase):
         expected = {"id": "1",
                     "links": [{"rel": "bookmark",
                                "href": flavor_bookmark}]}
-        result = self.view_builder._get_flavor(self.request, self.instance)
+        result = self.view_builder._get_flavor(self.request, self.instance,
+                                               False)
         self.assertEqual(result, expected)
 
     def test_build_server(self):

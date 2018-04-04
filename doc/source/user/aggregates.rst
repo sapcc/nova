@@ -19,7 +19,17 @@
 Host Aggregates
 ===============
 
-Host aggregates can be regarded as a mechanism to further partition an availability zone; while availability zones are visible to users, host aggregates are only visible to administrators.  Host aggregates started out as a way to use Xen hypervisor resource pools, but has been generalized to provide a mechanism to allow administrators to assign key-value pairs to groups of machines.  Each node can have multiple aggregates, each aggregate can have multiple key-value pairs, and the same key-value pair can be assigned to multiple aggregate.  This information can be used in the scheduler to enable advanced scheduling, to set up xen hypervisor resources pools or to define logical groups for migration.
+Host aggregates can be regarded as a mechanism to further partition an
+availability zone; while availability zones are visible to users, host
+aggregates are only visible to administrators.  Host aggregates started out as
+a way to use Xen hypervisor resource pools, but has been generalized to provide
+a mechanism to allow administrators to assign key-value pairs to groups of
+machines.  Each node can have multiple aggregates, each aggregate can have
+multiple key-value pairs, and the same key-value pair can be assigned to
+multiple aggregate.  This information can be used in the scheduler to enable
+advanced scheduling, to set up xen hypervisor resources pools or to define
+logical groups for migration.  For more information, including an example of
+associating a group of hosts to a flavor, see :ref:`host-aggregates`.
 
 
 Availability Zones (AZs)
@@ -55,6 +65,9 @@ between aggregates and availability zones:
   moved to another aggregate or when the user would like to migrate the
   instance.
 
+.. note:: Availablity zone name must NOT contain ':' since it is used by admin
+  users to specify hosts where instances are launched in server creation.
+  See :doc:`Select hosts where instances are launched </admin/availability-zones>` for more detail.
 
 Xen Pool Host Aggregates
 ------------------------
@@ -69,7 +82,7 @@ The OSAPI Admin API is extended to support the following operations:
 
 * Aggregates
 
-  * list aggregates: returns a list of all the host-aggregates (optionally filtered by availability zone)
+  * list aggregates: returns a list of all the host-aggregates
   * create aggregate: creates an aggregate, takes a friendly name, etc. returns an id
   * show aggregate: shows the details of an aggregate (id, name, availability_zone, hosts and metadata)
   * update aggregate: updates the name and availability zone of an aggregate
@@ -77,11 +90,26 @@ The OSAPI Admin API is extended to support the following operations:
   * delete aggregate: deletes an aggregate, it fails if the aggregate is not empty
   * add host: adds a host to the aggregate
   * remove host: removes a host from the aggregate
-
 * Hosts
 
+  * list all hosts by service
+
+    * It has been depricated since microversion 2.43. Use `list hypervisors` instead.
   * start host maintenance (or evacuate-host): disallow a host to serve API requests and migrate instances to other hosts of the aggregate
+
+    * It has been depricated since microversion 2.43. Use `disable service` instead.
   * stop host maintenance: (or rebalance-host): put the host back into operational mode, migrating instances back onto that host
+
+    * It has been depricated since microversion 2.43. Use `enable service` instead.
+
+* Hypervisors
+
+  * list hypervisors: list hypervisors with hypervisor hostname
+
+* Compute services
+
+  * enable service
+  * disable service
 
 Using the Nova CLI
 ------------------
@@ -94,13 +122,21 @@ Usage
 ::
 
   * aggregate-list                                                    Print a list of all aggregates.
-  * aggregate-create         <name> <availability_zone>               Create a new aggregate with the specified details.
-  * aggregate-delete         <id>                                     Delete the aggregate by its id.
-  * aggregate-details        <id>                                     Show details of the specified aggregate.
-  * aggregate-add-host       <id> <host>                              Add the host to the specified aggregate.
-  * aggregate-remove-host    <id> <host>                              Remove the specified host from the specified aggregate.
-  * aggregate-set-metadata   <id> <key=value> [<key=value> ...]       Update the metadata associated with the aggregate.
-  * aggregate-update         <id> <name> [<availability_zone>]        Update the aggregate's name and optionally availability zone.
+  * aggregate-create         <name> [<availability_zone>]             Create a new aggregate with the specified details.
+  * aggregate-delete         <aggregate>                              Delete the aggregate by its ID or name.
+  * aggregate-show           <aggregate>                              Show details of the aggregate specified by its ID or name.
+  * aggregate-add-host       <aggregate> <host>                       Add the host to the aggregate specified by its ID or name.
+  * aggregate-remove-host    <aggregate> <host>                       Remove the specified host from the aggregate specified by its ID or name.
+  * aggregate-set-metadata   <aggregate> <key=value> [<key=value> ...]
+                                                                      Update the metadata associated with the aggregate specified by its ID or name.
+  * aggregate-update         [--name <name>] [--availability-zone <availability-zone>] <aggregate>
+                                                                      Update the aggregate's name or availability zone.
 
-  * host-list                                                         List all hosts by service
-  * host-update              --maintenance [enable | disable]         Put/resume host into/from maintenance.
+  * host-list                                                         List all hosts by service.
+  * hypervisor-list          [--matching <hostname>] [--marker <marker>] [--limit <limit>]
+                                                                      List hypervisors.
+
+  * host-update              [--status <enable|disable>] [--maintenance <enable|disable>] <hostname>
+                                                                      Put/resume host into/from maintenance.
+  * service-enable           <id>                                     Enable the service.
+  * service-disable          [--reason <reason>] <id>                 Disable the service.

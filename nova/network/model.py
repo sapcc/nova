@@ -52,6 +52,7 @@ VIF_DETAILS_PORT_FILTER = 'port_filter'
 VIF_DETAILS_OVS_HYBRID_PLUG = 'ovs_hybrid_plug'
 VIF_DETAILS_PHYSICAL_NETWORK = 'physical_network'
 VIF_DETAILS_BRIDGE_NAME = 'bridge_name'
+VIF_DETAILS_OVS_DATAPATH_TYPE = 'datapath_type'
 
 # The following constant defines an SR-IOV related parameter in the
 # 'vif_details'. 'profileid' should be used for VIF_TYPE_802_QBH
@@ -84,12 +85,14 @@ VIF_DETAILS_VHOSTUSER_FP_PLUG = 'vhostuser_fp_plug'
 # create a vrouter netdevice interface
 # TODO(mhenkel): Consider renaming this to be contrail-specific.
 VIF_DETAILS_VHOSTUSER_VROUTER_PLUG = 'vhostuser_vrouter_plug'
-# ovs vhost user interface type name
-OVS_VHOSTUSER_INTERFACE_TYPE = 'dpdkvhostuser'
 
 # Constants for dictionary keys in the 'vif_details' field that are
 # valid for VIF_TYPE_TAP.
 VIF_DETAILS_TAP_MAC_ADDRESS = 'mac_address'
+
+# Open vSwitch datapath types.
+VIF_DETAILS_OVS_DATAPATH_SYSTEM = 'system'
+VIF_DETAILS_OVS_DATAPATH_NETDEV = 'netdev'
 
 # Define supported virtual NIC types. VNIC_TYPE_DIRECT and VNIC_TYPE_MACVTAP
 # are used for SR-IOV ports
@@ -409,8 +412,11 @@ class VIF(Model):
         return not self.__eq__(other)
 
     def fixed_ips(self):
-        return [fixed_ip for subnet in self['network']['subnets']
-                         for fixed_ip in subnet['ips']]
+        if self['network']:
+            return [fixed_ip for subnet in self['network']['subnets']
+                             for fixed_ip in subnet['ips']]
+        else:
+            return []
 
     def floating_ips(self):
         return [floating_ip for fixed_ip in self.fixed_ips()

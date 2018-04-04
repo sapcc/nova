@@ -44,6 +44,10 @@ the fixed IP address to assign to the server interface.
 
 **Server personality**
 
+.. note:: The use of personality files is deprecated starting with the 2.57
+  microversion. Use ``metadata`` and ``user_data`` to customize a server
+  instance.
+
 To customize the personality of a server instance, you can inject data
 into its file system. For example, you might insert ssh keys, set
 configuration files, or store data that you want to retrieve from inside
@@ -107,7 +111,7 @@ servers request. The server status is returned in the response
 body. The possible server status values are:
 
 - ``ACTIVE``. The server is active.
-- ``BUILDING``. The server has not finished the original build process.
+- ``BUILD``. The server has not finished the original build process.
 - ``DELETED``. The server is permanently deleted.
 - ``ERROR``. The server is in error.
 - ``HARD_REBOOT``. The server is hard rebooting. This is equivalent to
@@ -120,17 +124,21 @@ body. The possible server status values are:
 - ``REBOOT``. The server is in a soft reboot state. A reboot command
   was passed to the operating system.
 - ``REBUILD``. The server is currently being rebuilt from an image.
-- ``RESCUED``. The server is in rescue mode. A rescue image is running
+- ``RESCUE``. The server is in rescue mode. A rescue image is running
   with the original server image attached.
-- ``RESIZED``. Server is performing the differential copy of data that
+- ``RESIZE``. Server is performing the differential copy of data that
   changed during its initial copy. Server is down for this stage.
 - ``REVERT_RESIZE``. The resize or migration of a server failed for
   some reason. The destination server is being cleaned up and the
   original source server is restarting.
+- ``SHELVED``: The server is in shelved state. Depending on the shelve offload
+  time, the server will be automatically shelved offloaded.
+- ``SHELVED_OFFLOADED``: The shelved server is offloaded (removed from the
+  compute host) and it needs unshelved action to be used again.
+- ``SHUTOFF``. The server is powered off and the disk image still
+  persists.
 - ``SOFT_DELETED``. The server is marked as deleted but the disk
   images are still available to restore.
-- ``STOPPED``. The server is powered off and the disk image still
-  persists.
 - ``SUSPENDED``. The server is suspended, either by request or
   necessity. This status appears for only the XenServer/XCP, KVM, and
   ESXi hypervisors. Administrative users can suspend an instance if it
@@ -144,10 +152,37 @@ body. The possible server status values are:
 - ``VERIFY_RESIZE``. System is awaiting confirmation that the server
   is operational after a move or resize.
 
+
+There is whitelist for valid filter keys. Any filter key other than from
+whitelist will be silently ignored.
+
+- For non-admin users, whitelist is different from admin users whitelist.
+  Valid whitelist for non-admin users includes
+
+  - ``all_tenants``
+  - ``changes-since``
+  - ``flavor``
+  - ``image``
+  - ``ip``
+  - ``ip6`` (New in version 2.5)
+  - ``name``
+  - ``not-tags`` (New in version 2.26)
+  - ``not-tags-any`` (New in version 2.26)
+  - ``reservation_id``
+  - ``status``
+  - ``tags`` (New in version 2.26)
+  - ``tags-any`` (New in version 2.26)
+
+
+- For admin user, whitelist includes all filter keys mentioned in
+  :ref:`list-server-request` Section.
+
 Normal response codes: 200
 
 Error response codes: badRequest(400), unauthorized(401),
 forbidden(403)
+
+.. _list-server-request:
 
 Request
 -------
@@ -328,6 +363,7 @@ Request
   - block_device_mapping_v2.boot_index: boot_index
   - block_device_mapping_v2.uuid: block_device_uuid
   - block_device_mapping_v2.tag: device_tag_bdm
+  - block_device_mapping_v2.disk_bus: disk_bus
   - config_drive: config_drive
   - key_name: key_name
   - os:scheduler_hints: os:scheduler_hints

@@ -90,9 +90,9 @@ def stub_out_key_pair_funcs(testcase, have_key_pair=True, **kwargs):
                      name='key', public_key='public_key', **kwargs)]
 
     def one_key_pair(context, user_id, name):
-        if name == 'key':
+        if name in ['key', 'new-key']:
             return dict(test_keypair.fake_keypair,
-                        name='key', public_key='public_key', **kwargs)
+                        name=name, public_key='public_key', **kwargs)
         else:
             raise exc.KeypairNotFound(user_id=user_id, name=name)
 
@@ -271,15 +271,6 @@ class TestRouter(wsgi.Router):
         mapper.resource("test", "tests",
                         controller=os_wsgi.Resource(controller))
         super(TestRouter, self).__init__(mapper)
-
-
-class TestRouterV21(wsgi.Router):
-    def __init__(self, controller, mapper=None):
-        if not mapper:
-            mapper = routes.Mapper()
-        mapper.resource("test", "tests",
-                        controller=os_wsgi.ResourceV21(controller))
-        super(TestRouterV21, self).__init__(mapper)
 
 
 class FakeAuthDatabase(object):
@@ -541,7 +532,8 @@ def stub_instance(id=1, user_id=None, project_id=None, host=None,
                   "flavor": flavorinfo,
               },
         "cleaned": cleaned,
-        "services": services}
+        "services": services,
+        "tags": []}
 
     instance.update(info_cache)
     instance['info_cache']['instance_uuid'] = instance['uuid']
@@ -552,7 +544,7 @@ def stub_instance(id=1, user_id=None, project_id=None, host=None,
 def stub_instance_obj(ctxt, *args, **kwargs):
     db_inst = stub_instance(*args, **kwargs)
     expected = ['metadata', 'system_metadata', 'flavor',
-                'info_cache', 'security_groups']
+                'info_cache', 'security_groups', 'tags']
     inst = objects.Instance._from_db_object(ctxt, objects.Instance(),
                                             db_inst,
                                             expected_attrs=expected)
@@ -582,7 +574,7 @@ def stub_volume(id, **kwargs):
         'volume_type_id': 'fakevoltype',
         'volume_metadata': [],
         'volume_type': {'name': 'vol_type_name'},
-        'multiattach': True,
+        'multiattach': False,
         'attachments': {'fakeuuid': {'mountpoint': '/'},
                         'fakeuuid2': {'mountpoint': '/dev/sdb'}
                         }
@@ -715,6 +707,7 @@ FLAVORS = {
         vcpu_weight=None,
         disabled=False,
         is_public=True,
+        description=None
     ),
     '2': objects.Flavor(
         id=2,
@@ -729,6 +722,7 @@ FLAVORS = {
         vcpu_weight=None,
         disabled=True,
         is_public=True,
+        description='flavor 2 description'
     ),
 }
 

@@ -26,6 +26,7 @@ semantics of real hypervisor connections.
 import collections
 import contextlib
 import copy
+import time
 
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
@@ -33,6 +34,7 @@ from oslo_utils import versionutils
 
 from nova.compute import power_state
 from nova.compute import task_states
+from nova.compute import vm_states
 import nova.conf
 from nova.console import type as ctype
 from nova import exception
@@ -127,6 +129,7 @@ class FakeDriver(driver.ComputeDriver):
         "supports_tagged_attach_interface": True,
         "supports_tagged_attach_volume": True,
         "supports_extend_volume": True,
+        "supports_multiattach": True
         }
 
     # Since we don't have a real hypervisor, pretend we have lots of
@@ -159,9 +162,12 @@ class FakeDriver(driver.ComputeDriver):
         self._mounts = {}
         self._interfaces = {}
         self.active_migrations = {}
+        self._nodes = self._init_nodes()
+
+    def _init_nodes(self):
         if not _FAKE_NODES:
             set_nodes([CONF.host])
-        self._nodes = copy.copy(_FAKE_NODES)
+        return copy.copy(_FAKE_NODES)
 
     def init_host(self, host):
         return
@@ -181,7 +187,8 @@ class FakeDriver(driver.ComputeDriver):
         pass
 
     def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, network_info=None, block_device_info=None):
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
         uuid = instance.uuid
         state = power_state.RUNNING
         flavor = instance.flavor
@@ -219,7 +226,7 @@ class FakeDriver(driver.ComputeDriver):
         pass
 
     def unrescue(self, instance, network_info):
-        pass
+        self.instances[instance.uuid].state = power_state.RUNNING
 
     def poll_rebooting_instances(self, timeout, instances):
         pass
@@ -242,11 +249,17 @@ class FakeDriver(driver.ComputeDriver):
         pass
 
     def power_off(self, instance, timeout=0, retry_interval=0):
-        pass
+        if instance.uuid in self.instances:
+            self.instances[instance.uuid].state = power_state.SHUTDOWN
+        else:
+            raise exception.InstanceNotFound(instance_id=instance.uuid)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):
-        pass
+        if instance.uuid in self.instances:
+            self.instances[instance.uuid].state = power_state.RUNNING
+        else:
+            raise exception.InstanceNotFound(instance_id=instance.uuid)
 
     def trigger_crash_dump(self, instance):
         pass
@@ -304,7 +317,7 @@ class FakeDriver(driver.ComputeDriver):
         except KeyError:
             pass
 
-    def swap_volume(self, old_connection_info, new_connection_info,
+    def swap_volume(self, context, old_connection_info, new_connection_info,
                     instance, mountpoint, resize_to):
         """Replace the disk attached to the instance."""
         instance_name = instance.name
@@ -333,11 +346,7 @@ class FakeDriver(driver.ComputeDriver):
         if instance.uuid not in self.instances:
             raise exception.InstanceNotFound(instance_id=instance.uuid)
         i = self.instances[instance.uuid]
-        return hardware.InstanceInfo(state=i.state,
-                                     max_mem_kb=0,
-                                     mem_kb=0,
-                                     num_cpu=2,
-                                     cpu_time_ns=0)
+        return hardware.InstanceInfo(state=i.state)
 
     def get_diagnostics(self, instance):
         return {'cpu0_time': 17300000000,
@@ -510,11 +519,15 @@ class FakeDriver(driver.ComputeDriver):
         data = migrate_data.LibvirtLiveMigrateData()
         data.filename = 'fake'
         data.image_type = CONF.libvirt.images_type
-        data.graphics_listen_addr_vnc = CONF.vnc.vncserver_listen
+        data.graphics_listen_addr_vnc = CONF.vnc.server_listen
         data.graphics_listen_addr_spice = CONF.spice.server_listen
         data.serial_listen_addr = None
-        data.block_migration = block_migration
-        data.disk_over_commit = disk_over_commit or False  # called with None
+        # Notes(eliqiao): block_migration and disk_over_commit are not
+        # nullable, so just don't set them if they are None
+        if block_migration is not None:
+            data.block_migration = block_migration
+        if disk_over_commit is not None:
+            data.disk_over_commit = disk_over_commit
         data.disk_available_mb = 100000
         data.is_shared_block_storage = True
         data.is_shared_instance_path = True
@@ -535,7 +548,7 @@ class FakeDriver(driver.ComputeDriver):
 
     def pre_live_migration(self, context, instance, block_device_info,
                            network_info, disk_info, migrate_data):
-        return
+        return migrate_data
 
     def unfilter_instance(self, instance, network_info):
         return
@@ -608,3 +621,90 @@ class MediumFakeDriver(FakeDriver):
     vcpus = 10
     memory_mb = 8192
     local_gb = 1028
+
+
+class FakeRescheduleDriver(FakeDriver):
+    """FakeDriver derivative that triggers a reschedule on the first spawn
+    attempt. This is expected to only be used in tests that have more than
+    one compute service.
+    """
+    # dict, keyed by instance uuid, mapped to a boolean telling us if the
+    # instance has been rescheduled or not
+    rescheduled = {}
+
+    def spawn(self, context, instance, image_meta, injected_files,
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
+        if not self.rescheduled.get(instance.uuid, False):
+            # We only reschedule on the first time something hits spawn().
+            self.rescheduled[instance.uuid] = True
+            raise exception.ComputeResourcesUnavailable(
+                reason='FakeRescheduleDriver')
+        super(FakeRescheduleDriver, self).spawn(
+            context, instance, image_meta, injected_files,
+            admin_password, allocations, network_info, block_device_info)
+
+
+class FakeBuildAbortDriver(FakeDriver):
+    """FakeDriver derivative that always fails on spawn() with a
+    BuildAbortException so no reschedule is attempted.
+    """
+    def spawn(self, context, instance, image_meta, injected_files,
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
+        raise exception.BuildAbortException(
+            instance_uuid=instance.uuid, reason='FakeBuildAbortDriver')
+
+
+class FakeUnshelveSpawnFailDriver(FakeDriver):
+    """FakeDriver derivative that always fails on spawn() with a
+    VirtualInterfaceCreateException when unshelving an offloaded instance.
+    """
+    def spawn(self, context, instance, image_meta, injected_files,
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
+        if instance.vm_state == vm_states.SHELVED_OFFLOADED:
+            raise exception.VirtualInterfaceCreateException(
+                'FakeUnshelveSpawnFailDriver')
+        # Otherwise spawn normally during the initial build.
+        super(FakeUnshelveSpawnFailDriver, self).spawn(
+            context, instance, image_meta, injected_files,
+            admin_password, allocations, network_info, block_device_info)
+
+
+class FakeLiveMigrateDriver(FakeDriver):
+    """FakeDriver derivative to handle force_complete and abort calls.
+
+    This module serves those tests that need to abort or force-complete
+    the live migration, thus the live migration will never be finished
+    without the force_complete_migration or delete_migration API calls.
+
+    """
+
+    def __init__(self, virtapi, read_only=False):
+        super(FakeLiveMigrateDriver, self).__init__(virtapi, read_only)
+        self._migrating = True
+        self._abort_migration = True
+
+    def live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration=False,
+                       migrate_data=None):
+        self._abort_migration = False
+        self._migrating = True
+        while self._migrating:
+            time.sleep(0.1)
+
+        if self._abort_migration:
+            recover_method(context, instance, dest, migrate_data,
+                           migration_status='cancelled')
+        else:
+            post_method(context, instance, dest, block_migration,
+                        migrate_data)
+
+    def live_migration_force_complete(self, instance):
+        self._migrating = False
+        del self.instances[instance.uuid]
+
+    def live_migration_abort(self, instance):
+        self._abort_migration = True
+        self._migrating = False

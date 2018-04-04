@@ -32,6 +32,7 @@ from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import vm_states
 from nova import exception
+from nova.i18n import _
 from nova import objects
 from nova.objects import base as obj_base
 from nova import rpc
@@ -110,7 +111,7 @@ class RPCClientCellsProxy(object):
         version = kwargs.pop('version', None)
 
         if kwargs:
-            raise ValueError("Unsupported kwargs: %s" % kwargs.keys())
+            raise ValueError(_("Unsupported kwargs: %s") % kwargs.keys())
 
         if server:
             ret._server = server
@@ -457,17 +458,20 @@ class ComputeCellsAPI(compute_api.API):
                 *args, **kwargs)
 
     @check_instance_cell
-    def _attach_volume(self, context, instance, volume_id, device,
-                       disk_bus, device_type, tag=None):
+    def _attach_volume(self, context, instance, volume, device,
+                       disk_bus, device_type, tag=None,
+                       supports_multiattach=False):
         """Attach an existing volume to an existing instance."""
         if tag:
             raise exception.VolumeTaggedAttachNotSupported()
-        volume = self.volume_api.get(context, volume_id)
+        if volume['multiattach']:
+            # We don't support multiattach volumes with cells v1.
+            raise exception.MultiattachSupportNotYetAvailable()
         self.volume_api.check_availability_zone(context, volume,
                                                 instance=instance)
 
         return self._call_to_cells(context, instance, 'attach_volume',
-                volume_id, device, disk_bus, device_type)
+                volume['id'], device, disk_bus, device_type)
 
     @check_instance_cell
     def _detach_volume(self, context, instance, volume):
@@ -676,7 +680,9 @@ class InstanceActionAPI(compute_api.InstanceActionAPI):
         super(InstanceActionAPI, self).__init__()
         self.cells_rpcapi = cells_rpcapi.CellsAPI()
 
-    def actions_get(self, context, instance):
+    def actions_get(self, context, instance, limit=None, marker=None,
+                    filters=None):
+        # Paging and filtering isn't supported in cells v1.
         return self.cells_rpcapi.actions_get(context, instance)
 
     def action_get_by_request_id(self, context, instance, request_id):

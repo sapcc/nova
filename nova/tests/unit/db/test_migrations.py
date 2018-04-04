@@ -965,6 +965,38 @@ class NovaMigrationsCheckers(test_migrations.ModelsMigrationsSync,
     def _check_362(self, engine, data):
         self.assertColumnExists(engine, 'pci_devices', 'uuid')
 
+    def _check_373(self, engine, data):
+        self.assertColumnExists(engine, 'migrations', 'uuid')
+
+    def _check_374(self, engine, data):
+        self.assertColumnExists(engine, 'block_device_mapping', 'uuid')
+        self.assertColumnExists(engine, 'shadow_block_device_mapping', 'uuid')
+
+        inspector = reflection.Inspector.from_engine(engine)
+        constraints = inspector.get_unique_constraints('block_device_mapping')
+        constraint_names = [constraint['name'] for constraint in constraints]
+        self.assertIn('uniq_block_device_mapping0uuid', constraint_names)
+
+    def _check_375(self, engine, data):
+        self.assertColumnExists(engine, 'console_auth_tokens',
+                                'access_url_base')
+
+    def _check_376(self, engine, data):
+        self.assertIndexMembers(
+            engine, 'console_auth_tokens',
+            'console_auth_tokens_token_hash_instance_uuid_idx',
+            ['token_hash', 'instance_uuid'])
+
+    def _check_377(self, engine, data):
+        self.assertIndexMembers(engine, 'migrations',
+                                'migrations_updated_at_idx', ['updated_at'])
+
+    def _check_378(self, engine, data):
+        self.assertIndexMembers(
+            engine, 'instance_actions',
+            'instance_actions_instance_uuid_updated_at_idx',
+            ['instance_uuid', 'updated_at'])
+
 
 class TestNovaMigrationsSQLite(NovaMigrationsCheckers,
                                test_base.DbTestCase,

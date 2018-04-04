@@ -30,4 +30,5 @@ fake_token_dict = {
     'internal_access_path': 'fake-path',
     'instance_uuid': fake_instance_uuid,
     'expires': 100,
+    'access_url_base': 'http://fake.url.fake/root.html'
     }

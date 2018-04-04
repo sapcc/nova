@@ -20,7 +20,6 @@ import webob
 from nova.api.openstack import api_version_request
 from nova.api.openstack import common
 from nova.api.openstack.compute.schemas import flavor_access
-from nova.api.openstack import extensions
 from nova.api.openstack import identity
 from nova.api.openstack import wsgi
 from nova.api import validation
@@ -40,7 +39,7 @@ def _marshall_flavor_access(flavor):
 
 class FlavorAccessController(wsgi.Controller):
     """The flavor access API controller for the OpenStack API."""
-    @extensions.expected_errors(404)
+    @wsgi.expected_errors(404)
     def index(self, req, flavor_id):
         context = req.environ['nova.context']
         context.can(fa_policies.BASE_POLICY_NAME)
@@ -58,36 +57,8 @@ class FlavorAccessController(wsgi.Controller):
 
 class FlavorActionController(wsgi.Controller):
     """The flavor access API controller for the OpenStack API."""
-    def _extend_flavor(self, flavor_rval, flavor_ref):
-        key = "os-flavor-access:is_public"
-        flavor_rval[key] = flavor_ref['is_public']
 
-    @wsgi.extends
-    def show(self, req, resp_obj, id):
-        context = req.environ['nova.context']
-        if context.can(fa_policies.BASE_POLICY_NAME, fatal=False):
-            db_flavor = req.get_db_flavor(id)
-
-            self._extend_flavor(resp_obj.obj['flavor'], db_flavor)
-
-    @wsgi.extends
-    def detail(self, req, resp_obj):
-        context = req.environ['nova.context']
-        if context.can(fa_policies.BASE_POLICY_NAME, fatal=False):
-            flavors = list(resp_obj.obj['flavors'])
-            for flavor_rval in flavors:
-                db_flavor = req.get_db_flavor(flavor_rval['id'])
-                self._extend_flavor(flavor_rval, db_flavor)
-
-    @wsgi.extends(action='create')
-    def create(self, req, body, resp_obj):
-        context = req.environ['nova.context']
-        if context.can(fa_policies.BASE_POLICY_NAME, fatal=False):
-            db_flavor = req.get_db_flavor(resp_obj.obj['flavor']['id'])
-
-            self._extend_flavor(resp_obj.obj['flavor'], db_flavor)
-
-    @extensions.expected_errors((400, 403, 404, 409))
+    @wsgi.expected_errors((400, 403, 404, 409))
     @wsgi.action("addTenantAccess")
     @validation.schema(flavor_access.add_tenant_access)
     def _add_tenant_access(self, req, id, body):
@@ -112,7 +83,7 @@ class FlavorActionController(wsgi.Controller):
             raise webob.exc.HTTPConflict(explanation=err.format_message())
         return _marshall_flavor_access(flavor)
 
-    @extensions.expected_errors((400, 403, 404))
+    @wsgi.expected_errors((400, 403, 404))
     @wsgi.action("removeTenantAccess")
     @validation.schema(flavor_access.remove_tenant_access)
     def _remove_tenant_access(self, req, id, body):

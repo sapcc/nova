@@ -44,8 +44,7 @@ class LibvirtDRBDVolumeDriverTestCase(
         }
         with mock.patch.object(connector.DRBDConnector, 'connect_volume',
                                return_value=device_info):
-            drbd_driver.connect_volume(
-                connection_info, self.disk_info, instance)
+            drbd_driver.connect_volume(connection_info, instance)
         # assert that the device_path was set
         self.assertIn('device_path', connection_info['data'])
         self.assertEqual('/path/to/fake-device',
@@ -58,6 +57,6 @@ class LibvirtDRBDVolumeDriverTestCase(
         # now disconnect the volume
         with mock.patch.object(connector.DRBDConnector,
                                'disconnect_volume') as mock_disconnect:
-            drbd_driver.disconnect_volume(connection_info, 'vda', instance)
+            drbd_driver.disconnect_volume(connection_info, instance)
         # disconnect is all passthrough so just assert the call
         mock_disconnect.assert_called_once_with(connection_info['data'], None)

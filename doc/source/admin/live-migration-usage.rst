@@ -11,8 +11,8 @@ non-live-migration options.
 
 The instructions below cover shared-storage and volume-backed migration.  To
 block-migrate instances, add the command-line option
-:command:``--block-migrate`` to the :command:``nova live-migration`` command,
-and :command:``--block-migration`` to the :command:``openstack server migrate``
+``-block-migrate`` to the :command:`nova live-migration` command,
+and ``--block-migration`` to the :command:`openstack server migrate`
 command.
 
 .. _section-manual-selection-of-dest:
@@ -281,7 +281,7 @@ To make live-migration succeed, you have several options:
   faster than the instance's memory writes.
 
   To enable auto-convergence, set
-  ``live_migration_permit_auto_convergence=true`` in ``nova.conf`` and restart
+  ``live_migration_permit_auto_converge=true`` in ``nova.conf`` and restart
   ``nova-compute``. Do this on all compute hosts.
 
   .. caution::

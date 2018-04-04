@@ -436,15 +436,11 @@ class Resource(wsgi.Application):
     wrapped in Fault() to provide API friendly error responses.
 
     """
-    support_api_request_version = False
+    support_api_request_version = True
 
-    def __init__(self, controller, inherits=None):
+    def __init__(self, controller):
         """:param controller: object that implement methods created by routes
                               lib
-           :param inherits: another resource object that this resource should
-                            inherit extensions from. Any action extensions that
-                            are applied to the parent resource will also apply
-                            to this resource.
         """
 
         self.controller = controller
@@ -459,7 +455,6 @@ class Resource(wsgi.Application):
         # Save a mapping of extensions
         self.wsgi_extensions = {}
         self.wsgi_action_extensions = {}
-        self.inherits = inherits
 
     def register_actions(self, controller):
         """Registers controller actions with this resource."""
@@ -696,12 +691,6 @@ class Resource(wsgi.Application):
                                             action,
                                             content_type,
                                             body)
-        if self.inherits:
-            _meth, parent_ext = self.inherits.get_method(request,
-                                                         action,
-                                                         content_type,
-                                                         body)
-            extensions.extend(parent_ext)
         return meth, extensions
 
     def _get_method(self, request, action, content_type, body):
@@ -739,10 +728,6 @@ class Resource(wsgi.Application):
             # about the exception to the user so it looks as if
             # the method is simply not implemented.
             return Fault(webob.exc.HTTPNotFound())
-
-
-class ResourceV21(Resource):
-    support_api_request_version = True
 
 
 def action(name):
@@ -786,6 +771,56 @@ def extends(*args, **kwargs):
         return decorator(*args)
 
     # OK, return the decorator instead
+    return decorator
+
+
+def expected_errors(errors):
+    """Decorator for v2.1 API methods which specifies expected exceptions.
+
+    Specify which exceptions may occur when an API method is called. If an
+    unexpected exception occurs then return a 500 instead and ask the user
+    of the API to file a bug report.
+    """
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapped(*args, **kwargs):
+            try:
+                return f(*args, **kwargs)
+            except Exception as exc:
+                if isinstance(exc, webob.exc.WSGIHTTPException):
+                    if isinstance(errors, int):
+                        t_errors = (errors,)
+                    else:
+                        t_errors = errors
+                    if exc.code in t_errors:
+                        raise
+                elif isinstance(exc, exception.Forbidden):
+                    # Note(cyeoh): Special case to handle
+                    # Forbidden exceptions so every
+                    # extension method does not need to wrap authorize
+                    # calls. ResourceExceptionHandler silently
+                    # converts NotAuthorized to HTTPForbidden
+                    raise
+                elif isinstance(exc, exception.ValidationError):
+                    # Note(oomichi): Handle a validation error, which
+                    # happens due to invalid API parameters, as an
+                    # expected error.
+                    raise
+                elif isinstance(exc, exception.Unauthorized):
+                    # Handle an authorized exception, will be
+                    # automatically converted to a HTTP 401, clients
+                    # like python-novaclient handle this error to
+                    # generate new token and do another attempt.
+                    raise
+
+                LOG.exception("Unexpected exception in API method")
+                msg = _('Unexpected API Error. Please report this at '
+                    'http://bugs.launchpad.net/nova/ and attach the Nova '
+                    'API log if possible.\n%s') % type(exc)
+                raise webob.exc.HTTPInternalServerError(explanation=msg)
+
+        return wrapped
+
     return decorator
 
 

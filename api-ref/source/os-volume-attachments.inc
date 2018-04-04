@@ -58,6 +58,11 @@ Error response codes: badRequest(400), unauthorized(401), forbidden(403), itemNo
 .. note:: From v2.20 attach a volume to an instance in SHELVED or SHELVED_OFFLOADED
           state is allowed.
 
+.. note:: From v2.60, attaching a multiattach volume to multiple instances is
+          supported for instances that are not SHELVED_OFFLOADED. The ability
+          to actually support a multiattach volume depends on the volume type
+          and compute hosting the instance.
+
 Request
 -------
 
@@ -136,6 +141,9 @@ Update a volume attachment
 .. rest_method:: PUT /servers/{server_id}/os-volume_attachments/{attachment_id}
 
 Update a volume attachment.
+
+.. note:: This action only valid when the server is in ACTIVE, PAUSED and RESIZED state,
+          or a conflict(409) error will be returned.
 
 Normal response codes: 202
 

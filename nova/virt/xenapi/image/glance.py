@@ -35,7 +35,7 @@ LOG = logging.getLogger(__name__)
 class GlanceStore(object):
     def _call_glance_plugin(self, context, instance, session, fn, image_id,
                             params):
-        glance_api_servers = glance.get_api_servers()
+        glance_api_servers = glance.get_api_servers(context)
         sr_path = vm_utils.get_sr_path(session)
         extra_headers = glance.generate_identity_headers(context)
 
@@ -89,3 +89,5 @@ class GlanceStore(object):
                                      host_glance.upload_vhd, image_id, params)
         except xenapi_exception.PluginRetriesExceeded:
             raise exception.CouldNotUploadImage(image_id=image_id)
+        except xenapi_exception.PluginImageNotFound:
+            raise exception.ImageNotFound(image_id=image_id)

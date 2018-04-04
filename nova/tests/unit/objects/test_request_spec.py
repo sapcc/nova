@@ -299,13 +299,22 @@ class _TestRequestSpecObject(object):
         # just making sure that the context is set by the method
         self.assertEqual(ctxt, spec._context)
 
+    def test_from_primitives_with_requested_destination(self):
+        destination = objects.Destination(host='foo')
+        spec_dict = {}
+        filt_props = {'requested_destination': destination}
+        ctxt = context.RequestContext('fake', 'fake')
+        spec = objects.RequestSpec.from_primitives(ctxt, spec_dict, filt_props)
+        self.assertEqual(destination, spec.requested_destination)
+
     def test_from_components(self):
         ctxt = context.RequestContext('fake-user', 'fake-project')
+        destination = objects.Destination(host='foo')
         instance = fake_instance.fake_instance_obj(ctxt)
         image = {'id': uuids.image_id, 'properties': {'mappings': []},
                  'status': 'fake-status', 'location': 'far-away'}
         flavor = fake_flavor.fake_flavor_obj(ctxt)
-        filter_properties = {}
+        filter_properties = {'requested_destination': destination}
         instance_group = None
 
         spec = objects.RequestSpec.from_components(ctxt, instance.uuid, image,
@@ -318,6 +327,7 @@ class _TestRequestSpecObject(object):
                             'Field: %s is not set' % field)
         # just making sure that the context is set by the method
         self.assertEqual(ctxt, spec._context)
+        self.assertEqual(destination, spec.requested_destination)
 
     @mock.patch('nova.objects.RequestSpec._populate_group_info')
     def test_from_components_with_instance_group(self, mock_pgi):
@@ -436,6 +446,7 @@ class _TestRequestSpecObject(object):
         fake_computes_obj = objects.ComputeNodeList(
             objects=[objects.ComputeNode(host='fake1',
                                          hypervisor_hostname='node1')])
+        fake_dest = objects.Destination(host='fakehost')
         spec = objects.RequestSpec(
             ignore_hosts=['ignoredhost'],
             force_hosts=['fakehost'],
@@ -447,8 +458,10 @@ class _TestRequestSpecObject(object):
                                            disk_gb=10.0,
                                            memory_mb=8192.0),
             instance_group=objects.InstanceGroup(hosts=['fake1'],
-                                                 policies=['affinity']),
-            scheduler_hints={'foo': ['bar']})
+                                                 policies=['affinity'],
+                                                 members=['inst1', 'inst2']),
+            scheduler_hints={'foo': ['bar']},
+            requested_destination=fake_dest)
         expected = {'ignore_hosts': ['ignoredhost'],
                     'force_hosts': ['fakehost'],
                     'force_nodes': ['fakenode'],
@@ -461,7 +474,9 @@ class _TestRequestSpecObject(object):
                     'group_updated': True,
                     'group_hosts': set(['fake1']),
                     'group_policies': set(['affinity']),
-                    'scheduler_hints': {'foo': 'bar'}}
+                    'group_members': set(['inst1', 'inst2']),
+                    'scheduler_hints': {'foo': 'bar'},
+                    'requested_destination': fake_dest}
         self.assertEqual(expected, spec.to_legacy_filter_properties_dict())
 
     def test_to_legacy_filter_properties_dict_with_nullable_values(self):
@@ -479,9 +494,11 @@ class _TestRequestSpecObject(object):
 
     @mock.patch.object(request_spec.RequestSpec,
             '_get_by_instance_uuid_from_db')
-    def test_get_by_instance_uuid(self, get_by_uuid):
+    @mock.patch('nova.objects.InstanceGroup.get_by_uuid')
+    def test_get_by_instance_uuid(self, mock_get_ig, get_by_uuid):
         fake_spec = fake_request_spec.fake_db_spec()
         get_by_uuid.return_value = fake_spec
+        mock_get_ig.return_value = objects.InstanceGroup(name='fresh')
 
         req_obj = request_spec.RequestSpec.get_by_instance_uuid(self.context,
                 fake_spec['instance_uuid'])
@@ -502,6 +519,7 @@ class _TestRequestSpecObject(object):
         self.assertIsInstance(req_obj.retry, objects.SchedulerRetries)
         self.assertIsInstance(req_obj.limits, objects.SchedulerLimits)
         self.assertIsInstance(req_obj.instance_group, objects.InstanceGroup)
+        self.assertEqual('fresh', req_obj.instance_group.name)
 
     def _check_update_primitive(self, req_obj, changes):
         self.assertEqual(req_obj.instance_uuid, changes['instance_uuid'])
@@ -517,10 +535,13 @@ class _TestRequestSpecObject(object):
 
         # object fields
         for field in ['image', 'numa_topology', 'pci_requests', 'flavor',
-                'retry', 'limits', 'instance_group']:
+                'retry', 'limits']:
             self.assertEqual(
                     getattr(req_obj, field).obj_to_primitive(),
                     getattr(serialized_obj, field).obj_to_primitive())
+
+        self.assertIsNone(serialized_obj.instance_group.members)
+        self.assertIsNone(serialized_obj.instance_group.hosts)
 
     def test_create(self):
         req_obj = fake_request_spec.fake_spec_obj(remove_id=True)
@@ -561,6 +582,19 @@ class _TestRequestSpecObject(object):
 
         destroy_in_db.assert_called_once_with(req_obj._context,
                                               req_obj.instance_uuid)
+
+    @mock.patch.object(request_spec.RequestSpec, '_destroy_bulk_in_db')
+    def test_destroy_bulk(self, destroy_bulk_in_db):
+        uuids_to_be_deleted = []
+        for i in range(0, 5):
+            uuid = uuidutils.generate_uuid()
+            uuids_to_be_deleted.append(uuid)
+        destroy_bulk_in_db.return_value = 5
+        result = objects.RequestSpec.destroy_bulk(self.context,
+                                            uuids_to_be_deleted)
+        destroy_bulk_in_db.assert_called_once_with(self.context,
+                                            uuids_to_be_deleted)
+        self.assertEqual(5, result)
 
     def test_reset_forced_destinations(self):
         req_obj = fake_request_spec.fake_spec_obj()

@@ -86,7 +86,8 @@ class ComputeTaskAPI(object):
 
     def resize_instance(self, context, instance, extra_instance_updates,
                         scheduler_hint, flavor, reservations=None,
-                        clean_shutdown=True, request_spec=None):
+                        clean_shutdown=True, request_spec=None,
+                        host_list=None):
         # NOTE(comstud): 'extra_instance_updates' is not used here but is
         # needed for compatibility with the cells_rpcapi version of this
         # method.
@@ -94,7 +95,7 @@ class ComputeTaskAPI(object):
             context, instance, scheduler_hint, live=False, rebuild=False,
             flavor=flavor, block_migration=None, disk_over_commit=None,
             reservations=reservations, clean_shutdown=clean_shutdown,
-            request_spec=request_spec)
+            request_spec=request_spec, host_list=host_list)
 
     def live_migrate_instance(self, context, instance, host_name,
                               block_migration, disk_over_commit,
@@ -112,7 +113,8 @@ class ComputeTaskAPI(object):
 
     def build_instances(self, context, instances, image, filter_properties,
             admin_password, injected_files, requested_networks,
-            security_groups, block_device_mapping, legacy_bdm=True):
+            security_groups, block_device_mapping, legacy_bdm=True,
+            request_spec=None, host_lists=None):
         self.conductor_compute_rpcapi.build_instances(context,
                 instances=instances, image=image,
                 filter_properties=filter_properties,
@@ -120,7 +122,8 @@ class ComputeTaskAPI(object):
                 requested_networks=requested_networks,
                 security_groups=security_groups,
                 block_device_mapping=block_device_mapping,
-                legacy_bdm=legacy_bdm)
+                legacy_bdm=legacy_bdm, request_spec=request_spec,
+                host_lists=host_lists)
 
     def schedule_and_build_instances(self, context, build_requests,
                                      request_spec, image,

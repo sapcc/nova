@@ -49,11 +49,15 @@ changed or be partially complete at this time.
 * `Compute Node Inventory <https://specs.openstack.org/openstack/nova-specs/specs/newton/implemented/compute-node-inventory-newton.html>`_
 * `Resource Provider Allocations <https://specs.openstack.org/openstack/nova-specs/specs/newton/implemented/resource-providers-allocations.html>`_
 * `Resource Provider Base Models <https://specs.openstack.org/openstack/nova-specs/specs/newton/implemented/resource-providers.html>`_
-* `Nested Resource Providers <http://specs.openstack.org/openstack/nova-specs/specs/pike/approved/nested-resource-providers.html>`_
+* `Nested Resource Providers`_
 * `Custom Resource Classes <http://specs.openstack.org/openstack/nova-specs/specs/ocata/implemented/custom-resource-classes.html>`_
 * `Scheduler Filters in DB <http://specs.openstack.org/openstack/nova-specs/specs/ocata/implemented/resource-providers-scheduler-db-filters.html>`_
 * `Scheduler claiming resources to the Placement API <http://specs.openstack.org/openstack/nova-specs/specs/pike/approved/placement-claims.html>`_
 * `The Traits API - Manage Traits with ResourceProvider <http://specs.openstack.org/openstack/nova-specs/specs/pike/approved/resource-provider-traits.html>`_
+* `Request Traits During Scheduling`_
+
+.. _Nested Resource Providers: http://specs.openstack.org/openstack/nova-specs/specs/queens/approved/nested-resource-providers.html
+.. _Request Traits During Scheduling: https://specs.openstack.org/openstack/nova-specs/specs/queens/approved/request-traits-in-nova.html
 
 Deployment
 ==========
@@ -69,15 +73,68 @@ Steps
 
 **1. Deploy the API service**
 
-At this time the placement API code is still in Nova alongside the compute
-REST API code (nova-api). So once you have upgraded nova-api to Newton you
-already have the placement API code, you just need to install the service.
-Nova provides a ``nova-placement-api`` WSGI script for running the service
-with Apache.
+At this time the placement API code is still in Nova alongside the compute REST
+API code (nova-api). So once you have upgraded nova-api to Newton you already
+have the placement API code, you just need to install the service.  Nova
+provides a ``nova-placement-api`` WSGI script for running the service with
+Apache, nginx or other WSGI-capable web servers. Depending on what packaging
+solution is used to deploy OpenStack, the WSGI script may be in ``/usr/bin``
+or ``/usr/local/bin``.
 
 .. note:: The placement API service is currently developed within Nova but
         it is designed to be as separate as possible from the existing code so
         that it can eventually be split into a separate project.
+
+``nova-placement-api``, as a standard WSGI script, provides a module level
+``application`` attribute that most WSGI servers expect to find. This means it
+is possible to run it with lots of different servers, providing flexibility in
+the face of different deployment scenarios. Common scenarios include:
+
+* apache2_ with mod_wsgi_
+* apache2 with mod_proxy_uwsgi_
+* nginx_ with uwsgi_
+* nginx with gunicorn_
+
+In all of these scenarios the host, port and mounting path (or prefix) of the
+application is controlled in the web server's configuration, not in the
+configuration (``nova.conf``) of the placement application.
+
+When placement was `first added to DevStack`_ it used the ``mod_wsgi`` style.
+Later it `was updated`_ to use mod_proxy_uwsgi_. Looking at those changes can
+be useful for understanding the relevant options.
+
+DevStack is configured to host placement at ``/placement`` on either the
+default port for http or for https (``80`` or ``443``) depending on whether TLS
+is being used. Using a default port is desirable.
+
+By default, the placement application will get its configuration for settings
+such as the database connection URL from ``/etc/nova/nova.conf``. The directory
+the configuration file will be found in can be changed by setting
+``OS_PLACEMENT_CONFIG_DIR`` in the environment of the process that starts the
+application.
+
+.. note:: When using uwsgi with a front end (e.g., apache2 or nginx) something
+    needs to ensure that the uwsgi process is running. In DevStack this is done
+    with systemd_. This is one of many different ways to manage uwsgi.
+
+This document refrains from declaring a set of installation instructions for
+the placement service. This is because a major point of having a WSGI
+application is to make the deployment as flexible as possible. Because the
+placement API service is itself stateless (all state is in the database), it is
+possible to deploy as many servers as desired behind a load balancing solution
+for robust and simple scaling. If you familiarize yourself with installing
+generic WSGI applications (using the links in the common scenarios list,
+above), those techniques will be applicable here.
+
+.. _apache2: http://httpd.apache.org/
+.. _mod_wsgi: https://modwsgi.readthedocs.io/
+.. _mod_proxy_uwsgi: http://uwsgi-docs.readthedocs.io/en/latest/Apache.html
+.. _nginx: http://nginx.org/
+.. _uwsgi: http://uwsgi-docs.readthedocs.io/en/latest/Nginx.html
+.. _gunicorn: http://gunicorn.org/
+.. _first added to DevStack: https://review.openstack.org/#/c/342362/
+.. _was updated: https://review.openstack.org/#/c/456717/
+.. _systemd: https://review.openstack.org/#/c/448323/
 
 **2. Synchronize the database**
 
@@ -124,23 +181,13 @@ placement-api service.
         updated in the ``[placement]`` group for credentials to make requests
         from nova-compute to the placement-api service.
 
-References
-~~~~~~~~~~
 
-The following changes were made to devstack (from oldest to newest) to enable
-the placement-api service and can serve as a guide for your own deployment.
-
-https://review.openstack.org/#/c/342362/
-
-https://review.openstack.org/#/c/363335/
-
-https://review.openstack.org/#/c/363724/
-
+.. _placement-upgrade-notes:
 
 Upgrade Notes
 =============
 
-The follow sub-sections provide notes on upgrading to a given target release.
+The following sub-sections provide notes on upgrading to a given target release.
 
 .. note::
 
@@ -223,18 +270,22 @@ Pike (16.0.0)
   used in testing, this is mentioned for completeness but should not be a
   concern for production deployments.
 
+Queens (17.0.0)
+~~~~~~~~~~~~~~~
+
+* The minimum Placement API microversion required by the *nova-scheduler*
+  service is ``1.17`` in order to support `Request Traits During Scheduling`_.
+  This means you must upgrade the placement service before upgrading any
+  *nova-scheduler* services to Queens.
+
 
 REST API
 ========
 
-The placement API service has its own REST API and data model.
+The placement API service has its own `REST API`_ and data model.  One
+can get a sample of the REST API via the functional test `gabbits`_.
 
-API Reference
-~~~~~~~~~~~~~
-
-A full API reference is forthcoming, but until then one can get a sample of the
-REST API via the functional test `gabbits`_.
-
+.. _`REST API`: https://developer.openstack.org/api-ref/placement/
 .. _gabbits: http://git.openstack.org/cgit/openstack/nova/tree/nova/tests/functional/api/openstack/placement/gabbits
 
 Microversions
@@ -248,5 +299,7 @@ the placement REST API and based on how Nova supports rolling upgrades the
 nova-compute service could be Newton level code making requests to an Ocata
 placement API, and vice-versa, an Ocata compute service in a cells v2 cell
 could be making requests to a Newton placement API.
+
+.. _placement-api-microversion-history:
 
 .. include:: ../../../nova/api/openstack/placement/rest_api_version_history.rst

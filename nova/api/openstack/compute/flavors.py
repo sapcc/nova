@@ -16,10 +16,12 @@
 from oslo_utils import strutils
 import webob
 
+from nova.api.openstack import api_version_request
 from nova.api.openstack import common
+from nova.api.openstack.compute.schemas import flavors as schema
 from nova.api.openstack.compute.views import flavors as flavors_view
-from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
+from nova.api import validation
 from nova.compute import flavors
 from nova import exception
 from nova.i18n import _
@@ -34,20 +36,22 @@ class FlavorsController(wsgi.Controller):
 
     _view_builder_class = flavors_view.ViewBuilder
 
-    @extensions.expected_errors(400)
+    @validation.query_schema(schema.index_query)
+    @wsgi.expected_errors(400)
     def index(self, req):
         """Return all flavors in brief."""
         limited_flavors = self._get_flavors(req)
         return self._view_builder.index(req, limited_flavors)
 
-    @extensions.expected_errors(400)
+    @validation.query_schema(schema.index_query)
+    @wsgi.expected_errors(400)
     def detail(self, req):
         """Return all flavors in detail."""
         limited_flavors = self._get_flavors(req)
         req.cache_db_flavors(limited_flavors)
         return self._view_builder.detail(req, limited_flavors)
 
-    @extensions.expected_errors(404)
+    @wsgi.expected_errors(404)
     def show(self, req, id):
         """Return data about the given flavor id."""
         context = req.environ['nova.context']
@@ -57,7 +61,9 @@ class FlavorsController(wsgi.Controller):
         except exception.FlavorNotFound as e:
             raise webob.exc.HTTPNotFound(explanation=e.format_message())
 
-        return self._view_builder.show(req, flavor)
+        include_description = api_version_request.is_supported(
+            req, flavors_view.FLAVOR_DESCRIPTION_MICROVERSION)
+        return self._view_builder.show(req, flavor, include_description)
 
     def _parse_is_public(self, is_public):
         """Parse is_public into something usable."""
@@ -94,7 +100,7 @@ class FlavorsController(wsgi.Controller):
             try:
                 filters['min_memory_mb'] = int(req.params['minRam'])
             except ValueError:
-                msg = _('Invalid min_ram filter [%s]') % req.params['minRam']
+                msg = _('Invalid minRam filter [%s]') % req.params['minRam']
                 raise webob.exc.HTTPBadRequest(explanation=msg)
 
         if 'minDisk' in req.params:

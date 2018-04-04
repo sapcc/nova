@@ -15,9 +15,9 @@
 
 from webob import exc
 
+from nova.api.openstack import api_version_request
 from nova.api.openstack import common
 from nova.api.openstack.compute.schemas import server_migrations
-from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api import validation
 from nova import compute
@@ -26,13 +26,13 @@ from nova.i18n import _
 from nova.policies import servers_migrations as sm_policies
 
 
-def output(migration):
+def output(migration, include_uuid=False):
     """Returns the desired output of the API from an object.
 
     From a Migrations's object this method returns the primitive
     object with the only necessary and expected fields.
     """
-    return {
+    result = {
         "created_at": migration.created_at,
         "dest_compute": migration.dest_compute,
         "dest_host": migration.dest_host,
@@ -50,6 +50,9 @@ def output(migration):
         "status": migration.status,
         "updated_at": migration.updated_at
     }
+    if include_uuid:
+        result['uuid'] = migration.uuid
+    return result
 
 
 class ServerMigrationsController(wsgi.Controller):
@@ -61,7 +64,7 @@ class ServerMigrationsController(wsgi.Controller):
 
     @wsgi.Controller.api_version("2.22")
     @wsgi.response(202)
-    @extensions.expected_errors((400, 403, 404, 409))
+    @wsgi.expected_errors((400, 403, 404, 409))
     @wsgi.action('force_complete')
     @validation.schema(server_migrations.force_complete)
     def _force_complete(self, req, id, server_id, body):
@@ -84,7 +87,7 @@ class ServerMigrationsController(wsgi.Controller):
                 state_error, 'force_complete', server_id)
 
     @wsgi.Controller.api_version("2.23")
-    @extensions.expected_errors(404)
+    @wsgi.expected_errors(404)
     def index(self, req, server_id):
         """Return all migrations of an instance in progress."""
         context = req.environ['nova.context']
@@ -97,10 +100,12 @@ class ServerMigrationsController(wsgi.Controller):
         migrations = self.compute_api.get_migrations_in_progress_by_instance(
                 context, server_id, 'live-migration')
 
-        return {'migrations': [output(migration) for migration in migrations]}
+        include_uuid = api_version_request.is_supported(req, '2.59')
+        return {'migrations': [output(
+            migration, include_uuid) for migration in migrations]}
 
     @wsgi.Controller.api_version("2.23")
-    @extensions.expected_errors(404)
+    @wsgi.expected_errors(404)
     def show(self, req, server_id, id):
         """Return the migration of an instance in progress by id."""
         context = req.environ['nova.context']
@@ -130,11 +135,12 @@ class ServerMigrationsController(wsgi.Controller):
                     " progress.") % {"id": id, "uuid": server_id}
             raise exc.HTTPNotFound(explanation=msg)
 
-        return {'migration': output(migration)}
+        include_uuid = api_version_request.is_supported(req, '2.59')
+        return {'migration': output(migration, include_uuid)}
 
     @wsgi.Controller.api_version("2.24")
     @wsgi.response(202)
-    @extensions.expected_errors((400, 404, 409))
+    @wsgi.expected_errors((400, 404, 409))
     def delete(self, req, server_id, id):
         """Abort an in progress migration of an instance."""
         context = req.environ['nova.context']

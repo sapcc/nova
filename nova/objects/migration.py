@@ -12,6 +12,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo_db import exception as db_exc
+from oslo_utils import uuidutils
 from oslo_utils import versionutils
 
 from nova import db
@@ -38,15 +40,17 @@ class Migration(base.NovaPersistentObject, base.NovaObject,
     # Version 1.2: Added migration_type and hidden
     # Version 1.3: Added get_by_id_and_instance()
     # Version 1.4: Added migration progress detail
-    VERSION = '1.4'
+    # Version 1.5: Added uuid
+    VERSION = '1.5'
 
     fields = {
         'id': fields.IntegerField(),
-        'source_compute': fields.StringField(nullable=True),
-        'dest_compute': fields.StringField(nullable=True),
-        'source_node': fields.StringField(nullable=True),
-        'dest_node': fields.StringField(nullable=True),
-        'dest_host': fields.StringField(nullable=True),
+        'uuid': fields.UUIDField(),
+        'source_compute': fields.StringField(nullable=True),  # source hostname
+        'dest_compute': fields.StringField(nullable=True),    # dest hostname
+        'source_node': fields.StringField(nullable=True),     # source nodename
+        'dest_node': fields.StringField(nullable=True),       # dest nodename
+        'dest_host': fields.StringField(nullable=True),       # dest host IP
         'old_instance_type_id': fields.IntegerField(nullable=True),
         'new_instance_type_id': fields.IntegerField(nullable=True),
         'instance_uuid': fields.StringField(nullable=True),
@@ -69,10 +73,13 @@ class Migration(base.NovaPersistentObject, base.NovaObject,
             value = db_migration[key]
             if key == 'migration_type' and value is None:
                 value = determine_migration_type(db_migration)
+            elif key == 'uuid' and value is None:
+                continue
             migration[key] = value
 
         migration._context = context
         migration.obj_reset_changes()
+        migration._ensure_uuid()
         return migration
 
     def obj_make_compatible(self, primitive, target_version):
@@ -90,6 +97,9 @@ class Migration(base.NovaPersistentObject, base.NovaObject,
                 del primitive['disk_total']
                 del primitive['disk_processed']
                 del primitive['disk_remaining']
+        if target_version < (1, 5):
+            if 'uuid' in primitive:
+                del primitive['uuid']
 
     def obj_load_attr(self, attrname):
         if attrname == 'migration_type':
@@ -100,6 +110,19 @@ class Migration(base.NovaPersistentObject, base.NovaObject,
             self.hidden = False
         else:
             super(Migration, self).obj_load_attr(attrname)
+
+    def _ensure_uuid(self):
+        if 'uuid' in self:
+            return
+
+        self.uuid = uuidutils.generate_uuid()
+        try:
+            self.save()
+        except db_exc.DBDuplicateEntry:
+            # NOTE(danms) We raced to generate a uuid for this,
+            # so fetch the winner and use that uuid
+            fresh = self.__class__.get_by_id(self.context, self.id)
+            self.uuid = fresh.uuid
 
     @base.remotable_classmethod
     def get_by_id(cls, context, migration_id):
@@ -123,6 +146,8 @@ class Migration(base.NovaPersistentObject, base.NovaObject,
         if self.obj_attr_is_set('id'):
             raise exception.ObjectActionError(action='create',
                                               reason='already created')
+        if 'uuid' not in self:
+            self.uuid = uuidutils.generate_uuid()
         updates = self.obj_get_changes()
         if 'migration_type' not in updates:
             raise exception.ObjectActionError(
@@ -160,7 +185,9 @@ class MigrationList(base.ObjectListBase, base.NovaObject):
     # Version 1.2: Migration version 1.2
     # Version 1.3: Added a new function to get in progress migrations
     #              for an instance.
-    VERSION = '1.3'
+    # Version 1.4: Added sort_keys, sort_dirs, limit, marker kwargs to
+    #              get_by_filters for migrations pagination support.
+    VERSION = '1.4'
 
     fields = {
         'objects': fields.ListOfObjectsField('Migration'),
@@ -189,8 +216,11 @@ class MigrationList(base.ObjectListBase, base.NovaObject):
                                   db_migrations)
 
     @base.remotable_classmethod
-    def get_by_filters(cls, context, filters):
-        db_migrations = db.migration_get_all_by_filters(context, filters)
+    def get_by_filters(cls, context, filters, sort_keys=None, sort_dirs=None,
+                       limit=None, marker=None):
+        db_migrations = db.migration_get_all_by_filters(
+            context, filters, sort_keys=sort_keys, sort_dirs=sort_dirs,
+            limit=limit, marker=marker)
         return base.obj_make_list(context, cls(context), objects.Migration,
                                   db_migrations)
 

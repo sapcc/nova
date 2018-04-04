@@ -46,6 +46,7 @@ from nova.virt import hardware
 from nova.virt.xenapi import driver as xenapi_conn
 from nova.virt.xenapi import fake
 from nova.virt.xenapi import vm_utils
+import time
 
 CONF = nova.conf.CONF
 XENSM_TYPE = 'xensm'
@@ -368,22 +369,22 @@ class ResizeHelpersTestCase(VMUtilsTestBase):
         utils.execute('parted', '--script', path, 'set', '1',
             'boot', 'on', run_as_root=True)
 
-    def test_resize_part_and_fs_down_succeeds(self):
-        self.mox.StubOutWithMock(vm_utils, "_repair_filesystem")
-        self.mox.StubOutWithMock(utils, 'execute')
+    @mock.patch('nova.privsep.fs.resize_partition')
+    @mock.patch.object(vm_utils, '_repair_filesystem')
+    @mock.patch.object(utils, 'execute')
+    def test_resize_part_and_fs_down_succeeds(self, mock_execute, mock_repair,
+                                              mock_resize):
+        dev_path = '/dev/fake'
+        partition_path = '%s1' % dev_path
+        vm_utils._resize_part_and_fs('fake', 0, 20, 10, 'boot')
 
-        dev_path = "/dev/fake"
-        partition_path = "%s1" % dev_path
-        vm_utils._repair_filesystem(partition_path)
-        self._call_tune2fs_remove_journal(partition_path)
-        utils.execute("resize2fs", partition_path, "10s", run_as_root=True)
-        self._call_parted_mkpart(dev_path, 0, 9)
-        self._call_parted_boot_flag(dev_path)
-        self._call_tune2fs_add_journal(partition_path)
-
-        self.mox.ReplayAll()
-
-        vm_utils._resize_part_and_fs("fake", 0, 20, 10, "boot")
+        mock_execute.assert_has_calls([
+            mock.call('tune2fs', '-O ^has_journal', partition_path,
+                      run_as_root=True),
+            mock.call('resize2fs', partition_path, '10s', run_as_root=True),
+            mock.call('tune2fs', '-j', partition_path, run_as_root=True)])
+        mock_resize.assert_has_calls([
+            mock.call(dev_path, 0, 9, True)])
 
     def test_log_progress_if_required(self):
         self.mox.StubOutWithMock(vm_utils.LOG, "debug")
@@ -426,21 +427,22 @@ class ResizeHelpersTestCase(VMUtilsTestBase):
                           vm_utils._resize_part_and_fs,
                           "fake", 0, 20, 10, "boot")
 
-    def test_resize_part_and_fs_up_succeeds(self):
-        self.mox.StubOutWithMock(vm_utils, "_repair_filesystem")
-        self.mox.StubOutWithMock(utils, 'execute')
+    @mock.patch('nova.privsep.fs.resize_partition')
+    @mock.patch.object(vm_utils, '_repair_filesystem')
+    @mock.patch.object(utils, 'execute')
+    def test_resize_part_and_fs_up_succeeds(self, mock_execute, mock_repair,
+                                            mock_resize):
+        dev_path = '/dev/fake'
+        partition_path = '%s1' % dev_path
+        vm_utils._resize_part_and_fs('fake', 0, 20, 30, '')
 
-        dev_path = "/dev/fake"
-        partition_path = "%s1" % dev_path
-        vm_utils._repair_filesystem(partition_path)
-        self._call_tune2fs_remove_journal(partition_path)
-        self._call_parted_mkpart(dev_path, 0, 29)
-        utils.execute("resize2fs", partition_path, run_as_root=True)
-        self._call_tune2fs_add_journal(partition_path)
-
-        self.mox.ReplayAll()
-
-        vm_utils._resize_part_and_fs("fake", 0, 20, 30, "")
+        mock_execute.assert_has_calls([
+            mock.call('tune2fs', '-O ^has_journal', partition_path,
+                      run_as_root=True),
+            mock.call('resize2fs', partition_path, run_as_root=True),
+            mock.call('tune2fs', '-j', partition_path, run_as_root=True)])
+        mock_resize.assert_has_calls([
+            mock.call(dev_path, 0, 29, False)])
 
     def test_resize_disk_throws_on_zero_size(self):
         flavor = fake_flavor.fake_flavor_obj(self.context, root_gb=0)
@@ -449,19 +451,6 @@ class ResizeHelpersTestCase(VMUtilsTestBase):
 
     def test_auto_config_disk_returns_early_on_zero_size(self):
         vm_utils.try_auto_configure_disk("bad_session", "bad_vdi_ref", 0)
-
-    @mock.patch.object(utils, "execute")
-    def test_get_partitions(self, mock_execute):
-        parted_return = "BYT;\n...\n"
-        parted_return += "1:2s:11s:10s:ext3::boot;\n"
-        parted_return += "2:20s:11s:10s::bob:;\n"
-        mock_execute.return_value = (parted_return, None)
-
-        partitions = vm_utils._get_partitions("abc")
-
-        self.assertEqual(2, len(partitions))
-        self.assertEqual((1, 2, 10, "ext3", "", "boot"), partitions[0])
-        self.assertEqual((2, 20, 10, "", "bob", ""), partitions[1])
 
 
 class CheckVDISizeTestCase(VMUtilsTestBase):
@@ -517,7 +506,7 @@ class GetInstanceForVdisForSrTestCase(VMUtilsTestBase):
         self.flags(instance_name_template='%d',
                    firewall_driver='nova.virt.xenapi.firewall.'
                                    'Dom0IptablesFirewallDriver')
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
 
@@ -628,11 +617,117 @@ class CreateCachedImageTestCase(VMUtilsTestBase):
                        mock_safe_find_sr):
         self.session.call_xenapi.side_effect = ['ext', {}, 'cache_vdi_ref',
                                                 None, None, None, None, None,
-                                                None, 'vdi_uuid']
+                                                None, None, 'vdi_uuid']
         self.assertEqual((True, {'root': {'uuid': 'vdi_uuid', 'file': None}}),
                          vm_utils._create_cached_image('context', self.session,
                                     'instance', 'name', 'uuid',
                                     vm_utils.ImageType.DISK_VHD))
+
+
+class DestroyCachedImageTestCase(VMUtilsTestBase):
+    def setUp(self):
+        super(DestroyCachedImageTestCase, self).setUp()
+        self.session = stubs.get_fake_session()
+
+    @mock.patch.object(vm_utils, '_find_cached_images')
+    @mock.patch.object(vm_utils, 'destroy_vdi')
+    @mock.patch.object(vm_utils, '_walk_vdi_chain')
+    @mock.patch.object(time, 'time')
+    def test_destroy_cached_image_out_of_keep_days(self,
+                                                   mock_time,
+                                                   mock_walk_vdi_chain,
+                                                   mock_destroy_vdi,
+                                                   mock_find_cached_images):
+        fake_cached_time = '0'
+        mock_find_cached_images.return_value = {'fake_image_id': {
+            'vdi_ref': 'fake_vdi_ref', 'cached_time': fake_cached_time}}
+        self.session.call_xenapi.return_value = 'fake_uuid'
+        mock_walk_vdi_chain.return_value = ('just_one',)
+
+        mock_time.return_value = 2 * 3600 * 24
+
+        fake_keep_days = 1
+        expected_return = set()
+        expected_return.add('fake_uuid')
+
+        uuid_return = vm_utils.destroy_cached_images(self.session,
+            'fake_sr_ref', False, False, fake_keep_days)
+        mock_find_cached_images.assert_called_once()
+        mock_walk_vdi_chain.assert_called_once()
+        mock_time.assert_called()
+        mock_destroy_vdi.assert_called_once()
+        self.assertEqual(expected_return, uuid_return)
+
+    @mock.patch.object(vm_utils, '_find_cached_images')
+    @mock.patch.object(vm_utils, 'destroy_vdi')
+    @mock.patch.object(vm_utils, '_walk_vdi_chain')
+    @mock.patch.object(time, 'time')
+    def test_destroy_cached_image(self, mock_time, mock_walk_vdi_chain,
+                                  mock_destroy_vdi, mock_find_cached_images):
+        fake_cached_time = '0'
+        mock_find_cached_images.return_value = {'fake_image_id': {
+            'vdi_ref': 'fake_vdi_ref', 'cached_time': fake_cached_time}}
+        self.session.call_xenapi.return_value = 'fake_uuid'
+        mock_walk_vdi_chain.return_value = ('just_one',)
+
+        mock_time.return_value = 2 * 3600 * 24
+
+        fake_keep_days = 1
+        expected_return = set()
+        expected_return.add('fake_uuid')
+
+        uuid_return = vm_utils.destroy_cached_images(self.session,
+            'fake_sr_ref', False, False, fake_keep_days)
+        mock_find_cached_images.assert_called_once()
+        mock_walk_vdi_chain.assert_called_once()
+        mock_destroy_vdi.assert_called_once()
+        self.assertEqual(expected_return, uuid_return)
+
+    @mock.patch.object(vm_utils, '_find_cached_images')
+    @mock.patch.object(vm_utils, 'destroy_vdi')
+    @mock.patch.object(vm_utils, '_walk_vdi_chain')
+    @mock.patch.object(time, 'time')
+    def test_destroy_cached_image_cached_time_not_exceed(
+        self, mock_time, mock_walk_vdi_chain,
+        mock_destroy_vdi, mock_find_cached_images):
+        fake_cached_time = '0'
+        mock_find_cached_images.return_value = {'fake_image_id': {
+            'vdi_ref': 'fake_vdi_ref', 'cached_time': fake_cached_time}}
+        self.session.call_xenapi.return_value = 'fake_uuid'
+        mock_walk_vdi_chain.return_value = ('just_one',)
+
+        mock_time.return_value = 1 * 3600 * 24
+
+        fake_keep_days = 2
+        expected_return = set()
+
+        uuid_return = vm_utils.destroy_cached_images(self.session,
+            'fake_sr_ref', False, False, fake_keep_days)
+        mock_find_cached_images.assert_called_once()
+        mock_walk_vdi_chain.assert_called_once()
+        mock_destroy_vdi.assert_not_called()
+        self.assertEqual(expected_return, uuid_return)
+
+    @mock.patch.object(vm_utils, '_find_cached_images')
+    @mock.patch.object(vm_utils, 'destroy_vdi')
+    @mock.patch.object(vm_utils, '_walk_vdi_chain')
+    @mock.patch.object(time, 'time')
+    def test_destroy_cached_image_no_cached_time(
+        self, mock_time, mock_walk_vdi_chain,
+        mock_destroy_vdi, mock_find_cached_images):
+        mock_find_cached_images.return_value = {'fake_image_id': {
+            'vdi_ref': 'fake_vdi_ref', 'cached_time': None}}
+        self.session.call_xenapi.return_value = 'fake_uuid'
+        mock_walk_vdi_chain.return_value = ('just_one',)
+        fake_keep_days = 2
+        expected_return = set()
+
+        uuid_return = vm_utils.destroy_cached_images(self.session,
+            'fake_sr_ref', False, False, fake_keep_days)
+        mock_find_cached_images.assert_called_once()
+        mock_walk_vdi_chain.assert_called_once()
+        mock_destroy_vdi.assert_not_called()
+        self.assertEqual(expected_return, uuid_return)
 
 
 class ShutdownTestCase(VMUtilsTestBase):
@@ -805,6 +900,11 @@ class UnplugVbdTestCase(VMUtilsTestBase):
     def test_uplug_vbd_retries_on_internal_error(self, mock_sleep):
         self._test_uplug_vbd_retries(mock_sleep,
                                      "INTERNAL_ERROR")
+
+    @mock.patch.object(greenthread, 'sleep')
+    def test_uplug_vbd_retries_on_missing_pv_drivers_error(self, mock_sleep):
+        self._test_uplug_vbd_retries(mock_sleep,
+                                     "VM_MISSING_PV_DRIVERS")
 
 
 class VDIOtherConfigTestCase(VMUtilsTestBase):
@@ -1181,7 +1281,7 @@ class VMUtilsSRPath(VMUtilsTestBase):
         self.flags(instance_name_template='%d',
                    firewall_driver='nova.virt.xenapi.firewall.'
                                    'Dom0IptablesFirewallDriver')
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         stubs.stubout_session(self.stubs, fake.SessionBase)
@@ -2123,7 +2223,7 @@ class CreateVmRecordTestCase(VMUtilsTestBase):
         self.flags(instance_name_template='%d',
                    firewall_driver='nova.virt.xenapi.firewall.'
                                    'Dom0IptablesFirewallDriver')
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
 
@@ -2353,7 +2453,5 @@ class VMInfoTests(VMUtilsTestBase):
         self.session.call_xenapi.side_effect = call_xenapi
 
         info = vm_utils.compile_info(self.session, "dummy")
-        self.assertEqual(hardware.InstanceInfo(state=power_state.RUNNING,
-                                               max_mem_kb=10, mem_kb=9,
-                                               num_cpu='5', cpu_time_ns=0),
+        self.assertEqual(hardware.InstanceInfo(state=power_state.RUNNING),
                          info)

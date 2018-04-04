@@ -10,8 +10,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from oslo_utils import versionutils
-
 from nova.notifications.objects import base
 from nova.objects import base as nova_base
 from nova.objects import fields
@@ -37,7 +35,8 @@ class FlavorPayload(base.NotificationPayloadBase):
     # Version 1.2: Add extra_specs and projects fields
     # Version 1.3: Make projects and extra_specs field nullable as they are
     # not always available when a notification is emitted.
-    VERSION = '1.3'
+    # Version 1.4: Added description field.
+    VERSION = '1.4'
 
     # NOTE: if we'd want to rename some fields(memory_mb->ram, root_gb->disk,
     # ephemeral_gb: ephemeral), bumping to payload version 2.0 will be needed.
@@ -55,6 +54,7 @@ class FlavorPayload(base.NotificationPayloadBase):
         'is_public': ('flavor', 'is_public'),
         'extra_specs': ('flavor', 'extra_specs'),
         'projects': ('flavor', 'projects'),
+        'description': ('flavor', 'description')
     }
 
     fields = {
@@ -71,6 +71,7 @@ class FlavorPayload(base.NotificationPayloadBase):
         'is_public': fields.BooleanField(),
         'extra_specs': fields.DictOfStringsField(nullable=True),
         'projects': fields.ListOfStringsField(nullable=True),
+        'description': fields.StringField(nullable=True)
     }
 
     def __init__(self, flavor):
@@ -83,24 +84,3 @@ class FlavorPayload(base.NotificationPayloadBase):
             flavor = flavor.obj_clone()
             flavor._context = None
         self.populate_schema(flavor=flavor)
-
-    def obj_make_compatible(self, primitive, target_version):
-        super(FlavorPayload, self).obj_make_compatible(primitive,
-                                                       target_version)
-        target_version = versionutils.convert_version_to_tuple(target_version)
-        if target_version < (1, 1):
-            primitive.pop('name', None)
-            primitive.pop('swap', None)
-            primitive.pop('rxtx_factor', None)
-            primitive.pop('vcpu_weight', None)
-            primitive.pop('disabled', None)
-            primitive.pop('is_public', None)
-        if target_version < (1, 2):
-            primitive.pop('extra_specs', None)
-            primitive.pop('projects', None)
-        if target_version < (1, 3):
-            if 'projects' not in primitive or primitive['projects'] is None:
-                primitive['projects'] = []
-            if ('extra_specs' not in primitive or
-                    primitive['extra_specs'] is None):
-                primitive['extra_specs'] = {}

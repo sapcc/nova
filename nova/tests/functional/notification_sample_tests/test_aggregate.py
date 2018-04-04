@@ -52,3 +52,56 @@ class TestAggregateNotificationSample(
                 'uuid': aggregate['uuid'],
                 'id': aggregate['id']},
             actual=fake_notifier.VERSIONED_NOTIFICATIONS[3])
+
+    def test_aggregate_add_remove_host(self):
+        aggregate_req = {
+            "aggregate": {
+                "name": "my-aggregate",
+                "availability_zone": "nova"}}
+        aggregate = self.admin_api.post_aggregate(aggregate_req)
+
+        fake_notifier.reset()
+
+        add_host_req = {
+            "add_host": {
+                "host": "compute"
+            }
+        }
+        self.admin_api.post_aggregate_action(aggregate['id'], add_host_req)
+
+        self.assertEqual(2, len(fake_notifier.VERSIONED_NOTIFICATIONS))
+        self._verify_notification(
+            'aggregate-add_host-start',
+            replacements={
+                'uuid': aggregate['uuid'],
+                'id': aggregate['id']},
+            actual=fake_notifier.VERSIONED_NOTIFICATIONS[0])
+        self._verify_notification(
+            'aggregate-add_host-end',
+            replacements={
+                'uuid': aggregate['uuid'],
+                'id': aggregate['id']},
+            actual=fake_notifier.VERSIONED_NOTIFICATIONS[1])
+
+        remove_host_req = {
+            "remove_host": {
+                "host": "compute"
+            }
+        }
+        self.admin_api.post_aggregate_action(aggregate['id'], remove_host_req)
+
+        self.assertEqual(4, len(fake_notifier.VERSIONED_NOTIFICATIONS))
+        self._verify_notification(
+            'aggregate-remove_host-start',
+            replacements={
+                'uuid': aggregate['uuid'],
+                'id': aggregate['id']},
+            actual=fake_notifier.VERSIONED_NOTIFICATIONS[2])
+        self._verify_notification(
+            'aggregate-remove_host-end',
+            replacements={
+                'uuid': aggregate['uuid'],
+                'id': aggregate['id']},
+            actual=fake_notifier.VERSIONED_NOTIFICATIONS[3])
+
+        self.admin_api.delete_aggregate(aggregate['id'])

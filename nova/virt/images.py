@@ -19,6 +19,7 @@
 Handling of VM disk images.
 """
 
+import operator
 import os
 
 from oslo_concurrency import processutils
@@ -42,6 +43,11 @@ QEMU_IMG_LIMITS = processutils.ProcessLimits(
     cpu_time=30,
     address_space=1 * units.Gi)
 
+# This is set by the libvirt driver on startup. The version is used to
+# determine what flags need to be set on the command line.
+QEMU_VERSION = None
+QEMU_VERSION_REQ_SHARED = 2010000
+
 
 def qemu_img_info(path, format=None):
     """Return an object containing the parsed output from qemu-img info."""
@@ -60,6 +66,10 @@ def qemu_img_info(path, format=None):
         cmd = ('env', 'LC_ALL=C', 'LANG=C', 'qemu-img', 'info', path)
         if format is not None:
             cmd = cmd + ('-f', format)
+        # Check to see if the qemu version is >= 2.10 because if so, we need
+        # to add the --force-share flag.
+        if QEMU_VERSION and operator.ge(QEMU_VERSION, QEMU_VERSION_REQ_SHARED):
+            cmd = cmd + ('--force-share',)
         out, err = utils.execute(*cmd, prlimit=QEMU_IMG_LIMITS)
     except processutils.ProcessExecutionError as exp:
         # this means we hit prlimits, make the exception more specific
@@ -108,7 +118,18 @@ def _convert_image(source, dest, in_format, out_format, run_as_root):
     # on persistent storage when the command exits. Without (2), a host crash
     # may leave a corrupt image in the image cache, which Nova cannot recover
     # automatically.
-    cmd = ('qemu-img', 'convert', '-t', 'none', '-O', out_format)
+    # NOTE(zigo): we cannot use -t none if the instances dir is mounted on a
+    # filesystem that doesn't have support for O_DIRECT, which is the case
+    # for example with tmpfs. This simply crashes "openstack server create"
+    # in environments like live distributions. In such case, the best choice
+    # is writethrough, which is power-failure safe, but still faster than
+    # writeback.
+    if utils.supports_direct_io(CONF.instances_path):
+        cache_mode = 'none'
+    else:
+        cache_mode = 'writethrough'
+    cmd = ('qemu-img', 'convert', '-t', cache_mode, '-O', out_format)
+
     if in_format is not None:
         cmd = cmd + ('-f', in_format)
     cmd = cmd + (source, dest)

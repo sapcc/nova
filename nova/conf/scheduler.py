@@ -31,6 +31,9 @@ The scheduler host manager to use.
 The host manager manages the in-memory picture of the hosts that the scheduler
 uses. The options values are chosen from the entry points under the namespace
 'nova.scheduler.host_manager' in 'setup.cfg'.
+
+NOTE: The "ironic_host_manager" option is deprecated as of the 17.0.0 Queens
+release.
 """),
     cfg.StrOpt("driver",
         default="filter_scheduler",
@@ -94,18 +97,15 @@ Related options:
         deprecated_name="scheduler_max_attempts",
         deprecated_group="DEFAULT",
         help="""
-Maximum number of schedule attempts for a chosen host.
-
-This is the maximum number of attempts that will be made to schedule an
-instance before it is assumed that the failures aren't due to normal occasional
-race conflicts, but rather some other problem. When this is reached a
-MaxRetriesExceeded exception is raised, and the instance is set to an error
-state.
+This is the maximum number of attempts that will be made for a given instance
+build/move operation. It limits the number of alternate hosts returned by the
+scheduler. When that list of hosts is exhausted, a MaxRetriesExceeded
+exception is raised and the instance is set to an error state.
 
 Possible values:
 
 * A positive integer, where the integer corresponds to the max number of
-  attempts that can be made when scheduling an instance.
+  attempts that can be made when building or moving an instance.
         """),
     cfg.IntOpt("discover_hosts_in_cells_interval",
                default=-1,
@@ -122,6 +122,25 @@ enabled, where others may prefer to manually discover hosts when one
 is added to avoid any overhead from constantly checking. If enabled,
 every time this runs, we will select any unmapped hosts out of each
 cell database on every run.
+"""),
+    cfg.IntOpt("max_placement_results",
+               default=1000,
+               min=1,
+               help="""
+This setting determines the maximum limit on results received from the
+placement service during a scheduling operation. It effectively limits
+the number of hosts that may be considered for scheduling requests that
+match a large number of candidates.
+
+A value of 1 (the minimum) will effectively defer scheduling to the placement
+service strictly on "will it fit" grounds. A higher value will put an upper
+cap on the number of results the scheduler will consider during the filtering
+and weighing process. Large deployments may need to set this lower than the
+total number of hosts available to limit memory consumption, network traffic,
+etc. of the scheduler.
+
+This option is only used by the FilterScheduler; if you use a different
+scheduler, this option has no effect.
 """),
 ]
 
@@ -227,7 +246,7 @@ this option cannot be enabled in that scenario. See also the
 Filters that the scheduler can use.
 
 An unordered list of the filter classes the nova scheduler may apply.  Only the
-filters specified in the 'scheduler_enabled_filters' option will be used, but
+filters specified in the 'enabled_filters' option will be used, but
 any filter appearing in that option must also be included in this list.
 
 By default, this is set to all filters that are included with nova.
@@ -242,7 +261,7 @@ Possible values:
 
 Related options:
 
-* scheduler_enabled_filters
+* enabled_filters
 """),
     cfg.ListOpt("enabled_filters",
         default=[
@@ -320,6 +339,10 @@ Related options:
     cfg.BoolOpt("use_baremetal_filters",
         deprecated_name="scheduler_use_baremetal_filters",
         deprecated_group="DEFAULT",
+        # NOTE(mriedem): We likely can't remove this option until the
+        # IronicHostManager is removed, and we likely can't remove that
+        # until all filters can at least not fail on ironic nodes, like the
+        # NUMATopologyFilter.
         deprecated_for_removal=True,
         deprecated_reason="""
 These filters were used to overcome some of the baremetal scheduling
@@ -332,7 +355,7 @@ selection.
 Enable baremetal filters.
 
 Set this to True to tell the nova scheduler that it should use the filters
-specified in the 'baremetal_scheduler_enabled_filters' option. If you are not
+specified in the 'baremetal_enabled_filters' option. If you are not
 scheduling baremetal nodes, leave this at the default setting of False.
 
 This option is only used by the FilterScheduler and its subclasses; if you use
@@ -341,8 +364,8 @@ a different scheduler, this option has no effect.
 Related options:
 
 * If this option is set to True, then the filters specified in the
-  'baremetal_scheduler_enabled_filters' are used instead of the filters
-  specified in 'scheduler_enabled_filters'.
+  'baremetal_enabled_filters' are used instead of the filters
+  specified in 'enabled_filters'.
 """),
     cfg.ListOpt("weight_classes",
         default=["nova.scheduler.weights.all_weighers"],
@@ -444,7 +467,7 @@ PCI devices on the host and the number of PCI devices requested by the
 instance. The ``NUMATopologyFilter`` filter must be enabled for this to have
 any significance. For more information, refer to the filter documentation:
 
-    https://docs.openstack.org/developer/nova/filter_scheduler.html
+    https://docs.openstack.org/nova/latest/user/filter-scheduler.html
 
 Possible values:
 
@@ -477,6 +500,21 @@ Possible values:
   for hosts with group soft anti-affinity. Only a positive value are
   meaningful, as negative values would make this behave as a soft affinity
   weigher.
+"""),
+    cfg.BoolOpt(
+        "shuffle_best_same_weighed_hosts",
+        default=False,
+        help="""
+Enable spreading the instances between hosts with the same best weight.
+
+Enabling it is beneficial for cases when host_subset_size is 1
+(default), but there is a large number of hosts with same maximal weight.
+This scenario is common in Ironic deployments where there are typically many
+baremetal nodes with identical weights returned to the scheduler.
+In such case enabling this option will reduce contention and chances for
+rescheduling events.
+At the same time it will make the instance packing (even in unweighed case)
+less dense.
 """),
     # TODO(mikal): replace this option with something involving host aggregates
     cfg.ListOpt("isolated_images",
@@ -594,207 +632,6 @@ Related options:
 
 * aggregate_image_properties_isolation_namespace
 """)]
-
-trust_group = cfg.OptGroup(name="trusted_computing",
-                           title="Trust parameters",
-                           help="""
-Configuration options for enabling Trusted Platform Module.
-""")
-
-trusted_opts = [
-    cfg.HostAddressOpt("attestation_server",
-                       deprecated_for_removal=True,
-                       deprecated_reason="Incomplete filter",
-                       deprecated_since="Pike",
-                       help="""
-The host to use as the attestation server.
-
-Cloud computing pools can involve thousands of compute nodes located at
-different geographical locations, making it difficult for cloud providers to
-identify a node's trustworthiness. When using the Trusted filter, users can
-request that their VMs only be placed on nodes that have been verified by the
-attestation server specified in this option.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Possible values:
-
-* A string representing the host name or IP address of the attestation server,
-  or an empty string.
-
-Related options:
-
-* attestation_server_ca_file
-* attestation_port
-* attestation_api_url
-* attestation_auth_blob
-* attestation_auth_timeout
-* attestation_insecure_ssl
-"""),
-    cfg.StrOpt("attestation_server_ca_file",
-            deprecated_for_removal=True,
-            deprecated_reason="Incomplete filter",
-            deprecated_since="Pike",
-            help="""
-The absolute path to the certificate to use for authentication when connecting
-to the attestation server. See the `attestation_server` help text for more
-information about host verification.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Possible values:
-
-* A string representing the path to the authentication certificate for the
-  attestation server, or an empty string.
-
-Related options:
-
-* attestation_server
-* attestation_port
-* attestation_api_url
-* attestation_auth_blob
-* attestation_auth_timeout
-* attestation_insecure_ssl
-"""),
-    cfg.PortOpt("attestation_port",
-            default=8443,
-            deprecated_for_removal=True,
-            deprecated_reason="Incomplete filter",
-            deprecated_since="Pike",
-            help="""
-The port to use when connecting to the attestation server. See the
-`attestation_server` help text for more information about host verification.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Related options:
-
-* attestation_server
-* attestation_server_ca_file
-* attestation_api_url
-* attestation_auth_blob
-* attestation_auth_timeout
-* attestation_insecure_ssl
-"""),
-    cfg.StrOpt("attestation_api_url",
-            default="/OpenAttestationWebServices/V1.0",
-            deprecated_for_removal=True,
-            deprecated_reason="Incomplete filter",
-            deprecated_since="Pike",
-            help="""
-The URL on the attestation server to use. See the `attestation_server` help
-text for more information about host verification.
-
-This value must be just that path portion of the full URL, as it will be joined
-to the host specified in the attestation_server option.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Possible values:
-
-* A valid URL string of the attestation server, or an empty string.
-
-Related options:
-
-* attestation_server
-* attestation_server_ca_file
-* attestation_port
-* attestation_auth_blob
-* attestation_auth_timeout
-* attestation_insecure_ssl
-"""),
-    cfg.StrOpt("attestation_auth_blob",
-            secret=True,
-            deprecated_for_removal=True,
-            deprecated_reason="Incomplete filter",
-            deprecated_since="Pike",
-            help="""
-Attestation servers require a specific blob that is used to authenticate. The
-content and format of the blob are determined by the particular attestation
-server being used. There is no default value; you must supply the value as
-specified by your attestation service. See the `attestation_server` help text
-for more information about host verification.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Possible values:
-
-* A string containing the specific blob required by the attestation server, or
-  an empty string.
-
-Related options:
-
-* attestation_server
-* attestation_server_ca_file
-* attestation_port
-* attestation_api_url
-* attestation_auth_timeout
-* attestation_insecure_ssl
-"""),
-    cfg.IntOpt("attestation_auth_timeout",
-            default=60,
-            deprecated_for_removal=True,
-            deprecated_reason="Incomplete filter",
-            deprecated_since="Pike",
-            min=0,
-            help="""
-This value controls how long a successful attestation is cached. Once this
-period has elapsed, a new attestation request will be made. See the
-`attestation_server` help text for more information about host verification.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Possible values:
-
-* A integer value, corresponding to the timeout interval for attestations in
-  seconds. Any integer is valid, although setting this to zero or negative
-  values can greatly impact performance when using an attestation service.
-
-Related options:
-
-* attestation_server
-* attestation_server_ca_file
-* attestation_port
-* attestation_api_url
-* attestation_auth_blob
-* attestation_insecure_ssl
-"""),
-    cfg.BoolOpt("attestation_insecure_ssl",
-            default=False,
-            deprecated_for_removal=True,
-            deprecated_reason="Incomplete filter",
-            deprecated_since="Pike",
-            help="""
-When set to True, the SSL certificate verification is skipped for the
-attestation service. See the `attestation_server` help text for more
-information about host verification.
-
-This option is only used by the FilterScheduler and its subclasses; if you use
-a different scheduler, this option has no effect. Also note that this setting
-only affects scheduling if the 'TrustedFilter' filter is enabled.
-
-Related options:
-
-* attestation_server
-* attestation_server_ca_file
-* attestation_port
-* attestation_api_url
-* attestation_auth_blob
-* attestation_auth_timeout
-"""),
-]
 
 metrics_group = cfg.OptGroup(name="metrics",
                              title="Metrics parameters",
@@ -923,9 +760,6 @@ def register_opts(conf):
     conf.register_group(filter_scheduler_group)
     conf.register_opts(filter_scheduler_opts, group=filter_scheduler_group)
 
-    conf.register_group(trust_group)
-    conf.register_opts(trusted_opts, group=trust_group)
-
     conf.register_group(metrics_group)
     conf.register_opts(metrics_weight_opts, group=metrics_group)
 
@@ -933,5 +767,4 @@ def register_opts(conf):
 def list_opts():
     return {scheduler_group: scheduler_opts,
             filter_scheduler_group: filter_scheduler_opts,
-            trust_group: trusted_opts,
             metrics_group: metrics_weight_opts}

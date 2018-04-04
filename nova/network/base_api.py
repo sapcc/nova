@@ -333,12 +333,15 @@ class NetworkAPI(base.Base):
         """Finish migrating the network of an instance."""
         raise NotImplementedError()
 
-    def setup_instance_network_on_host(self, context, instance, host):
+    def setup_instance_network_on_host(self, context, instance, host,
+                                       migration=None):
         """Setup network for specified instance on host.
 
         :param context: The request context.
         :param instance: nova.objects.instance.Instance object.
         :param host: The host which network should be setup for instance.
+        :param migration: The migration object if the instance is being
+                          tracked with a migration.
         """
         raise NotImplementedError()
 
@@ -364,3 +367,6 @@ class NetworkAPI(base.Base):
         :param index: The index on the instance for the VIF.
         """
         pass
+
+    def has_substr_port_filtering_extension(self, context):
+        return False

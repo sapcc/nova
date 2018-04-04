@@ -64,10 +64,14 @@ Request
 
 .. rest_parameters:: parameters.yaml
 
-  - name: resource_class_path
+  - name: resource_class_path_custom
 
 Response
 --------
+
+.. rest_parameters:: parameters.yaml
+
+  - Location: location
 
 No body content is returned on a successful PUT.
 
@@ -92,7 +96,8 @@ Request
 
 .. rest_parameters:: parameters.yaml
 
-  - name: resource_class
+  - name: resource_class_path
+  - name: resource_class_custom
 
 Request example
 ---------------
@@ -123,7 +128,10 @@ Delete the resource class identified by `{name}`.
 
 Normal Response Codes: 204
 
-Error response codes: itemNotFound(404), conflict(409)
+Error response codes: badRequest(400), itemNotFound(404), conflict(409)
+
+A `400 BadRequest` response code will be returned if trying
+to delete a standard resource class.
 
 A `409 Conflict` response code will be returned if there exist
 inventories for the resource class.

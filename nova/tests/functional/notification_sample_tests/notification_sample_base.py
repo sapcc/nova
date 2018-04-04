@@ -22,6 +22,7 @@ from oslo_utils import fixture as utils_fixture
 from nova import test
 from nova.tests import fixtures as nova_fixtures
 from nova.tests.functional import integrated_helpers
+from nova.tests import json_ref
 from nova.tests.unit.api.openstack.compute import test_services
 from nova.tests.unit import fake_crypto
 from nova.tests.unit import fake_notifier
@@ -87,6 +88,8 @@ class NotificationSampleTestBase(test.TestCase,
         self.start_service('scheduler')
         self.start_service('network', manager=CONF.network_manager)
         self.compute = self.start_service('compute')
+        # Reset the service create notifications
+        fake_notifier.reset()
 
     def _get_notification_sample(self, sample):
         sample_dir = os.path.dirname(os.path.abspath(__file__))
@@ -134,11 +137,14 @@ class NotificationSampleTestBase(test.TestCase,
             notification = fake_notifier.VERSIONED_NOTIFICATIONS[0]
         else:
             notification = actual
-
-        with open(self._get_notification_sample(sample_file_name)) as sample:
+        sample_file = self._get_notification_sample(sample_file_name)
+        with open(sample_file) as sample:
             sample_data = sample.read()
 
         sample_obj = jsonutils.loads(sample_data)
+        sample_base_dir = os.path.dirname(sample_file)
+        sample_obj = json_ref.resolve_refs(
+            sample_obj, base_path=sample_base_dir)
         self._apply_replacements(replacements, sample_obj, notification)
 
         self.assertJsonEqual(sample_obj, notification)
@@ -169,6 +175,16 @@ class NotificationSampleTestBase(test.TestCase,
                 "public_key": fake_crypto.get_ssh_public_key()
             }}
         self.api.post_keypair(keypair_req)
+
+        keypair_expected_notifications = [
+            'keypair-import-start',
+            'keypair-import-end'
+        ]
+        self.assertLessEqual(2, len(fake_notifier.VERSIONED_NOTIFICATIONS))
+        for notification in keypair_expected_notifications:
+            self._verify_notification(
+                notification,
+                actual=fake_notifier.VERSIONED_NOTIFICATIONS.pop(0))
 
         server = self._build_minimal_create_server_request(
             self.api, 'some-server',
@@ -207,33 +223,24 @@ class NotificationSampleTestBase(test.TestCase,
                     in fake_notifier.VERSIONED_NOTIFICATIONS
                     if notification['event_type'] == event_type]
 
-    def _wait_for_notification(self, event_type, timeout=1.0):
-        received = fake_notifier.wait_for_versioned_notification(
-            event_type, timeout)
+    def _wait_for_notification(self, event_type, timeout=10.0):
+        notifications = fake_notifier.wait_for_versioned_notifications(
+            event_type, timeout=timeout)
         self.assertTrue(
-            received,
+            len(notifications) > 0,
             'notification %s hasn\'t been received' % event_type)
 
-    def _wait_for_notifications(self, event_type, expected_count, timeout=1.0):
-        notifications = []
-        start_time = time.clock()
-
-        while (len(notifications) < expected_count
-               and time.clock() - start_time < timeout):
-
-            fake_notifier.wait_for_versioned_notification(event_type, timeout)
-            notifications += self._get_notifications(event_type)
-            # NOTE(gibi): reading and then resetting the fake_notifier without
-            # synchronization doesn't lead to race condition as the only
-            # parallelism is due to eventlet.
-            fake_notifier.reset()
+    def _wait_for_notifications(self, event_type, expected_count,
+                                timeout=10.0):
+        notifications = fake_notifier.wait_for_versioned_notifications(
+                event_type, n_events=expected_count, timeout=timeout)
+        msg = ''.join('\n%s' % notif for notif in notifications)
 
         self.assertEqual(expected_count, len(notifications),
                          'Unexpected number of %s notifications '
                          'within the given timeout. '
                          'Expected %d, got %d: %s' %
-                         (event_type, expected_count, len(notifications),
-                          notifications))
+                         (event_type, expected_count, len(notifications), msg))
         return notifications
 
     def _attach_volume_to_server(self, server, volume_id):
@@ -256,7 +263,8 @@ class NotificationSampleTestBase(test.TestCase,
             retries += 1
             migrations = self.admin_api.get_active_migrations(server['id'])
             if (len(migrations) > 0 and
-                        migrations[0]['status'] != 'preparing'):
+                    migrations[0]['status'] not in ['queued', 'preparing']):
                 return migrations
             if retries == max_retries:
                 self.fail('The migration table left empty.')
+            time.sleep(0.5)

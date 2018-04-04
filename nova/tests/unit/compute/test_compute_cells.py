@@ -466,7 +466,7 @@ class CellsComputeAPITestCase(test_compute.ComputeAPITestCase):
         instance = self._create_fake_instance_obj()
         bdms = [block_device.BlockDeviceDict({'source_type': 'image',
                                               'destination_type': 'local',
-                                              'image_id': 'fake-image',
+                                              'image_id': uuids.image,
                                               'boot_index': 0})]
         self.compute_api._create_block_device_mapping(
             instance_type, instance.uuid, bdms)
@@ -650,14 +650,13 @@ class CellsConductorAPIRPCRedirect(test.NoDBTestCase):
     @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(compute_api.API, '_record_action_start')
     @mock.patch.object(compute_api.API, '_resize_cells_support')
-    @mock.patch.object(compute_utils, 'reserve_quota_delta')
     @mock.patch.object(compute_utils, 'upsize_quota_delta')
     @mock.patch.object(objects.Instance, 'save')
     @mock.patch.object(flavors, 'extract_flavor')
     @mock.patch.object(compute_api.API, '_check_auto_disk_config')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_instance(self, _bdms, _check, _extract, _save, _upsize,
-                             _reserve, _cells, _record, _spec_get_by_uuid):
+                             _cells, _record, _spec_get_by_uuid):
         flavor = objects.Flavor(**test_flavor.fake_flavor)
         _extract.return_value = flavor
         orig_system_metadata = {}
@@ -703,13 +702,16 @@ class CellsConductorAPIRPCRedirect(test.NoDBTestCase):
         orig_system_metadata = {}
         instance = fake_instance.fake_instance_obj(self.context,
                 vm_state=vm_states.ACTIVE, cell_name='fake-cell',
-                launched_at=timeutils.utcnow(),
+                launched_at=timeutils.utcnow(), image_ref=uuids.image_id,
                 system_metadata=orig_system_metadata,
                 expected_attrs=['system_metadata'])
         get_flavor.return_value = ''
-        image_href = ''
+        # The API request schema validates that a UUID is passed for the
+        # imageRef parameter so we need to provide an image.
+        image_href = uuids.image_id
         image = {"min_ram": 10, "min_disk": 1,
-                 "properties": {'architecture': 'x86_64'}}
+                 "properties": {'architecture': 'x86_64'},
+                 "id": uuids.image_id}
         admin_pass = ''
         files_to_inject = []
         bdms = objects.BlockDeviceMappingList()

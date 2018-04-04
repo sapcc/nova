@@ -148,11 +148,13 @@ class _TestInstanceActionObject(object):
             'instance_uuid': uuids.instance,
             'action': 'fake-action',
             'start_time': self.context.timestamp,
+            'updated_at': self.context.timestamp,
         }
         expected_packed_action_finish = {
             'request_id': self.context.request_id,
             'instance_uuid': uuids.instance,
             'finish_time': NOW,
+            'updated_at': NOW,
         }
         mock_start.return_value = fake_action
         mock_finish.return_value = fake_action
@@ -174,7 +176,8 @@ class _TestInstanceActionObject(object):
             self.context, 'fake-uuid')
         for index, action in enumerate(obj_list):
             self.compare_obj(action, fake_actions[index])
-        mock_get.assert_called_once_with(self.context, 'fake-uuid')
+        mock_get.assert_called_once_with(self.context, 'fake-uuid', None,
+                                         None, None)
 
 
 class TestInstanceActionObject(test_objects._LocalTest,

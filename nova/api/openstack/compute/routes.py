@@ -43,7 +43,6 @@ from nova.api.openstack.compute import extension_info
 from nova.api.openstack.compute import fixed_ips
 from nova.api.openstack.compute import flavor_access
 from nova.api.openstack.compute import flavor_manage
-from nova.api.openstack.compute import flavor_rxtx
 from nova.api.openstack.compute import flavors
 from nova.api.openstack.compute import flavors_extraspecs
 from nova.api.openstack.compute import floating_ip_dns
@@ -109,7 +108,7 @@ def _create_controller(main_controller, controller_list,
     same resource will be merged into single one controller.
     """
 
-    controller = wsgi.ResourceV21(main_controller())
+    controller = wsgi.Resource(main_controller())
     for ctl in controller_list:
         controller.register_extensions(ctl())
     for ctl in action_controller_list:
@@ -160,10 +159,7 @@ fixed_ips_controller = functools.partial(_create_controller,
 
 flavor_controller = functools.partial(_create_controller,
     flavors.FlavorsController,
-    [
-        flavor_rxtx.FlavorRxtxController,
-        flavor_access.FlavorActionController
-    ],
+    [],
     [
         flavor_manage.FlavorManageController,
         flavor_access.FlavorActionController
@@ -429,6 +425,7 @@ ROUTE_LIST = (
     }),
     ('/flavors/{id}', {
         'GET': [flavor_controller, 'show'],
+        'PUT': [flavor_controller, 'update'],
         'DELETE': [flavor_controller, 'delete']
     }),
     ('/flavors/{id}/action', {

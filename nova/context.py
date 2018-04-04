@@ -88,9 +88,8 @@ class RequestContext(context.RequestContext):
 
     def __init__(self, user_id=None, project_id=None, is_admin=None,
                  read_deleted="no", remote_address=None, timestamp=None,
-                 quota_class=None, user_name=None, project_name=None,
-                 service_catalog=None, instance_lock_checked=False,
-                 user_auth_plugin=None, **kwargs):
+                 quota_class=None, service_catalog=None,
+                 instance_lock_checked=False, user_auth_plugin=None, **kwargs):
         """:param read_deleted: 'no' indicates deleted records are hidden,
                 'yes' indicates deleted records are visible,
                 'only' indicates that *only* deleted records are visible.
@@ -119,8 +118,8 @@ class RequestContext(context.RequestContext):
         if service_catalog:
             # Only include required parts of service_catalog
             self.service_catalog = [s for s in service_catalog
-                if s.get('type') in ('volume', 'volumev2', 'volumev3',
-                                     'key-manager', 'placement')]
+                if s.get('type') in ('image', 'block-storage', 'volumev3',
+                                     'key-manager', 'placement', 'network')]
         else:
             # if list is empty or none
             self.service_catalog = []
@@ -131,8 +130,6 @@ class RequestContext(context.RequestContext):
         # rs_limits turnstile pre-processor.
         # See https://lists.launchpad.net/openstack/msg12200.html
         self.quota_class = quota_class
-        self.user_name = user_name
-        self.project_name = project_name
 
         # NOTE(dheeraj): The following attributes are used by cellsv2 to store
         # connection information for connecting to the target cell.
@@ -165,25 +162,6 @@ class RequestContext(context.RequestContext):
 
     read_deleted = property(_get_read_deleted, _set_read_deleted,
                             _del_read_deleted)
-
-    # FIXME(dims): user_id and project_id duplicate information that is
-    # already present in the oslo_context's RequestContext. We need to
-    # get rid of them.
-    @property
-    def project_id(self):
-        return self.tenant
-
-    @project_id.setter
-    def project_id(self, value):
-        self.tenant = value
-
-    @property
-    def user_id(self):
-        return self.user
-
-    @user_id.setter
-    def user_id(self, value):
-        self.user = value
 
     def to_dict(self):
         values = super(RequestContext, self).to_dict()
@@ -231,19 +209,6 @@ class RequestContext(context.RequestContext):
             service_catalog=values.get('service_catalog'),
             instance_lock_checked=values.get('instance_lock_checked', False),
         )
-
-    @classmethod
-    def from_environ(cls, environ, **kwargs):
-        ctx = super(RequestContext, cls).from_environ(environ, **kwargs)
-
-        # the base oslo.context sets its user param and tenant param but not
-        # our user_id and project_id param so fix those up.
-        if ctx.user and not ctx.user_id:
-            ctx.user_id = ctx.user
-        if ctx.tenant and not ctx.project_id:
-            ctx.project_id = ctx.tenant
-
-        return ctx
 
     def elevated(self, read_deleted=None):
         """Return a version of this context with admin flag set."""
@@ -425,7 +390,14 @@ def target_cell(context, cell_mapping):
     :param context: The RequestContext to add connection information
     :param cell_mapping: An objects.CellMapping object or None
     """
-    cctxt = copy.copy(context)
+    # Create a sanitized copy of context by serializing and deserializing it
+    # (like we would do over RPC). This help ensure that we have a clean
+    # copy of the context with all the tracked attributes, but without any
+    # of the hidden/private things we cache on a context. We do this to avoid
+    # unintentional sharing of cached thread-local data across threads.
+    # Specifically, this won't include any oslo_db-set transaction context, or
+    # any existing cell targeting.
+    cctxt = RequestContext.from_dict(context.to_dict())
     set_target_cell(cctxt, cell_mapping)
     yield cctxt
 
@@ -454,9 +426,11 @@ def scatter_gather_cells(context, cell_mappings, timeout, fn, *args, **kwargs):
     queue = eventlet.queue.LightQueue()
     results = {}
 
-    def gather_result(cell_uuid, fn, *args, **kwargs):
+    def gather_result(cell_mapping, fn, context, *args, **kwargs):
+        cell_uuid = cell_mapping.uuid
         try:
-            result = fn(*args, **kwargs)
+            with target_cell(context, cell_mapping) as cctxt:
+                result = fn(cctxt, *args, **kwargs)
         except Exception:
             LOG.exception('Error gathering result from cell %s', cell_uuid)
             result = raised_exception_sentinel
@@ -464,10 +438,9 @@ def scatter_gather_cells(context, cell_mappings, timeout, fn, *args, **kwargs):
         queue.put((cell_uuid, result))
 
     for cell_mapping in cell_mappings:
-        with target_cell(context, cell_mapping) as cctxt:
-            greenthreads.append((cell_mapping.uuid,
-                                 utils.spawn(gather_result, cell_mapping.uuid,
-                                             fn, cctxt, *args, **kwargs)))
+        greenthreads.append((cell_mapping.uuid,
+                             utils.spawn(gather_result, cell_mapping,
+                                         fn, context, *args, **kwargs)))
 
     with eventlet.timeout.Timeout(timeout, exception.CellTimeout):
         try:

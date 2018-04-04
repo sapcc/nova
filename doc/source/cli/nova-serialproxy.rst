@@ -2,9 +2,9 @@
 nova-serialproxy
 ================
 
---------------------------------------------------------
-Websocket serial Proxy for OpenStack Nova serial ports.
---------------------------------------------------------
+------------------------------------------------------
+Websocket serial Proxy for OpenStack Nova serial ports
+------------------------------------------------------
 
 :Author: openstack@lists.launchpad.net
 :Date:   2014-03-15
@@ -13,36 +13,37 @@ Websocket serial Proxy for OpenStack Nova serial ports.
 :Manual section: 1
 :Manual group: cloud computing
 
-SYNOPSIS
+Synopsis
 ========
 
   nova-serialproxy [options]
 
-DESCRIPTION
+Description
 ===========
 
-Websocket proxy that is compatible with OpenStack Nova
-serial ports.
+`nova-serialproxy` is a server daemon that serves the Nova Serial Websocket
+Proxy service, which provides a websocket proxy that is compatible with
+OpenStack Nova serial ports.
 
-OPTIONS
+Options
 =======
 
  **General options**
 
-FILES
+Files
+=====
+
+* ``/etc/nova/nova.conf``
+* ``/etc/nova/policy.json``
+* ``/etc/nova/rootwrap.conf``
+* ``/etc/nova/rootwrap.d/``
+
+See Also
 ========
 
-* /etc/nova/nova.conf
-* /etc/nova/policy.json
-* /etc/nova/rootwrap.conf
-* /etc/nova/rootwrap.d/
+* `OpenStack Nova <https://docs.openstack.org/nova/latest/>`__
 
-SEE ALSO
-========
-
-* `OpenStack Nova <https://docs.openstack.org/developer/nova>`__
-
-BUGS
+Bugs
 ====
 
-* Nova bugs are managed at Launchpad `Bugs : Nova <https://bugs.launchpad.net/nova>`__
+* Nova bugs are managed at `Launchpad <https://bugs.launchpad.net/nova>`__

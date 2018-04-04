@@ -47,14 +47,29 @@ CONF = nova.conf.CONF
 
 LOG = logging.getLogger(__name__)
 
+_ADMIN_AUTH = None
 _SESSION = None
 
 
 def reset_globals():
     """Testing method to reset globals.
     """
+    global _ADMIN_AUTH
     global _SESSION
+
+    _ADMIN_AUTH = None
     _SESSION = None
+
+
+def _load_auth_plugin(conf):
+    auth_plugin = ks_loading.load_auth_from_conf_options(conf,
+                                    nova.conf.cinder.cinder_group.name)
+
+    if auth_plugin:
+        return auth_plugin
+
+    err_msg = _('Unknown auth type: %s') % conf.cinder.auth_type
+    raise cinder_exception.Unauthorized(401, message=err_msg)
 
 
 def _check_microversion(url, microversion):
@@ -79,6 +94,50 @@ def _check_microversion(url, microversion):
     raise exception.CinderAPIVersionNotAvailable(version=microversion)
 
 
+def _get_cinderclient_parameters(context):
+    global _ADMIN_AUTH
+    global _SESSION
+
+    if not _SESSION:
+        _SESSION = ks_loading.load_session_from_conf_options(
+            CONF, nova.conf.cinder.cinder_group.name)
+
+    # NOTE(lixipeng): Auth token is none when call
+    # cinder API from compute periodic tasks, context
+    # from them generated from 'context.get_admin_context'
+    # which only set is_admin=True but is without token.
+    # So add load_auth_plugin when this condition appear.
+    if context.is_admin and not context.auth_token:
+        if not _ADMIN_AUTH:
+            _ADMIN_AUTH = _load_auth_plugin(CONF)
+        auth = _ADMIN_AUTH
+    else:
+        auth = service_auth.get_auth_plugin(context)
+
+    url = None
+
+    service_type, service_name, interface = CONF.cinder.catalog_info.split(':')
+
+    service_parameters = {'service_type': service_type,
+                          'service_name': service_name,
+                          'interface': interface,
+                          'region_name': CONF.cinder.os_region_name}
+
+    if CONF.cinder.endpoint_template:
+        url = CONF.cinder.endpoint_template % context.to_dict()
+    else:
+        url = _SESSION.get_endpoint(auth, **service_parameters)
+
+    return auth, service_parameters, url
+
+
+def is_microversion_supported(context, microversion):
+
+    _, _, url = _get_cinderclient_parameters(context)
+
+    _check_microversion(url, microversion)
+
+
 def cinderclient(context, microversion=None, skip_version_check=False):
     """Constructs a cinder client object for making API requests.
 
@@ -92,53 +151,29 @@ def cinderclient(context, microversion=None, skip_version_check=False):
         is used directly. This should only be used if a previous check for the
         same microversion was successful.
     """
-    global _SESSION
 
-    if not _SESSION:
-        _SESSION = ks_loading.load_session_from_conf_options(
-            CONF, nova.conf.cinder.cinder_group.name)
-
-    url = None
     endpoint_override = None
-
-    auth = service_auth.get_auth_plugin(context)
-    service_type, service_name, interface = CONF.cinder.catalog_info.split(':')
-
-    service_parameters = {'service_type': service_type,
-                          'service_name': service_name,
-                          'interface': interface,
-                          'region_name': CONF.cinder.os_region_name}
+    auth, service_parameters, url = _get_cinderclient_parameters(context)
 
     if CONF.cinder.endpoint_template:
-        url = CONF.cinder.endpoint_template % context.to_dict()
         endpoint_override = url
-    else:
-        url = _SESSION.get_endpoint(auth, **service_parameters)
 
     # TODO(jamielennox): This should be using proper version discovery from
     # the cinder service rather than just inspecting the URL for certain string
     # values.
     version = cinder_client.get_volume_api_from_url(url)
 
-    if version == '1':
+    if version != '3':
         raise exception.UnsupportedCinderAPIVersion(version=version)
 
-    if version == '2':
-        if microversion is not None:
-            # The Cinder v2 API does not support microversions.
-            raise exception.CinderAPIVersionNotAvailable(version=microversion)
-        LOG.warning("The support for the Cinder API v2 is deprecated, please "
-                    "upgrade to Cinder API v3.")
-
-    if version == '3':
-        version = '3.0'
-        # Check to see a specific microversion is requested and if so, can it
-        # be handled by the backing server.
-        if microversion is not None:
-            if skip_version_check:
-                version = microversion
-            else:
-                version = _check_microversion(url, microversion)
+    version = '3.0'
+    # Check to see a specific microversion is requested and if so, can it
+    # be handled by the backing server.
+    if microversion is not None:
+        if skip_version_check:
+            version = microversion
+        else:
+            version = _check_microversion(url, microversion)
 
     return cinder_client.Client(version,
                                 session=_SESSION,
@@ -191,6 +226,13 @@ def _untranslate_volume_summary_view(context, vol):
     if hasattr(vol, 'volume_image_metadata'):
         d['volume_image_metadata'] = copy.deepcopy(vol.volume_image_metadata)
 
+    # The 3.48 microversion exposes a shared_targets boolean and service_uuid
+    # string parameter which can be used with locks during volume attach
+    # and detach.
+    if hasattr(vol, 'shared_targets'):
+        d['shared_targets'] = vol.shared_targets
+        d['service_uuid'] = vol.service_uuid
+
     return d
 
 
@@ -215,15 +257,29 @@ def _untranslate_snapshot_summary_view(context, snapshot):
 
 def _translate_attachment_ref(attachment_ref):
     """Building old style connection_info by adding the 'data' key back."""
-    connection_info = attachment_ref.pop('connection_info', {})
-    attachment_ref['connection_info'] = {}
-    if connection_info.get('driver_volume_type'):
-        attachment_ref['connection_info']['driver_volume_type'] = \
-            connection_info['driver_volume_type']
-    attachment_ref['connection_info']['data'] = {}
-    for k, v in connection_info.items():
-        if k != "driver_volume_type":
-            attachment_ref['connection_info']['data'][k] = v
+    translated_con_info = {}
+    connection_info_data = attachment_ref.pop('connection_info', None)
+    if connection_info_data:
+        connection_info_data.pop('attachment_id', None)
+        translated_con_info['driver_volume_type'] = \
+            connection_info_data.pop('driver_volume_type', None)
+        translated_con_info['data'] = connection_info_data
+        translated_con_info['status'] = attachment_ref.pop('status', None)
+        translated_con_info['instance'] = attachment_ref.pop('instance', None)
+        translated_con_info['attach_mode'] = attachment_ref.pop('attach_mode',
+                                                                None)
+        translated_con_info['attached_at'] = attachment_ref.pop('attached_at',
+                                                                None)
+        translated_con_info['detached_at'] = attachment_ref.pop('detached_at',
+                                                                None)
+
+        # Now the catch all...
+        for k, v in attachment_ref.items():
+            if k != "id":
+                translated_con_info[k] = v
+
+    attachment_ref['connection_info'] = translated_con_info
+
     return attachment_ref
 
 
@@ -310,8 +366,17 @@ class API(object):
     """API for interacting with the volume manager."""
 
     @translate_volume_exception
-    def get(self, context, volume_id):
-        item = cinderclient(context).volumes.get(volume_id)
+    def get(self, context, volume_id, microversion=None):
+        """Get the details about a volume given it's ID.
+
+        :param context: the nova request context
+        :param volume_id: the id of the volume to get
+        :param microversion: optional string microversion value
+        :raises: CinderAPIVersionNotAvailable if the specified microversion is
+            not available.
+        """
+        item = cinderclient(
+            context, microversion=microversion).volumes.get(volume_id)
         return _untranslate_volume_summary_view(context, item)
 
     @translate_cinder_exception
@@ -536,8 +601,12 @@ class API(object):
 
     @translate_volume_exception
     def attachment_create(self, context, volume_id, instance_id,
-                          connector=None):
-        """Create a volume attachment. This requires microversion >= 3.27.
+                          connector=None, mountpoint=None):
+        """Create a volume attachment. This requires microversion >= 3.44.
+
+        The attachment_create call was introduced in microversion 3.27. We
+        need 3.44 as minmum here as we need attachment_complete to finish the
+        attaching process and it which was introduced in version 3.44.
 
         :param context: The nova request context.
         :param volume_id: UUID of the volume on which to create the attachment.
@@ -545,13 +614,28 @@ class API(object):
             attached.
         :param connector: host connector dict; if None, the attachment will
             be 'reserved' but not yet attached.
+        :param mountpoint: Optional mount device name for the attachment,
+            e.g. "/dev/vdb". This is only used if a connector is provided.
         :returns: a dict created from the
             cinderclient.v3.attachments.VolumeAttachment object with a backward
             compatible connection_info dict
         """
+        # NOTE(mriedem): Due to a limitation in the POST /attachments/
+        # API in Cinder, we have to pass the mountpoint in via the
+        # host connector rather than pass it in as a top-level parameter
+        # like in the os-attach volume action API. Hopefully this will be
+        # fixed some day with a new Cinder microversion but until then we
+        # work around it client-side.
+        _connector = connector
+        if _connector and mountpoint and 'mountpoint' not in _connector:
+            # Make a copy of the connector so we don't modify it by
+            # reference.
+            _connector = copy.deepcopy(connector)
+            _connector['mountpoint'] = mountpoint
+
         try:
-            attachment_ref = cinderclient(context, '3.27').attachments.create(
-                volume_id, connector, instance_id)
+            attachment_ref = cinderclient(context, '3.44').attachments.create(
+                volume_id, _connector, instance_id)
             return _translate_attachment_ref(attachment_ref)
         except cinder_exception.ClientException as ex:
             with excutils.save_and_reraise_exception():
@@ -563,7 +647,33 @@ class API(object):
                           instance_uuid=instance_id)
 
     @translate_attachment_exception
-    def attachment_update(self, context, attachment_id, connector):
+    def attachment_get(self, context, attachment_id):
+        """Gets a volume attachment.
+
+        :param context: The nova request context.
+        :param attachment_id: UUID of the volume attachment to get.
+        :returns: a dict created from the
+            cinderclient.v3.attachments.VolumeAttachment object with a backward
+            compatible connection_info dict
+        """
+        try:
+            attachment_ref = cinderclient(
+                context, '3.44', skip_version_check=True).attachments.show(
+                attachment_id)
+            translated_attach_ref = _translate_attachment_ref(
+                attachment_ref.to_dict())
+            return translated_attach_ref
+        except cinder_exception.ClientException as ex:
+            with excutils.save_and_reraise_exception():
+                LOG.error(('Show attachment failed for attachment '
+                           '%(id)s. Error: %(msg)s Code: %(code)s'),
+                          {'id': attachment_id,
+                           'msg': six.text_type(ex),
+                           'code': getattr(ex, 'code', None)})
+
+    @translate_attachment_exception
+    def attachment_update(self, context, attachment_id, connector,
+                          mountpoint=None):
         """Updates the connector on the volume attachment. An attachment
         without a connector is considered reserved but not fully attached.
 
@@ -572,15 +682,34 @@ class API(object):
         :param connector: host connector dict. This is required when updating
             a volume attachment. To terminate a connection, the volume
             attachment for that connection must be deleted.
+        :param mountpoint: Optional mount device name for the attachment,
+            e.g. "/dev/vdb". Theoretically this is optional per volume backend,
+            but in practice it's normally required so it's best to always
+            provide a value.
         :returns: a dict created from the
             cinderclient.v3.attachments.VolumeAttachment object with a backward
             compatible connection_info dict
         """
+        # NOTE(mriedem): Due to a limitation in the PUT /attachments/{id}
+        # API in Cinder, we have to pass the mountpoint in via the
+        # host connector rather than pass it in as a top-level parameter
+        # like in the os-attach volume action API. Hopefully this will be
+        # fixed some day with a new Cinder microversion but until then we
+        # work around it client-side.
+        _connector = connector
+        if mountpoint and 'mountpoint' not in connector:
+            # Make a copy of the connector so we don't modify it by
+            # reference.
+            _connector = copy.deepcopy(connector)
+            _connector['mountpoint'] = mountpoint
+
         try:
             attachment_ref = cinderclient(
-                context, '3.27', skip_version_check=True).attachments.update(
-                    attachment_id, connector)
-            return _translate_attachment_ref(attachment_ref.to_dict())
+                context, '3.44', skip_version_check=True).attachments.update(
+                    attachment_id, _connector)
+            translated_attach_ref = _translate_attachment_ref(
+                attachment_ref.to_dict())
+            return translated_attach_ref
         except cinder_exception.ClientException as ex:
             with excutils.save_and_reraise_exception():
                 LOG.error(('Update attachment failed for attachment '
@@ -593,11 +722,34 @@ class API(object):
     def attachment_delete(self, context, attachment_id):
         try:
             cinderclient(
-                context, '3.27', skip_version_check=True).attachments.delete(
+                context, '3.44', skip_version_check=True).attachments.delete(
                     attachment_id)
         except cinder_exception.ClientException as ex:
             with excutils.save_and_reraise_exception():
                 LOG.error(('Delete attachment failed for attachment '
+                           '%(id)s. Error: %(msg)s Code: %(code)s'),
+                          {'id': attachment_id,
+                           'msg': six.text_type(ex),
+                           'code': getattr(ex, 'code', None)})
+
+    @translate_attachment_exception
+    def attachment_complete(self, context, attachment_id):
+        """Marks a volume attachment complete.
+
+        This call should be used to inform Cinder that a volume attachment is
+        fully connected on the compute host so Cinder can apply the necessary
+        state changes to the volume info in its database.
+
+        :param context: The nova request context.
+        :param attachment_id: UUID of the volume attachment to update.
+        """
+        try:
+            cinderclient(
+                context, '3.44', skip_version_check=True).attachments.complete(
+                    attachment_id)
+        except cinder_exception.ClientException as ex:
+            with excutils.save_and_reraise_exception():
+                LOG.error(('Complete attachment failed for attachment '
                            '%(id)s. Error: %(msg)s Code: %(code)s'),
                           {'id': attachment_id,
                            'msg': six.text_type(ex),

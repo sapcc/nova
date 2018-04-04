@@ -12,6 +12,7 @@
 """Libvirt volume driver for iSCSI"""
 
 from os_brick import exception as os_brick_exception
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_log import log as logging
 
@@ -34,7 +35,7 @@ class LibvirtISCSIVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         # Call the factory here so we can support
         # more than x86 architectures.
         self.connector = connector.InitiatorConnector.factory(
-            'ISCSI', utils.get_root_helper(),
+            initiator.ISCSI, utils.get_root_helper(),
             use_multipath=CONF.libvirt.volume_use_multipath,
             device_scan_attempts=CONF.libvirt.num_volume_scan_tries,
             transport=self._get_transport())
@@ -56,7 +57,7 @@ class LibvirtISCSIVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         conf.driver_io = "native"
         return conf
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         """Attach the volume to instance_name."""
 
         LOG.debug("Calling os-brick to attach iSCSI Volume")
@@ -65,19 +66,19 @@ class LibvirtISCSIVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
 
         connection_info['data']['device_path'] = device_info['path']
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         """Detach the volume from instance_name."""
 
-        LOG.debug("calling os-brick to detach iSCSI Volume")
+        LOG.debug("calling os-brick to detach iSCSI Volume", instance=instance)
         try:
             self.connector.disconnect_volume(connection_info['data'], None)
         except os_brick_exception.VolumeDeviceNotFound as exc:
             LOG.warning('Ignoring VolumeDeviceNotFound: %s', exc)
             return
-        LOG.debug("Disconnected iSCSI Volume %s", disk_dev)
+        LOG.debug("Disconnected iSCSI Volume", instance=instance)
 
         super(LibvirtISCSIVolumeDriver,
-              self).disconnect_volume(connection_info, disk_dev, instance)
+              self).disconnect_volume(connection_info, instance)
 
     def extend_volume(self, connection_info, instance):
         """Extend the volume."""

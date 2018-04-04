@@ -407,6 +407,12 @@ API endpoints as below::
   '/os-baremetal-nodes'
   '/os-fping'
 
+.. note:: A `regression`_ was introduced in this microversion which broke the
+    ``force`` parameter in the ``PUT /os-quota-sets`` API. The fix will have
+    to be applied to restore this functionality.
+
+.. _regression: https://bugs.launchpad.net/nova/+bug/1733886
+
 2.37
 ----
 
@@ -456,7 +462,7 @@ API response.
 ----
 
 Optional query parameters ``limit`` and ``marker`` were added to the
-``os-simple-tenant-usage`` endpoints for pagination. If a limit isn’t
+``os-simple-tenant-usage`` endpoints for pagination. If a limit isn't
 provided, the configurable ``max_limit`` will be used which currently
 defaults to 1000.
 
@@ -465,7 +471,7 @@ defaults to 1000.
     GET /os-simple-tenant-usage?limit={limit}&marker={instance_uuid}
     GET /os-simple-tenant-usage/{tenant_id}?limit={limit}&marker={instance_uuid}
 
-A tenant’s usage statistics may span multiple pages when the number of
+A tenant's usage statistics may span multiple pages when the number of
 instances exceeds limit, and API consumers will need to stitch together
 the aggregate results if they still want totals for all instances in a
 specific time window, grouped by tenant.
@@ -627,6 +633,8 @@ There are two changes for the 2.51 microversion:
 Adds support for applying tags when creating a server. The tag schema is
 the same as in the `2.26`_ microversion.
 
+.. _2.53-microversion:
+
 2.53 (Maximum in Pike)
 ----------------------
 
@@ -683,3 +691,77 @@ uniqueness across cells. This microversion brings the following changes:
   * ``GET /os-hypervisors/detail``
   * ``GET /os-hypervisors/{hypervisor_id}``
   * ``GET /os-hypervisors/{hypervisor_id}/uptime``
+
+2.54
+----
+
+Allow the user to set the server key pair while rebuilding.
+
+2.55
+----
+
+Adds a ``description`` field to the flavor resource in the following APIs:
+
+* ``GET /flavors``
+* ``GET /flavors/detail``
+* ``GET /flavors/{flavor_id}``
+* ``POST /flavors``
+* ``PUT /flavors/{flavor_id}``
+
+The embedded flavor description will not be included in server representations.
+
+2.56
+----
+
+Updates the POST request body for the ``migrate`` action to include the
+the optional ``host`` string field defaulted to ``null``. If ``host`` is
+set the migrate action verifies the provided host with the nova scheduler
+and uses it as the destination for the migration.
+
+2.57
+----
+
+The 2.57 microversion makes the following changes:
+
+* The ``personality`` parameter is removed from the server create and rebuild
+  APIs.
+* The ``user_data`` parameter is added to the server rebuild API.
+* The ``maxPersonality`` and ``maxPersonalitySize`` limits are excluded from
+  the ``GET /limits`` API response.
+* The ``injected_files``, ``injected_file_content_bytes`` and
+  ``injected_file_path_bytes`` quotas are removed from the ``os-quota-sets``
+  and ``os-quota-class-sets`` APIs.
+
+2.58
+----
+
+Add pagination support and ``changes-since`` filter for os-instance-actions
+API. Users can now use ``limit`` and ``marker`` to perform paginated query
+when listing instance actions. Users can also use ``changes-since`` filter
+to filter the results based on the last time the instance action was
+updated.
+
+2.59
+----
+
+Added pagination support for migrations, there are four changes:
+
+* Add pagination support and ``changes-since`` filter for os-migrations
+  API. Users can now use ``limit`` and ``marker`` to perform paginate query
+  when listing migrations.
+* Users can also use ``changes-since`` filter to filter the results based
+  on the last time the migration record was updated.
+* ``GET /os-migrations``,
+  ``GET /servers/{server_id}/migrations/{migration_id}`` and
+  ``GET /servers/{server_id}/migrations`` will now return a uuid value in
+  addition to the migrations id in the response.
+* The query parameter schema of the ``GET /os-migrations`` API no longer
+  allows additional properties.
+
+2.60 (Maximum in Queens)
+------------------------
+
+From this version of the API users can attach a ``multiattach`` capable volume
+to multiple instances. The API request for creating the additional attachments
+is the same. The chosen virt driver and the volume back end has to support the
+functionality as well.

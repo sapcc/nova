@@ -134,11 +134,7 @@ class VMOps(object):
         info = self._vmutils.get_vm_summary_info(instance_name)
 
         state = constants.HYPERV_POWER_STATE[info['EnabledState']]
-        return hardware.InstanceInfo(state=state,
-                                     max_mem_kb=info['MemoryUsage'],
-                                     mem_kb=info['MemoryUsage'],
-                                     num_cpu=info['NumberOfProcessors'],
-                                     cpu_time_ns=info['UpTime'])
+        return hardware.InstanceInfo(state=state)
 
     def _create_root_device(self, context, instance, root_disk_info, vm_gen):
         path = None
@@ -305,7 +301,7 @@ class VMOps(object):
             self.power_on(instance, network_info=network_info)
         except Exception:
             with excutils.save_and_reraise_exception():
-                self.destroy(instance)
+                self.destroy(instance, network_info, block_device_info)
 
     @contextlib.contextmanager
     def wait_vif_plug_events(self, instance, network_info):
@@ -444,7 +440,8 @@ class VMOps(object):
         :returns: memory amount and number of vCPUs per NUMA node or
                   (None, None), if instance NUMA topology was not requested.
         :raises exception.InstanceUnacceptable:
-            If the given instance NUMA topology is not possible on Hyper-V.
+            If the given instance NUMA topology is not possible on Hyper-V, or
+            if CPU pinning is required.
         """
         instance_topology = hardware.numa_get_constraints(instance.flavor,
                                                           image_meta)
@@ -454,6 +451,11 @@ class VMOps(object):
 
         memory_per_numa_node = instance_topology.cells[0].memory
         cpus_per_numa_node = len(instance_topology.cells[0].cpuset)
+
+        if instance_topology.cpu_pinning_requested:
+            raise exception.InstanceUnacceptable(
+                reason=_("Hyper-V does not support CPU pinning."),
+                instance_id=instance.uuid)
 
         # validate that the requested NUMA topology is not asymetric.
         # e.g.: it should be like: (X cpus, X cpus, Y cpus), where X == Y.
@@ -705,7 +707,7 @@ class VMOps(object):
                                          create_dir=False,
                                          remove_dir=True)
 
-    def destroy(self, instance, network_info=None, block_device_info=None,
+    def destroy(self, instance, network_info, block_device_info,
                 destroy_disks=True):
         instance_name = instance.name
         LOG.info("Got request to destroy instance", instance=instance)
@@ -715,11 +717,12 @@ class VMOps(object):
                 # Stop the VM first.
                 self._vmutils.stop_vm_jobs(instance_name)
                 self.power_off(instance)
-                self.unplug_vifs(instance, network_info)
                 self._vmutils.destroy_vm(instance_name)
-                self._volumeops.disconnect_volumes(block_device_info)
             else:
                 LOG.debug("Instance not found", instance=instance)
+
+            self.unplug_vifs(instance, network_info)
+            self._volumeops.disconnect_volumes(block_device_info)
 
             if destroy_disks:
                 self._delete_disk_files(instance_name)

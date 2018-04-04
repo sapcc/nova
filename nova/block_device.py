@@ -48,22 +48,11 @@ bdm_new_fields = set(['source_type', 'destination_type',
                      'connection_info', 'tag'])
 
 
-bdm_db_only_fields = set(['id', 'instance_uuid', 'attachment_id'])
+bdm_db_only_fields = set(['id', 'instance_uuid', 'attachment_id', 'uuid'])
 
 
 bdm_db_inherited_fields = set(['created_at', 'updated_at',
                                'deleted_at', 'deleted'])
-
-
-bdm_new_non_api_fields = set(['volume_id', 'snapshot_id',
-                              'image_id', 'connection_info'])
-
-
-bdm_new_api_only_fields = set(['uuid'])
-
-
-bdm_new_api_fields = ((bdm_new_fields - bdm_new_non_api_fields) |
-                      bdm_new_api_only_fields)
 
 
 class BlockDeviceDict(dict):
@@ -94,12 +83,13 @@ class BlockDeviceDict(dict):
     def _validate(self, bdm_dict):
         """Basic data format validations."""
         dict_fields = set(key for key, _ in bdm_dict.items())
+        valid_fields = self._fields | self._db_only_fields
 
         # Check that there are no bogus fields
-        if not (dict_fields <=
-                (self._fields | self._db_only_fields)):
+        if not (dict_fields <= valid_fields):
             raise exception.InvalidBDMFormat(
-                details=_("Some fields are invalid."))
+                    details=("Following fields are invalid: %s" %
+                             " ".join(dict_fields - valid_fields)))
 
         if bdm_dict.get('no_device'):
             return

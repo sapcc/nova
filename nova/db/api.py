@@ -534,6 +534,11 @@ def migration_get(context, migration_id):
     return IMPL.migration_get(context, migration_id)
 
 
+def migration_get_by_uuid(context, migration_uuid):
+    """Finds a migration by the migration uuid."""
+    return IMPL.migration_get_by_uuid(context, migration_uuid)
+
+
 def migration_get_by_id_and_instance(context, migration_id, instance_uuid):
     """Finds a migration by the migration id and the instance uuid."""
     return IMPL.migration_get_by_id_and_instance(context,
@@ -563,9 +568,13 @@ def migration_get_in_progress_by_host_and_node(context, host, node):
     return IMPL.migration_get_in_progress_by_host_and_node(context, host, node)
 
 
-def migration_get_all_by_filters(context, filters):
-    """Finds all migrations in progress."""
-    return IMPL.migration_get_all_by_filters(context, filters)
+def migration_get_all_by_filters(context, filters, sort_keys=None,
+                                 sort_dirs=None, limit=None, marker=None):
+    """Finds all migrations using the provided filters."""
+    return IMPL.migration_get_all_by_filters(context, filters,
+                                             sort_keys=sort_keys,
+                                             sort_dirs=sort_dirs,
+                                             limit=limit, marker=marker)
 
 
 def migration_get_in_progress_by_instance(context, instance_uuid,
@@ -573,6 +582,17 @@ def migration_get_in_progress_by_instance(context, instance_uuid,
     """Finds all migrations of an instance in progress."""
     return IMPL.migration_get_in_progress_by_instance(context, instance_uuid,
                                                       migration_type)
+
+
+def migration_get_by_sort_filters(context, sort_keys, sort_dirs, values):
+    """Get the uuid of the first migration in a sort order.
+
+    Return the first migration (uuid) of the set where each column value
+    is greater than or equal to the matching one in @values, for each key
+    in @sort_keys.
+    """
+    return IMPL.migration_get_by_sort_filters(context, sort_keys, sort_dirs,
+                                              values)
 
 
 ####################
@@ -780,6 +800,17 @@ def instance_get_all_by_filters_sort(context, filters, limit=None,
         context, filters, limit=limit, marker=marker,
         columns_to_join=columns_to_join, sort_keys=sort_keys,
         sort_dirs=sort_dirs)
+
+
+def instance_get_by_sort_filters(context, sort_keys, sort_dirs, values):
+    """Get the uuid of the first instance in a sort order.
+
+    Return the first instance (uuid) of the set where each column value
+    is greater than or equal to the matching one in @values, for each key
+    in @sort_keys.
+    """
+    return IMPL.instance_get_by_sort_filters(context, sort_keys, sort_dirs,
+                                             values)
 
 
 def instance_get_active_by_window_joined(context, begin, end=None,
@@ -1182,74 +1213,6 @@ def quota_class_update(context, class_name, resource, limit):
 ###################
 
 
-def quota_usage_get(context, project_id, resource, user_id=None):
-    """Retrieve a quota usage or raise if it does not exist."""
-    return IMPL.quota_usage_get(context, project_id, resource, user_id=user_id)
-
-
-def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
-    """Retrieve all usage associated with a given resource."""
-    return IMPL.quota_usage_get_all_by_project_and_user(context,
-                                                        project_id, user_id)
-
-
-def quota_usage_get_all_by_project(context, project_id):
-    """Retrieve all usage associated with a given resource."""
-    return IMPL.quota_usage_get_all_by_project(context, project_id)
-
-
-def quota_usage_update(context, project_id, user_id, resource, **kwargs):
-    """Update a quota usage or raise if it does not exist."""
-    return IMPL.quota_usage_update(context, project_id, user_id, resource,
-                                   **kwargs)
-
-
-def quota_usage_refresh(context, resources, keys, until_refresh, max_age,
-                        project_id=None, user_id=None):
-    """Refresh the quota usages.
-
-    :param context: The request context, for access checks.
-    :param resources: A dictionary of the registered resources.
-    :param keys: Names of the resources whose usage is to be refreshed.
-    :param until_refresh:  The until_refresh configuration value.
-    :param max_age:  The max_age configuration value.
-    :param project_id: (Optional) The project_id containing the usages
-                       to be refreshed.  Defaults to the project_id
-                       in the context.
-    :param user_id: (Optional) The user_id containing the usages
-                     to be refreshed.  Defaults to the user_id
-                     in the context.
-
-    """
-    return IMPL.quota_usage_refresh(context, resources, keys, until_refresh,
-                              max_age, project_id=project_id, user_id=user_id)
-
-
-###################
-
-
-def quota_reserve(context, resources, quotas, user_quotas, deltas, expire,
-                  until_refresh, max_age, project_id=None, user_id=None):
-    """Check quotas and create appropriate reservations."""
-    return IMPL.quota_reserve(context, resources, quotas, user_quotas, deltas,
-                              expire, until_refresh, max_age,
-                              project_id=project_id, user_id=user_id)
-
-
-def reservation_commit(context, reservations, project_id=None, user_id=None):
-    """Commit quota reservations."""
-    return IMPL.reservation_commit(context, reservations,
-                                   project_id=project_id,
-                                   user_id=user_id)
-
-
-def reservation_rollback(context, reservations, project_id=None, user_id=None):
-    """Roll back quota reservations."""
-    return IMPL.reservation_rollback(context, reservations,
-                                     project_id=project_id,
-                                     user_id=user_id)
-
-
 def quota_destroy_all_by_project_and_user(context, project_id, user_id):
     """Destroy all quotas associated with a given project and user."""
     return IMPL.quota_destroy_all_by_project_and_user(context,
@@ -1259,11 +1222,6 @@ def quota_destroy_all_by_project_and_user(context, project_id, user_id):
 def quota_destroy_all_by_project(context, project_id):
     """Destroy all quotas associated with a given project."""
     return IMPL.quota_destroy_all_by_project(context, project_id)
-
-
-def reservation_expire(context):
-    """Roll back any expired reservations."""
-    return IMPL.reservation_expire(context)
 
 
 ###################
@@ -1942,9 +1900,10 @@ def action_finish(context, values):
     return IMPL.action_finish(context, values)
 
 
-def actions_get(context, uuid):
-    """Get all instance actions for the provided instance."""
-    return IMPL.actions_get(context, uuid)
+def actions_get(context, instance_uuid, limit=None, marker=None,
+                filters=None):
+    """Get all instance actions for the provided instance and filters."""
+    return IMPL.actions_get(context, instance_uuid, limit, marker, filters)
 
 
 def action_get_by_request_id(context, uuid, request_id):
@@ -2108,16 +2067,22 @@ def console_auth_token_create(context, values):
     return IMPL.console_auth_token_create(context, values)
 
 
-def console_auth_token_get_valid(context, token_hash, instance_uuid):
+def console_auth_token_get_valid(context, token_hash, instance_uuid=None):
     """Get a valid console authorization by token_hash and instance_uuid.
 
     The console authorizations expire at the time specified by their
     'expires' column. An expired console auth token will not be returned
     to the caller - it is treated as if it does not exist.
+
+    If instance_uuid is specified, the token is validated against both
+    expiry and instance_uuid.
+
+    If instance_uuid is not specified, the token is validated against
+    expiry only.
     """
     return IMPL.console_auth_token_get_valid(context,
                                              token_hash,
-                                             instance_uuid)
+                                             instance_uuid=instance_uuid)
 
 
 def console_auth_token_destroy_all_by_instance(context, instance_uuid):

@@ -24,12 +24,11 @@ from oslo_context import context as common_context
 from oslo_log import log
 from oslo_utils import excutils
 from oslo_utils import timeutils
-import six
 
 import nova.conf
 import nova.context
 from nova import exception
-from nova.image import glance
+from nova import image as image_api
 from nova import network
 from nova.network import model as network_model
 from nova.notifications.objects import base as notification_base
@@ -79,21 +78,6 @@ def notify_decorator(name, fn):
 
         return fn(*args, **kwarg)
     return wrapped_func
-
-
-def send_api_fault(url, status, exception):
-    """Send an api.fault notification."""
-
-    if not CONF.notifications.notify_on_api_faults:
-        return
-
-    payload = {'url': url, 'exception': six.text_type(exception),
-               'status': status}
-
-    rpc.get_notifier('api').error(common_context.get_current() or
-                                  nova.context.get_admin_context(),
-                                  'api.fault',
-                                  payload)
 
 
 def send_update(context, old_instance, new_instance, service="compute",
@@ -218,7 +202,6 @@ def _compute_states_payload(instance, old_vm_state=None,
     return states_payload
 
 
-@rpc.if_notifications_enabled
 def send_instance_update_notification(context, instance, old_vm_state=None,
             old_task_state=None, new_vm_state=None, new_task_state=None,
             service="compute", host=None, old_display_name=None):
@@ -240,7 +223,7 @@ def send_instance_update_notification(context, instance, old_vm_state=None,
     payload["audit_period_ending"] = null_safe_isotime(audit_end)
 
     # add bw usage info:
-    bw = bandwidth_usage(instance, audit_start)
+    bw = bandwidth_usage(context, instance, audit_start)
     payload["bandwidth"] = bw
 
     # add old display name if it is changed
@@ -316,12 +299,12 @@ def audit_period_bounds(current_period=False):
     return (audit_start, audit_end)
 
 
-def bandwidth_usage(instance_ref, audit_start,
+def bandwidth_usage(context, instance_ref, audit_start,
         ignore_missing_network_data=True):
     """Get bandwidth usage information for the instance for the
     specified audit period.
     """
-    admin_context = nova.context.get_admin_context(read_deleted='yes')
+    admin_context = context.elevated(read_deleted='yes')
 
     def _get_nwinfo_old_skool():
         """Support for getting network info without objects."""
@@ -411,7 +394,8 @@ def info_from_instance(context, instance, network_info,
         modifications.
 
     """
-    image_ref_url = glance.generate_image_url(instance.image_ref)
+    image_ref_url = image_api.API().generate_image_url(instance.image_ref,
+                                                       context)
 
     instance_type = instance.get_flavor()
     instance_type_name = instance_type.get('name', '')

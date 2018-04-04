@@ -12,13 +12,18 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo_db import api as oslo_db_api
+from oslo_db.sqlalchemy import update_match
 from oslo_log import log as logging
+from oslo_utils import uuidutils
 from oslo_utils import versionutils
 
 from nova import block_device
 from nova.cells import opts as cells_opts
 from nova.cells import rpcapi as cells_rpcapi
 from nova import db
+from nova.db.sqlalchemy import api as db_api
+from nova.db.sqlalchemy import models as db_models
 from nova import exception
 from nova.i18n import _
 from nova import objects
@@ -63,10 +68,12 @@ class BlockDeviceMapping(base.NovaPersistentObject, base.NovaObject,
     #               get_by_volume() and get_by_volume_and_instance()
     # Version 1.17: Added tag field
     # Version 1.18: Added attachment_id
-    VERSION = '1.18'
+    # Version 1.19: Added uuid
+    VERSION = '1.19'
 
     fields = {
         'id': fields.IntegerField(),
+        'uuid': fields.UUIDField(),
         'instance_uuid': fields.UUIDField(),
         'instance': fields.ObjectField('Instance', nullable=True),
         'source_type': fields.BlockDeviceSourceTypeField(nullable=True),
@@ -90,19 +97,80 @@ class BlockDeviceMapping(base.NovaPersistentObject, base.NovaObject,
 
     def obj_make_compatible(self, primitive, target_version):
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 19) and 'uuid' in primitive:
+            del primitive['uuid']
         if target_version < (1, 18) and 'attachment_id' in primitive:
             del primitive['attachment_id']
         if target_version < (1, 17) and 'tag' in primitive:
             del primitive['tag']
 
+    @classmethod
+    def populate_uuids(cls, context, count):
+        @db_api.pick_context_manager_reader
+        def get_bdms_no_uuid(context):
+            return context.session.query(db_models.BlockDeviceMapping).\
+                    filter_by(uuid=None).limit(count).all()
+
+        db_bdms = get_bdms_no_uuid(context)
+
+        done = 0
+        for db_bdm in db_bdms:
+            cls._create_uuid(context, db_bdm['id'])
+            done += 1
+
+        return done, done
+
     @staticmethod
-    def _from_db_object(context, block_device_obj,
+    @oslo_db_api.wrap_db_retry(max_retries=1, retry_on_deadlock=True)
+    def _create_uuid(context, bdm_id):
+        # NOTE(mdbooth): This method is only required until uuid is made
+        # non-nullable in a future release.
+
+        # NOTE(mdbooth): We wrap this method in a retry loop because it can
+        # fail (safely) on multi-master galera if concurrent updates happen on
+        # different masters. It will never fail on single-master. We can only
+        # ever need one retry.
+
+        uuid = uuidutils.generate_uuid()
+        values = {'uuid': uuid}
+        compare = db_models.BlockDeviceMapping(id=bdm_id, uuid=None)
+
+        # NOTE(mdbooth): We explicitly use an independent transaction context
+        # here so as not to fail if:
+        # 1. We retry.
+        # 2. We're in a read transaction.This is an edge case of what's
+        #    normally a read operation. Forcing everything (transitively)
+        #    which reads a BDM to be in a write transaction for a narrow
+        #    temporary edge case is undesirable.
+        tctxt = db_api.get_context_manager(context).writer.independent
+        with tctxt.using(context):
+            query = context.session.query(db_models.BlockDeviceMapping).\
+                        filter_by(id=bdm_id)
+
+            try:
+                query.update_on_match(compare, 'id', values)
+            except update_match.NoRowsMatched:
+                # We can only get here if we raced, and another writer already
+                # gave this bdm a uuid
+                result = query.one()
+                uuid = result['uuid']
+                assert(uuid is not None)
+
+        return uuid
+
+    @classmethod
+    def _from_db_object(cls, context, block_device_obj,
                         db_block_device, expected_attrs=None):
         if expected_attrs is None:
             expected_attrs = []
         for key in block_device_obj.fields:
             if key in BLOCK_DEVICE_OPTIONAL_ATTRS:
                 continue
+            if key == 'uuid' and not db_block_device.get(key):
+                # NOTE(danms): While the records could be nullable,
+                # generate a UUID on read since the object requires it
+                bdm_id = db_block_device['id']
+                db_block_device[key] = cls._create_uuid(context, bdm_id)
             block_device_obj[key] = db_block_device[key]
         if 'instance' in expected_attrs:
             my_inst = objects.Instance(context)
@@ -285,10 +353,10 @@ class BlockDeviceMapping(base.NovaPersistentObject, base.NovaObject,
             raise exception.OrphanedObjectError(method='obj_load_attr',
                                                 objtype=self.obj_name())
 
-        LOG.debug("Lazy-loading '%(attr)s' on %(name)s uuid %(uuid)s",
+        LOG.debug("Lazy-loading '%(attr)s' on %(name)s using uuid %(uuid)s",
                   {'attr': attrname,
                    'name': self.obj_name(),
-                   'uuid': self.uuid,
+                   'uuid': self.instance_uuid,
                    })
         self.instance = objects.Instance.get_by_uuid(self._context,
                                                      self.instance_uuid)

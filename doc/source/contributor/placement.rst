@@ -141,18 +141,23 @@ The rules around when a microversion is needed are the same as for the
 there are a few bits of required housekeeping that must be done in the code:
 
 * Update the ``VERSIONS`` list in
-  `nova.api.openstack.placement.microversion` to indicate the new
+  ``nova/api/openstack/placement/microversion.py`` to indicate the new
   microversion and give a very brief summary of the added feature.
-* Update `nova/api/openstack/placement/rest_api_version_history.rst`
+* Update ``nova/api/openstack/placement/rest_api_version_history.rst``
   to add a more detailed section describing the new microversion.
-* Add a `release note`_ announcing the new or changed feature and
-  the microversion.
+* Add a `release note`_ with a ``features`` section announcing the new or
+  changed feature and the microversion.
 * If the ``version_handler`` decorator (see below) has been used,
   increment ``TOTAL_VERSIONED_METHODS`` in
-  `nova/tests/unit/api/openstack/placement/test_microversion.py`.
+  ``nova/tests/unit/api/openstack/placement/test_microversion.py``.
   This provides a confirmatory check just to make sure you're paying
   attention and as a helpful reminder to do the other things in this
   list.
+* Include functional gabbi tests as appropriate (see `Using Gabbi`_).  At the
+  least, update the ``latest microversion`` test in
+  ``nova/tests/functional/api/openstack/placement/gabbits/microversion.yaml``.
+* Update the `API Reference`_ documentation as appropriate.  The source is
+  located under `placement-api-ref/source/`.
 
 In the placement API, microversions only use the modern form of the
 version header::
@@ -209,6 +214,30 @@ provided in a request using another decorator:
 ``@util.check_accept('application/json')``. If the header does not allow
 `JSON`, a ``406`` response status is returned.
 
+If a hander returns a response body, a ``Last-Modified`` header should be
+included with the response. If the entity or entities in the response body
+are directly associated with an object (or objects, in the case of a
+collection response) that has an ``updated_at`` (or ``created_at``)
+field, that field's value can be used as the value of the header (WebOb will
+take care of turning the datetime object into a string timestamp). A
+``util.pick_last_modified`` is available to help choose the most recent
+last-modified when traversing a collection of entities.
+
+If there is no directly associated object (for example, the output is the
+composite of several objects) then the ``Last-Modified`` time should be
+``timeutils.utcnow(with_timezone=True)`` (the timezone must be set in order
+to be a valid HTTP timestamp). For example, the response__ to
+``GET /allocation_candidates`` should have a last-modified header of now
+because it is composed from queries against many different database entities,
+presents a mixture of result types (allocation requests and provider
+summaries), and has a view of the system that is only meaningful *now*.
+
+__ https://developer.openstack.org/api-ref/placement/#list-allocation-candidates
+
+If a ``Last-Modified`` header is set, then a ``Cache-Control`` header with a
+value of ``no-cache`` must be set as well. This is to avoid user-agents
+inadvertently caching the responses.
+
 `JSON` sent in a request should be validated against a JSON Schema. A
 ``util.extract_json`` method is available. This takes a request body and a
 schema. If multiple schema are used for different microversions of the same
@@ -237,7 +266,7 @@ Most of the handler code in the placement API is tested using `gabbi`_. Some
 utility code is tested with unit tests found in
 `nova/tests/unit/api/openstack/placement/`. The back-end objects are tested
 with a combination of unit and functional tests found in
-`nova/tests/unit/objects/test_resource_provider.py` and
+``nova/tests/unit/objects/test_resource_provider.py`` and
 `nova/tests/functional/db`. Adding unit and non-gabbi functional tests is done
 in the same way as other aspects of nova.
 
@@ -254,20 +283,20 @@ application is run via `wsgi-intercept`_, meaning that real HTTP requests are
 being made over a file handle that appears to Python to be a socket.
 
 In the placement API the YAML files (aka "gabbits") can be found in
-`nova/tests/functional/api/openstack/placement/gabbits`. Fixture definitions are
-in `fixtures.py` in the parent directory. Tests are currently grouped by handlers
-(e.g., `resource-provider.yaml` and `inventory.yaml`). This is not a
+``nova/tests/functional/api/openstack/placement/gabbits``. Fixture definitions are
+in ``fixtures.py`` in the parent directory. Tests are currently grouped by handlers
+(e.g., ``resource-provider.yaml`` and ``inventory.yaml``). This is not a
 requirement and as we increase the number of tests it makes sense to have more
 YAML files with fewer tests, divided up by the arc of API interaction that they
 test.
 
 The gabbi tests are integrated into the functional tox target, loaded via
-`nova/tests/functional/api/openstack/placement/test_placement_api.py`. If you
+``nova/tests/functional/api/openstack/placement/test_placement_api.py``. If you
 want to run just the gabbi tests one way to do so is::
 
     tox -efunctional test_placement_api
 
-If you want to run just one yaml file (in this example `inventory.yaml`)::
+If you want to run just one yaml file (in this example ``inventory.yaml``)::
 
     tox -efunctional placement_api.inventory
 
@@ -299,7 +328,7 @@ overhead, the tests run quickly.
 
 While `fixtures`_ can be used to establish entities that are required for
 tests, creating those entities via the HTTP API results in tests which are more
-descriptive. For example the `inventory.yaml` file creates the resource
+descriptive. For example the ``inventory.yaml`` file creates the resource
 provider to which it will then add inventory. This makes it easy to explore a
 sequence of interactions and a variety of responses with the tests:
 
@@ -337,7 +366,7 @@ developed in a way to limit dependency on the rest of the nova codebase and be
 self-contained:
 
 * Most code is in `nova/api/openstack/placement` except for oslo versioned
-  object code in `nova/objects/resource_provider.py`.
+  object code in ``nova/objects/resource_provider.py``.
 * Database query code is kept within the objects.
 * The methods on the objects are not remotable, as the only intended caller is
   the placement API code.
@@ -351,7 +380,7 @@ addressed if the extraction ever happens):
 * Database models, migrations and tables use the nova api database.
 * The nova `FaultWrapper` middleware is being used.
 * `nova.i18n` package provides the ``_`` and related functions.
-* `nova.conf` is used for configuration.
+* ``nova.conf`` is used for configuration.
 * Unit and functional tests depend on fixtures and other functionality in base
   classes provided by nova.
 
@@ -365,7 +394,7 @@ for an eventual extraction and avoid creating unnecessary interdependencies.
 .. _Request: http://docs.webob.org/en/latest/reference.html#request
 .. _Response: http://docs.webob.org/en/latest/#response
 .. _microversions: http://specs.openstack.org/openstack/api-wg/guidelines/microversion_specification.html
-.. _release note: http://docs.openstack.org/developer/reno/usage.html
+.. _release note: https://docs.openstack.org/reno/latest/user/usage.html
 .. _gabbi: https://gabbi.readthedocs.io/
 .. _telemetry: http://specs.openstack.org/openstack/telemetry-specs/specs/kilo/declarative-http-tests.html
 .. _wsgi-intercept: http://wsgi-intercept.readthedocs.io/
@@ -375,3 +404,4 @@ for an eventual extraction and avoid creating unnecessary interdependencies.
 .. _JSONPath: http://goessner.net/articles/JsonPath/
 .. _gabbi-run: http://gabbi.readthedocs.io/en/latest/runner.html
 .. _errors: http://specs.openstack.org/openstack/api-wg/guidelines/errors.html
+.. _API Reference: https://developer.openstack.org/api-ref/placement/

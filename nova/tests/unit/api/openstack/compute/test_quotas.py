@@ -295,6 +295,44 @@ class QuotaSetsTestV21(BaseQuotaSetsTest):
         self.controller.update(self._get_http_request(),
                                1234, body={'quota_set': {'networks': 1}})
 
+    def test_duplicate_quota_filter(self):
+        query_string = 'user_id=1&user_id=2'
+        req = fakes.HTTPRequest.blank('', query_string=query_string)
+        self.controller.show(req, 1234)
+        self.controller.update(req, 1234, body={'quota_set': {}})
+        self.controller.detail(req, 1234)
+        self.controller.delete(req, 1234)
+
+    def test_quota_filter_negative_int_as_string(self):
+        req = fakes.HTTPRequest.blank('', query_string='user_id=-1')
+        self.controller.show(req, 1234)
+        self.controller.update(req, 1234, body={'quota_set': {}})
+        self.controller.detail(req, 1234)
+        self.controller.delete(req, 1234)
+
+    def test_quota_filter_int_as_string(self):
+        req = fakes.HTTPRequest.blank('', query_string='user_id=123')
+        self.controller.show(req, 1234)
+        self.controller.update(req, 1234, body={'quota_set': {}})
+        self.controller.detail(req, 1234)
+        self.controller.delete(req, 1234)
+
+    def test_unknown_quota_filter(self):
+        query_string = 'unknown_filter=abc'
+        req = fakes.HTTPRequest.blank('', query_string=query_string)
+        self.controller.show(req, 1234)
+        self.controller.update(req, 1234, body={'quota_set': {}})
+        self.controller.detail(req, 1234)
+        self.controller.delete(req, 1234)
+
+    def test_quota_additional_filter(self):
+        query_string = 'user_id=1&additional_filter=2'
+        req = fakes.HTTPRequest.blank('', query_string=query_string)
+        self.controller.show(req, 1234)
+        self.controller.update(req, 1234, body={'quota_set': {}})
+        self.controller.detail(req, 1234)
+        self.controller.delete(req, 1234)
+
 
 class ExtendedQuotasTestV21(BaseQuotaSetsTest):
     plugin = quotas_v21
@@ -338,32 +376,26 @@ class ExtendedQuotasTestV21(BaseQuotaSetsTest):
     def _get_http_request(self, url=''):
         return fakes.HTTPRequest.blank(url)
 
-    def test_quotas_update_exceed_in_used(self):
-        patcher = mock.patch.object(quota.QUOTAS, 'get_settable_quotas')
-        get_settable_quotas = patcher.start()
-
+    @mock.patch.object(quota.QUOTAS, 'get_settable_quotas')
+    def test_quotas_update_exceed_in_used(self, get_settable_quotas):
         body = {'quota_set': {'cores': 10}}
 
         get_settable_quotas.side_effect = self.fake_get_settable_quotas
         req = self._get_http_request()
         self.assertRaises(webob.exc.HTTPBadRequest, self.controller.update,
                           req, 'update_me', body=body)
-        mock.patch.stopall()
 
-    def test_quotas_force_update_exceed_in_used(self):
-        patcher = mock.patch.object(quota.QUOTAS, 'get_settable_quotas')
-        get_settable_quotas = patcher.start()
-        patcher = mock.patch.object(self.plugin.QuotaSetsController,
-                                    '_get_quotas')
-        _get_quotas = patcher.start()
+    @mock.patch.object(quota.QUOTAS, 'get_settable_quotas')
+    def test_quotas_force_update_exceed_in_used(self, get_settable_quotas):
+        with mock.patch.object(self.plugin.QuotaSetsController,
+                               '_get_quotas') as _get_quotas:
 
-        body = {'quota_set': {'cores': 10, 'force': 'True'}}
+            body = {'quota_set': {'cores': 10, 'force': 'True'}}
 
-        get_settable_quotas.side_effect = self.fake_get_settable_quotas
-        _get_quotas.side_effect = self.fake_get_quotas
-        req = self._get_http_request()
-        self.controller.update(req, 'update_me', body=body)
-        mock.patch.stopall()
+            get_settable_quotas.side_effect = self.fake_get_settable_quotas
+            _get_quotas.side_effect = self.fake_get_quotas
+            req = self._get_http_request()
+            self.controller.update(req, 'update_me', body=body)
 
     @mock.patch('nova.objects.Quotas.create_limit')
     def test_quotas_update_good_data(self, mock_createlimit):
@@ -376,19 +408,16 @@ class ExtendedQuotasTestV21(BaseQuotaSetsTest):
                          len(mock_createlimit.mock_calls))
 
     @mock.patch('nova.objects.Quotas.create_limit')
-    def test_quotas_update_bad_data(self, mock_createlimit):
-        patcher = mock.patch.object(quota.QUOTAS, 'get_settable_quotas')
-        get_settable_quotas = patcher.start()
-
+    @mock.patch.object(quota.QUOTAS, 'get_settable_quotas')
+    def test_quotas_update_bad_data(self, mock_gsq, mock_createlimit):
         body = {'quota_set': {'cores': 10,
                               'instances': 1}}
 
-        get_settable_quotas.side_effect = self.fake_get_settable_quotas
+        mock_gsq.side_effect = self.fake_get_settable_quotas
         req = fakes.HTTPRequest.blank('/v2/fake4/os-quota-sets/update_me',
                                       use_admin_context=True)
         self.assertRaises(webob.exc.HTTPBadRequest, self.controller.update,
                           req, 'update_me', body=body)
-        mock.patch.stopall()
         self.assertEqual(0,
                          len(mock_createlimit.mock_calls))
 
@@ -535,6 +564,7 @@ class QuotaSetsPolicyEnforcementV21(test.NoDBTestCase):
 
 
 class QuotaSetsTestV236(test.NoDBTestCase):
+    microversion = '2.36'
 
     def setUp(self):
         super(QuotaSetsTestV236, self).setUp()
@@ -584,7 +614,7 @@ class QuotaSetsTestV236(test.NoDBTestCase):
             'server_groups': 10
         }
         self.controller = quotas_v21.QuotaSetsController()
-        self.req = fakes.HTTPRequest.blank('', version='2.36')
+        self.req = fakes.HTTPRequest.blank('', version=self.microversion)
 
     def _ensure_filtered_quotas_existed_in_old_api(self):
         res_dict = self.controller.show(self.old_req, 1234)
@@ -637,3 +667,11 @@ class QuotaSetsTestV236(test.NoDBTestCase):
              body={'quota_set': {'cores': 100}})
         for filtered in self.filtered_quotas:
             self.assertNotIn(filtered, res_dict['quota_set'])
+
+
+class QuotaSetsTestV257(QuotaSetsTestV236):
+    microversion = '2.57'
+
+    def setUp(self):
+        super(QuotaSetsTestV257, self).setUp()
+        self.filtered_quotas.extend(quotas_v21.FILTERED_QUOTAS_2_57)

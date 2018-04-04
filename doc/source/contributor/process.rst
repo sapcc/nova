@@ -28,16 +28,16 @@ OpenStack Wide Patterns
 Nova follows most of the generally adopted norms for OpenStack projects.
 You can get more details here:
 
-* http://docs.openstack.org/infra/manual/developers.html
-* http://docs.openstack.org/project-team-guide/
+* https://docs.openstack.org/infra/manual/developers.html
+* https://docs.openstack.org/project-team-guide/
 
 If you are new to Nova, please read this first: :ref:`getting_involved`.
 
 Dates overview
 ==============
 
-For Pike, please see:
-https://wiki.openstack.org/wiki/Nova/Pike_Release_Schedule
+For Queens, please see:
+https://wiki.openstack.org/wiki/Nova/Queens_Release_Schedule
 
 .. note: Throughout this document any link which references the name of a
          release cycle in the link can usually be changed to the name of the
@@ -53,7 +53,7 @@ and packagers to perform tests (automated, and manual) on the release, to
 spot any major bugs.
 
 The Nova release process is aligned with the `development cycle schedule
-<http://docs.openstack.org/project-team-guide/release-management.html#typical-development-cycle-schedule>`_
+<https://docs.openstack.org/project-team-guide/release-management.html#typical-development-cycle-schedule>`_
 used by many OpenStack projects, including the following steps.
 
 - Feature Proposal Freeze
@@ -69,7 +69,10 @@ used by many OpenStack projects, including the following steps.
 - String Freeze
 
   -  give translators time to translate all our strings
-  -  Note: debug logs are no longer translated
+
+  .. note::
+
+    debug logs are no longer translated
 
 - Dependency Freeze
 
@@ -98,18 +101,21 @@ Why we have a Spec Freeze:
    bounding is a useful way to limit the number of submissions
 
 By the freeze date, we expect all blueprints that will be approved for the
-cycle to be listed on launchpad and all relevant specs to be merged. For Pike,
-blueprints can be found at https://blueprints.launchpad.net/nova/pike and
-specs at
-https://specs.openstack.org/openstack/nova-specs/specs/pike/index.html
+cycle to be listed on launchpad and all relevant specs to be merged.
+For Queens, blueprints can be found at
+https://blueprints.launchpad.net/nova/queens and specs at
+https://specs.openstack.org/openstack/nova-specs/specs/queens/index.html
 
 Starting with Liberty, we are keeping a backlog open for submission at all
-times. Note: the focus is on accepting and agreeing problem statements
-as being in scope, rather than queueing up work items for the next
-release. We are still working on a new lightweight process to get out of
-the backlog and approved for a particular release. For more details on
-backlog specs, please see:
-http://specs.openstack.org/openstack/nova-specs/specs/backlog/index.html
+times.
+
+.. note::
+
+  The focus is on accepting and agreeing problem statements as being in scope,
+  rather than queueing up work items for the next release. We are still
+  working on a new lightweight process to get out of the backlog and approved
+  for a particular release. For more details on backlog specs, please see:
+  http://specs.openstack.org/openstack/nova-specs/specs/backlog/index.html
 
 There can be exceptions, usually it's an urgent feature request that
 comes up after the initial deadline. These will generally be discussed
@@ -125,7 +131,7 @@ Non-priority Feature Freeze
 This is a Nova specific process.
 
 This only applies to low priority blueprints in this list:
-https://blueprints.launchpad.net/nova/pike
+https://blueprints.launchpad.net/nova/queens
 
 We currently have a very finite amount of review bandwidth. In order to
 make code review time for the agreed community wide priorities, we have
@@ -151,7 +157,7 @@ http://lists.openstack.org/pipermail/openstack-dev/2015-July/070920.html
 Exception process:
 
 -  Please add request in here:
-   https://etherpad.openstack.org/p/pike-nova-non-priority-feature-freeze
+   https://etherpad.openstack.org/p/queens-nova-non-priority-feature-freeze
    (ideally with core reviewers to sponsor your patch, normally the
    folks who have already viewed those patches)
 -  make sure you make your request before the end of the feature freeze
@@ -190,7 +196,7 @@ implement. How do I make that happen?
 
 You can get most of your questions answered here:
 
--  http://docs.openstack.org/infra/manual/developers.html
+-  https://docs.openstack.org/infra/manual/developers.html
 
 But let's put a Nova specific twist on things...
 
@@ -205,7 +211,7 @@ Where do you track bugs?
 
 We track bugs here:
 
--  http://bugs.launchpad.net/nova
+-  https://bugs.launchpad.net/nova
 
 If you fix an issue, please raise a bug so others who spot that issue
 can find the fix you kindly created for them.
@@ -219,7 +225,7 @@ When do I need a blueprint vs a spec?
 
 For more details see:
 
--  http://docs.openstack.org/developer/nova/blueprints.html
+-  https://docs.openstack.org/nova/latest/contributor/blueprints.html
 
 To understand this question, we need to understand why blueprints and
 specs are useful.
@@ -248,7 +254,7 @@ So you need your blueprint approved? Here is how:
       review in that meeting.
 
 -  if you need a spec, then please submit a nova-spec for review, see:
-   http://docs.openstack.org/infra/manual/developers.html
+   https://docs.openstack.org/infra/manual/developers.html
 
 Got any more questions? Contact johnthetubaguy or one of the other
 nova-specs-core who are awake at the same time as you. IRC is best as
@@ -376,7 +382,7 @@ For blueprint and spec features, do everything for blueprint-only
 features and also:
 
 -  If it's a project or subteam priority, add it to:
-   https://etherpad.openstack.org/p/pike-nova-priorities-tracking
+   https://etherpad.openstack.org/p/queens-nova-priorities-tracking
 -  Ensure your spec is approved for the current release cycle.
 
 If your code is a project or subteam priority, the cores interested in
@@ -421,7 +427,7 @@ Interoperable API, supporting a vibrant ecosystem
 
 An interoperable API that gives users on-demand access to compute
 resources is at the heart of Nova's mission:
-http://docs.openstack.org/developer/nova/project_scope.html#mission
+https://docs.openstack.org/nova/latest/contributor/project-scope.html#mission
 
 Nova has a vibrant ecosystem of tools built on top of the current Nova
 API. All features should be designed to work with all technology
@@ -782,7 +788,7 @@ get, and increase the velocity of getting code merged.
 
 The first part is for subgroups to show they can do a great job of
 recommending patches. This is starting in here:
-https://etherpad.openstack.org/p/pike-nova-priorities-tracking
+https://etherpad.openstack.org/p/queens-nova-priorities-tracking
 
 Ideally this would be done with gerrit user "tags" rather than an
 etherpad. There are some investigations by sdague in how feasible it
@@ -906,7 +912,7 @@ Feature Classification
 
 This is a look at moving forward this effort:
 
--  http://docs.openstack.org/developer/nova/support-matrix.html
+-  https://docs.openstack.org/nova/latest/user/support-matrix.html
 
 The things we need to cover:
 

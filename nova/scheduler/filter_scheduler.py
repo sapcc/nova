@@ -27,9 +27,11 @@ from six.moves import range
 import nova.conf
 from nova import exception
 from nova.i18n import _
+from nova import objects
 from nova import rpc
 from nova.scheduler import client
 from nova.scheduler import driver
+from nova.scheduler import utils
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -44,22 +46,21 @@ class FilterScheduler(driver.Scheduler):
         self.placement_client = scheduler_client.reportclient
 
     def select_destinations(self, context, spec_obj, instance_uuids,
-            alloc_reqs_by_rp_uuid, provider_summaries):
-        """Returns a sorted list of HostState objects that satisfy the
-        supplied request_spec.
-
-        These hosts will have already had their resources claimed in Placement.
+            alloc_reqs_by_rp_uuid, provider_summaries,
+            allocation_request_version=None, return_alternates=False):
+        """Returns a list of lists of Selection objects, which represent the
+        hosts and (optionally) alternates for each instance.
 
         :param context: The RequestContext object
         :param spec_obj: The RequestSpec object
         :param instance_uuids: List of UUIDs, one for each value of the spec
                                object's num_instances attribute
         :param alloc_reqs_by_rp_uuid: Optional dict, keyed by resource provider
-                                      UUID, of the allocation requests that may
+                                      UUID, of the allocation_requests that may
                                       be used to claim resources against
                                       matched hosts. If None, indicates either
                                       the placement API wasn't reachable or
-                                      that there were no allocation requests
+                                      that there were no allocation_requests
                                       returned by the placement API. If the
                                       latter, the provider_summaries will be an
                                       empty dict, not None.
@@ -73,57 +74,40 @@ class FilterScheduler(driver.Scheduler):
                                    indicates the Placement API returned no
                                    potential matches for the requested
                                    resources.
+        :param allocation_request_version: The microversion used to request the
+                                           allocations.
+        :param return_alternates: When True, zero or more alternate hosts are
+                                  returned with each selected host. The number
+                                  of alternates is determined by the
+                                  configuration option
+                                  `CONF.scheduler.max_attempts`.
         """
         self.notifier.info(
             context, 'scheduler.select_destinations.start',
             dict(request_spec=spec_obj.to_legacy_request_spec_dict()))
 
-        num_instances = spec_obj.num_instances
-        selected_hosts = self._schedule(context, spec_obj, instance_uuids,
-            alloc_reqs_by_rp_uuid, provider_summaries)
-
-        # Couldn't fulfill the request_spec
-        if len(selected_hosts) < num_instances:
-            # NOTE(Rui Chen): If multiple creates failed, set the updated time
-            # of selected HostState to None so that these HostStates are
-            # refreshed according to database in next schedule, and release
-            # the resource consumed by instance in the process of selecting
-            # host.
-            for host in selected_hosts:
-                host.updated = None
-
-            # Log the details but don't put those into the reason since
-            # we don't want to give away too much information about our
-            # actual environment.
-            LOG.debug('There are %(hosts)d hosts available but '
-                      '%(num_instances)d instances requested to build.',
-                      {'hosts': len(selected_hosts),
-                       'num_instances': num_instances})
-
-            reason = _('There are not enough hosts available.')
-            raise exception.NoValidHost(reason=reason)
-
+        host_selections = self._schedule(context, spec_obj, instance_uuids,
+                alloc_reqs_by_rp_uuid, provider_summaries,
+                allocation_request_version, return_alternates)
         self.notifier.info(
             context, 'scheduler.select_destinations.end',
             dict(request_spec=spec_obj.to_legacy_request_spec_dict()))
-        return selected_hosts
+        return host_selections
 
     def _schedule(self, context, spec_obj, instance_uuids,
-            alloc_reqs_by_rp_uuid, provider_summaries):
-        """Returns a list of hosts that meet the required specs, ordered by
-        their fitness.
-
-        These hosts will have already had their resources claimed in Placement.
+            alloc_reqs_by_rp_uuid, provider_summaries,
+            allocation_request_version=None, return_alternates=False):
+        """Returns a list of lists of Selection objects.
 
         :param context: The RequestContext object
         :param spec_obj: The RequestSpec object
         :param instance_uuids: List of instance UUIDs to place or move.
         :param alloc_reqs_by_rp_uuid: Optional dict, keyed by resource provider
-                                      UUID, of the allocation requests that may
+                                      UUID, of the allocation_requests that may
                                       be used to claim resources against
                                       matched hosts. If None, indicates either
                                       the placement API wasn't reachable or
-                                      that there were no allocation requests
+                                      that there were no allocation_requests
                                       returned by the placement API. If the
                                       latter, the provider_summaries will be an
                                       empty dict, not None.
@@ -137,6 +121,13 @@ class FilterScheduler(driver.Scheduler):
                                    indicates the Placement API returned no
                                    potential matches for the requested
                                    resources.
+        :param allocation_request_version: The microversion used to request the
+                                           allocations.
+        :param return_alternates: When True, zero or more alternate hosts are
+                                  returned with each selected host. The number
+                                  of alternates is determined by the
+                                  configuration option
+                                  `CONF.scheduler.max_attempts`.
         """
         elevated = context.elevated()
 
@@ -145,19 +136,11 @@ class FilterScheduler(driver.Scheduler):
         # host, we virtually consume resources on it so subsequent
         # selections can adjust accordingly.
 
-        # Note: remember, we are using an iterator here. So only
+        # Note: remember, we are using a generator-iterator here. So only
         # traverse this list once. This can bite you if the hosts
         # are being scanned in a filter or weighing function.
         hosts = self._get_all_host_states(elevated, spec_obj,
             provider_summaries)
-
-        # A list of the instance UUIDs that were successfully claimed against
-        # in the placement API. If we are not able to successfully claim for
-        # all involved instances, we use this list to remove those allocations
-        # before returning
-        claimed_instance_uuids = []
-
-        selected_hosts = []
 
         # NOTE(sbauza): The RequestSpec.num_instances field contains the number
         # of instances created when the RequestSpec was used to first boot some
@@ -165,127 +148,250 @@ class FilterScheduler(driver.Scheduler):
         # so prefer the length of instance_uuids unless it is None.
         num_instances = (len(instance_uuids) if instance_uuids
                          else spec_obj.num_instances)
+
+        # For each requested instance, we want to return a host whose resources
+        # for the instance have been claimed, along with zero or more
+        # alternates. These alternates will be passed to the cell that the
+        # selected host is in, so that if for some reason the build fails, the
+        # cell conductor can retry building the instance on one of these
+        # alternates instead of having to simply fail. The number of alternates
+        # is based on CONF.scheduler.max_attempts; note that if there are not
+        # enough filtered hosts to provide the full number of alternates, the
+        # list of hosts may be shorter than this amount.
+        num_alts = CONF.scheduler.max_attempts if return_alternates else 0
+
+        if (instance_uuids is None or
+                not self.USES_ALLOCATION_CANDIDATES or
+                alloc_reqs_by_rp_uuid is None):
+            # We need to support the caching scheduler, which doesn't use the
+            # placement API (and has USES_ALLOCATION_CANDIDATE = False) and
+            # therefore we skip all the claiming logic for that scheduler
+            # driver. Also, if there was a problem communicating with the
+            # placement API, alloc_reqs_by_rp_uuid will be None, so we skip
+            # claiming in that case as well. In the case where instance_uuids
+            # is None, that indicates an older conductor, so we need to return
+            # the objects without alternates. They will be converted back to
+            # the older dict format representing HostState objects.
+            return self._legacy_find_hosts(context, num_instances, spec_obj,
+                                           hosts, num_alts)
+
+        # A list of the instance UUIDs that were successfully claimed against
+        # in the placement API. If we are not able to successfully claim for
+        # all involved instances, we use this list to remove those allocations
+        # before returning
+        claimed_instance_uuids = []
+
+        # The list of hosts that have been selected (and claimed).
+        claimed_hosts = []
+
         for num in range(num_instances):
             hosts = self._get_sorted_hosts(spec_obj, hosts, num)
             if not hosts:
                 # NOTE(jaypipes): If we get here, that means not all instances
                 # in instance_uuids were able to be matched to a selected host.
-                # So, let's clean up any already-claimed allocations here
-                # before breaking and returning
-                self._cleanup_allocations(claimed_instance_uuids)
+                # Any allocations will be cleaned up in the
+                # _ensure_sufficient_hosts() call.
                 break
 
-            if (instance_uuids is None or
-                    not self.USES_ALLOCATION_CANDIDATES or
-                    alloc_reqs_by_rp_uuid is None):
-                # Unfortunately, we still need to deal with older conductors
-                # that may not be passing in a list of instance_uuids. In those
-                # cases, obviously we can't claim resources because we don't
-                # have instance UUIDs to claim with, so we just grab the first
-                # host in the list of sorted hosts. In addition to older
-                # conductors, we need to support the caching scheduler, which
-                # doesn't use the placement API (and has
-                # USES_ALLOCATION_CANDIDATE = False) and therefore we skip all
-                # the claiming logic for that scheduler driver. Finally, if
-                # there was a problem communicating with the placement API,
-                # alloc_reqs_by_rp_uuid will be None, so we skip claiming in
-                # that case as well
-                claimed_host = hosts[0]
-            else:
-                instance_uuid = instance_uuids[num]
+            instance_uuid = instance_uuids[num]
+            # Attempt to claim the resources against one or more resource
+            # providers, looping over the sorted list of possible hosts
+            # looking for an allocation_request that contains that host's
+            # resource provider UUID
+            claimed_host = None
+            for host in hosts:
+                cn_uuid = host.uuid
+                if cn_uuid not in alloc_reqs_by_rp_uuid:
+                    msg = ("A host state with uuid = '%s' that did not have a "
+                          "matching allocation_request was encountered while "
+                          "scheduling. This host was skipped.")
+                    LOG.debug(msg, cn_uuid)
+                    continue
 
-                # Attempt to claim the resources against one or more resource
-                # providers, looping over the sorted list of possible hosts
-                # looking for an allocation request that contains that host's
-                # resource provider UUID
-                claimed_host = None
-                for host in hosts:
-                    cn_uuid = host.uuid
-                    if cn_uuid not in alloc_reqs_by_rp_uuid:
-                        LOG.debug("Found host state %s that wasn't in "
-                                  "allocation requests. Skipping.", cn_uuid)
-                        continue
+                alloc_reqs = alloc_reqs_by_rp_uuid[cn_uuid]
+                # TODO(jaypipes): Loop through all allocation_requests instead
+                # of just trying the first one. For now, since we'll likely
+                # want to order the allocation_requests in the future based on
+                # information in the provider summaries, we'll just try to
+                # claim resources using the first allocation_request
+                alloc_req = alloc_reqs[0]
+                if utils.claim_resources(elevated, self.placement_client,
+                        spec_obj, instance_uuid, alloc_req,
+                        allocation_request_version=allocation_request_version):
+                    claimed_host = host
+                    break
 
-                    alloc_reqs = alloc_reqs_by_rp_uuid[cn_uuid]
-                    if self._claim_resources(elevated, spec_obj, instance_uuid,
-                            alloc_reqs):
-                        claimed_host = host
-                        break
+            if claimed_host is None:
+                # We weren't able to claim resources in the placement API
+                # for any of the sorted hosts identified. So, clean up any
+                # successfully-claimed resources for prior instances in
+                # this request and return an empty list which will cause
+                # select_destinations() to raise NoValidHost
+                LOG.debug("Unable to successfully claim against any host.")
+                break
 
-                if claimed_host is None:
-                    # We weren't able to claim resources in the placement API
-                    # for any of the sorted hosts identified. So, clean up any
-                    # successfully-claimed resources for prior instances in
-                    # this request and return an empty list which will cause
-                    # select_destinations() to raise NoValidHost
-                    LOG.debug("Unable to successfully claim against any host.")
-                    self._cleanup_allocations(claimed_instance_uuids)
-                    return []
-
-                claimed_instance_uuids.append(instance_uuid)
-
-            LOG.debug("Selected host: %(host)s", {'host': claimed_host})
-            selected_hosts.append(claimed_host)
+            claimed_instance_uuids.append(instance_uuid)
+            claimed_hosts.append(claimed_host)
 
             # Now consume the resources so the filter/weights will change for
             # the next instance.
-            claimed_host.consume_from_request(spec_obj)
-            if spec_obj.instance_group is not None:
-                spec_obj.instance_group.hosts.append(claimed_host.host)
-                # hosts has to be not part of the updates when saving
-                spec_obj.instance_group.obj_reset_changes(['hosts'])
-        return selected_hosts
+            self._consume_selected_host(claimed_host, spec_obj)
 
-    def _cleanup_allocations(self, instance_uuids):
+        # Check if we were able to fulfill the request. If not, this call will
+        # raise a NoValidHost exception.
+        self._ensure_sufficient_hosts(context, claimed_hosts, num_instances,
+                claimed_instance_uuids)
+
+        # We have selected and claimed hosts for each instance. Now we need to
+        # find alternates for each host.
+        selections_to_return = self._get_alternate_hosts(
+            claimed_hosts, spec_obj, hosts, num, num_alts,
+            alloc_reqs_by_rp_uuid, allocation_request_version)
+        return selections_to_return
+
+    def _ensure_sufficient_hosts(self, context, hosts, required_count,
+            claimed_uuids=None):
+        """Checks that we have selected a host for each requested instance. If
+        not, log this failure, remove allocations for any claimed instances,
+        and raise a NoValidHost exception.
+        """
+        if len(hosts) == required_count:
+            # We have enough hosts.
+            return
+
+        if claimed_uuids:
+            self._cleanup_allocations(context, claimed_uuids)
+        # NOTE(Rui Chen): If multiple creates failed, set the updated time
+        # of selected HostState to None so that these HostStates are
+        # refreshed according to database in next schedule, and release
+        # the resource consumed by instance in the process of selecting
+        # host.
+        for host in hosts:
+            host.updated = None
+
+        # Log the details but don't put those into the reason since
+        # we don't want to give away too much information about our
+        # actual environment.
+        LOG.debug('There are %(hosts)d hosts available but '
+                  '%(required_count)d instances requested to build.',
+                  {'hosts': len(hosts),
+                   'required_count': required_count})
+        reason = _('There are not enough hosts available.')
+        raise exception.NoValidHost(reason=reason)
+
+    def _cleanup_allocations(self, context, instance_uuids):
         """Removes allocations for the supplied instance UUIDs."""
         if not instance_uuids:
             return
         LOG.debug("Cleaning up allocations for %s", instance_uuids)
         for uuid in instance_uuids:
-            self.placement_client.delete_allocation_for_instance(uuid)
+            self.placement_client.delete_allocation_for_instance(context, uuid)
 
-    def _claim_resources(self, ctx, spec_obj, instance_uuid, alloc_reqs):
-        """Given an instance UUID (representing the consumer of resources), the
-        HostState object for the host that was chosen for the instance, and a
-        list of allocation request JSON objects, attempt to claim resources for
-        the instance in the placement API. Returns True if the claim process
-        was successful, False otherwise.
-
-        :param ctx: The RequestContext object
-        :param spec_obj: The RequestSpec object
-        :param instance_uuid: The UUID of the consuming instance
-        :param cn_uuid: UUID of the host to allocate against
-        :param alloc_reqs: A list of allocation request JSON objects that
-                           allocate against (at least) the compute host
-                           selected by the _schedule() method. These allocation
-                           requests were constructed from a call to the GET
-                           /allocation_candidates placement API call.  Each
-                           allocation_request satisfies the original request
-                           for resources and can be supplied as-is (along with
-                           the project and user ID to the placement API's
-                           PUT /allocations/{consumer_uuid} call to claim
-                           resources for the instance
+    def _legacy_find_hosts(self, context, num_instances, spec_obj, hosts,
+                           num_alts):
+        """Some schedulers do not do claiming, or we can sometimes not be able
+        to if the Placement service is not reachable. Additionally, we may be
+        working with older conductors that don't pass in instance_uuids.
         """
-        LOG.debug("Attempting to claim resources in the placement API for "
-                  "instance %s", instance_uuid)
+        # The list of hosts selected for each instance
+        selected_hosts = []
+        # This the overall list of values to be returned. There will be one
+        # item per instance, and each item will be a list of Selection objects
+        # representing the selected host along with zero or more alternates
+        # from the same cell.
+        selections_to_return = []
 
-        project_id = spec_obj.project_id
+        for num in range(num_instances):
+            hosts = self._get_sorted_hosts(spec_obj, hosts, num)
+            if not hosts:
+                # No hosts left, so break here, and the
+                # _ensure_sufficient_hosts() call below will handle this.
+                break
+            selected_host = hosts[0]
+            selected_hosts.append(selected_host)
+            self._consume_selected_host(selected_host, spec_obj)
 
-        # NOTE(jaypipes): So, the RequestSpec doesn't store the user_id,
-        # only the project_id, so we need to grab the user information from
-        # the context. Perhaps we should consider putting the user ID in
-        # the spec object?
-        user_id = ctx.user_id
+        # Check if we were able to fulfill the request. If not, this call will
+        # raise a NoValidHost exception.
+        self._ensure_sufficient_hosts(context, selected_hosts, num_instances)
 
-        # TODO(jaypipes): Loop through all allocation requests instead of just
-        # trying the first one. For now, since we'll likely want to order the
-        # allocation requests in the future based on information in the
-        # provider summaries, we'll just try to claim resources using the first
-        # allocation request
-        alloc_req = alloc_reqs[0]
+        selections_to_return = self._get_alternate_hosts(selected_hosts,
+                spec_obj, hosts, num, num_alts)
+        return selections_to_return
 
-        return self.placement_client.claim_resources(instance_uuid,
-            alloc_req, project_id, user_id)
+    @staticmethod
+    def _consume_selected_host(selected_host, spec_obj):
+        LOG.debug("Selected host: %(host)s", {'host': selected_host})
+        selected_host.consume_from_request(spec_obj)
+        if spec_obj.instance_group is not None:
+            spec_obj.instance_group.hosts.append(selected_host.host)
+            # hosts has to be not part of the updates when saving
+            spec_obj.instance_group.obj_reset_changes(['hosts'])
+
+    def _get_alternate_hosts(self, selected_hosts, spec_obj, hosts, index,
+                             num_alts, alloc_reqs_by_rp_uuid=None,
+                             allocation_request_version=None):
+        # We only need to filter/weigh the hosts again if we're dealing with
+        # more than one instance since the single selected host will get
+        # filtered out of the list of alternates below.
+        if index > 0:
+            # The selected_hosts have all had resources 'claimed' via
+            # _consume_selected_host, so we need to filter/weigh and sort the
+            # hosts again to get an accurate count for alternates.
+            hosts = self._get_sorted_hosts(spec_obj, hosts, index)
+        # This is the overall list of values to be returned. There will be one
+        # item per instance, and each item will be a list of Selection objects
+        # representing the selected host along with alternates from the same
+        # cell.
+        selections_to_return = []
+        for selected_host in selected_hosts:
+            # This is the list of hosts for one particular instance.
+            if alloc_reqs_by_rp_uuid:
+                selected_alloc_req = alloc_reqs_by_rp_uuid.get(
+                        selected_host.uuid)[0]
+            else:
+                selected_alloc_req = None
+            selection = objects.Selection.from_host_state(selected_host,
+                    allocation_request=selected_alloc_req,
+                    allocation_request_version=allocation_request_version)
+            selected_plus_alts = [selection]
+            cell_uuid = selected_host.cell_uuid
+            # This will populate the alternates with many of the same unclaimed
+            # hosts. This is OK, as it should be rare for a build to fail. And
+            # if there are not enough hosts to fully populate the alternates,
+            # it's fine to return fewer than we'd like. Note that we exclude
+            # any claimed host from consideration as an alternate because it
+            # will have had its resources reduced and will have a much lower
+            # chance of being able to fit another instance on it.
+            for host in hosts:
+                if len(selected_plus_alts) >= num_alts:
+                    break
+                if host.cell_uuid == cell_uuid and host not in selected_hosts:
+                    if alloc_reqs_by_rp_uuid is not None:
+                        alt_uuid = host.uuid
+                        if alt_uuid not in alloc_reqs_by_rp_uuid:
+                            msg = ("A host state with uuid = '%s' that did "
+                                   "not have a matching allocation_request "
+                                   "was encountered while scheduling. This "
+                                   "host was skipped.")
+                            LOG.debug(msg, alt_uuid)
+                            continue
+
+                        # TODO(jaypipes): Loop through all allocation_requests
+                        # instead of just trying the first one. For now, since
+                        # we'll likely want to order the allocation_requests in
+                        # the future based on information in the provider
+                        # summaries, we'll just try to claim resources using
+                        # the first allocation_request
+                        alloc_req = alloc_reqs_by_rp_uuid[alt_uuid][0]
+                        alt_selection = (
+                            objects.Selection.from_host_state(host, alloc_req,
+                                    allocation_request_version))
+                    else:
+                        alt_selection = objects.Selection.from_host_state(host)
+                    selected_plus_alts.append(alt_selection)
+            selections_to_return.append(selected_plus_alts)
+        return selections_to_return
 
     def _get_sorted_hosts(self, spec_obj, host_states, index):
         """Returns a list of HostState objects that match the required
@@ -302,6 +408,16 @@ class FilterScheduler(driver.Scheduler):
 
         weighed_hosts = self.host_manager.get_weighed_hosts(filtered_hosts,
             spec_obj)
+        if CONF.filter_scheduler.shuffle_best_same_weighed_hosts:
+            # NOTE(pas-ha) Randomize best hosts, relying on weighed_hosts
+            # being already sorted by weight in descending order.
+            # This decreases possible contention and rescheduling attempts
+            # when there is a large number of hosts having the same best
+            # weight, especially so when host_subset_size is 1 (default)
+            best_hosts = [w for w in weighed_hosts
+                          if w.weight == weighed_hosts[0].weight]
+            random.shuffle(best_hosts)
+            weighed_hosts = best_hosts + weighed_hosts[len(best_hosts):]
         # Strip off the WeighedHost wrapper class...
         weighed_hosts = [h.obj for h in weighed_hosts]
 
@@ -321,10 +437,14 @@ class FilterScheduler(driver.Scheduler):
 
     def _get_all_host_states(self, context, spec_obj, provider_summaries):
         """Template method, so a subclass can implement caching."""
-        # NOTE(jaypipes): None is treated differently from an empty dict. We
-        # pass None when we want to grab all compute nodes (for instance, when
-        # using the caching scheduler. We pass an empty dict when the Placement
-        # API found no providers that match the requested constraints.
+        # NOTE(jaypipes): provider_summaries being None is treated differently
+        # from an empty dict. provider_summaries is None when we want to grab
+        # all compute nodes, for instance when using the caching scheduler.
+        # The provider_summaries variable will be an empty dict when the
+        # Placement API found no providers that match the requested
+        # constraints, which in turn makes compute_uuids an empty list and
+        # get_host_states_by_uuids will return an empty generator-iterator
+        # also, which will eventually result in a NoValidHost error.
         compute_uuids = None
         if provider_summaries is not None:
             compute_uuids = list(provider_summaries.keys())

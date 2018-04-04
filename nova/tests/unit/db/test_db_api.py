@@ -20,7 +20,6 @@
 
 import copy
 import datetime
-import uuid as stdlib_uuid
 
 import iso8601
 import mock
@@ -62,7 +61,6 @@ from nova.db.sqlalchemy import utils as db_utils
 from nova import exception
 from nova import objects
 from nova.objects import fields
-from nova import quota
 from nova import test
 from nova.tests import fixtures as nova_fixtures
 from nova.tests.unit import fake_console_auth_token
@@ -117,23 +115,10 @@ def _make_compute_node(host, node, hv_type, service_id):
     return compute_node_dict
 
 
-def _quota_reserve(context, project_id, user_id):
-    """Create sample Quota, QuotaUsage and Reservation objects.
-
-    There is no method db.quota_usage_create(), so we have to use
-    db.quota_reserve() for creating QuotaUsage objects.
-
-    Returns reservations uuids.
-
-    """
-    def get_sync(resource, usage):
-        def sync(elevated, project_id, user_id):
-            return {resource: usage}
-        return sync
+def _quota_create(context, project_id, user_id):
+    """Create sample Quota objects."""
     quotas = {}
     user_quotas = {}
-    resources = {}
-    deltas = {}
     for i in range(3):
         resource = 'resource%d' % i
         if i == 2:
@@ -150,16 +135,6 @@ def _quota_reserve(context, project_id, user_id):
             user_quotas[resource] = db.quota_create(context, project_id,
                                                     resource, i + 1,
                                                     user_id=user_id).hard_limit
-        sync_name = '_sync_%s' % resource
-        resources[resource] = quota.ReservableResource(
-            resource, sync_name, 'quota_res_%d' % i)
-        deltas[resource] = i
-        setattr(sqlalchemy_api, sync_name, get_sync(resource, i))
-        sqlalchemy_api.QUOTA_SYNC_FUNCTIONS[sync_name] = getattr(
-            sqlalchemy_api, sync_name)
-    return db.quota_reserve(context, resources, quotas, user_quotas, deltas,
-                    timeutils.utcnow(), CONF.quota.until_refresh,
-                    datetime.timedelta(days=1), project_id, user_id)
 
 
 class DbTestCase(test.TestCase):
@@ -1052,8 +1027,8 @@ class SqlAlchemyDbApiNoDbTestCase(test.NoDBTestCase):
         t2 = t1 + datetime.timedelta(seconds=10)
         t3 = t2 + datetime.timedelta(hours=1)
 
-        t2_utc = t2.replace(tzinfo=iso8601.iso8601.Utc())
-        t3_utc = t3.replace(tzinfo=iso8601.iso8601.Utc())
+        t2_utc = t2.replace(tzinfo=iso8601.UTC)
+        t3_utc = t3.replace(tzinfo=iso8601.UTC)
 
         datetime_keys = ('created_at', 'deleted_at')
 
@@ -1469,6 +1444,7 @@ class MigrationTestCase(test.TestCase):
         self._create(status='error')
         self._create(status='failed')
         self._create(status='accepted')
+        self._create(status='done')
         self._create(status='completed')
         self._create(status='cancelled')
         self._create(source_compute='host2', source_node='b',
@@ -1478,7 +1454,8 @@ class MigrationTestCase(test.TestCase):
 
     def _create(self, status='migrating', source_compute='host1',
                 source_node='a', dest_compute='host2', dest_node='b',
-                system_metadata=None, migration_type=None):
+                system_metadata=None, migration_type=None, uuid=None,
+                created_at=None, updated_at=None):
 
         values = {'host': source_compute}
         instance = db.instance_create(self.ctxt, values)
@@ -1489,7 +1466,11 @@ class MigrationTestCase(test.TestCase):
         values = {'status': status, 'source_compute': source_compute,
                   'source_node': source_node, 'dest_compute': dest_compute,
                   'dest_node': dest_node, 'instance_uuid': instance['uuid'],
-                  'migration_type': migration_type}
+                  'migration_type': migration_type, 'uuid': uuid}
+        if created_at:
+            values['created_at'] = created_at
+        if updated_at:
+            values['updated_at'] = updated_at
         db.migration_create(self.ctxt, values)
         return values
 
@@ -1500,6 +1481,7 @@ class MigrationTestCase(test.TestCase):
             self.assertNotEqual('error', migration['status'])
             self.assertNotEqual('failed', migration['status'])
             self.assertNotEqual('accepted', migration['status'])
+            self.assertNotEqual('done', migration['status'])
             self.assertNotEqual('cancelled', migration['status'])
 
     def test_migration_get_in_progress_joins(self):
@@ -1537,6 +1519,48 @@ class MigrationTestCase(test.TestCase):
             instance = migration['instance']
             self.assertEqual(migration['instance_uuid'], instance['uuid'])
 
+    def test_migration_get_by_uuid(self):
+        migration1 = self._create(uuid=uuidsentinel.migration1_uuid)
+        self._create(uuid=uuidsentinel.other_uuid)
+        real_migration1 = db.migration_get_by_uuid(
+            self.ctxt, uuidsentinel.migration1_uuid)
+        for key in migration1:
+            self.assertEqual(migration1[key], real_migration1[key])
+
+    def test_migration_get_by_uuid_soft_deleted_and_deleted(self):
+        migration1 = self._create(uuid=uuidsentinel.migration1_uuid)
+
+        @sqlalchemy_api.pick_context_manager_writer
+        def soft_delete_it(context):
+            sqlalchemy_api.model_query(context, models.Migration).\
+                filter_by(uuid=uuidsentinel.migration1_uuid).\
+                soft_delete()
+
+        @sqlalchemy_api.pick_context_manager_writer
+        def delete_it(context):
+            sqlalchemy_api.model_query(context, models.Migration,
+                                       read_deleted="yes").\
+                filter_by(uuid=uuidsentinel.migration1_uuid).\
+                delete()
+
+        soft_delete_it(self.ctxt)
+        soft_deletd_migration1 = db.migration_get_by_uuid(
+            self.ctxt, uuidsentinel.migration1_uuid)
+        for key in migration1:
+            self.assertEqual(migration1[key], soft_deletd_migration1[key])
+        delete_it(self.ctxt)
+        self.assertRaises(exception.MigrationNotFound,
+                          db.migration_get_by_uuid, self.ctxt,
+                          uuidsentinel.migration1_uuid)
+
+    def test_migration_get_by_uuid_not_found(self):
+        """Asserts that MigrationNotFound is raised if a migration is not
+        found by a given uuid.
+        """
+        self.assertRaises(exception.MigrationNotFound,
+                          db.migration_get_by_uuid, self.ctxt,
+                          uuidsentinel.migration_not_found)
+
     def test_get_migrations_by_filters(self):
         filters = {"status": "migrating", "host": "host3",
                    "migration_type": None, "hidden": False}
@@ -1546,6 +1570,14 @@ class MigrationTestCase(test.TestCase):
             self.assertEqual(filters["status"], migration['status'])
             hosts = [migration['source_compute'], migration['dest_compute']]
             self.assertIn(filters["host"], hosts)
+
+    def test_get_migrations_by_uuid_filters(self):
+        mig_uuid1 = self._create(uuid=uuidsentinel.mig_uuid1)
+        filters = {"uuid": [uuidsentinel.mig_uuid1]}
+        mig_get = db.migration_get_all_by_filters(self.ctxt, filters)
+        self.assertEqual(1, len(mig_get))
+        for key in mig_uuid1:
+            self.assertEqual(mig_uuid1[key], mig_get[0][key])
 
     def test_get_migrations_by_filters_with_multiple_statuses(self):
         filters = {"status": ["reverted", "confirmed"],
@@ -1680,6 +1712,74 @@ class MigrationTestCase(test.TestCase):
                           db.migration_get_by_id_and_instance, self.ctxt,
                           '500', '501')
 
+    def _create_3_migration_after_time(self, time=None):
+        time = time or timeutils.utcnow()
+        tmp_time = time + datetime.timedelta(days=1)
+        after_1hour = datetime.timedelta(hours=1)
+        self._create(uuid=uuidsentinel.uuid_time1, created_at=tmp_time,
+                     updated_at=tmp_time + after_1hour)
+        tmp_time = time + datetime.timedelta(days=2)
+        self._create(uuid=uuidsentinel.uuid_time2, created_at=tmp_time,
+                     updated_at=tmp_time + after_1hour)
+        tmp_time = time + datetime.timedelta(days=3)
+        self._create(uuid=uuidsentinel.uuid_time3, created_at=tmp_time,
+                     updated_at=tmp_time + after_1hour)
+
+    def test_get_migrations_by_filters_with_limit(self):
+        migrations = db.migration_get_all_by_filters(self.ctxt, {}, limit=3)
+        self.assertEqual(3, len(migrations))
+
+    def test_get_migrations_by_filters_with_limit_marker(self):
+        self._create_3_migration_after_time()
+        # order by created_at, desc: time3, time2, time1
+        migrations = db.migration_get_all_by_filters(
+            self.ctxt, {}, limit=2, marker=uuidsentinel.uuid_time3)
+        # time3 as marker: time2, time1
+        self.assertEqual(2, len(migrations))
+        self.assertEqual(migrations[0]['uuid'], uuidsentinel.uuid_time2)
+        self.assertEqual(migrations[1]['uuid'], uuidsentinel.uuid_time1)
+        # time3 as marker, limit 2: time3, time2
+        migrations = db.migration_get_all_by_filters(
+            self.ctxt, {}, limit=1, marker=uuidsentinel.uuid_time3)
+        self.assertEqual(1, len(migrations))
+        self.assertEqual(migrations[0]['uuid'], uuidsentinel.uuid_time2)
+
+    def test_get_migrations_by_filters_with_limit_marker_sort(self):
+        self._create_3_migration_after_time()
+        # order by created_at, desc: time3, time2, time1
+        migrations = db.migration_get_all_by_filters(
+            self.ctxt, {}, limit=2, marker=uuidsentinel.uuid_time3)
+        # time2, time1
+        self.assertEqual(2, len(migrations))
+        self.assertEqual(migrations[0]['uuid'], uuidsentinel.uuid_time2)
+        self.assertEqual(migrations[1]['uuid'], uuidsentinel.uuid_time1)
+
+        # order by updated_at, desc: time1, time2, time3
+        migrations = db.migration_get_all_by_filters(
+            self.ctxt, {}, sort_keys=['updated_at'], sort_dirs=['asc'],
+            limit=2, marker=uuidsentinel.uuid_time1)
+        # time2, time3
+        self.assertEqual(2, len(migrations))
+        self.assertEqual(migrations[0]['uuid'], uuidsentinel.uuid_time2)
+        self.assertEqual(migrations[1]['uuid'], uuidsentinel.uuid_time3)
+
+    def test_get_migrations_by_filters_with_not_found_marker(self):
+        self.assertRaises(exception.MarkerNotFound,
+                          db.migration_get_all_by_filters, self.ctxt, {},
+                          marker=uuidsentinel.not_found_marker)
+
+    def test_get_migrations_by_filters_with_changes_since(self):
+        changes_time = timeutils.utcnow(with_timezone=True)
+        self._create_3_migration_after_time(changes_time)
+        after_1day_2hours = datetime.timedelta(days=1, hours=2)
+        filters = {"changes-since": changes_time + after_1day_2hours}
+        migrations = db.migration_get_all_by_filters(
+            self.ctxt, filters,
+            sort_keys=['updated_at'], sort_dirs=['asc'])
+        self.assertEqual(2, len(migrations))
+        self.assertEqual(migrations[0]['uuid'], uuidsentinel.uuid_time2)
+        self.assertEqual(migrations[1]['uuid'], uuidsentinel.uuid_time3)
+
 
 class ModelsObjectComparatorMixin(object):
     def _dict_from_object(self, obj, ignored_keys):
@@ -1769,158 +1869,6 @@ class InstanceSystemMetadataTestCase(test.TestCase):
                           db.instance_system_metadata_update,
                           self.ctxt, 'nonexistent-uuid',
                           {'key': 'value'}, True)
-
-
-class RefreshUsageTestCase(test.TestCase):
-    """Tests for the db.api.quota_usage_refresh method. """
-
-    def setUp(self):
-        super(RefreshUsageTestCase, self).setUp()
-        self.ctxt = context.get_admin_context()
-        self.project_id = 'project1'
-        self.user_id = 'user1'
-
-    def _quota_refresh(self, keys):
-        """Refresh the in_use count on the QuotaUsage objects.
-           The QuotaUsage objects are created if they don't exist.
-        """
-        def get_sync(resource, usage):
-            def sync(elevated, project_id, user_id):
-                return {resource: usage}
-            return sync
-
-        resources = {}
-        for i in range(4):
-            resource = 'resource%d' % i
-            if i == 2:
-                # test for project level resources
-                resource = 'fixed_ips'
-            if i == 3:
-                # test for project level resources
-                resource = 'floating_ips'
-
-            sync_name = '_sync_%s' % resource
-            resources[resource] = quota.ReservableResource(
-                resource, sync_name, 'quota_res_%d' % i)
-            setattr(sqlalchemy_api, sync_name, get_sync(resource, i + 1))
-            sqlalchemy_api.QUOTA_SYNC_FUNCTIONS[sync_name] = getattr(
-                sqlalchemy_api, sync_name)
-
-        db.quota_usage_refresh(self.ctxt, resources, keys,
-                               until_refresh=3,
-                               max_age=0,
-                               project_id=self.project_id,
-                               user_id=self.user_id)
-
-    def _compare_resource_usages(self, keys, expected, project_id,
-                                 user_id = None):
-        for key in keys:
-            actual = db.quota_usage_get(self.ctxt, project_id, key, user_id)
-            self.assertEqual(expected['project_id'], actual.project_id)
-            self.assertEqual(expected['user_id'], actual.user_id)
-            self.assertEqual(key, actual.resource)
-            self.assertEqual(expected[key]['in_use'], actual.in_use)
-            self.assertEqual(expected[key]['reserved'], actual.reserved)
-            self.assertEqual(expected[key]['until_refresh'],
-                             actual.until_refresh)
-
-    def test_refresh_created_project_usages(self):
-        # The refresh will create the usages and then sync
-        # in_use from 0 to 3 for fixed_ips and 0 to 4 for floating_ips.
-        keys = ['fixed_ips', 'floating_ips']
-        self._quota_refresh(keys)
-        expected = {'project_id': self.project_id,
-                    # User ID will be none for per-project resources
-                    'user_id': None,
-                    'fixed_ips': {'in_use': 3, 'reserved': 0,
-                                  'until_refresh': 3},
-                    'floating_ips': {'in_use': 4, 'reserved': 0,
-                                     'until_refresh': 3}}
-        self._compare_resource_usages(keys, expected, self.project_id,
-                                      self.user_id)
-
-    def test_refresh_created_user_usages(self):
-        # The refresh will create the usages and then sync
-        # in_use from 0 to 1 for resource0 and 0 to 2 for resource1.
-        keys = ['resource0', 'resource1']
-        self._quota_refresh(keys)
-        expected = {'project_id': self.project_id,
-                    'user_id': self.user_id,
-                    'resource0': {'in_use': 1, 'reserved': 0,
-                                  'until_refresh': 3},
-                    'resource1': {'in_use': 2, 'reserved': 0,
-                                  'until_refresh': 3}}
-        self._compare_resource_usages(keys, expected, self.project_id,
-                                      self.user_id)
-
-
-class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
-
-    """Tests for db.api.reservation_* methods."""
-
-    def setUp(self):
-        super(ReservationTestCase, self).setUp()
-        self.ctxt = context.get_admin_context()
-
-        self.reservations = _quota_reserve(self.ctxt, 'project1', 'user1')
-        usage = db.quota_usage_get(self.ctxt, 'project1', 'resource1', 'user1')
-
-        self.values = {'uuid': 'sample-uuid',
-                'project_id': 'project1',
-                'user_id': 'user1',
-                'resource': 'resource1',
-                'delta': 42,
-                'expire': timeutils.utcnow() + datetime.timedelta(days=1),
-                'usage': {'id': usage.id}}
-
-    def test_reservation_commit(self):
-        expected = {'project_id': 'project1', 'user_id': 'user1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 1, 'in_use': 1},
-                'fixed_ips': {'reserved': 2, 'in_use': 2}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
-                                            self.ctxt, 'project1', 'user1'))
-        _reservation_get(self.ctxt, self.reservations[0])
-        db.reservation_commit(self.ctxt, self.reservations, 'project1',
-                              'user1')
-        self.assertRaises(exception.ReservationNotFound,
-            _reservation_get, self.ctxt, self.reservations[0])
-        expected = {'project_id': 'project1', 'user_id': 'user1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 0, 'in_use': 2},
-                'fixed_ips': {'reserved': 0, 'in_use': 4}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
-                                            self.ctxt, 'project1', 'user1'))
-
-    def test_reservation_rollback(self):
-        expected = {'project_id': 'project1', 'user_id': 'user1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 1, 'in_use': 1},
-                'fixed_ips': {'reserved': 2, 'in_use': 2}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
-                                            self.ctxt, 'project1', 'user1'))
-        _reservation_get(self.ctxt, self.reservations[0])
-        db.reservation_rollback(self.ctxt, self.reservations, 'project1',
-                                'user1')
-        self.assertRaises(exception.ReservationNotFound,
-            _reservation_get, self.ctxt, self.reservations[0])
-        expected = {'project_id': 'project1', 'user_id': 'user1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 0, 'in_use': 1},
-                'fixed_ips': {'reserved': 0, 'in_use': 2}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
-                                            self.ctxt, 'project1', 'user1'))
-
-    def test_reservation_expire(self):
-        self.assertEqual(len(self.reservations),
-                         db.reservation_expire(self.ctxt))
-
-        expected = {'project_id': 'project1', 'user_id': 'user1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 0, 'in_use': 1},
-                'fixed_ips': {'reserved': 0, 'in_use': 2}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
-                                            self.ctxt, 'project1', 'user1'))
 
 
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
@@ -2254,23 +2202,6 @@ class SecurityGroupTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(1, len(security_groups))
         self.assertEqual("default", security_groups[0]["name"])
 
-        usage = db.quota_usage_get(self.ctxt,
-                                   self.ctxt.project_id,
-                                   'security_groups',
-                                   self.ctxt.user_id)
-        self.assertEqual(1, usage.in_use)
-
-    def test_security_group_ensure_default_until_refresh(self):
-        self.flags(until_refresh=2, group='quota')
-        self.ctxt.project_id = 'fake'
-        self.ctxt.user_id = 'fake'
-        db.security_group_ensure_default(self.ctxt)
-        usage = db.quota_usage_get(self.ctxt,
-                                   self.ctxt.project_id,
-                                   'security_groups',
-                                   self.ctxt.user_id)
-        self.assertEqual(2, usage.until_refresh)
-
     @mock.patch.object(db.sqlalchemy.api, '_security_group_get_by_names')
     def test_security_group_ensure_default_called_concurrently(self, sg_mock):
         # make sure NotFound is always raised here to trick Nova to insert the
@@ -2374,7 +2305,7 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         dt_keys = ('created_at', 'deleted_at', 'updated_at',
                    'launched_at', 'terminated_at')
         dt = timeutils.utcnow()
-        dt_utc = dt.replace(tzinfo=iso8601.iso8601.Utc())
+        dt_utc = dt.replace(tzinfo=iso8601.UTC)
         for key in dt_keys:
             values[key] = dt_utc
         inst = db.instance_create(self.ctxt, values)
@@ -2391,7 +2322,7 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         dt_keys = ('created_at', 'deleted_at', 'updated_at',
                    'launched_at', 'terminated_at')
         dt = timeutils.utcnow()
-        dt_utc = dt.replace(tzinfo=iso8601.iso8601.Utc())
+        dt_utc = dt.replace(tzinfo=iso8601.UTC)
         for key in dt_keys:
             values[key] = dt_utc
         inst = db.instance_create(self.ctxt, {})
@@ -2523,6 +2454,22 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
             sys_meta = utils.metadata_to_dict(inst['system_metadata'])
             self.assertEqual(sys_meta, {})
 
+    def test_instance_get_all_by_filters_with_fault(self):
+        inst = self.create_instance_with_args()
+        result = db.instance_get_all_by_filters(self.ctxt, {},
+                                                columns_to_join=['fault'])
+        self.assertIsNone(result[0]['fault'])
+        db.instance_fault_create(self.ctxt,
+                                 {'instance_uuid': inst['uuid'],
+                                  'code': 123})
+        fault2 = db.instance_fault_create(self.ctxt,
+                                          {'instance_uuid': inst['uuid'],
+                                           'code': 123})
+        result = db.instance_get_all_by_filters(self.ctxt, {},
+                                                columns_to_join=['fault'])
+        # Make sure we get the latest fault
+        self.assertEqual(fault2['id'], result[0]['fault']['id'])
+
     def test_instance_get_all_by_filters(self):
         instances = [self.create_instance_with_args() for i in range(3)]
         filtered_instances = db.instance_get_all_by_filters(self.ctxt, {})
@@ -2640,6 +2587,9 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def test_instance_get_by_uuid(self):
         inst = self.create_instance_with_args()
         result = db.instance_get_by_uuid(self.ctxt, inst['uuid'])
+        # instance_create() will return a fault=None, so delete it before
+        # comparing the result of instance_get_by_uuid()
+        del inst.fault
         self._assertEqualInstances(inst, result)
 
     def test_instance_get_by_uuid_join_empty(self):
@@ -3827,6 +3777,38 @@ class ServiceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(0, total)
         self.assertEqual(0, done)
 
+    def test_migration_migrate_to_uuid(self):
+        total, done = sqlalchemy_api.migration_migrate_to_uuid(self.ctxt, 10)
+        self.assertEqual(0, total)
+        self.assertEqual(0, done)
+
+        # Create two migrations, one with a uuid and one without.
+        db.migration_create(self.ctxt,
+                            dict(source_compute='src', source_node='srcnode',
+                                 dest_compute='dst', dest_node='dstnode',
+                                 status='running'))
+        db.migration_create(self.ctxt,
+                            dict(source_compute='src', source_node='srcnode',
+                                 dest_compute='dst', dest_node='dstnode',
+                                 status='running',
+                                 uuid=uuidsentinel.migration2))
+
+        # Now migrate them, we should find one and update one
+        total, done = sqlalchemy_api.migration_migrate_to_uuid(self.ctxt, 10)
+        self.assertEqual(1, total)
+        self.assertEqual(1, done)
+
+        # Get the migrations back to make sure the original uuid didn't change.
+        migrations = db.migration_get_all_by_filters(self.ctxt, {})
+        uuids = [m.uuid for m in migrations]
+        self.assertIn(uuidsentinel.migration2, uuids)
+        self.assertNotIn(None, uuids)
+
+        # Run the online migration again to see nothing was processed.
+        total, done = sqlalchemy_api.migration_migrate_to_uuid(self.ctxt, 10)
+        self.assertEqual(0, total)
+        self.assertEqual(0, done)
+
 
 class BaseInstanceTypeTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def setUp(self):
@@ -3869,19 +3851,22 @@ class InstanceActionTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.ctxt = context.get_admin_context()
 
     def _create_action_values(self, uuid, action='run_instance',
-                              ctxt=None, extra=None):
+                              ctxt=None, extra=None, instance_create=True):
         if ctxt is None:
             ctxt = self.ctxt
 
-        db.instance_create(ctxt, {'uuid': uuid})
+        if instance_create:
+            db.instance_create(ctxt, {'uuid': uuid})
 
+        utc_now = timeutils.utcnow()
         values = {
             'action': action,
             'instance_uuid': uuid,
             'request_id': ctxt.request_id,
             'user_id': ctxt.user_id,
             'project_id': ctxt.project_id,
-            'start_time': timeutils.utcnow(),
+            'start_time': utc_now,
+            'updated_at': utc_now,
             'message': 'action-message'
         }
         if extra is not None:
@@ -3995,6 +3980,64 @@ class InstanceActionTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         self._assertEqualOrderedListOfObjects([action2, action1], actions)
 
+    def test_instance_actions_get_with_limit(self):
+        """Test list instance actions can support pagination."""
+        uuid1 = uuidsentinel.uuid1
+
+        extra = {
+            'created_at': timeutils.utcnow()
+        }
+
+        action_values = self._create_action_values(uuid1, extra=extra)
+        action1 = db.action_start(self.ctxt, action_values)
+
+        action_values['action'] = 'delete'
+        action_values['request_id'] = 'req-' + uuidsentinel.reqid1
+        db.action_start(self.ctxt, action_values)
+
+        actions = db.actions_get(self.ctxt, uuid1)
+        self.assertEqual(2, len(actions))
+
+        actions = db.actions_get(self.ctxt, uuid1, limit=1)
+        self.assertEqual(1, len(actions))
+
+        actions = db.actions_get(
+            self.ctxt, uuid1, limit=1,
+            marker=action_values['request_id'])
+        self.assertEqual(1, len(actions))
+        self._assertEqualListsOfObjects([action1], actions)
+
+    def test_instance_actions_get_with_changes_since(self):
+        """Test list instance actions can support timestamp filter."""
+        uuid1 = uuidsentinel.uuid1
+
+        extra = {
+            'created_at': timeutils.utcnow()
+        }
+
+        action_values = self._create_action_values(uuid1, extra=extra)
+        db.action_start(self.ctxt, action_values)
+
+        timestamp = timeutils.utcnow()
+        action_values['start_time'] = timestamp
+        action_values['updated_at'] = timestamp
+        action_values['action'] = 'delete'
+        action2 = db.action_start(self.ctxt, action_values)
+
+        actions = db.actions_get(self.ctxt, uuid1)
+        self.assertEqual(2, len(actions))
+        self.assertNotEqual(actions[0]['updated_at'],
+                            actions[1]['updated_at'])
+        actions = db.actions_get(
+            self.ctxt, uuid1, filters={'changes-since': timestamp})
+        self.assertEqual(1, len(actions))
+        self._assertEqualListsOfObjects([action2], actions)
+
+    def test_instance_actions_get_with_not_found_marker(self):
+        self.assertRaises(exception.MarkerNotFound,
+                          db.actions_get, self.ctxt, uuidsentinel.uuid1,
+                          marker=uuidsentinel.not_found_marker)
+
     def test_instance_action_get_by_instance_and_action(self):
         """Ensure we can get an action by instance UUID and action id."""
         ctxt2 = context.get_admin_context()
@@ -4017,6 +4060,34 @@ class InstanceActionTestCase(test.TestCase, ModelsObjectComparatorMixin):
         action = db.action_get_by_request_id(self.ctxt, uuid1, request_id)
         self.assertEqual('run_instance', action['action'])
         self.assertEqual(self.ctxt.request_id, action['request_id'])
+
+    def test_instance_action_get_by_instance_and_action_by_order(self):
+        instance_uuid = uuidsentinel.uuid1
+
+        t1 = {
+            'created_at': timeutils.utcnow()
+        }
+        t2 = {
+            'created_at': timeutils.utcnow() + datetime.timedelta(seconds=5)
+        }
+        # Create a confirmResize action
+        action_values = self._create_action_values(
+            instance_uuid, action='confirmResize', extra=t1)
+        a1 = db.action_start(self.ctxt, action_values)
+
+        # Create a delete action with same instance uuid and req id
+        action_values = self._create_action_values(
+            instance_uuid, action='delete', extra=t2, instance_create=False)
+        a2 = db.action_start(self.ctxt, action_values)
+
+        self.assertEqual(a1['request_id'], a2['request_id'])
+        self.assertEqual(a1['instance_uuid'], a2['instance_uuid'])
+        self.assertTrue(a1['created_at'] < a2['created_at'])
+
+        action = db.action_get_by_request_id(self.ctxt, instance_uuid,
+                                             a1['request_id'])
+        # Only get the delete action(last created)
+        self.assertEqual(action['action'], a2['action'])
 
     def test_instance_action_event_start(self):
         """Create an instance action event."""
@@ -4211,6 +4282,82 @@ class InstanceActionTestCase(test.TestCase, ModelsObjectComparatorMixin):
         action = db.action_get_by_request_id(self.ctxt, uuid,
                                              self.ctxt.request_id)
         self.assertNotEqual('Error', action['message'])
+
+    def test_instance_action_updated_with_event_start_and_finish_action(self):
+        uuid = uuidsentinel.uuid1
+        action = db.action_start(self.ctxt, self._create_action_values(uuid))
+        updated_create = action['updated_at']
+        self.assertIsNotNone(updated_create)
+        event_values = self._create_event_values(uuid)
+
+        # event start action
+        time_start = timeutils.utcnow() + datetime.timedelta(seconds=5)
+        event_values['start_time'] = time_start
+        db.action_event_start(self.ctxt, event_values)
+        action = db.action_get_by_request_id(self.ctxt, uuid,
+                                             self.ctxt.request_id)
+        updated_event_start = action['updated_at']
+        self.assertEqual(time_start.isoformat(),
+                         updated_event_start.isoformat())
+        self.assertTrue(updated_event_start > updated_create)
+
+        # event finish action
+        time_finish = timeutils.utcnow() + datetime.timedelta(seconds=10)
+        event_values = {
+            'finish_time': time_finish,
+            'result': 'Success'
+        }
+        event_values = self._create_event_values(uuid, extra=event_values)
+        db.action_event_finish(self.ctxt, event_values)
+        action = db.action_get_by_request_id(self.ctxt, uuid,
+                                             self.ctxt.request_id)
+        updated_event_finish = action['updated_at']
+        self.assertEqual(time_finish.isoformat(),
+                         updated_event_finish.isoformat())
+        self.assertTrue(updated_event_finish > updated_event_start)
+
+    def test_instance_action_not_updated_with_unknown_event_request(self):
+        """Tests that we don't update the action.updated_at field when
+        starting or finishing an action event if we couldn't find the
+        action by the request_id.
+        """
+        # Create a valid action - this represents an active user request.
+        uuid = uuidsentinel.uuid1
+        action = db.action_start(self.ctxt, self._create_action_values(uuid))
+        updated_create = action['updated_at']
+        self.assertIsNotNone(updated_create)
+        event_values = self._create_event_values(uuid)
+
+        # Now start an event on an unknown request ID and admin context where
+        # project_id won't be set.
+        time_start = timeutils.utcnow() + datetime.timedelta(seconds=5)
+        event_values['start_time'] = time_start
+        random_request_id = 'req-%s' % uuidsentinel.request_id
+        event_values['request_id'] = random_request_id
+        admin_context = context.get_admin_context()
+        event_ref = db.action_event_start(admin_context, event_values)
+        # The event would be created on the existing action.
+        self.assertEqual(action['id'], event_ref['action_id'])
+        # And the action.update_at should be the same as before the event was
+        # started.
+        action = db.action_get_by_request_id(self.ctxt, uuid,
+                                             self.ctxt.request_id)
+        self.assertEqual(updated_create, action['updated_at'])
+
+        # Now finish the event on the unknown request ID and admin context.
+        time_finish = timeutils.utcnow() + datetime.timedelta(seconds=10)
+        event_values = {
+            'finish_time': time_finish,
+            'request_id': random_request_id,
+            'result': 'Success'
+        }
+        event_values = self._create_event_values(uuid, extra=event_values)
+        db.action_event_finish(admin_context, event_values)
+        # And the action.update_at should be the same as before the event was
+        # finished.
+        action = db.action_get_by_request_id(self.ctxt, uuid,
+                                             self.ctxt.request_id)
+        self.assertEqual(updated_create, action['updated_at'])
 
 
 class InstanceFaultTestCase(test.TestCase, ModelsObjectComparatorMixin):
@@ -6390,6 +6537,16 @@ class BlockDeviceMappingTestCase(test.TestCase):
     def test_block_device_mapping_create(self):
         bdm = self._create_bdm({})
         self.assertIsNotNone(bdm)
+        self.assertTrue(uuidutils.is_uuid_like(bdm['uuid']))
+
+    def test_block_device_mapping_create_with_blank_uuid(self):
+        bdm = self._create_bdm({'uuid': ''})
+        self.assertIsNotNone(bdm)
+        self.assertTrue(uuidutils.is_uuid_like(bdm['uuid']))
+
+    def test_block_device_mapping_create_with_invalid_uuid(self):
+        self.assertRaises(exception.InvalidUUID,
+                          self._create_bdm, {'uuid': 'invalid-uuid'})
 
     def test_block_device_mapping_create_with_attachment_id(self):
         bdm = self._create_bdm({'attachment_id': uuidsentinel.attachment_id})
@@ -6419,16 +6576,19 @@ class BlockDeviceMappingTestCase(test.TestCase):
             'destination_type': 'volume'
         }
         # check create
-        db.block_device_mapping_update_or_create(self.ctxt, values,
-                                                 legacy=False)
+        bdm = db.block_device_mapping_update_or_create(self.ctxt,
+                                                       copy.deepcopy(values),
+                                                       legacy=False)
+        self.assertTrue(uuidutils.is_uuid_like(bdm['uuid']))
         uuid = values['instance_uuid']
         bdm_real = db.block_device_mapping_get_all_by_instance(self.ctxt, uuid)
         self.assertEqual(len(bdm_real), 1)
         self.assertEqual(bdm_real[0]['device_name'], 'fake_name')
 
         # check update
-        values['destination_type'] = 'camelot'
-        db.block_device_mapping_update_or_create(self.ctxt, values,
+        bdm0 = copy.deepcopy(values)
+        bdm0['destination_type'] = 'camelot'
+        db.block_device_mapping_update_or_create(self.ctxt, bdm0,
                                                  legacy=False)
         bdm_real = db.block_device_mapping_get_all_by_instance(self.ctxt, uuid)
         self.assertEqual(len(bdm_real), 1)
@@ -6437,12 +6597,13 @@ class BlockDeviceMappingTestCase(test.TestCase):
         self.assertEqual(bdm_real['destination_type'], 'camelot')
 
         # check create without device_name
-        bdm1 = dict(values)
+        bdm1 = copy.deepcopy(values)
         bdm1['device_name'] = None
         db.block_device_mapping_update_or_create(self.ctxt, bdm1, legacy=False)
         bdms = db.block_device_mapping_get_all_by_instance(self.ctxt, uuid)
         with_device_name = [b for b in bdms if b['device_name'] is not None]
         without_device_name = [b for b in bdms if b['device_name'] is None]
+        self.assertEqual(2, len(bdms))
         self.assertEqual(len(with_device_name), 1,
                          'expected 1 bdm with device_name, found %d' %
                          len(with_device_name))
@@ -6463,6 +6624,49 @@ class BlockDeviceMappingTestCase(test.TestCase):
         self.assertEqual(len(without_device_name), 2,
                          'expected 2 bdms without device_name, found %d' %
                          len(without_device_name))
+
+    def test_block_device_mapping_update_or_create_with_uuid(self):
+        # Test that we are able to change device_name when calling
+        # block_device_mapping_update_or_create with a uuid.
+        bdm = self._create_bdm({})
+        values = {
+            'uuid': bdm['uuid'],
+            'instance_uuid': bdm['instance_uuid'],
+            'device_name': 'foobar',
+        }
+        db.block_device_mapping_update_or_create(self.ctxt, values,
+                                                 legacy=False)
+        real_bdms = db.block_device_mapping_get_all_by_instance(
+            self.ctxt, bdm['instance_uuid'])
+        self.assertEqual(1, len(real_bdms))
+        self.assertEqual('foobar', real_bdms[0]['device_name'])
+
+    def test_block_device_mapping_update_or_create_with_blank_uuid(self):
+        # Test that create with block_device_mapping_update_or_create raises an
+        # exception if given an invalid uuid
+        values = {
+            'uuid': '',
+            'instance_uuid': uuidsentinel.instance,
+            'device_name': 'foobar',
+        }
+        db.block_device_mapping_update_or_create(self.ctxt, values)
+
+        real_bdms = db.block_device_mapping_get_all_by_instance(
+            self.ctxt, uuidsentinel.instance)
+        self.assertEqual(1, len(real_bdms))
+        self.assertTrue(uuidutils.is_uuid_like(real_bdms[0]['uuid']))
+
+    def test_block_device_mapping_update_or_create_with_invalid_uuid(self):
+        # Test that create with block_device_mapping_update_or_create raises an
+        # exception if given an invalid uuid
+        values = {
+            'uuid': 'invalid-uuid',
+            'instance_uuid': uuidsentinel.instance,
+            'device_name': 'foobar',
+        }
+        self.assertRaises(exception.InvalidUUID,
+                          db.block_device_mapping_update_or_create,
+                          self.ctxt, values)
 
     def test_block_device_mapping_update_or_create_multiple_ephemeral(self):
         uuid = self.instance['uuid']
@@ -7438,294 +7642,28 @@ class QuotaTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertRaises(exception.ProjectQuotaNotFound,
             db.quota_get, self.ctxt, 'project1', 'resource1')
 
-    def test_quota_reserve_all_resources(self):
-        quotas = {}
-        deltas = {}
-        reservable_resources = {}
-        for i, resource in enumerate(quota.resources):
-            if isinstance(resource, quota.ReservableResource):
-                quotas[resource.name] = db.quota_create(self.ctxt, 'project1',
-                                                        resource.name,
-                                                        100).hard_limit
-                deltas[resource.name] = i
-                reservable_resources[resource.name] = resource
-
-        usages = {'instances': 3, 'cores': 6, 'ram': 9}
-        instances = []
-        for i in range(3):
-            instances.append(db.instance_create(self.ctxt,
-                             {'vcpus': 2, 'memory_mb': 3,
-                             'project_id': 'project1'}))
-
-        usages['fixed_ips'] = 2
-        network = db.network_create_safe(self.ctxt, {})
-        for i in range(2):
-            address = '192.168.0.%d' % i
-            db.fixed_ip_create(self.ctxt, {'project_id': 'project1',
-                                           'address': address,
-                                           'network_id': network['id']})
-            db.fixed_ip_associate(self.ctxt, address,
-                                  instances[0].uuid, network['id'])
-
-        usages['floating_ips'] = 5
-        for i in range(5):
-            db.floating_ip_create(self.ctxt, {'project_id': 'project1'})
-
-        usages['security_groups'] = 3
-        for i in range(3):
-            db.security_group_create(self.ctxt, {'project_id': 'project1'})
-
-        usages['server_groups'] = 4
-        for i in range(4):
-            db.instance_group_create(self.ctxt, {'uuid': str(i),
-                                                 'project_id': 'project1'})
-
-        reservations_uuids = db.quota_reserve(self.ctxt, reservable_resources,
-                                              quotas, quotas, deltas, None,
-                                              None, None, 'project1')
-        resources_names = list(reservable_resources.keys())
-        for reservation_uuid in reservations_uuids:
-            reservation = _reservation_get(self.ctxt, reservation_uuid)
-            usage = db.quota_usage_get(self.ctxt, 'project1',
-                                       reservation.resource)
-            self.assertEqual(usage.in_use, usages[reservation.resource],
-                             'Resource: %s' % reservation.resource)
-            self.assertEqual(usage.reserved, deltas[reservation.resource])
-            self.assertIn(reservation.resource, resources_names)
-            resources_names.remove(reservation.resource)
-        self.assertEqual(len(resources_names), 0)
-
     def test_quota_destroy_all_by_project(self):
-        reservations = _quota_reserve(self.ctxt, 'project1', 'user1')
+        _quota_create(self.ctxt, 'project1', 'user1')
         db.quota_destroy_all_by_project(self.ctxt, 'project1')
         self.assertEqual(db.quota_get_all_by_project(self.ctxt, 'project1'),
                             {'project_id': 'project1'})
         self.assertEqual(db.quota_get_all_by_project_and_user(self.ctxt,
                             'project1', 'user1'),
                             {'project_id': 'project1', 'user_id': 'user1'})
-        self.assertEqual(db.quota_usage_get_all_by_project(
-                            self.ctxt, 'project1'),
-                            {'project_id': 'project1'})
-        for r in reservations:
-            self.assertRaises(exception.ReservationNotFound,
-                            _reservation_get, self.ctxt, r)
 
     def test_quota_destroy_all_by_project_and_user(self):
-        reservations = _quota_reserve(self.ctxt, 'project1', 'user1')
+        _quota_create(self.ctxt, 'project1', 'user1')
         db.quota_destroy_all_by_project_and_user(self.ctxt, 'project1',
                                                  'user1')
         self.assertEqual(db.quota_get_all_by_project_and_user(self.ctxt,
                             'project1', 'user1'),
                             {'project_id': 'project1',
                              'user_id': 'user1'})
-        self.assertEqual(db.quota_usage_get_all_by_project_and_user(
-                            self.ctxt, 'project1', 'user1'),
-                            {'project_id': 'project1',
-                             'user_id': 'user1',
-                             'fixed_ips': {'in_use': 2, 'reserved': 2}})
-        for r in reservations:
-            self.assertRaises(exception.ReservationNotFound,
-                            _reservation_get, self.ctxt, r)
-
-    def test_quota_usage_get_nonexistent(self):
-        self.assertRaises(exception.QuotaUsageNotFound, db.quota_usage_get,
-            self.ctxt, 'p1', 'nonexitent_resource')
-
-    def test_quota_usage_get(self):
-        _quota_reserve(self.ctxt, 'p1', 'u1')
-        quota_usage = db.quota_usage_get(self.ctxt, 'p1', 'resource0')
-        expected = {'resource': 'resource0', 'project_id': 'p1',
-                    'in_use': 0, 'reserved': 0, 'total': 0}
-        for key, value in expected.items():
-            self.assertEqual(value, quota_usage[key])
-
-    def test_quota_usage_get_all_by_project(self):
-        _quota_reserve(self.ctxt, 'p1', 'u1')
-        expected = {'project_id': 'p1',
-                    'resource0': {'in_use': 0, 'reserved': 0},
-                    'resource1': {'in_use': 1, 'reserved': 1},
-                    'fixed_ips': {'in_use': 2, 'reserved': 2}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project(
-                         self.ctxt, 'p1'))
-
-    def test_quota_usage_get_all_by_project_and_user(self):
-        _quota_reserve(self.ctxt, 'p1', 'u1')
-        expected = {'project_id': 'p1',
-                    'user_id': 'u1',
-                    'resource0': {'in_use': 0, 'reserved': 0},
-                    'resource1': {'in_use': 1, 'reserved': 1},
-                    'fixed_ips': {'in_use': 2, 'reserved': 2}}
-        self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
-                         self.ctxt, 'p1', 'u1'))
-
-    def test_get_project_user_quota_usages_in_order(self):
-        _quota_reserve(self.ctxt, 'p1', 'u1')
-
-        @sqlalchemy_api.pick_context_manager_reader
-        def test(context):
-            with mock.patch.object(query.Query, 'order_by') as order_mock:
-                sqlalchemy_api._get_project_user_quota_usages(
-                    context, 'p1', 'u1')
-                self.assertTrue(order_mock.called)
-
-        test(self.ctxt)
-
-    def test_quota_usage_update_nonexistent(self):
-        self.assertRaises(exception.QuotaUsageNotFound, db.quota_usage_update,
-            self.ctxt, 'p1', 'u1', 'resource', in_use=42)
-
-    def test_quota_usage_update(self):
-        _quota_reserve(self.ctxt, 'p1', 'u1')
-        db.quota_usage_update(self.ctxt, 'p1', 'u1', 'resource0', in_use=42,
-                              reserved=43)
-        quota_usage = db.quota_usage_get(self.ctxt, 'p1', 'resource0', 'u1')
-        expected = {'resource': 'resource0', 'project_id': 'p1',
-                    'user_id': 'u1', 'in_use': 42, 'reserved': 43, 'total': 85}
-        for key, value in expected.items():
-            self.assertEqual(value, quota_usage[key])
 
     def test_quota_create_exists(self):
         db.quota_create(self.ctxt, 'project1', 'resource1', 41)
         self.assertRaises(exception.QuotaExists, db.quota_create, self.ctxt,
                           'project1', 'resource1', 42)
-
-
-class QuotaReserveNoDbTestCase(test.NoDBTestCase):
-    """Tests quota reserve/refresh operations using mock."""
-
-    def test_create_quota_usage_if_missing_not_created(self):
-        # Tests that QuotaUsage isn't created if it's already in user_usages.
-        resource = 'fake-resource'
-        project_id = 'fake-project'
-        user_id = 'fake_user'
-        session = mock.sentinel
-        quota_usage = mock.sentinel
-        user_usages = {resource: quota_usage}
-        with mock.patch.object(sqlalchemy_api, '_quota_usage_create') as quc:
-            self.assertFalse(sqlalchemy_api._create_quota_usage_if_missing(
-                                user_usages, resource, None,
-                                project_id, user_id, session))
-        self.assertFalse(quc.called)
-
-    def _test_create_quota_usage_if_missing_created(self, per_project_quotas):
-        # Tests that the QuotaUsage is created.
-        user_usages = {}
-        if per_project_quotas:
-            resource = sqlalchemy_api.PER_PROJECT_QUOTAS[0]
-        else:
-            resource = 'fake-resource'
-        project_id = 'fake-project'
-        user_id = 'fake_user'
-        session = mock.sentinel
-        quota_usage = mock.sentinel
-        with mock.patch.object(sqlalchemy_api, '_quota_usage_create',
-                               return_value=quota_usage) as quc:
-            self.assertTrue(sqlalchemy_api._create_quota_usage_if_missing(
-                                user_usages, resource, None,
-                                project_id, user_id, session))
-        self.assertEqual(quota_usage, user_usages[resource])
-        # Now test if the QuotaUsage was created with a user_id or not.
-        if per_project_quotas:
-            quc.assert_called_once_with(
-                project_id, None, resource, 0, 0, None, session)
-        else:
-            quc.assert_called_once_with(
-                project_id, user_id, resource, 0, 0, None, session)
-
-    def test_create_quota_usage_if_missing_created_per_project_quotas(self):
-        self._test_create_quota_usage_if_missing_created(True)
-
-    def test_create_quota_usage_if_missing_created_user_quotas(self):
-        self._test_create_quota_usage_if_missing_created(False)
-
-    def test_is_quota_refresh_needed_in_use(self):
-        # Tests when a quota refresh is needed based on the in_use value.
-        for in_use in range(-1, 1):
-            # We have to set until_refresh=None otherwise mock will give it
-            # a value which runs some code we don't want.
-            quota_usage = mock.MagicMock(in_use=in_use, until_refresh=None)
-            if in_use < 0:
-                self.assertTrue(sqlalchemy_api._is_quota_refresh_needed(
-                                                    quota_usage, max_age=0))
-            else:
-                self.assertFalse(sqlalchemy_api._is_quota_refresh_needed(
-                                                    quota_usage, max_age=0))
-
-    def test_is_quota_refresh_needed_until_refresh_none(self):
-        quota_usage = mock.MagicMock(in_use=0, until_refresh=None)
-        self.assertFalse(sqlalchemy_api._is_quota_refresh_needed(quota_usage,
-                                                                 max_age=0))
-
-    def test_is_quota_refresh_needed_until_refresh_not_none(self):
-        # Tests different values for the until_refresh counter.
-        for until_refresh in range(3):
-            quota_usage = mock.MagicMock(in_use=0, until_refresh=until_refresh)
-            refresh = sqlalchemy_api._is_quota_refresh_needed(quota_usage,
-                                                              max_age=0)
-            until_refresh -= 1
-            if until_refresh <= 0:
-                self.assertTrue(refresh)
-            else:
-                self.assertFalse(refresh)
-            self.assertEqual(until_refresh, quota_usage.until_refresh)
-
-    def test_refresh_quota_usages(self):
-        quota_usage = mock.Mock(spec=models.QuotaUsage)
-        quota_usage.in_use = 5
-        quota_usage.until_refresh = None
-        sqlalchemy_api._refresh_quota_usages(quota_usage, until_refresh=5,
-                                             in_use=6)
-        self.assertEqual(6, quota_usage.in_use)
-        self.assertEqual(5, quota_usage.until_refresh)
-
-    def test_calculate_overquota_no_delta(self):
-        deltas = {'foo': -1}
-        user_quotas = {'foo': 10}
-        overs = sqlalchemy_api._calculate_overquota({}, user_quotas, deltas,
-                                                    {}, {})
-        self.assertFalse(overs)
-
-    def test_calculate_overquota_unlimited_user_quota(self):
-        deltas = {'foo': 1}
-        project_quotas = {'foo': -1}
-        user_quotas = {'foo': -1}
-        project_usages = {'foo': {'total': 10}}
-        user_usages = {'foo': {'total': 10}}
-        overs = sqlalchemy_api._calculate_overquota(
-            project_quotas, user_quotas, deltas, project_usages, user_usages)
-        self.assertFalse(overs)
-
-    def test_calculate_overquota_unlimited_project_quota(self):
-        deltas = {'foo': 1}
-        project_quotas = {'foo': -1}
-        user_quotas = {'foo': 1}
-        project_usages = {'foo': {'total': 0}}
-        user_usages = {'foo': {'total': 0}}
-        overs = sqlalchemy_api._calculate_overquota(
-            project_quotas, user_quotas, deltas, project_usages, user_usages)
-        self.assertFalse(overs)
-
-    def _test_calculate_overquota(self, resource, project_usages, user_usages):
-        deltas = {resource: 1}
-        project_quotas = {resource: 10}
-        user_quotas = {resource: 10}
-        overs = sqlalchemy_api._calculate_overquota(
-            project_quotas, user_quotas, deltas, project_usages, user_usages)
-        self.assertEqual(resource, overs[0])
-
-    def test_calculate_overquota_per_project_quota_overquota(self):
-        # In this test, user quotas are fine but project quotas are over.
-        resource = 'foo'
-        project_usages = {resource: {'total': 10}}
-        user_usages = {resource: {'total': 5}}
-        self._test_calculate_overquota(resource, project_usages, user_usages)
-
-    def test_calculate_overquota_per_user_quota_overquota(self):
-        # In this test, project quotas are fine but user quotas are over.
-        resource = 'foo'
-        project_usages = {resource: {'total': 5}}
-        user_usages = {resource: {'total': 10}}
-        self._test_calculate_overquota(resource, project_usages, user_usages)
 
 
 class QuotaClassTestCase(test.TestCase, ModelsObjectComparatorMixin):
@@ -7783,11 +7721,6 @@ class QuotaClassTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def test_quota_class_update_nonexistent(self):
         self.assertRaises(exception.QuotaClassNotFound, db.quota_class_update,
                                 self.ctxt, 'class name', 'resource', 42)
-
-    def test_refresh_quota_usages(self):
-        quota_usages = mock.Mock()
-        sqlalchemy_api._refresh_quota_usages(quota_usages, until_refresh=5,
-                                             in_use=6)
 
 
 class S3ImageTestCase(test.TestCase):
@@ -9137,7 +9070,7 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         self.uuidstrs = []
         for _ in range(6):
-            self.uuidstrs.append(stdlib_uuid.uuid4().hex)
+            self.uuidstrs.append(uuidutils.generate_uuid(dashed=False))
 
     def _assert_shadow_tables_empty_except(self, *exceptions):
         """Ensure shadow tables are empty
@@ -9207,7 +9140,7 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
         # Archive 2 rows
         results = db.archive_deleted_rows(max_rows=2)
         expected = dict(instance_id_mappings=2)
-        self._assertEqualObjects(expected, results)
+        self._assertEqualObjects(expected, results[0])
         rows = self.conn.execute(qiim).fetchall()
         # Verify we have 4 left in main
         self.assertEqual(len(rows), 4)
@@ -9217,7 +9150,7 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
         # Archive 2 more rows
         results = db.archive_deleted_rows(max_rows=2)
         expected = dict(instance_id_mappings=2)
-        self._assertEqualObjects(expected, results)
+        self._assertEqualObjects(expected, results[0])
         rows = self.conn.execute(qiim).fetchall()
         # Verify we have 2 left in main
         self.assertEqual(len(rows), 2)
@@ -9227,7 +9160,7 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
         # Try to archive more, but there are no deleted rows left.
         results = db.archive_deleted_rows(max_rows=2)
         expected = dict()
-        self._assertEqualObjects(expected, results)
+        self._assertEqualObjects(expected, results[0])
         rows = self.conn.execute(qiim).fetchall()
         # Verify we still have 2 left in main
         self.assertEqual(len(rows), 2)
@@ -9336,6 +9269,37 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
             'shadow_dns_domains',
         )
 
+    def test_archive_deleted_rows_shadow_insertions_equals_deletions(self):
+        # Add 2 rows to table
+        for uuidstr in self.uuidstrs[:2]:
+            ins_stmt = self.instance_id_mappings.insert().values(uuid=uuidstr)
+            self.conn.execute(ins_stmt)
+        # Set both to deleted
+        update_statement = self.instance_id_mappings.update().\
+                where(self.instance_id_mappings.c.uuid.in_(self.uuidstrs[:2]))\
+                .values(deleted=1)
+        self.conn.execute(update_statement)
+        qiim = sql.select([self.instance_id_mappings]).where(self.
+                            instance_id_mappings.c.uuid.in_(self.uuidstrs[:2]))
+        rows = self.conn.execute(qiim).fetchall()
+        # Verify we have 2 in main
+        self.assertEqual(len(rows), 2)
+
+        qsiim = sql.select([self.shadow_instance_id_mappings]).\
+                where(self.shadow_instance_id_mappings.c.uuid.in_(
+                                                            self.uuidstrs[:2]))
+        shadow_rows = self.conn.execute(qsiim).fetchall()
+        # Verify we have 0 in shadow
+        self.assertEqual(len(shadow_rows), 0)
+
+        # Archive the rows
+        db.archive_deleted_rows(max_rows=2)
+
+        main_rows = self.conn.execute(qiim).fetchall()
+        shadow_rows = self.conn.execute(qsiim).fetchall()
+        # Verify the insertions into shadow is same as deletions from main
+        self.assertEqual(len(shadow_rows), len(rows) - len(main_rows))
+
     def _check_sqlite_version_less_than_3_7(self):
         # SQLite doesn't enforce foreign key constraints without a pragma.
         dialect = self.engine.url.get_dialect()
@@ -9364,15 +9328,15 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
         # The first try to archive console_pools should fail, due to FK.
         num = sqlalchemy_api._archive_deleted_rows_for_table("console_pools",
                                                              max_rows=None)
-        self.assertEqual(num, 0)
+        self.assertEqual(num[0], 0)
         # Then archiving consoles should work.
         num = sqlalchemy_api._archive_deleted_rows_for_table("consoles",
                                                              max_rows=None)
-        self.assertEqual(num, 1)
+        self.assertEqual(num[0], 1)
         # Then archiving console_pools should work.
         num = sqlalchemy_api._archive_deleted_rows_for_table("console_pools",
                                                              max_rows=None)
-        self.assertEqual(num, 1)
+        self.assertEqual(num[0], 1)
         self._assert_shadow_tables_empty_except(
             'shadow_console_pools',
             'shadow_consoles'
@@ -9391,15 +9355,15 @@ class ArchiveTestCase(test.TestCase, ModelsObjectComparatorMixin):
         # The first try to archive instances should fail, due to FK.
         num = sqlalchemy_api._archive_deleted_rows_for_table("instances",
                                                              max_rows=None)
-        self.assertEqual(0, num)
+        self.assertEqual(0, num[0])
         # Then archiving migrations should work.
         num = sqlalchemy_api._archive_deleted_rows_for_table("migrations",
                                                              max_rows=None)
-        self.assertEqual(1, num)
+        self.assertEqual(1, num[0])
         # Then archiving instances should work.
         num = sqlalchemy_api._archive_deleted_rows_for_table("instances",
                                                              max_rows=None)
-        self.assertEqual(1, num)
+        self.assertEqual(1, num[0])
         self._assert_shadow_tables_empty_except(
             'shadow_instances',
             'shadow_migrations'
@@ -10696,6 +10660,7 @@ class ConsoleAuthTokenTestCase(test.TestCase):
         db_obj1 = db.console_auth_token_get_valid(self.context, hash1, uuid1)
         db_obj2 = db.console_auth_token_get_valid(self.context, hash1, uuid2)
         self.assertIsNotNone(db_obj1, "a valid token should be found here")
+        self.assertEqual(hash1, db_obj1['token_hash'])
         self.assertIsNone(db_obj2, "the token uuid should not match")
 
     def test_console_auth_token_destroy_expired_by_host(self):
@@ -10727,3 +10692,166 @@ class ConsoleAuthTokenTestCase(test.TestCase):
         self.assertIsNone(db_obj1, "the token should have been deleted")
         self.assertIsNotNone(db_obj2, "a valid token should be found here")
         self.assertIsNotNone(db_obj3, "a valid token should be found here")
+
+    def test_console_auth_token_get_valid_without_uuid_deleted_instance(self):
+        uuid1 = uuidsentinel.uuid1
+        hash1 = utils.get_sha256_str(uuidsentinel.token1)
+        self._create_instances([uuid1])
+        self._create(hash1, uuid1, 100)
+
+        db_obj1 = db.console_auth_token_get_valid(self.context, hash1)
+        self.assertIsNotNone(db_obj1, "a valid token should be in database")
+
+        db.instance_destroy(self.context, uuid1)
+        db_obj1 = db.console_auth_token_get_valid(self.context, hash1)
+        self.assertIsNone(db_obj1, "the token should have been deleted")
+
+    def test_console_auth_token_get_valid_without_uuid_by_expiry(self):
+        uuid1 = uuidsentinel.uuid1
+        uuid2 = uuidsentinel.uuid2
+        hash1 = utils.get_sha256_str(uuidsentinel.token1)
+        hash2 = utils.get_sha256_str(uuidsentinel.token2)
+        self.addCleanup(timeutils.clear_time_override)
+        timeutils.set_time_override(timeutils.utcnow())
+        self._create_instances([uuid1, uuid2])
+
+        self._create(hash1, uuid1, 10)
+        timeutils.advance_time_seconds(100)
+        self._create(hash2, uuid2, 10)
+
+        db_obj1 = db.console_auth_token_get_valid(self.context, hash1)
+        db_obj2 = db.console_auth_token_get_valid(self.context, hash2)
+        self.assertIsNone(db_obj1, "the token should have expired")
+        self.assertIsNotNone(db_obj2, "a valid token should be found here")
+
+
+class SortMarkerHelper(test.TestCase):
+    def setUp(self):
+        super(SortMarkerHelper, self).setUp()
+
+        self.context = context.RequestContext('fake', 'fake')
+        self.instances = []
+
+        launched = datetime.datetime(2005, 4, 30, 13, 00, 00)
+        td = datetime.timedelta
+
+        values = {
+            'key_name': ['dan', 'dan', 'taylor', 'jax'],
+            'memory_mb': [512, 1024, 512, 256],
+            'launched_at': [launched + td(1), launched - td(256),
+                            launched + td(32), launched - td(5000)],
+        }
+
+        for i in range(0, 4):
+            inst = {'user_id': self.context.user_id,
+                    'project_id': self.context.project_id,
+                    'auto_disk_config': bool(i % 2),
+                    'vcpus': 1}
+            for key in values:
+                inst[key] = values[key].pop(0)
+            db_instance = db.instance_create(self.context, inst)
+            self.instances.append(db_instance)
+
+    def test_with_one_key(self):
+        """Test instance_get_by_sort_filters() with one sort key."""
+        # If we sort ascending by key_name and our marker was something
+        # just after jax, taylor would be the next one.
+        marker = db.instance_get_by_sort_filters(
+            self.context,
+            ['key_name'], ['asc'], ['jaxz'])
+        self.assertEqual(self.instances[2]['uuid'], marker)
+
+    def _test_with_multiple_keys(self, sort_keys, sort_dirs, value_fn):
+        """Test instance_get_by_sort_filters() with multiple sort keys.
+
+        Since this returns the marker it's looking for, it's actually really
+        hard to test this like we normally would with pagination, i.e. marching
+        through the instances in order. Attempting to do so covered up a bug
+        in this previously.
+
+        So, for a list of marker values, query and assert we get the instance
+        we expect.
+        """
+
+        # For the query below, ordering memory_mb asc, key_name desc,
+        # The following is the expected ordering of the instances we
+        # have to test:
+        #
+        #   256-jax
+        #   512-taylor
+        #   512-dan
+        #   1024-dan
+
+        steps = [
+            (200, 'foo', 3),  # all less than 256-jax
+            (256, 'xyz', 3),  # name comes before jax
+            (256, 'jax', 3),  # all equal to 256-jax
+            (256, 'abc', 2),  # name after jax
+            (500, 'foo', 2),  # all greater than 256-jax
+            (512, 'xyz', 2),  # name before taylor and dan
+            (512, 'mno', 0),  # name after taylor, before dan-512
+            (512, 'abc', 1),  # name after dan-512
+            (999, 'foo', 1),  # all greater than 512-taylor
+            (1024, 'xyz', 1),  # name before dan
+            (1024, 'abc', None),  # name after dan
+            (2048, 'foo', None),  # all greater than 1024-dan
+        ]
+
+        for mem, name, expected in steps:
+            marker = db.instance_get_by_sort_filters(
+                self.context,
+                sort_keys,
+                sort_dirs,
+                value_fn(mem, name))
+            if expected is None:
+                self.assertIsNone(marker)
+            else:
+                expected_inst = self.instances[expected]
+                got_inst = [inst for inst in self.instances
+                            if inst['uuid'] == marker][0]
+                self.assertEqual(
+                    expected_inst['uuid'],
+                    marker,
+                    'marker %s-%s expected %s-%s got %s-%s' % (
+                        mem, name,
+                        expected_inst['memory_mb'], expected_inst['key_name'],
+                        got_inst['memory_mb'], got_inst['key_name']))
+
+    def test_with_two_keys(self):
+        """Test instance_get_by_sort_filters() with two sort_keys."""
+        self._test_with_multiple_keys(
+            ['memory_mb', 'key_name'],
+            ['asc', 'desc'],
+            lambda mem, name: [mem, name])
+
+    def test_with_three_keys(self):
+        """Test instance_get_by_sort_filters() with three sort_keys.
+
+        This inserts another key in the middle of memory_mb,key_name
+        which is always equal in all the test instances. We do this
+        to make sure that we are only including the equivalence fallback
+        on the final sort_key, otherwise we might stall out in the
+        middle of a series of instances with equivalent values for
+        a key in the middle of sort_keys.
+        """
+        self._test_with_multiple_keys(
+            ['memory_mb', 'vcpus', 'key_name'],
+            ['asc', 'asc', 'desc'],
+            lambda mem, name: [mem, 1, name])
+
+    def test_no_match(self):
+        marker = db.instance_get_by_sort_filters(self.context,
+                                                 ['memory_mb'], ['asc'],
+                                                 [4096])
+        # None of our instances have >= 4096mb, so nothing matches
+        self.assertIsNone(marker)
+
+    def test_by_bool(self):
+        """Verify that we can use booleans in sort_keys."""
+        # If we sort ascending by auto_disk_config, the first one
+        # with True for that value would be the second instance we
+        # create, because bool(1 % 2) == True.
+        marker = db.instance_get_by_sort_filters(
+            self.context,
+            ['auto_disk_config', 'id'], ['asc', 'asc'], [True, 2])
+        self.assertEqual(self.instances[1]['uuid'], marker)

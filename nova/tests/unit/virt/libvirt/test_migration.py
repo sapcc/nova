@@ -24,6 +24,7 @@ from nova import objects
 from nova import test
 from nova.tests.unit import matchers
 from nova.tests.unit.virt.libvirt import fakelibvirt
+from nova.tests import uuidsentinel as uuids
 from nova.virt.libvirt import config as vconfig
 from nova.virt.libvirt import guest as libvirt_guest
 from nova.virt.libvirt import host
@@ -123,7 +124,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </devices>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_serial_xml(doc, data))
+        res = etree.tostring(migration._update_serial_xml(doc, data),
+                             encoding='unicode')
         new_xml = xml.replace("127.0.0.1", "127.0.0.100").replace(
             "2000", "2001")
         self.assertThat(res, matchers.XMLMatches(new_xml))
@@ -145,7 +147,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </devices>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_serial_xml(doc, data))
+        res = etree.tostring(migration._update_serial_xml(doc, data),
+                             encoding='unicode')
         new_xml = xml.replace("127.0.0.1", "127.0.0.100").replace(
             "2001", "299").replace("2002", "300")
 
@@ -170,7 +173,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </devices>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_serial_xml(doc, data))
+        res = etree.tostring(migration._update_serial_xml(doc, data),
+                             encoding='unicode')
         new_xml = xml.replace("127.0.0.1", "127.0.0.100")
         self.assertThat(res, matchers.XMLMatches(new_xml))
 
@@ -189,7 +193,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </devices>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_graphics_xml(doc, data))
+        res = etree.tostring(migration._update_graphics_xml(doc, data),
+                             encoding='unicode')
         new_xml = xml.replace("127.0.0.1", "127.0.0.100")
         new_xml = new_xml.replace("127.0.0.2", "127.0.0.200")
         self.assertThat(res, matchers.XMLMatches(new_xml))
@@ -238,9 +243,233 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
         get_volume_config = mock.MagicMock(return_value=conf)
         doc = etree.fromstring(xml)
         res = etree.tostring(migration._update_volume_xml(
-            doc, data, get_volume_config))
+            doc, data, get_volume_config), encoding='unicode')
         new_xml = xml.replace('ip-1.2.3.4:3260-iqn.abc.12345.opst-lun-X',
                               'ip-1.2.3.4:3260-iqn.cde.67890.opst-lun-Z')
+        self.assertThat(res, matchers.XMLMatches(new_xml))
+
+    def test_update_volume_xml_keeps_address(self):
+        # Now test to make sure address isn't altered for virtio-scsi and rbd
+        connection_info = {
+            'driver_volume_type': 'rbd',
+            'serial': 'd299a078-f0db-4993-bf03-f10fe44fd192',
+            'data': {
+                'access_mode': 'rw',
+                'secret_type': 'ceph',
+                'name': 'cinder-volumes/volume-d299a078',
+                'encrypted': False,
+                'discard': True,
+                'cluster_name': 'ceph',
+                'secret_uuid': '1a790a26-dd49-4825-8d16-3dd627cf05a9',
+                'qos_specs': None,
+                'auth_enabled': True,
+                'volume_id': 'd299a078-f0db-4993-bf03-f10fe44fd192',
+                'hosts': ['172.16.128.101', '172.16.128.121'],
+                'auth_username': 'cinder',
+                'ports': ['6789', '6789', '6789']}}
+        bdm = objects.LibvirtLiveMigrateBDMInfo(
+            serial='d299a078-f0db-4993-bf03-f10fe44fd192',
+            bus='scsi', type='disk', dev='sdc',
+            connection_info=connection_info)
+        data = objects.LibvirtLiveMigrateData(
+            target_connect_addr=None,
+            bdms=[bdm],
+            block_migration=False)
+        xml = """<domain>
+ <devices>
+    <disk type='network' device='disk'>
+      <driver name='qemu' type='raw' cache='writeback' discard='unmap'/>
+      <auth username='cinder'>
+        <secret type='ceph' uuid='1a790a26-dd49-4825-8d16-3dd627cf05a9'/>
+      </auth>
+      <source protocol='rbd' name='cinder-volumes/volume-d299a078'>
+        <host name='172.16.128.101' port='6789'/>
+        <host name='172.16.128.121' port='6789'/>
+      </source>
+      <backingStore/>
+      <target dev='sdb' bus='scsi'/>
+      <serial>d299a078-f0db-4993-bf03-f10fe44fd192</serial>
+      <alias name='scsi0-0-0-1'/>
+      <address type='drive' controller='0' bus='0' target='0' unit='1'/>
+    </disk>
+ </devices>
+</domain>"""
+        conf = vconfig.LibvirtConfigGuestDisk()
+        conf.source_device = bdm.type
+        conf.driver_name = "qemu"
+        conf.driver_format = "raw"
+        conf.driver_cache = "writeback"
+        conf.target_dev = bdm.dev
+        conf.target_bus = bdm.bus
+        conf.serial = bdm.connection_info.get('serial')
+        conf.source_type = "network"
+        conf.driver_discard = 'unmap'
+        conf.device_addr = vconfig.LibvirtConfigGuestDeviceAddressDrive()
+        conf.device_addr.controller = 0
+
+        get_volume_config = mock.MagicMock(return_value=conf)
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_volume_xml(
+            doc, data, get_volume_config), encoding='unicode')
+        new_xml = xml.replace('sdb',
+                              'sdc')
+        self.assertThat(res, matchers.XMLMatches(new_xml))
+
+    def test_update_volume_xml_add_encryption(self):
+        connection_info = {
+            'driver_volume_type': 'rbd',
+            'serial': 'd299a078-f0db-4993-bf03-f10fe44fd192',
+            'data': {
+                'access_mode': 'rw',
+                'secret_type': 'ceph',
+                'name': 'cinder-volumes/volume-d299a078',
+                'encrypted': False,
+                'discard': True,
+                'cluster_name': 'ceph',
+                'secret_uuid': '1a790a26-dd49-4825-8d16-3dd627cf05a9',
+                'qos_specs': None,
+                'auth_enabled': True,
+                'volume_id': 'd299a078-f0db-4993-bf03-f10fe44fd192',
+                'hosts': ['172.16.128.101', '172.16.128.121'],
+                'auth_username': 'cinder',
+                'ports': ['6789', '6789', '6789']}}
+        bdm = objects.LibvirtLiveMigrateBDMInfo(
+            serial='d299a078-f0db-4993-bf03-f10fe44fd192',
+            bus='scsi', type='disk', dev='sdb',
+            connection_info=connection_info,
+            encryption_secret_uuid=uuids.encryption_secret_uuid)
+        data = objects.LibvirtLiveMigrateData(
+            target_connect_addr=None,
+            bdms=[bdm],
+            block_migration=False)
+        xml = """<domain>
+ <devices>
+    <disk type='network' device='disk'>
+      <driver name='qemu' type='raw' cache='writeback' discard='unmap'/>
+      <auth username='cinder'>
+        <secret type='ceph' uuid='1a790a26-dd49-4825-8d16-3dd627cf05a9'/>
+      </auth>
+      <source protocol='rbd' name='cinder-volumes/volume-d299a078'>
+        <host name='172.16.128.101' port='6789'/>
+        <host name='172.16.128.121' port='6789'/>
+      </source>
+      <backingStore/>
+      <target dev='sdb' bus='scsi'/>
+      <serial>d299a078-f0db-4993-bf03-f10fe44fd192</serial>
+      <alias name='scsi0-0-0-1'/>
+      <address type='drive' controller='0' bus='0' target='0' unit='1'/>
+    </disk>
+ </devices>
+</domain>"""
+        new_xml = """<domain>
+ <devices>
+    <disk type='network' device='disk'>
+      <driver name='qemu' type='raw' cache='writeback' discard='unmap'/>
+      <auth username='cinder'>
+        <secret type='ceph' uuid='1a790a26-dd49-4825-8d16-3dd627cf05a9'/>
+      </auth>
+      <source protocol='rbd' name='cinder-volumes/volume-d299a078'>
+        <host name='172.16.128.101' port='6789'/>
+        <host name='172.16.128.121' port='6789'/>
+      </source>
+      <backingStore/>
+      <target dev='sdb' bus='scsi'/>
+      <serial>d299a078-f0db-4993-bf03-f10fe44fd192</serial>
+      <alias name='scsi0-0-0-1'/>
+      <encryption format='luks'>
+        <secret type='passphrase' uuid='%(encryption_secret_uuid)s'/>
+      </encryption>
+      <address type='drive' controller='0' bus='0' target='0' unit='1'/>
+    </disk>
+ </devices>
+</domain>""" % {'encryption_secret_uuid': uuids.encryption_secret_uuid}
+        conf = vconfig.LibvirtConfigGuestDisk()
+        conf.source_device = bdm.type
+        conf.driver_name = "qemu"
+        conf.driver_format = "raw"
+        conf.driver_cache = "writeback"
+        conf.target_dev = bdm.dev
+        conf.target_bus = bdm.bus
+        conf.serial = bdm.connection_info.get('serial')
+        conf.source_type = "network"
+        conf.driver_discard = 'unmap'
+        conf.device_addr = vconfig.LibvirtConfigGuestDeviceAddressDrive()
+        conf.device_addr.controller = 0
+
+        get_volume_config = mock.MagicMock(return_value=conf)
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_volume_xml(
+            doc, data, get_volume_config), encoding='unicode')
+        self.assertThat(res, matchers.XMLMatches(new_xml))
+
+    def test_update_volume_xml_update_encryption(self):
+        connection_info = {
+            'driver_volume_type': 'rbd',
+            'serial': 'd299a078-f0db-4993-bf03-f10fe44fd192',
+            'data': {
+                'access_mode': 'rw',
+                'secret_type': 'ceph',
+                'name': 'cinder-volumes/volume-d299a078',
+                'encrypted': False,
+                'discard': True,
+                'cluster_name': 'ceph',
+                'secret_uuid': '1a790a26-dd49-4825-8d16-3dd627cf05a9',
+                'qos_specs': None,
+                'auth_enabled': True,
+                'volume_id': 'd299a078-f0db-4993-bf03-f10fe44fd192',
+                'hosts': ['172.16.128.101', '172.16.128.121'],
+                'auth_username': 'cinder',
+                'ports': ['6789', '6789', '6789']}}
+        bdm = objects.LibvirtLiveMigrateBDMInfo(
+            serial='d299a078-f0db-4993-bf03-f10fe44fd192',
+            bus='scsi', type='disk', dev='sdb',
+            connection_info=connection_info,
+            encryption_secret_uuid=uuids.encryption_secret_uuid_new)
+        data = objects.LibvirtLiveMigrateData(
+            target_connect_addr=None,
+            bdms=[bdm],
+            block_migration=False)
+        xml = """<domain>
+ <devices>
+    <disk type='network' device='disk'>
+      <driver name='qemu' type='raw' cache='writeback' discard='unmap'/>
+      <auth username='cinder'>
+        <secret type='ceph' uuid='1a790a26-dd49-4825-8d16-3dd627cf05a9'/>
+      </auth>
+      <source protocol='rbd' name='cinder-volumes/volume-d299a078'>
+        <host name='172.16.128.101' port='6789'/>
+        <host name='172.16.128.121' port='6789'/>
+      </source>
+      <backingStore/>
+      <target dev='sdb' bus='scsi'/>
+      <serial>d299a078-f0db-4993-bf03-f10fe44fd192</serial>
+      <alias name='scsi0-0-0-1'/>
+      <encryption format='luks'>
+        <secret type='passphrase' uuid='%(encryption_secret_uuid)s'/>
+      </encryption>
+      <address type='drive' controller='0' bus='0' target='0' unit='1'/>
+    </disk>
+ </devices>
+</domain>""" % {'encryption_secret_uuid': uuids.encryption_secret_uuid_old}
+        conf = vconfig.LibvirtConfigGuestDisk()
+        conf.source_device = bdm.type
+        conf.driver_name = "qemu"
+        conf.driver_format = "raw"
+        conf.driver_cache = "writeback"
+        conf.target_dev = bdm.dev
+        conf.target_bus = bdm.bus
+        conf.serial = bdm.connection_info.get('serial')
+        conf.source_type = "network"
+        conf.driver_discard = 'unmap'
+        conf.device_addr = vconfig.LibvirtConfigGuestDeviceAddressDrive()
+        conf.device_addr.controller = 0
+
+        get_volume_config = mock.MagicMock(return_value=conf)
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_volume_xml(
+            doc, data, get_volume_config), encoding='unicode')
+        new_xml = xml.replace(uuids.encryption_secret_uuid_old,
+                              uuids.encryption_secret_uuid_new)
         self.assertThat(res, matchers.XMLMatches(new_xml))
 
     def test_update_perf_events_xml(self):
@@ -253,7 +482,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </perf>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_perf_events_xml(doc, data))
+        res = etree.tostring(migration._update_perf_events_xml(doc, data),
+                             encoding='unicode')
 
         self.assertThat(res, matchers.XMLMatches("""<domain>
   <perf>
@@ -266,7 +496,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
         xml = """<domain>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_perf_events_xml(doc, data))
+        res = etree.tostring(migration._update_perf_events_xml(doc, data),
+                             encoding='unicode')
 
         self.assertThat(res, matchers.XMLMatches("""<domain>
 <perf><event enabled="yes" name="cmt"/></perf></domain>"""))
@@ -280,7 +511,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </perf>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_perf_events_xml(doc, data))
+        res = etree.tostring(migration._update_perf_events_xml(doc, data),
+                             encoding='unicode')
 
         self.assertThat(res, matchers.XMLMatches("""<domain>
   <perf>
@@ -296,7 +528,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </perf>
 </domain>"""
         doc = etree.fromstring(xml)
-        res = etree.tostring(migration._update_perf_events_xml(doc, data))
+        res = etree.tostring(migration._update_perf_events_xml(doc, data),
+                             encoding='unicode')
 
         self.assertThat(res, matchers.XMLMatches("""<domain>
   <perf>

@@ -3,13 +3,15 @@ Configure remote console access
 ===============================
 
 To provide a remote console or remote desktop access to guest virtual machines,
-use VNC or SPICE HTML5 through either the OpenStack dashboard or the command
-line. Best practice is to select one or the other to run.
+use VNC, SPICE HTML5 or Serial through either the OpenStack dashboard or the
+command line. Best practice is to select only one of them to run.
+
+.. _about-nova-consoleauth:
 
 About nova-consoleauth
-~~~~~~~~~~~~~~~~~~~~~~
+----------------------
 
-Both client proxies leverage a shared service to manage token authentication
+The client proxies leverage a shared service to manage token authentication
 called ``nova-consoleauth``. This service must be running for either proxy to
 work. Many proxies of either type can be run against a single
 ``nova-consoleauth`` service in a cluster configuration.
@@ -19,7 +21,7 @@ which is a XenAPI-specific service that most recent VNC proxy architectures do
 not use.
 
 SPICE console
-~~~~~~~~~~~~~
+-------------
 
 OpenStack Compute supports VNC consoles to guests. The VNC protocol is fairly
 limited, lacking support for multiple monitors, bi-directional audio, reliable
@@ -55,7 +57,7 @@ Replace ``IP_ADDRESS`` with the management interface IP address of the
 controller or the VIP.
 
 VNC console proxy
-~~~~~~~~~~~~~~~~~
+-----------------
 
 The VNC proxy is an OpenStack component that enables compute service users to
 access their instances through VNC clients.
@@ -70,8 +72,7 @@ The VNC console connection works as follows:
 #. A user connects to the API and gets an ``access_url`` such as,
    ``http://ip:port/?token=xyz``.
 
-#. The user pastes the URL in a browser or uses it as a client
-   parameter.
+#. The user pastes the URL in a browser or uses it as a client parameter.
 
 #. The browser or client connects to the proxy.
 
@@ -80,7 +81,7 @@ The VNC console connection works as follows:
    instance.
 
    The compute host specifies the address that the proxy should use to connect
-   through the ``nova.conf`` file option, ``vncserver_proxyclient_address``. In
+   through the ``nova.conf`` file option, ``server_proxyclient_address``. In
    this way, the VNC proxy works as a bridge between the public network and
    private host network.
 
@@ -102,8 +103,137 @@ client can talk to VNC servers. In general, the VNC proxy:
    :alt: noVNC process
    :width: 95%
 
+VNC proxy security
+~~~~~~~~~~~~~~~~~~
+
+Deploy the public-facing interface of the VNC proxy with HTTPS to prevent
+attacks from malicious parties on the network between the tenant user and proxy
+server. When using HTTPS, the TLS encryption only applies to data between the
+tenant user and proxy server. The data between the proxy server and Compute
+node instance will still be unencrypted. To provide protection for the latter,
+it is necessary to enable the VeNCrypt authentication scheme for VNC in both
+the Compute nodes and noVNC proxy server hosts.
+
+QEMU/KVM Compute node configuration
++++++++++++++++++++++++++++++++++++
+
+Ensure each Compute node running QEMU/KVM with libvirt has a set of
+certificates issued to it. The following is a list of the required
+certificates:
+
+- :file:`/etc/pki/libvirt-vnc/server-cert.pem`
+
+  An x509 certificate to be presented **by the VNC server**. The ``CommonName``
+  should match the **primary hostname of the compute node**. Use of
+  ``subjectAltName`` is also permitted if there is a need to use multiple
+  hostnames or IP addresses to access the same Compute node.
+
+- :file:`/etc/pki/libvirt-vnc/server-key.pem`
+
+  The private key used to generate the ``server-cert.pem`` file.
+
+- :file:`/etc/pki/libvirt-vnc/ca-cert.pem`
+
+  The authority certificate used to sign ``server-cert.pem`` and sign the VNC
+  proxy server certificates.
+
+The certificates must have v3 basic constraints [3]_ present to indicate the
+permitted key use and purpose data.
+
+We recommend using a dedicated certificate authority solely for the VNC
+service. This authority may be a child of the master certificate authority used
+for the OpenStack deployment. This is because libvirt does not currently have
+a mechanism to restrict what certificates can be presented by the proxy server.
+
+For further details on certificate creation, consult the QEMU manual page
+documentation on VNC server certificate setup [2]_.
+
+Configure libvirt to enable the VeNCrypt authentication scheme for the VNC
+server. In :file:`/etc/libvirt/qemu.conf`, uncomment the following settings:
+
+- ``vnc_tls=1``
+
+  This instructs libvirt to enable the VeNCrypt authentication scheme when
+  launching QEMU, passing it the certificates shown above.
+
+- ``vnc_tls_x509_verify=1``
+
+  This instructs QEMU to require that all VNC clients present a valid x509
+  certificate. Assuming a dedicated certificate authority is used for the VNC
+  service, this ensures that only approved VNC proxy servers can connect to the
+  Compute nodes.
+
+After editing :file:`qemu.conf`, the ``libvirtd`` service must be restarted:
+
+.. code:: shell
+
+  $ systemctl restart libvirtd.service
+
+Changes will not apply to any existing running guests on the Compute node, so
+this configuration should be done before launching any instances.
+
+noVNC proxy server configuration
+++++++++++++++++++++++++++++++++
+
+The noVNC proxy server initially only supports the ``none`` authentication
+scheme, which does no checking. Therefore, it is necessary to enable the
+``vencrypt`` authentication scheme by editing the :file:`nova.conf` file to
+set.
+
+.. code::
+
+  [vnc]
+  auth_schemes=vencrypt,none
+
+The :oslo.config:option:`vnc.auth_schemes` values should be listed in order
+of preference. If enabling VeNCrypt on an existing deployment which already has
+instances running, the noVNC proxy server must initially be allowed to use
+``vencrypt`` and ``none``. Once it is confirmed that all Compute nodes have
+VeNCrypt enabled for VNC, it is possible to remove the ``none`` option from the
+list of the :oslo.config:option:`vnc.auth_schemes` values.
+
+At that point, the noVNC proxy will refuse to connect to any Compute node that
+does not offer VeNCrypt.
+
+As well as enabling the authentication scheme, it is necessary to provide
+certificates to the noVNC proxy.
+
+- :file:`/etc/pki/nova-novncproxy/client-cert.pem`
+
+  An x509 certificate to be presented **to the VNC server**. While libvirt/QEMU
+  will not currently do any validation of the ``CommonName`` field, future
+  versions will allow for setting up access controls based on the
+  ``CommonName``. The ``CommonName`` field should match the **primary hostname
+  of the controller node**. If using a HA deployment, the ``Organization``
+  field can also be configured to a value that is common across all console
+  proxy instances in the deployment. This avoids the need to modify each
+  compute node's whitelist every time a console proxy instance is added or
+  removed.
+
+- :file:`/etc/pki/nova-novncproxy/client-key.pem`
+
+  The private key used to generate the ``client-cert.pem`` file.
+
+- :file:`/etc/pki/nova-novncproxy/ca-cert.pem`
+
+  The certificate authority cert used to sign ``client-cert.pem`` and sign the
+  compute node VNC server certificates.
+
+The certificates must have v3 basic constraints [3]_ present to indicate the
+permitted key use and purpose data.
+
+Once the certificates have been created, the noVNC console proxy service must
+be told where to find them. This requires editing :file:`nova.conf` to set.
+
+.. code::
+
+  [vnc]
+  vencrypt_client_key=/etc/pki/nova-novncproxy/client-key.pem
+  vencrypt_client_cert=/etc/pki/nova-novncproxy/client-cert.pem
+  vencrypt_ca_certs=/etc/pki/nova-novncproxy/ca-cert.pem
+
 VNC configuration options
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To customize the VNC console, use the following configuration options in your
 ``nova.conf`` file:
@@ -111,7 +241,7 @@ To customize the VNC console, use the following configuration options in your
 .. note::
 
    To support :ref:`live migration <section_configuring-compute-migrations>`,
-   you cannot specify a specific IP address for ``vncserver_listen``, because
+   you cannot specify a specific IP address for ``server_listen``, because
    that IP address does not exist on the destination host.
 
 .. list-table:: **Description of VNC configuration options**
@@ -151,9 +281,9 @@ To customize the VNC console, use the following configuration options in your
    * - novncproxy_base_url = http://127.0.0.1:6080/vnc_auto.html
      - (StrOpt) Location of VNC console proxy, in the form
        "http://127.0.0.1:6080/vnc_auto.html"
-   * - vncserver_listen = 127.0.0.1
+   * - server_listen = 127.0.0.1
      - (StrOpt) IP address on which instance vncservers should listen
-   * - vncserver_proxyclient_address = 127.0.0.1
+   * - server_proxyclient_address = 127.0.0.1
      - (StrOpt) The address to which proxy clients (like nova-xvpvncproxy)
        should connect
    * - xvpvncproxy_base_url = http://127.0.0.1:6081/console
@@ -162,7 +292,7 @@ To customize the VNC console, use the following configuration options in your
 
 .. note::
 
-   - The ``vncserver_proxyclient_address`` defaults to ``127.0.0.1``, which is
+   - The ``server_proxyclient_address`` defaults to ``127.0.0.1``, which is
      the address of the compute host that Compute instructs proxies to use when
      connecting to instance servers.
 
@@ -175,7 +305,7 @@ To customize the VNC console, use the following configuration options in your
      same network as the proxies.
 
 Typical deployment
-------------------
+~~~~~~~~~~~~~~~~~~
 
 A typical deployment has the following components:
 
@@ -195,7 +325,7 @@ A typical deployment has the following components:
   options, as follows.
 
 nova-novncproxy (noVNC)
------------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 You must install the noVNC package, which contains the ``nova-novncproxy``
 service. As root, run the following command:
@@ -220,7 +350,7 @@ By default, ``nova-novncproxy`` binds on ``0.0.0.0:6080``.
 To connect the service to your Compute deployment, add the following
 configuration options to your ``nova.conf`` file:
 
-- ``vncserver_listen=0.0.0.0``
+- ``server_listen=0.0.0.0``
 
   Specifies the address on which the VNC service should bind. Make sure it is
   assigned one of the compute node interfaces. This address is the one used by
@@ -234,13 +364,13 @@ configuration options to your ``nova.conf`` file:
 
      To use live migration, use the 0.0.0.0 address.
 
-- ``vncserver_proxyclient_address=127.0.0.1``
+- ``server_proxyclient_address=127.0.0.1``
 
   The address of the compute host that Compute instructs proxies to use when
   connecting to instance ``vncservers``.
 
 Frequently asked questions about VNC access to virtual machines
----------------------------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - **Q: What is the difference between ``nova-xvpvncproxy`` and
   ``nova-novncproxy``?**
@@ -278,21 +408,22 @@ Frequently asked questions about VNC access to virtual machines
 
   .. code-block:: console
 
+     [vnc]
      # These flags help construct a connection data structure
-     vncserver_proxyclient_address=192.168.1.2
+     server_proxyclient_address=192.168.1.2
      novncproxy_base_url=http://172.24.1.1:6080/vnc_auto.html
      xvpvncproxy_base_url=http://172.24.1.1:6081/console
 
      # This is the address where the underlying vncserver (not the proxy)
      # will listen for connections.
-     vncserver_listen=192.168.1.2
+     server_listen=192.168.1.2
 
   .. note::
 
      ``novncproxy_base_url`` and ``xvpvncproxy_base_url`` use a public IP; this
      is the URL that is ultimately returned to clients, which generally do not
      have access to your private network. Your PROXYSERVER must be able to
-     reach ``vncserver_proxyclient_address``, because that is the address over
+     reach ``server_proxyclient_address``, because that is the address over
      which the VNC connection is proxied.
 
 - **Q: My noVNC does not work with recent versions of web browsers. Why?**
@@ -320,3 +451,51 @@ Frequently asked questions about VNC access to virtual machines
   A: Make sure the ``base_url`` match your TLS setting. If you are using https
   console connections, make sure that the value of ``novncproxy_base_url`` is
   set explicitly where the ``nova-novncproxy`` service is running.
+
+Serial Console
+--------------
+
+The *serial console* feature  [1]_ in nova is an alternative for graphical
+consoles like *VNC*, *SPICE*, *RDP*. The example below uses these nodes:
+
+* controller node with IP ``192.168.50.100``
+* compute node 1 with IP ``192.168.50.104``
+* compute node 2 with IP ``192.168.50.105``
+
+Here's the general flow of actions:
+
+.. figure:: figures/serial-console-flow.svg
+   :width: 100%
+   :alt: The serial console flow
+
+1. The user requests a serial console connection string for an instance
+   from the REST API.
+2. The `nova-api` service asks the `nova-compute` service, which manages
+   that instance, to fulfill that request.
+3. That connection string gets used by the user to connect to the
+   `nova-serialproxy` service.
+4. The `nova-serialproxy` service then proxies the console interaction
+   to the port of the compute node where the instance is running. That
+   port gets forwarded by the hypervisor into the KVM guest.
+
+The config options for those nodes, which are in the section
+``[serial_console]`` of your ``nova.conf``, are not intuitive at first.
+Keep these things in mind:
+
+* The ``serialproxy_host`` is the address the `nova-serialproxy` service
+  listens to for incoming connections (see step 3).
+* The ``serialproxy_port`` value must be the very same as in the URI
+  of ``base_url``.
+* The ``base_url`` on the compute node will be part of the response the user
+  will get when asking for a serial console connection string (see step 1
+  from above). This means it needs to be an URL the user can connect to.
+* The ``proxyclient_address`` on the compute node will be used by the
+  `nova-serialproxy` service to determine where to connect to for
+  proxying the console interaction.
+
+References
+----------
+
+.. [1] https://specs.openstack.org/openstack/nova-specs/specs/juno/implemented/serial-ports.html
+.. [2] https://qemu.weilnetz.de/doc/qemu-doc.html#vnc_005fsec_005fcertificate_005fverify
+.. [3] https://tools.ietf.org/html/rfc3280#section-4.2.1.10

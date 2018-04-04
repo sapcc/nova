@@ -152,3 +152,72 @@ The 1.10 version brings a new REST resource endpoint for getting a list of
 allocation candidates. Allocation candidates are collections of possible
 allocations against resource providers that can satisfy a particular request
 for resources.
+
+1.11 Add 'allocations' link to the ``GET /resource_providers`` response
+-----------------------------------------------------------------------
+
+The ``/resource_providers/{rp_uuid}/allocations`` endpoint has been available
+since version 1.0, but was not listed in the ``links`` section of the
+``GET /resource_providers`` response.  The link is included as of version 1.11.
+
+1.12 PUT dict format to /allocations/{consumer_uuid}
+----------------------------------------------------
+
+In version 1.12 the request body of a ``PUT /allocations/{consumer_uuid}``
+is expected to have an `object` for the ``allocations`` property, not as
+`array` as with earlier microversions. This puts the request body more in
+alignment with the structure of the ``GET /allocations/{consumer_uuid}``
+response body. Because the `PUT` request requires `user_id` and
+`project_id` in the request body, these fields are added to the `GET`
+response. In addition, the response body for ``GET /allocation_candidates``
+is updated so the allocations in the ``alocation_requests`` object work
+with the new `PUT` format.
+
+1.13 POST multiple allocations to /allocations
+----------------------------------------------
+
+Version 1.13 gives the ability to set or clear allocations for more than
+one consumer uuid with a request to ``POST /allocations``.
+
+1.14 Add nested resource providers
+----------------------------------
+
+The 1.14 version introduces the concept of nested resource providers. The
+resource provider resource now contains two new attributes:
+
+* ``parent_provider_uuid`` indicates the provider's direct parent, or null if
+  there is no parent. This attribute can be set in the call to ``POST
+  /resource_providers`` and ``PUT /resource_providers/{uuid}`` if the attribute
+  has not already been set to a non-NULL value (i.e. we do not support
+  "reparenting" a provider)
+* ``root_provider_uuid`` indicates the UUID of the root resource provider in
+  the provider's tree. This is a read-only attribute
+
+A new ``in_tree=<UUID>`` parameter is now available in the ``GET
+/resource-providers`` API call. Supplying a UUID value for the ``in_tree``
+parameter will cause all resource providers within the "provider tree" of the
+provider matching ``<UUID>`` to be returned.
+
+1.15 Add 'last-modified' and 'cache-control' headers
+----------------------------------------------------
+
+Throughout the API, 'last-modified' headers have been added to GET responses
+and those PUT and POST responses that have bodies. The value is either the
+actual last modified time of the most recently modified associated database
+entity or the current time if there is no direct mapping to the database. In
+addition, 'cache-control: no-cache' headers are added where the 'last-modified'
+header has been added to prevent inadvertent caching of resources.
+
+1.16 Limit allocation candidates
+--------------------------------
+
+Add support for a ``limit`` query parameter when making a
+``GET /allocation_candidates`` request. The parameter accepts an integer
+value, `N`, which limits the maximum number of candidates returned.
+
+1.17 Add 'required' parameter to the allocation candidates (Maximum in Queens)
+------------------------------------------------------------------------------
+
+Add the `required` parameter to the `GET /allocation_candidates` API. It
+accepts a list of traits separated by `,`. The provider summary in the response
+will include the attached traits also.

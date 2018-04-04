@@ -14,14 +14,13 @@ import webob
 
 from oslo_log import log as logging
 
+from nova.api.openstack import api_version_request
 from nova.api.openstack.compute.schemas import flavor_manage
 from nova.api.openstack.compute.views import flavors as flavors_view
-from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api import validation
 from nova.compute import flavors
 from nova import exception
-from nova.i18n import _
 from nova import objects
 from nova.policies import base
 from nova.policies import flavor_manage as fm_policies
@@ -43,7 +42,7 @@ class FlavorManageController(wsgi.Controller):
     # 204 as this operation complete the deletion of aggregate resource and
     # return no response body.
     @wsgi.response(202)
-    @extensions.expected_errors((404))
+    @wsgi.expected_errors((404))
     @wsgi.action("delete")
     def _delete(self, req, id):
         context = req.environ['nova.context']
@@ -66,9 +65,11 @@ class FlavorManageController(wsgi.Controller):
     # NOTE(oomichi): Return 200 for backwards compatibility but should be 201
     # as this operation complete the creation of flavor resource.
     @wsgi.action("create")
-    @extensions.expected_errors((400, 409))
+    @wsgi.expected_errors((400, 409))
     @validation.schema(flavor_manage.create_v20, '2.0', '2.0')
-    @validation.schema(flavor_manage.create, '2.1')
+    @validation.schema(flavor_manage.create, '2.1', '2.54')
+    @validation.schema(flavor_manage.create_v2_55,
+                       flavors_view.FLAVOR_DESCRIPTION_MICROVERSION)
     def _create(self, req, body):
         context = req.environ['nova.context']
         # TODO(rb560u): remove this check in future release
@@ -93,20 +94,46 @@ class FlavorManageController(wsgi.Controller):
         rxtx_factor = vals.get('rxtx_factor', 1.0)
         is_public = vals.get('os-flavor-access:is_public', True)
 
+        # The user can specify a description starting with microversion 2.55.
+        include_description = api_version_request.is_supported(
+            req, flavors_view.FLAVOR_DESCRIPTION_MICROVERSION)
+        description = vals.get('description') if include_description else None
+
         try:
             flavor = flavors.create(name, memory, vcpus, root_gb,
                                     ephemeral_gb=ephemeral_gb,
                                     flavorid=flavorid, swap=swap,
                                     rxtx_factor=rxtx_factor,
-                                    is_public=is_public)
+                                    is_public=is_public,
+                                    description=description)
             # NOTE(gmann): For backward compatibility, non public flavor
             # access is not being added for created tenant. Ref -bug/1209101
             req.cache_db_flavor(flavor)
         except (exception.FlavorExists,
                 exception.FlavorIdExists) as err:
             raise webob.exc.HTTPConflict(explanation=err.format_message())
-        except exception.ObjectActionError:
-            raise webob.exc.HTTPConflict(explanation=_(
-                'Not all flavors have been migrated to the API database'))
 
-        return self._view_builder.show(req, flavor)
+        return self._view_builder.show(req, flavor, include_description)
+
+    @wsgi.Controller.api_version(flavors_view.FLAVOR_DESCRIPTION_MICROVERSION)
+    @wsgi.action('update')
+    @wsgi.expected_errors((400, 404))
+    @validation.schema(flavor_manage.update_v2_55,
+                       flavors_view.FLAVOR_DESCRIPTION_MICROVERSION)
+    def _update(self, req, id, body):
+        # Validate the policy.
+        context = req.environ['nova.context']
+        context.can(fm_policies.POLICY_ROOT % 'update')
+
+        # Get the flavor and update the description.
+        try:
+            flavor = objects.Flavor.get_by_flavor_id(context, id)
+            flavor.description = body['flavor']['description']
+            flavor.save()
+        except exception.FlavorNotFound as e:
+            raise webob.exc.HTTPNotFound(explanation=e.format_message())
+
+        # Cache the flavor so the flavor_access and flavor_rxtx extensions
+        # can add stuff to the response.
+        req.cache_db_flavor(flavor)
+        return self._view_builder.show(req, flavor, include_description=True)

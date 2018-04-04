@@ -14,6 +14,7 @@
 #    under the License.
 
 from oslo_config import cfg
+from oslo_config import types
 
 vnc_group = cfg.OptGroup(
     'vnc',
@@ -55,18 +56,25 @@ Possible values:
 """),
 
     cfg.HostAddressOpt(
-        'vncserver_listen',
+        'server_listen',
         default='127.0.0.1',
-        deprecated_group='DEFAULT',
+        deprecated_opts=[
+            cfg.DeprecatedOpt('vncserver_listen', group='DEFAULT'),
+            cfg.DeprecatedOpt('vncserver_listen', group='vnc'),
+        ],
         help="""
 The IP address or hostname on which an instance should listen to for
 incoming VNC connection requests on this node.
 """),
 
     cfg.HostAddressOpt(
-        'vncserver_proxyclient_address',
+        'server_proxyclient_address',
         default='127.0.0.1',
-        deprecated_group='DEFAULT',
+        deprecated_opts=[
+            cfg.DeprecatedOpt('vncserver_proxyclient_address',
+                              group='DEFAULT'),
+            cfg.DeprecatedOpt('vncserver_proxyclient_address', group='vnc'),
+        ],
         help="""
 Private, internal IP address or hostname of VNC console proxy.
 
@@ -205,6 +213,64 @@ Related options:
 
 * novncproxy_host
 * novncproxy_base_url
+"""),
+    cfg.ListOpt(
+        'auth_schemes',
+        item_type=types.String(
+            choices=['none', 'vencrypt']
+        ),
+        default=['none'],
+        help="""
+The authentication schemes to use with the compute node.
+
+Control what RFB authentication schemes are permitted for connections between
+the proxy and the compute host. If multiple schemes are enabled, the first
+matching scheme will be used, thus the strongest schemes should be listed
+first.
+
+Possible values:
+
+* ``none``: allow connection without authentication
+* ``vencrypt``: use VeNCrypt authentication scheme
+
+Related options:
+
+* ``[vnc]vencrypt_client_key``, ``[vnc]vencrypt_client_cert``: must also be set
+"""),
+    cfg.StrOpt(
+        'vencrypt_client_key',
+        help="""The path to the client certificate PEM file (for x509)
+
+The fully qualified path to a PEM file containing the private key which the VNC
+proxy server presents to the compute node during VNC authentication.
+
+Related options:
+
+* ``vnc.auth_schemes``: must include ``vencrypt``
+* ``vnc.vencrypt_client_cert``: must also be set
+"""),
+    cfg.StrOpt(
+        'vencrypt_client_cert',
+        help="""The path to the client key file (for x509)
+
+The fully qualified path to a PEM file containing the x509 certificate which
+the VNC proxy server presents to the compute node during VNC authentication.
+
+Realted options:
+
+* ``vnc.auth_schemes``: must include ``vencrypt``
+* ``vnc.vencrypt_client_key``: must also be set
+"""),
+    cfg.StrOpt(
+        'vencrypt_ca_certs',
+        help="""The path to the CA certificate PEM file
+
+The fully qualified path to a PEM file containing one or more x509 certificates
+for the certificate authorities used by the compute node VNC server.
+
+Related options:
+
+* ``vnc.auth_schemes``: must include ``vencrypt``
 """),
 ]
 

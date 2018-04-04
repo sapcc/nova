@@ -22,9 +22,14 @@ class LibvirtISCSIVolumeDriverTestCase(
         test_volume.LibvirtISCSIVolumeBaseTestCase):
 
     def test_libvirt_iscsi_driver(self, transport=None):
-        libvirt_driver = iscsi.LibvirtISCSIVolumeDriver(self.fake_host)
-        self.assertIsInstance(libvirt_driver.connector,
-                              connector.ISCSIConnector)
+        for multipath in (True, False):
+            self.flags(volume_use_multipath=multipath, group='libvirt')
+            libvirt_driver = iscsi.LibvirtISCSIVolumeDriver(self.fake_host)
+            self.assertIsInstance(libvirt_driver.connector,
+                                  connector.ISCSIConnector)
+            if hasattr(libvirt_driver.connector, 'use_multipath'):
+                self.assertEqual(
+                    multipath, libvirt_driver.connector.use_multipath)
 
     def test_libvirt_iscsi_driver_get_config(self):
         libvirt_driver = iscsi.LibvirtISCSIVolumeDriver(self.fake_host)
@@ -50,7 +55,7 @@ class LibvirtISCSIVolumeDriverTestCase(
         libvirt_driver.connector.disconnect_volume = mock.MagicMock(
             side_effect=os_brick_exception.VolumeDeviceNotFound(
                 device=device_path))
-        libvirt_driver.disconnect_volume(connection_info, device_path,
+        libvirt_driver.disconnect_volume(connection_info,
                                          mock.sentinel.instance)
 
         msg = mock_LOG_warning.call_args_list[0]

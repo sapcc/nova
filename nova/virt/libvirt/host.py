@@ -38,6 +38,7 @@ from eventlet import greenthread
 from eventlet import patcher
 from eventlet import tpool
 from oslo_log import log as logging
+from oslo_utils import encodeutils
 from oslo_utils import excutils
 from oslo_utils import importutils
 from oslo_utils import units
@@ -381,15 +382,6 @@ class Host(object):
         try:
             LOG.debug("Registering for connection events: %s", str(self))
             wrapped_conn.registerCloseCallback(self._close_callback, None)
-        except (TypeError, AttributeError) as e:
-            # NOTE: The registerCloseCallback of python-libvirt 1.0.1+
-            # is defined with 3 arguments, and the above registerClose-
-            # Callback succeeds. However, the one of python-libvirt 1.0.0
-            # is defined with 4 arguments and TypeError happens here.
-            # Then python-libvirt 0.9 does not define a method register-
-            # CloseCallback.
-            LOG.debug("The version of python-libvirt does not support "
-                      "registerCloseCallback or is too old: %s", e)
         except libvirt.libvirtError as e:
             LOG.warning("URI %(uri)s does not support connection"
                         " events: %(error)s",
@@ -531,10 +523,9 @@ class Host(object):
         :raises exception.InstanceNotFound: The domain was not found
         :raises exception.InternalError: A libvirt error occurred
         """
-        return libvirt_guest.Guest(self.get_domain(instance))
+        return libvirt_guest.Guest(self._get_domain(instance))
 
-    # TODO(sahid): needs to be private
-    def get_domain(self, instance):
+    def _get_domain(self, instance):
         """Retrieve libvirt domain object for an instance.
 
         All libvirt error handling should be handled in this method and
@@ -833,6 +824,8 @@ class Host(object):
 
         :returns: an instance of Guest
         """
+        if six.PY2:
+            xml = encodeutils.safe_encode(xml)
         domain = self.get_connection().defineXML(xml)
         return libvirt_guest.Guest(domain)
 
@@ -849,7 +842,39 @@ class Host(object):
 
         :returns: a list of virNodeDevice instance
         """
+        # TODO(sbauza): Replace that call by a generic _list_devices("pci")
         return self.get_connection().listDevices("pci", flags)
+
+    def list_mdev_capable_devices(self, flags=0):
+        """Lookup devices supporting mdev capabilities.
+
+        :returns: a list of virNodeDevice instance
+        """
+        return self._list_devices("mdev_types", flags=flags)
+
+    def list_mediated_devices(self, flags=0):
+        """Lookup mediated devices.
+
+        :returns: a list of virNodeDevice instance
+        """
+        return self._list_devices("mdev", flags=flags)
+
+    def _list_devices(self, cap, flags=0):
+        """Lookup devices.
+
+        :returns: a list of virNodeDevice instance
+        """
+        try:
+            return self.get_connection().listDevices(cap, flags)
+        except libvirt.libvirtError as ex:
+            error_code = ex.get_error_code()
+            if error_code == libvirt.VIR_ERR_NO_SUPPORT:
+                LOG.warning("URI %(uri)s does not support "
+                            "listDevices: %(error)s",
+                            {'uri': self._uri, 'error': ex})
+                return []
+            else:
+                raise
 
     def compare_cpu(self, xmlDesc, flags=0):
         """Compares the given CPU description with the host CPU."""

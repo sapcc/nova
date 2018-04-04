@@ -26,7 +26,6 @@ import textwrap
 import traceback
 
 from keystoneauth1 import exceptions as ks_exc
-from keystoneauth1 import loading as keystone
 from oslo_config import cfg
 import pkg_resources
 import prettytable
@@ -41,11 +40,13 @@ from nova.db.sqlalchemy import api as db_session
 from nova.i18n import _
 from nova.objects import cell_mapping as cell_mapping_obj
 from nova.objects import fields
+from nova import utils
 from nova import version
 
 CONF = nova.conf.CONF
 
-PLACEMENT_DOCS_LINK = 'http://docs.openstack.org/developer/nova/placement.html'
+PLACEMENT_DOCS_LINK = 'https://docs.openstack.org/nova/latest' \
+                      '/user/placement.html'
 
 
 class UpgradeCheckCode(enum.IntEnum):
@@ -173,40 +174,33 @@ class UpgradeCommands(object):
 
         return UpgradeCheckResult(UpgradeCheckCode.SUCCESS)
 
-    def _placement_get(self, path):
+    @staticmethod
+    def _placement_get(path):
         """Do an HTTP get call against placement engine.
 
         This is in a dedicated method to make it easier for unit
         testing purposes.
 
         """
-        ks_filter = {'service_type': 'placement',
-                     'region_name': CONF.placement.os_region_name,
-                     'interface': CONF.placement.os_interface}
-        auth = keystone.load_auth_from_conf_options(
-            CONF, 'placement')
-        client = keystone.load_session_from_conf_options(
-            CONF, 'placement', auth=auth)
-
-        return client.get(path, endpoint_filter=ks_filter).json()
+        client = utils.get_ksa_adapter('placement')
+        return client.get(path).json()
 
     def _check_placement(self):
         """Checks to see if the placement API is ready for scheduling.
 
         Checks to see that the placement API service is registered in the
-        service catalog and that we can make requests against it. Also checks
-        that there are compute nodes registered with the placement service
-        as resource providers so that when the Ocata nova-scheduler code starts
-        handling requests it has somewhere to send those builds.
+        service catalog and that we can make requests against it.
         """
         try:
+            # TODO(efried): Use ksa's version filtering in _placement_get
             versions = self._placement_get("/")
             max_version = pkg_resources.parse_version(
                 versions["versions"][0]["max_version"])
-            # NOTE(rpodolyaka): 1.10 is needed in Pike and further as
-            # FilterScheduler requires GET /allocation_candidates in the
-            # Placement API.
-            needs_version = pkg_resources.parse_version("1.10")
+            # NOTE(mriedem): 1.17 is required by nova-scheduler to get
+            # allocation candidates with required traits from the flavor.
+            # NOTE: If you bump this version, remember to update the history
+            # section in the nova-status man page (doc/source/cli/nova-status).
+            needs_version = pkg_resources.parse_version("1.17")
             if max_version < needs_version:
                 msg = (_('Placement API version %(needed)s needed, '
                          'you have %(current)s.') %

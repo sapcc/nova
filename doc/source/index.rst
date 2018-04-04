@@ -72,20 +72,35 @@ API, which can be used to build more complicated logic or automation with
 nova. This can be consumed directly, or via various SDKs. The following
 resources will help you get started with consuming the API directly.
 
-* `Compute API Guide: <https://developer.openstack.org/api-guide/compute/>`_: The
+* `Compute API Guide <https://developer.openstack.org/api-guide/compute/>`_: The
   concept guide for the API. This helps lay out the concepts behind the API to
   make consuming the API reference easier.
 * `Compute API Reference <http://developer.openstack.org/api-ref/compute/>`_:
-  The complete reference for the API, including all methods and request /
-  response parameters and their meaning.
-* :doc:`API Microversion History </reference/api-microversion-history>`: The
-  compute API evolves over time through `Microversions
+  The complete reference for the compute API, including all methods and
+  request / response parameters and their meaning.
+* :doc:`Compute API Microversion History </reference/api-microversion-history>`:
+  The compute API evolves over time through `Microversions
   <https://developer.openstack.org/api-guide/compute/microversions.html>`_. This
   provides the history of all those changes. Consider it a "what's new" in the
   compute API.
+* `Placement API Reference <https://developer.openstack.org/api-ref/placement/>`_:
+  The complete reference for the placement API, including all methods and
+  request / response parameters and their meaning.
+* :ref:`Placement API Microversion History <placement-api-microversion-history>`:
+  The placement API evolves over time through `Microversions
+  <https://developer.openstack.org/api-guide/compute/microversions.html>`_. This
+  provides the history of all those changes. Consider it a "what's new" in the
+  placement API.
 * :doc:`Block Device Mapping </user/block-device-mapping>`: One of the trickier
   parts to understand is the Block Device Mapping parameters used to connect
   specific block devices to computes. This deserves its own deep dive.
+* :doc:`Configuration drive </user/config-drive>`: Provide information to the
+  guest instance when it is created.
+
+Nova can be configured to emit notifications over RPC.
+
+* :ref:`Versioned Notifications <versioned_notification_samples>`: This
+  provides the list of existing versioned notifications with sample payloads.
 
 For Operators
 =============
@@ -131,7 +146,7 @@ the defaults from the :doc:`install guide </install/index>` will be sufficient.
   * :doc:`Feature Support full list </user/support-matrix>`: A detailed dive through
     features in each compute driver backend.
 
-* :doc:`Cells v2 Planning </user/cellsv2_layout>`: For large deployments, Cells v2
+* :doc:`Cells v2 Planning </user/cellsv2-layout>`: For large deployments, Cells v2
   allows sharding of your compute environment. Upfront planning is key to a
   successful Cells v2 layout.
 * :doc:`Placement service </user/placement>`: Overview of the placement
@@ -152,6 +167,7 @@ Once you are running nova, the following information is extremely useful.
      This guide was imported during the Pike cycle and is a bit out of
      date. It will be updated during Queens to be more accurate.
 
+* :doc:`Flavors </user/flavors>`: What flavors are and why they are used.
 * :doc:`Upgrades </user/upgrade>`: How nova is designed to be upgraded for minimal
   service impact, and the order you should do them in.
 * :doc:`Quotas </user/quotas>`: Managing project quotas in nova.
@@ -222,6 +238,7 @@ looking parts of our architecture. These are collected below.
    admin/index
    admin/configuration/index
    cli/index
+   configuration/index
    configuration/config
    configuration/sample-config
    configuration/policy
@@ -246,6 +263,7 @@ looking parts of our architecture. These are collected below.
    reference/api-microversion-history.rst
    reference/gmr
    reference/i18n
+   reference/live-migration
    reference/notifications
    reference/policy-enforcement
    reference/rpc
@@ -255,23 +273,31 @@ looking parts of our architecture. These are collected below.
    reference/stable-api
    reference/threading
    reference/vm-states
+   user/index
    user/aggregates
    user/architecture
    user/block-device-mapping
    user/cells
-   user/cellsv2_layout
+   user/cellsv2-layout
    user/conductor
+   user/config-drive
    user/feature-classification
    user/filter-scheduler
+   user/flavors
+   user/manage-ip-addresses
    user/placement
    user/quotas
    user/support-matrix
    user/upgrade
+   user/user-data
    user/vendordata
    user/wsgi
 
 
-Indices and tables
-==================
+Search
+======
 
-* :ref:`search`
+* :ref:`Nova document search <search>`: Search the contents of this document.
+* `OpenStack wide search <https://docs.openstack.org>`_: Search the wider
+  set of OpenStack documentation, including forums.
+

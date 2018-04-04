@@ -38,7 +38,7 @@ class FpingTestV21(test.TestCase):
         self.flags(use_ipv6=False)
         return_server = fakes.fake_instance_get()
         return_servers = fakes.fake_instance_get_all_by_filters()
-        self.stub_out("nova.db.instance_get_all_by_filters",
+        self.stub_out("nova.compute.instance_list.get_instances_sorted",
                       return_servers)
         self.stub_out("nova.db.instance_get_by_uuid",
                       return_server)
@@ -90,6 +90,38 @@ class FpingTestV21(test.TestCase):
         res_dict = self.controller.index(req)
         self.assertEqual(len(res_dict["servers"]), 1)
         self.assertEqual(res_dict["servers"][0]["id"], ids[0])
+
+    def test_fping_index_with_negative_int_filters(self):
+        req = fakes.HTTPRequest.blank(self._get_url() +
+            '/os-fping?all_tenants=-1&include=-21&exclude=-3',
+            use_admin_context=True)
+        self.controller.index(req)
+
+    def test_fping_index_with_string_filter(self):
+        req = fakes.HTTPRequest.blank(self._get_url() +
+            '/os-fping?all_tenants=abc&include=abc1&exclude=abc2',
+            use_admin_context=True)
+        self.controller.index(req)
+
+    def test_fping_index_duplicate_query_parameters_validation(self):
+        params = {
+           'all_tenants': 1,
+           'include': 'UUID1',
+           'exclude': 'UUID2'
+        }
+
+        for param, value in params.items():
+            req = fakes.HTTPRequest.blank(self._get_url()
+                + '/os-fping?%s=%s&%s=%s' %
+                (param, value, param, value),
+                use_admin_context=True)
+            self.controller.index(req)
+
+    def test_fping_index_pagination_with_additional_filter(self):
+        req = fakes.HTTPRequest.blank(self._get_url() +
+            '/os-fping?all_tenants=1&include=UUID1&additional=3',
+            use_admin_context=True)
+        self.controller.index(req)
 
     def test_fping_show(self):
         req = fakes.HTTPRequest.blank(self._get_url() +

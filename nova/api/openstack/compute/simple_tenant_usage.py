@@ -22,9 +22,10 @@ import six.moves.urllib.parse as urlparse
 from webob import exc
 
 from nova.api.openstack import common
+from nova.api.openstack.compute.schemas import simple_tenant_usage as schema
 from nova.api.openstack.compute.views import usages as usages_view
-from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
+from nova.api import validation
 import nova.conf
 from nova import context as nova_context
 from nova import exception
@@ -242,7 +243,7 @@ class SimpleTenantUsageController(wsgi.Controller):
         # instance object fields and still maintain backwards compatibility
         # in the API.
         if value.utcoffset() is None:
-            value = value.replace(tzinfo=iso8601.iso8601.Utc())
+            value = value.replace(tzinfo=iso8601.UTC)
         return value
 
     def _get_datetime_range(self, req):
@@ -261,25 +262,29 @@ class SimpleTenantUsageController(wsgi.Controller):
         return (period_start, period_stop, detailed)
 
     @wsgi.Controller.api_version("2.40")
-    @extensions.expected_errors(400)
+    @validation.query_schema(schema.index_query_v240)
+    @wsgi.expected_errors(400)
     def index(self, req):
         """Retrieve tenant_usage for all tenants."""
         return self._index(req, links=True)
 
     @wsgi.Controller.api_version("2.1", "2.39")  # noqa
-    @extensions.expected_errors(400)
+    @validation.query_schema(schema.index_query)
+    @wsgi.expected_errors(400)
     def index(self, req):
         """Retrieve tenant_usage for all tenants."""
         return self._index(req)
 
     @wsgi.Controller.api_version("2.40")
-    @extensions.expected_errors(400)
+    @validation.query_schema(schema.show_query_v240)
+    @wsgi.expected_errors(400)
     def show(self, req, id):
         """Retrieve tenant_usage for a specified tenant."""
         return self._show(req, id, links=True)
 
     @wsgi.Controller.api_version("2.1", "2.39")  # noqa
-    @extensions.expected_errors(400)
+    @validation.query_schema(schema.show_query)
+    @wsgi.expected_errors(400)
     def show(self, req, id):
         """Retrieve tenant_usage for a specified tenant."""
         return self._show(req, id)

@@ -11,35 +11,18 @@
 #    under the License.
 """Placement API handlers for resource classes."""
 
-import copy
-
 from oslo_serialization import jsonutils
 from oslo_utils import encodeutils
+from oslo_utils import timeutils
 import webob
 
 from nova.api.openstack.placement import microversion
+from nova.api.openstack.placement.schemas import resource_class as schema
 from nova.api.openstack.placement import util
 from nova.api.openstack.placement import wsgi_wrapper
 from nova import exception
 from nova.i18n import _
-from nova import objects
-
-
-POST_RC_SCHEMA_V1_2 = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string",
-            "pattern": "^CUSTOM\_[A-Z0-9_]+$",
-            "maxLength": 255,
-        },
-    },
-    "required": [
-        "name"
-    ],
-    "additionalProperties": False,
-}
-PUT_RC_SCHEMA_V1_2 = copy.deepcopy(POST_RC_SCHEMA_V1_2)
+from nova.objects import resource_provider as rp_obj
 
 
 def _serialize_links(environ, rc):
@@ -56,12 +39,17 @@ def _serialize_resource_class(environ, rc):
     return data
 
 
-def _serialize_resource_classes(environ, rcs):
+def _serialize_resource_classes(environ, rcs, want_version):
     output = []
+    last_modified = None
+    get_last_modified = want_version.matches((1, 15))
     for rc in rcs:
+        if get_last_modified:
+            last_modified = util.pick_last_modified(last_modified, rc)
         data = _serialize_resource_class(environ, rc)
         output.append(data)
-    return {"resource_classes": output}
+    last_modified = last_modified or timeutils.utcnow(with_timezone=True)
+    return ({"resource_classes": output}, last_modified)
 
 
 @wsgi_wrapper.PlacementWsgify
@@ -74,10 +62,10 @@ def create_resource_class(req):
     header pointing to the newly created resource class.
     """
     context = req.environ['placement.context']
-    data = util.extract_json(req.body, POST_RC_SCHEMA_V1_2)
+    data = util.extract_json(req.body, schema.POST_RC_SCHEMA_V1_2)
 
     try:
-        rc = objects.ResourceClass(context, name=data['name'])
+        rc = rp_obj.ResourceClass(context, name=data['name'])
         rc.create()
     except exception.ResourceClassExists:
         raise webob.exc.HTTPConflict(
@@ -106,17 +94,15 @@ def delete_resource_class(req):
     name = util.wsgi_path_item(req.environ, 'name')
     context = req.environ['placement.context']
     # The containing application will catch a not found here.
-    rc = objects.ResourceClass.get_by_name(context, name)
+    rc = rp_obj.ResourceClass.get_by_name(context, name)
     try:
         rc.destroy()
     except exception.ResourceClassCannotDeleteStandard as exc:
         raise webob.exc.HTTPBadRequest(
-            _('Cannot delete standard resource class %(rp_name)s: %(error)s') %
-            {'rp_name': name, 'error': exc})
+            _('Error in delete resource class: %(error)s') % {'error': exc})
     except exception.ResourceClassInUse as exc:
         raise webob.exc.HTTPConflict(
-            _('Unable to delete resource class %(rp_name)s: %(error)s') %
-            {'rp_name': name, 'error': exc})
+            _('Error in delete resource class: %(error)s') % {'error': exc})
     req.response.status = 204
     req.response.content_type = None
     return req.response
@@ -133,13 +119,21 @@ def get_resource_class(req):
     """
     name = util.wsgi_path_item(req.environ, 'name')
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
     # The containing application will catch a not found here.
-    rc = objects.ResourceClass.get_by_name(context, name)
+    rc = rp_obj.ResourceClass.get_by_name(context, name)
 
     req.response.body = encodeutils.to_utf8(jsonutils.dumps(
         _serialize_resource_class(req.environ, rc))
     )
     req.response.content_type = 'application/json'
+    if want_version.matches((1, 15)):
+        req.response.cache_control = 'no-cache'
+        # Non-custom resource classes will return None from pick_last_modified,
+        # so the 'or' causes utcnow to be used.
+        last_modified = util.pick_last_modified(None, rc) or timeutils.utcnow(
+            with_timezone=True)
+        req.response.last_modified = last_modified
     return req.response
 
 
@@ -153,13 +147,17 @@ def list_resource_classes(req):
     a collection of resource classes.
     """
     context = req.environ['placement.context']
-    rcs = objects.ResourceClassList.get_all(context)
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
+    rcs = rp_obj.ResourceClassList.get_all(context)
 
     response = req.response
-    response.body = encodeutils.to_utf8(jsonutils.dumps(
-        _serialize_resource_classes(req.environ, rcs))
-    )
+    output, last_modified = _serialize_resource_classes(
+        req.environ, rcs, want_version)
+    response.body = encodeutils.to_utf8(jsonutils.dumps(output))
     response.content_type = 'application/json'
+    if want_version.matches((1, 15)):
+        response.last_modified = last_modified
+        response.cache_control = 'no-cache'
     return response
 
 
@@ -175,10 +173,10 @@ def update_resource_class(req):
     name = util.wsgi_path_item(req.environ, 'name')
     context = req.environ['placement.context']
 
-    data = util.extract_json(req.body, PUT_RC_SCHEMA_V1_2)
+    data = util.extract_json(req.body, schema.PUT_RC_SCHEMA_V1_2)
 
     # The containing application will catch a not found here.
-    rc = objects.ResourceClass.get_by_name(context, name)
+    rc = rp_obj.ResourceClass.get_by_name(context, name)
 
     rc.name = data['name']
 
@@ -214,14 +212,14 @@ def update_resource_class(req):
     context = req.environ['placement.context']
 
     # Use JSON validation to validation resource class name.
-    util.extract_json('{"name": "%s"}' % name, PUT_RC_SCHEMA_V1_2)
+    util.extract_json('{"name": "%s"}' % name, schema.PUT_RC_SCHEMA_V1_2)
 
     status = 204
     try:
-        rc = objects.ResourceClass.get_by_name(context, name)
+        rc = rp_obj.ResourceClass.get_by_name(context, name)
     except exception.NotFound:
         try:
-            rc = objects.ResourceClass(context, name=name)
+            rc = rp_obj.ResourceClass(context, name=name)
             rc.create()
             status = 201
         # We will not see ResourceClassCannotUpdateStandard because

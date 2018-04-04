@@ -24,8 +24,8 @@ from nova.api.openstack.api_version_request \
 from nova.api.openstack import common
 from nova.api.openstack.compute.schemas import security_groups as \
                                                   schema_security_groups
-from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
+from nova.api import validation
 from nova import compute
 from nova import exception
 from nova.i18n import _
@@ -36,6 +36,7 @@ from nova.virt import netutils
 
 LOG = logging.getLogger(__name__)
 ATTRIBUTE_NAME = 'security_groups'
+SG_NOT_FOUND = object()
 
 
 def _authorize_context(req):
@@ -90,7 +91,8 @@ class SecurityGroupControllerBase(object):
             sg_rule['ip_range'] = {'cidr': rule['cidr']}
         return sg_rule
 
-    def _format_security_group(self, context, group):
+    def _format_security_group(self, context, group,
+                               group_rule_data_by_rule_group_id=None):
         security_group = {}
         security_group['id'] = group['id']
         security_group['description'] = group['description']
@@ -98,10 +100,46 @@ class SecurityGroupControllerBase(object):
         security_group['tenant_id'] = group['project_id']
         security_group['rules'] = []
         for rule in group['rules']:
-            formatted_rule = self._format_security_group_rule(context, rule)
+            group_rule_data = None
+            if rule['group_id'] and group_rule_data_by_rule_group_id:
+                group_rule_data = (
+                    group_rule_data_by_rule_group_id.get(rule['group_id']))
+                if group_rule_data == SG_NOT_FOUND:
+                    # The security group for the rule was not found so skip it.
+                    continue
+            formatted_rule = self._format_security_group_rule(
+                context, rule, group_rule_data)
             if formatted_rule:
                 security_group['rules'] += [formatted_rule]
         return security_group
+
+    def _get_group_rule_data_by_rule_group_id(self, context, groups):
+        group_rule_data_by_rule_group_id = {}
+        # Pre-populate with the group information itself in case any of the
+        # rule group IDs are the in-scope groups.
+        for group in groups:
+            group_rule_data_by_rule_group_id[group['id']] = {
+                'name': group.get('name'),
+                'tenant_id': group.get('project_id')}
+
+        for group in groups:
+            for rule in group['rules']:
+                rule_group_id = rule['group_id']
+                if (rule_group_id and
+                        rule_group_id not in group_rule_data_by_rule_group_id):
+                    try:
+                        source_group = self.security_group_api.get(
+                            context, id=rule['group_id'])
+                        group_rule_data_by_rule_group_id[rule_group_id] = {
+                            'name': source_group.get('name'),
+                            'tenant_id': source_group.get('project_id')}
+                    except exception.SecurityGroupNotFound:
+                        LOG.debug("Security Group %s does not exist",
+                                  rule_group_id)
+                        # Use a sentinel so we don't process this group again.
+                        group_rule_data_by_rule_group_id[rule_group_id] = (
+                            SG_NOT_FOUND)
+        return group_rule_data_by_rule_group_id
 
     def _from_body(self, body, key):
         if not body:
@@ -118,7 +156,7 @@ class SecurityGroupController(SecurityGroupControllerBase, wsgi.Controller):
     """The Security group API controller for the OpenStack API."""
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors((400, 404))
+    @wsgi.expected_errors((400, 404))
     def show(self, req, id):
         """Return data about the given security group."""
         context = _authorize_context(req)
@@ -136,7 +174,7 @@ class SecurityGroupController(SecurityGroupControllerBase, wsgi.Controller):
                                                               security_group)}
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors((400, 404))
+    @wsgi.expected_errors((400, 404))
     @wsgi.response(202)
     def delete(self, req, id):
         """Delete a security group."""
@@ -153,7 +191,8 @@ class SecurityGroupController(SecurityGroupControllerBase, wsgi.Controller):
             raise exc.HTTPBadRequest(explanation=exp.format_message())
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors(404)
+    @validation.query_schema(schema_security_groups.index_query)
+    @wsgi.expected_errors(404)
     def index(self, req):
         """Returns a list of security groups."""
         context = _authorize_context(req)
@@ -175,7 +214,7 @@ class SecurityGroupController(SecurityGroupControllerBase, wsgi.Controller):
                             key=lambda k: (k['tenant_id'], k['name'])))}
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors((400, 403))
+    @wsgi.expected_errors((400, 403))
     def create(self, req, body):
         """Creates a new security group."""
         context = _authorize_context(req)
@@ -200,7 +239,7 @@ class SecurityGroupController(SecurityGroupControllerBase, wsgi.Controller):
                                                               group_ref)}
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors((400, 404))
+    @wsgi.expected_errors((400, 404))
     def update(self, req, id, body):
         """Update a security group."""
         context = _authorize_context(req)
@@ -237,7 +276,7 @@ class SecurityGroupRulesController(SecurityGroupControllerBase,
                                    wsgi.Controller):
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors((400, 403, 404))
+    @wsgi.expected_errors((400, 403, 404))
     def create(self, req, body):
         context = _authorize_context(req)
 
@@ -312,7 +351,7 @@ class SecurityGroupRulesController(SecurityGroupControllerBase,
                                         cidr, ip_protocol, from_port, to_port)
 
     @wsgi.Controller.api_version("2.1", MAX_PROXY_API_SUPPORT_VERSION)
-    @extensions.expected_errors((400, 404, 409))
+    @wsgi.expected_errors((400, 404, 409))
     @wsgi.response(202)
     def delete(self, req, id):
         context = _authorize_context(req)
@@ -336,7 +375,7 @@ class SecurityGroupRulesController(SecurityGroupControllerBase,
 
 class ServerSecurityGroupController(SecurityGroupControllerBase):
 
-    @extensions.expected_errors(404)
+    @wsgi.expected_errors(404)
     def index(self, req, server_id):
         """Returns a list of security groups for the given instance."""
         context = _authorize_context(req)
@@ -352,8 +391,15 @@ class ServerSecurityGroupController(SecurityGroupControllerBase):
             msg = exp.format_message()
             raise exc.HTTPNotFound(explanation=msg)
 
-        result = [self._format_security_group(context, group)
-                    for group in groups]
+        # Optimize performance here by loading up the group_rule_data per
+        # rule['group_id'] ahead of time so we're not doing redundant
+        # security group lookups for each rule.
+        group_rule_data_by_rule_group_id = (
+            self._get_group_rule_data_by_rule_group_id(context, groups))
+
+        result = [self._format_security_group(context, group,
+                                              group_rule_data_by_rule_group_id)
+                  for group in groups]
 
         return {'security_groups':
                 list(sorted(result,
@@ -389,7 +435,7 @@ class SecurityGroupActionController(wsgi.Controller):
         instance = common.get_instance(self.compute_api, context, id)
         method(context, instance, group_name)
 
-    @extensions.expected_errors((400, 404, 409))
+    @wsgi.expected_errors((400, 404, 409))
     @wsgi.response(202)
     @wsgi.action('addSecurityGroup')
     def _addSecurityGroup(self, req, id, body):
@@ -409,7 +455,7 @@ class SecurityGroupActionController(wsgi.Controller):
                 exception.SecurityGroupExistsForInstance) as exp:
             raise exc.HTTPBadRequest(explanation=exp.format_message())
 
-    @extensions.expected_errors((400, 404, 409))
+    @wsgi.expected_errors((400, 404, 409))
     @wsgi.response(202)
     @wsgi.action('removeSecurityGroup')
     def _removeSecurityGroup(self, req, id, body):

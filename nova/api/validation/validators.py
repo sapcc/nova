@@ -34,7 +34,7 @@ from nova.i18n import _
 
 @jsonschema.FormatChecker.cls_checks('regex')
 def _validate_regex_format(instance):
-    if not isinstance(instance, six.text_type):
+    if not instance or not isinstance(instance, six.text_type):
         return False
     try:
         re.compile(instance)
@@ -110,6 +110,33 @@ def _validate_name_with_leading_trailing_spaces(instance):
 @jsonschema.FormatChecker.cls_checks('name', exception.InvalidName)
 def _validate_name(instance):
     regex = parameter_types.valid_name_regex
+    try:
+        if re.search(regex.regex, instance):
+            return True
+    except TypeError:
+        # The name must be string type. If instance isn't string type, the
+        # TypeError will be raised at here.
+        pass
+    raise exception.InvalidName(reason=regex.reason)
+
+
+@jsonschema.FormatChecker.cls_checks('az_name_with_leading_trailing_spaces',
+                                     exception.InvalidName)
+def _validate_az_name_with_leading_trailing_spaces(instance):
+    regex = parameter_types.valid_az_name_leading_trailing_spaces_regex
+    try:
+        if re.search(regex.regex, instance):
+            return True
+    except TypeError:
+        # The name must be string type. If instance isn't string type, the
+        # TypeError will be raised at here.
+        pass
+    raise exception.InvalidName(reason=regex.reason)
+
+
+@jsonschema.FormatChecker.cls_checks('az_name', exception.InvalidName)
+def _validate_az_name(instance):
+    regex = parameter_types.valid_az_name_regex
     try:
         if re.search(regex.regex, instance):
             return True

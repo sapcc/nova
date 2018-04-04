@@ -63,7 +63,7 @@ def get_block_device_info(instance, block_device_mapping):
     return block_device_info
 
 
-def block_device_info_get_root(block_device_info):
+def block_device_info_get_root_device(block_device_info):
     block_device_info = block_device_info or {}
     return block_device_info.get('root_device_name')
 
@@ -125,12 +125,21 @@ class ComputeDriver(object):
         "has_imagecache": False,
         "supports_recreate": False,
         "supports_migrate_to_same_host": False,
+        "resource_scheduling": False,
         "supports_attach_interface": False,
         "supports_device_tagging": False,
         "supports_tagged_attach_interface": False,
         "supports_tagged_attach_volume": False,
         "supports_extend_volume": False,
+        "supports_multiattach": False
     }
+
+    requires_allocation_refresh = False
+
+    # Indicates if this driver will rebalance nodes among compute service
+    # hosts. This is really here for ironic and should not be used by any
+    # other driver.
+    rebalances_nodes = False
 
     def __init__(self, virtapi):
         self.virtapi = virtapi
@@ -221,7 +230,7 @@ class ComputeDriver(object):
         raise NotImplementedError()
 
     def rebuild(self, context, instance, image_meta, injected_files,
-                admin_password, bdms, detach_block_devices,
+                admin_password, allocations, bdms, detach_block_devices,
                 attach_block_devices, network_info=None,
                 recreate=False, block_device_info=None,
                 preserve_ephemeral=False):
@@ -244,6 +253,9 @@ class ComputeDriver(object):
             The metadata of the image of the instance.
         :param injected_files: User files to inject into instance.
         :param admin_password: Administrator password to set in instance.
+        :param allocations: Information about resources allocated to the
+                            instance via placement, of the form returned by
+                            SchedulerReportClient.get_allocations_for_consumer.
         :param bdms: block-device-mappings to use for rebuild
         :param detach_block_devices: function to detach block devices. See
             nova.compute.manager.ComputeManager:_rebuild_default_impl for
@@ -262,7 +274,8 @@ class ComputeDriver(object):
         raise NotImplementedError()
 
     def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, network_info=None, block_device_info=None):
+              admin_password, allocations, network_info=None,
+              block_device_info=None):
         """Create a new instance/VM/domain on the virtualization platform.
 
         Once this successfully completes, the instance should be
@@ -280,6 +293,9 @@ class ComputeDriver(object):
             The metadata of the image of the instance.
         :param injected_files: User files to inject into instance.
         :param admin_password: Administrator password to set in instance.
+        :param allocations: Information about resources allocated to the
+                            instance via placement, of the form returned by
+                            SchedulerReportClient.get_allocations_for_consumer.
         :param network_info: instance network information
         :param block_device_info: Information about block devices to be
                                   attached to the instance.
@@ -456,10 +472,11 @@ class ComputeDriver(object):
         """Detach the disk attached to the instance."""
         raise NotImplementedError()
 
-    def swap_volume(self, old_connection_info, new_connection_info,
+    def swap_volume(self, context, old_connection_info, new_connection_info,
                     instance, mountpoint, resize_to):
         """Replace the volume attached to the given `instance`.
 
+        :param context: The request context.
         :param dict old_connection_info:
             The volume for this connection gets detached from the given
             `instance`.
@@ -490,6 +507,33 @@ class ComputeDriver(object):
         :return: None
         """
         raise NotImplementedError()
+
+    def prepare_networks_before_block_device_mapping(self, instance,
+                                                     network_info):
+        """Prepare networks before the block devices are mapped to instance.
+
+        Drivers who need network information for block device preparation can
+        do some network preparation necessary for block device preparation.
+
+        :param nova.objects.instance.Instance instance:
+            The instance whose networks are prepared.
+        :param nova.network.model.NetworkInfoAsyncWrapper network_info:
+            The network information of the given `instance`.
+        """
+        pass
+
+    def clean_networks_preparation(self, instance, network_info):
+        """Clean networks preparation when block device mapping is failed.
+
+        Drivers who need network information for block device preparaion should
+        clean the preparation when block device mapping is failed.
+
+        :param nova.objects.instance.Instance instance:
+            The instance whose networks are prepared.
+        :param nova.network.model.NetworkInfoAsyncWrapper network_info:
+            The network information of the given `instance`.
+        """
+        pass
 
     def attach_interface(self, context, instance, image_meta, vif):
         """Use hotplug to add a network interface to a running instance.
@@ -787,9 +831,49 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def update_provider_tree(self, provider_tree, nodename):
+        """Update a ProviderTree object with current resource provider and
+        inventory information.
+
+        When this method returns, provider_tree should represent the correct
+        hierarchy of nested resource providers associated with this compute
+        node, as well as the inventory, aggregates, and traits associated with
+        those resource providers.
+
+        This method supersedes get_inventory(): if this method is implemented,
+        get_inventory() is not used.
+
+        :note: Renaming a provider (by deleting it from provider_tree and
+        re-adding it with a different name) is not supported at this time.
+
+        :param nova.compute.provider_tree.ProviderTree provider_tree:
+            A ProviderTree object representing all the providers associated
+            with the compute node's nested tree or aggregates.  This is fully
+            owned by the update_provider_tree method, and can therefore be
+            modified without locking/concurrency considerations.
+        :param nodename:
+            Name of the compute node for which the caller is updating providers
+            and inventory.  Drivers managing more than one node may use this in
+            an advisory capacity to restrict changes to only the providers
+            associated with that one node, but this is not a requirement: the
+            caller always subsumes all changes regardless.
+        :return: True if the provider_tree was changed; False otherwise.
+        """
+        raise NotImplementedError()
+
     def get_inventory(self, nodename):
         """Return a dict, keyed by resource class, of inventory information for
         the supplied node.
+        """
+        raise NotImplementedError()
+
+    def get_traits(self, nodename):
+        """Get the traits for a given node.
+
+        Returns an iterable of traits for the supplied node.
+
+        :param nodename: the name of the node.
+        :returns: an iterable of traits for the supplied node.
         """
         raise NotImplementedError()
 
@@ -816,6 +900,7 @@ class ComputeDriver(object):
         :param network_info: instance network information
         :param disk_info: instance disk information
         :param migrate_data: a LiveMigrateData object
+        :returns: migrate_data modified by the driver
         """
         raise NotImplementedError()
 

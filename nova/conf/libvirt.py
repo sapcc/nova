@@ -488,16 +488,20 @@ default to "none".
 
 Possible values:
 
-* ``host-model``: Clones the host CPU feature flags.
-* ``host-passthrough``: Use the host CPU model exactly;
-* ``custom``: Use a named CPU model;
-* ``none``: Not set any CPU model.
+* ``host-model``: Clones the host CPU feature flags
+* ``host-passthrough``: Use the host CPU model exactly
+* ``custom``: Use a named CPU model
+* ``none``: Don't set a specific CPU model. For instances with
+``virt_type`` as KVM/QEMU, the default CPU model from QEMU will be used,
+which provides a basic set of CPU features that are compatible with most
+hosts.
 
 Related options:
 
-* ``cpu_model``: If ``custom`` is used for ``cpu_mode``, set this config
-  option too, otherwise this would result in an error and the instance won't
-  be launched.
+* ``cpu_model``: This should be set ONLY when ``cpu_mode`` is set to
+``custom``. Otherwise, it would result in an error and the instance
+launch will fail.
+
 """),
     cfg.StrOpt('cpu_model',
                help="""
@@ -505,12 +509,14 @@ Set the name of the libvirt CPU model the instance should use.
 
 Possible values:
 
-* The names listed in /usr/share/libvirt/cpu_map.xml
+* The named CPU models listed in ``/usr/share/libvirt/cpu_map.xml``
 
 Related options:
 
-* ``cpu_mode``: Don't set this when ``cpu_mode`` is NOT set to ``custom``.
-  This would result in an error and the instance won't be launched.
+* ``cpu_mode``: This should be set to ``custom`` ONLY when you want to
+configure (via ``cpu_model``) a specific named CPU model.  Otherwise, it
+would result in an error and the instance launch will fail.
+
 * ``virt_type``: Only the virtualization types ``kvm`` and ``qemu`` use this.
 """),
     cfg.StrOpt('snapshots_directory',
@@ -548,7 +554,9 @@ Possible cache modes:
   barriers), then data integrity can be ensured. However, because the host
   page cache is disabled, the read performance in the guest would not be as
   good as in the modes where the host page cache is enabled, such as
-  writethrough mode.
+  writethrough mode. Shareable disk devices, like for a multi-attachable block
+  storage volume, will have their cache mode set to 'none' regardless of
+  configuration.
 * writethrough: writethrough mode is the default caching mode. With
   caching set to writethrough mode, the host page cache is enabled, but the
   disk write cache is disabled for the guest. Consequently, this caching mode
@@ -885,7 +893,7 @@ libvirt_volume_quobyte_opts = [
 Directory where the Quobyte volume is mounted on the compute node.
 
 Nova supports Quobyte volume driver that enables storing Block Storage
-service volumes on a Quobyte storage back end. This Option sepcifies the
+service volumes on a Quobyte storage back end. This Option specifies the
 path of the directory where Quobyte volume is mounted.
 
 Possible values:
@@ -908,7 +916,7 @@ Directory where the SMBFS shares are mounted on the compute node.
 Mount options passed to the SMBFS client.
 
 Provide SMBFS options as a single string containing all parameters.
-See mount.cifs man page for  details. Note that the libvirt-qemu ``uid``
+See mount.cifs man page for details. Note that the libvirt-qemu ``uid``
 and ``gid`` must be specified.
 """),
 ]

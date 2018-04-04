@@ -247,7 +247,7 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
             '1.1.1.1'
         image_meta = test_utils.get_test_image_object(None, instance_ref)
         self.connection.spawn(self.ctxt, instance_ref, image_meta,
-                              [], 'herp', network_info=network_info)
+                              [], 'herp', {}, network_info=network_info)
         return instance_ref, network_info
 
     @catch_notimplementederror
@@ -336,12 +336,14 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
                                image_meta, '')
 
     @catch_notimplementederror
-    def test_unrescue_unrescued_instance(self):
+    @mock.patch('os.unlink')
+    def test_unrescue_unrescued_instance(self, mock_unlink):
         instance_ref, network_info = self._get_running_instance()
         self.connection.unrescue(instance_ref, network_info)
 
     @catch_notimplementederror
-    def test_unrescue_rescued_instance(self):
+    @mock.patch('os.unlink')
+    def test_unrescue_rescued_instance(self, mock_unlink):
         image_meta = objects.ImageMeta.from_dict({})
         instance_ref, network_info = self._get_running_instance()
         self.connection.rescue(self.ctxt, instance_ref, network_info,
@@ -452,6 +454,7 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
         self.assertIn('ip', result)
         self.assertIn('initiator', result)
         self.assertIn('host', result)
+        return result
 
     @catch_notimplementederror
     def test_get_volume_connector_storage_ip(self):
@@ -492,7 +495,7 @@ class _VirtDriverTestCase(_FakeDriverBackendTestCase):
                                           instance_ref,
                                           '/dev/sda'))
         self.assertIsNone(
-            self.connection.swap_volume({'driver_volume_type': 'fake',
+            self.connection.swap_volume(None, {'driver_volume_type': 'fake',
                                          'data': {}},
                                         {'driver_volume_type': 'fake',
                                          'data': {}},
@@ -979,3 +982,11 @@ class LibvirtConnTestCase(_VirtDriverTestCase, test.TestCase):
             "hw_qemu_guest_agent": "yes"}}
         instance, network_info = self._get_running_instance(obj=True)
         self.connection.set_admin_password(instance, 'p4ssw0rd')
+
+    def test_get_volume_connector(self):
+        for multipath in (True, False):
+            self.flags(volume_use_multipath=multipath, group='libvirt')
+            result = super(LibvirtConnTestCase,
+                           self).test_get_volume_connector()
+            self.assertIn('multipath', result)
+            self.assertEqual(multipath, result['multipath'])

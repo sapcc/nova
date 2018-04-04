@@ -11,59 +11,19 @@
 #    under the License.
 """Traits handlers for Placement API."""
 
-import copy
-
 import jsonschema
 from oslo_serialization import jsonutils
 from oslo_utils import encodeutils
+from oslo_utils import timeutils
 import webob
 
 from nova.api.openstack.placement import microversion
+from nova.api.openstack.placement.schemas import trait as schema
 from nova.api.openstack.placement import util
 from nova.api.openstack.placement import wsgi_wrapper
 from nova import exception
 from nova.i18n import _
-from nova import objects
-
-TRAIT = {
-    "type": "string",
-    'minLength': 1, 'maxLength': 255,
-}
-
-CUSTOM_TRAIT = copy.deepcopy(TRAIT)
-CUSTOM_TRAIT.update({"pattern": "^CUSTOM_[A-Z0-9_]+$"})
-
-PUT_TRAITS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "traits": {
-            "type": "array",
-            "items": CUSTOM_TRAIT,
-        }
-    },
-    'required': ['traits'],
-    'additionalProperties': False
-}
-
-SET_TRAITS_FOR_RP_SCHEMA = copy.deepcopy(PUT_TRAITS_SCHEMA)
-SET_TRAITS_FOR_RP_SCHEMA['properties']['traits']['items'] = TRAIT
-SET_TRAITS_FOR_RP_SCHEMA['properties'][
-    'resource_provider_generation'] = {'type': 'integer'}
-SET_TRAITS_FOR_RP_SCHEMA['required'].append('resource_provider_generation')
-
-
-LIST_TRAIT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "name": {
-            "type": "string"
-        },
-        "associated": {
-            "type": "string",
-        }
-    },
-    "additionalProperties": False
-}
+from nova.objects import resource_provider as rp_obj
 
 
 def _normalize_traits_qs_param(qs):
@@ -85,35 +45,53 @@ def _normalize_traits_qs_param(qs):
     return filters
 
 
-def _serialize_traits(traits):
-    return {'traits': [trait.name for trait in traits]}
+def _serialize_traits(traits, want_version):
+    last_modified = None
+    get_last_modified = want_version.matches((1, 15))
+    trait_names = []
+    for trait in traits:
+        if get_last_modified:
+            last_modified = util.pick_last_modified(last_modified, trait)
+        trait_names.append(trait.name)
+
+    # If there were no traits, set last_modified to now
+    last_modified = last_modified or timeutils.utcnow(with_timezone=True)
+
+    return {'traits': trait_names}, last_modified
 
 
 @wsgi_wrapper.PlacementWsgify
 @microversion.version_handler('1.6')
 def put_trait(req):
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
     name = util.wsgi_path_item(req.environ, 'name')
 
     try:
-        jsonschema.validate(name, CUSTOM_TRAIT)
+        jsonschema.validate(name, schema.CUSTOM_TRAIT)
     except jsonschema.ValidationError:
         raise webob.exc.HTTPBadRequest(
-            _('The trait is invalid. A valid trait must include prefix '
-              '"CUSTOM_" and use following characters: "A"-"Z", "0"-"9" and '
-              '"_"'))
+            _('The trait is invalid. A valid trait must be no longer than '
+              '255 characters, start with the prefix "CUSTOM_" and use '
+              'following characters: "A"-"Z", "0"-"9" and "_"'))
 
-    trait = objects.Trait(context)
+    trait = rp_obj.Trait(context)
     trait.name = name
 
     try:
         trait.create()
         req.response.status = 201
     except exception.TraitExists:
+        # Get the trait that already exists to get last-modified time.
+        if want_version.matches((1, 15)):
+            trait = rp_obj.Trait.get_by_name(context, name)
         req.response.status = 204
 
     req.response.content_type = None
     req.response.location = util.trait_url(req.environ, trait)
+    if want_version.matches((1, 15)):
+        req.response.last_modified = trait.created_at
+        req.response.cache_control = 'no-cache'
     return req.response
 
 
@@ -121,16 +99,20 @@ def put_trait(req):
 @microversion.version_handler('1.6')
 def get_trait(req):
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
     name = util.wsgi_path_item(req.environ, 'name')
 
     try:
-        objects.Trait.get_by_name(context, name)
+        trait = rp_obj.Trait.get_by_name(context, name)
     except exception.TraitNotFound as ex:
         raise webob.exc.HTTPNotFound(
             explanation=ex.format_message())
 
     req.response.status = 204
     req.response.content_type = None
+    if want_version.matches((1, 15)):
+        req.response.last_modified = trait.created_at
+        req.response.cache_control = 'no-cache'
     return req.response
 
 
@@ -141,7 +123,7 @@ def delete_trait(req):
     name = util.wsgi_path_item(req.environ, 'name')
 
     try:
-        trait = objects.Trait.get_by_name(context, name)
+        trait = rp_obj.Trait.get_by_name(context, name)
         trait.destroy()
     except exception.TraitNotFound as ex:
         raise webob.exc.HTTPNotFound(
@@ -163,15 +145,10 @@ def delete_trait(req):
 @util.check_accept('application/json')
 def list_traits(req):
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
     filters = {}
 
-    try:
-        jsonschema.validate(dict(req.GET), LIST_TRAIT_SCHEMA,
-                            format_checker=jsonschema.FormatChecker())
-    except jsonschema.ValidationError as exc:
-        raise webob.exc.HTTPBadRequest(
-            _('Invalid query string parameters: %(exc)s') %
-            {'exc': exc})
+    util.validate_query_params(req, schema.LIST_TRAIT_SCHEMA)
 
     if 'name' in req.GET:
         filters = _normalize_traits_qs_param(req.GET['name'])
@@ -183,10 +160,13 @@ def list_traits(req):
         filters['associated'] = (
             True if req.GET['associated'].lower() == 'true' else False)
 
-    traits = objects.TraitList.get_all(context, filters)
+    traits = rp_obj.TraitList.get_all(context, filters)
     req.response.status = 200
-    req.response.body = encodeutils.to_utf8(
-        jsonutils.dumps(_serialize_traits(traits)))
+    output, last_modified = _serialize_traits(traits, want_version)
+    if want_version.matches((1, 15)):
+        req.response.last_modified = last_modified
+        req.response.cache_control = 'no-cache'
+    req.response.body = encodeutils.to_utf8(jsonutils.dumps(output))
     req.response.content_type = 'application/json'
     return req.response
 
@@ -196,14 +176,28 @@ def list_traits(req):
 @util.check_accept('application/json')
 def list_traits_for_resource_provider(req):
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
     uuid = util.wsgi_path_item(req.environ, 'uuid')
 
-    resource_provider = objects.ResourceProvider.get_by_uuid(
-        context, uuid)
+    # Resource provider object is needed for two things: If it is
+    # NotFound we'll get a 404 here, which needs to happen because
+    # get_all_by_resource_provider can return an empty list.
+    # It is also needed for the generation, used in the outgoing
+    # representation.
+    try:
+        rp = rp_obj.ResourceProvider.get_by_uuid(context, uuid)
+    except exception.NotFound as exc:
+        raise webob.exc.HTTPNotFound(
+            _("No resource provider with uuid %(uuid)s found: %(error)s") %
+             {'uuid': uuid, 'error': exc})
 
-    response_body = _serialize_traits(resource_provider.get_traits())
-    response_body[
-        "resource_provider_generation"] = resource_provider.generation
+    traits = rp_obj.TraitList.get_all_by_resource_provider(context, rp)
+    response_body, last_modified = _serialize_traits(traits, want_version)
+    response_body["resource_provider_generation"] = rp.generation
+
+    if want_version.matches((1, 15)):
+        req.response.last_modified = last_modified
+        req.response.cache_control = 'no-cache'
 
     req.response.status = 200
     req.response.body = encodeutils.to_utf8(jsonutils.dumps(response_body))
@@ -216,11 +210,12 @@ def list_traits_for_resource_provider(req):
 @util.require_content('application/json')
 def update_traits_for_resource_provider(req):
     context = req.environ['placement.context']
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
     uuid = util.wsgi_path_item(req.environ, 'uuid')
-    data = util.extract_json(req.body, SET_TRAITS_FOR_RP_SCHEMA)
+    data = util.extract_json(req.body, schema.SET_TRAITS_FOR_RP_SCHEMA)
     rp_gen = data['resource_provider_generation']
     traits = data['traits']
-    resource_provider = objects.ResourceProvider.get_by_uuid(
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(
         context, uuid)
 
     if resource_provider.generation != rp_gen:
@@ -229,7 +224,7 @@ def update_traits_for_resource_provider(req):
               "the generation and try again."),
             json_formatter=util.json_error_formatter)
 
-    trait_objs = objects.TraitList.get_all(
+    trait_objs = rp_obj.TraitList.get_all(
         context, filters={'name_in': traits})
     traits_name = set([obj.name for obj in trait_objs])
     non_existed_trait = set(traits) - set(traits_name)
@@ -239,9 +234,12 @@ def update_traits_for_resource_provider(req):
 
     resource_provider.set_traits(trait_objs)
 
-    response_body = _serialize_traits(trait_objs)
+    response_body, last_modified = _serialize_traits(trait_objs, want_version)
     response_body[
         'resource_provider_generation'] = resource_provider.generation
+    if want_version.matches((1, 15)):
+        req.response.last_modified = last_modified
+        req.response.cache_control = 'no-cache'
     req.response.status = 200
     req.response.body = encodeutils.to_utf8(jsonutils.dumps(response_body))
     req.response.content_type = 'application/json'
@@ -254,9 +252,9 @@ def delete_traits_for_resource_provider(req):
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
 
-    resource_provider = objects.ResourceProvider.get_by_uuid(context, uuid)
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(context, uuid)
     try:
-        resource_provider.set_traits(objects.TraitList(objects=[]))
+        resource_provider.set_traits(rp_obj.TraitList(objects=[]))
     except exception.ConcurrentUpdateDetected as e:
         raise webob.exc.HTTPConflict(explanation=e.format_message())
 

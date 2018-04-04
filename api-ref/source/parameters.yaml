@@ -368,23 +368,38 @@ all_projects:
     If you specify a tenant ID for a non-administrative user with this query parameter,
     the call lists all server groups for the tenant, or project, rather than for
     all projects.
+    Value of this query parameter is not checked, only presence is considered
+    as request for all projects.
+  in: query
+  required: false
+  type: string
+all_tenants:
+  description: |
+    Specify the ``all_tenants`` query parameter to ping instances
+    for all tenants. By default this is only allowed by admin users.
+    Value of this query parameter is not checked, only presence
+    is considered as request for all tenants.
+  in: query
+  required: false
+  type: string
+all_tenants_query:
+  description: |
+    Specify the ``all_tenants`` query parameter to list all instances
+    for all projects. A value of `all_tenants`` need not be specified.
+    If it is specified, it must be 'boolean'.
+    By default this is only allowed by admin users.
   in: query
   required: false
   type: boolean
-all_tenants:
+all_tenants_sec_grp_query:
   description: |
-    Specify the ``all_tenants=1`` query parameter to ping instances
-    for all tenants. By default this is only allowed by admin users.
+    Specify the ``all_tenants`` query parameter to list all security
+    groups for all projects. This is only allowed for admin users.
+    Value of this query parameter is not checked, only presence
+    is considered as request for all tenants.
   in: query
   required: false
-  type: integer
-all_tenants_query:
-  description: |
-    Specify the ``all_tenants=1`` query parameter to list all instances
-    for all projects. By default this is only allowed by admin users.
-  in: query
-  required: false
-  type: integer
+  type: string
 availability_zone_query_server:
   description: |
     Filter the server list result by server availability zone.
@@ -420,6 +435,40 @@ changes-since:
   in: query
   required: false
   type: string
+changes_since_instance_action:
+  description: |
+    Filters the response by a date and time stamp when the instance action last
+    changed.
+
+    The date and time stamp format is `ISO 8601 <https://en.wikipedia.org/wiki/ISO_8601>`_:
+    ::
+
+       CCYY-MM-DDThh:mm:ss±hh:mm
+
+    The ``±hh:mm`` value, if included, returns the time zone as an offset from UTC.
+    For example, ``2015-08-27T09:49:58-05:00``.
+    If you omit the time zone, the UTC time zone is assumed.
+  in: query
+  required: false
+  type: string
+  min_version: 2.58
+changes_since_migration:
+  description: |
+    Filters the response by a date and time stamp when the migration last
+    changed. Those changed after the specified date and time stamp are returned.
+
+    The date and time stamp format is `ISO 8601 <https://en.wikipedia.org/wiki/ISO_8601>`_:
+    ::
+
+       CCYY-MM-DDThh:mm:ss±hh:mm
+
+    The ``±hh:mm`` value, if included, returns the time zone as an offset from UTC.
+    For example, ``2015-08-27T09:49:58-05:00``.
+    If you omit the time zone, the UTC time zone is assumed.
+  in: query
+  required: false
+  type: string
+  min_version: 2.59
 changes_since_server:
   description: |
     Filters the response by a date and time stamp when the server last
@@ -465,7 +514,7 @@ delete_info:
 
     .. code-block:: javascript
 
-       DELETE /os-assisted-volume-snapshots?delete_info='{"volume_id": "521752a6-acf6-4b2d-bc7a-119f9148cd8c"}'
+       DELETE /os-assisted-volume-snapshots/421752a6-acf6-4b2d-bc7a-119f9148cd8c?delete_info='{"volume_id": "521752a6-acf6-4b2d-bc7a-119f9148cd8c"}'
   in: query
   required: true
   type: string
@@ -670,6 +719,26 @@ include:
   in: query
   required: false
   type: string
+instance_action_limit:
+  description: |
+    Requests a page size of items. Returns a number of items up to a limit value.
+    Use the ``limit`` parameter to make an initial limited request and use the
+    last-seen item from the response as the ``marker`` parameter value in a
+    subsequent limited request.
+  in: query
+  required: false
+  type: integer
+  min_version: 2.58
+instance_action_marker:
+  description: |
+    The ``request_id`` of the last-seen instance action. Use the ``limit``
+    parameter to make an initial limited request and use the last-seen
+    item from the response as the ``marker`` parameter value in a subsequent
+    limited request.
+  in: query
+  required: false
+  type: string
+  min_version: 2.58
 ip6_query:
   description: |
     An IPv6 address to filter results by.
@@ -799,6 +868,25 @@ migration_instance_uuid:
   in: query
   required: false
   type: string
+migration_limit:
+  description: |
+    Requests a page size of items. Returns a number of items up to a limit value.
+    Use the ``limit`` parameter to make an initial limited request and use the
+    last-seen item from the response as the ``marker`` parameter value in a
+    subsequent limited request.
+  in: query
+  required: false
+  type: integer
+  min_version: 2.59
+migration_marker:
+  description: |
+    The UUID of the last-seen migration. Use the ``limit`` parameter to make an
+    initial limited request and use the last-seen item from the response as
+    the ``marker`` parameter value in a subsequent limited request.
+  in: query
+  required: false
+  type: string
+  min_version: 2.59
 migration_source_compute:
   description: |
     The source compute node of migration to filter.
@@ -960,10 +1048,11 @@ sort_key_flavor:
   type: string
 sort_key_server:
   description: |
-    Sorts by a server attribute. Default attribute is ``created``. You can specify
-    multiple pairs of sort key and sort direction query parameters. If you omit the
-    sort direction in a pair, the API uses the natural sorting direction of the server
-    ``sort_key`` attribute. The sort keys are limited to:
+    Sorts by a server attribute. Default attribute is ``created_at``. You can
+    specify multiple pairs of sort key and sort direction query parameters. If
+    you omit the sort direction in a pair, the API uses the natural sorting
+    direction of the server ``sort_key`` attribute. The sort keys are limited
+    to:
 
     - ``access_ip_v4``
     - ``access_ip_v6``
@@ -1189,7 +1278,7 @@ addresses:
     in a state set in the ``hide_server_address_states`` configuration option.
     By default, servers in ``building`` state hide their addresses information.
     See ``nova.conf`` `configuration options
-    <https://docs.openstack.org/ocata/config-reference/compute/config-options.html>`_
+    <https://docs.openstack.org/nova/latest/configuration/config.html>`_
     for more information.
   in: body
   required: true
@@ -1302,7 +1391,10 @@ aggregate_az:
   type: string
 aggregate_az_optional:
   description: |
-    The availability zone of the host aggregate.
+    The availability zone of the host aggregate. You should use a custom
+    availability zone rather than the default returned by the
+    os-availability-zone API. The availability zone must not include ':'
+    in its name.
   in: body
   required: false
   type: string
@@ -1541,7 +1633,8 @@ block_device_mapping_v2:
             "volume_size": "25",
             "destination_type": "volume",
             "delete_on_termination": true,
-            "tag": "disk1" }]
+            "tag": "disk1",
+            "disk_bus": "scsi"}]
 
     In microversion 2.32, ``tag`` is an optional string attribute that can
     be used to assign a tag to the block device. This tag is then exposed to
@@ -1553,7 +1646,7 @@ block_device_mapping_v2:
     with version 2.33. It has been restored in version 2.42.
   in: body
   required: false
-  type: object
+  type: array
 block_device_uuid:
   description: |
     This is the uuid of source resource. The uuid is point to different resource
@@ -1646,8 +1739,8 @@ config_drive:
     setting provides information about a drive that the instance can mount at boot
     time. The instance reads files from the drive to get information that is normally
     available through the metadata service. This metadata is different from the user
-    data. Not all cloud providers enable the ``config_drive``. Read more in the OpenStack
-    End User Guide.
+    data. Not all cloud providers enable the ``config_drive``. Read more in the
+    `OpenStack End User Guide <https://docs.openstack.org/nova/latest/user/config-drive.html>`_.
   in: body
   required: false
   type: boolean
@@ -1725,6 +1818,7 @@ contents:
   in: body
   required: true
   type: string
+  max_version: 2.56
 cores: &cores
   description: |
     The number of allowed server cores for each tenant.
@@ -1982,6 +2076,15 @@ disk_available_least:
   in: body
   required: true
   type: integer
+disk_bus:
+  description: |
+    Disk bus type, some hypervisors (currently only libvirt) support
+    specify this parameter. Some example disk_bus values can be: `ide`,
+    `usb`, `virtio`, `scsi`. This is not an exhaustive list as it depends
+    on the virtualization driver, and may change as more support is added.
+  in: body
+  required: false
+  type: string
 disk_config:
   description: |
     Disk configuration. The value is either:
@@ -2351,6 +2454,29 @@ flavor_cpus_2_47:
   type: integer
   description: |
     The number of virtual CPUs that were allocated to the server.
+flavor_description:
+  type: string
+  in: body
+  required: false
+  min_version: 2.55
+  description: |
+    A free form description of the flavor. Limited to 65535 characters
+    in length. Only printable characters are allowed.
+flavor_description_required:
+  type: string
+  in: body
+  required: true
+  min_version: 2.55
+  description: |
+    A free form description of the flavor. Limited to 65535 characters
+    in length. Only printable characters are allowed.
+flavor_description_resp:
+  description: |
+    The description of the flavor.
+  in: body
+  required: true
+  type: string
+  min_version: 2.55
 flavor_disabled:
   in: body
   required: false
@@ -2680,6 +2806,16 @@ force_evacuate:
   description: |
     Force an evacuation by not verifying the provided destination host by the
     scheduler.
+
+    .. warning:: This could result in failures to actually evacuate the
+      instance to the specified host. It is recommended to either not specify
+      a host so that the scheduler will pick one, or specify a host without
+      ``force=True`` set.
+
+      Furthermore, this should not be specified when evacuating instances
+      managed by a clustered hypervisor driver like ironic since you
+      cannot specify a node, so the compute service will pick a node randomly
+      which may not be able to accomodate the instance.
   in: body
   required: false
   type: boolean
@@ -2688,16 +2824,21 @@ force_live_migrate:
   description: |
     Force a live-migration by not verifying the provided destination host by
     the scheduler.
+
+    .. warning:: This could result in failures to actually live migrate the
+      instance to the specified host. It is recommended to either not specify
+      a host so that the scheduler will pick one, or specify a host without
+      ``force=True`` set.
   in: body
   required: false
   type: boolean
   min_version: 2.30
 force_migration_complete:
   description: |
-    The action.
+    The action to force an in-progress live migration to complete.
   in: body
   required: true
-  type: string
+  type: none
   min_version: 2.22
 force_snapshot:
   description: |
@@ -2769,14 +2910,23 @@ group_id:
   type: string
 guest_format:
   description: |
-    Specifies the guest server disk file system format, such as ``ephemeral`` or ``swap``.
+    Specifies the guest server disk file system format, such as ``ext2``,
+    ``ext3``, ``ext4``, ``xfs`` or ``swap``. This parameter affects only
+    the libvirt virt driver.
   in: body
-  required: true
+  required: false
   type: string
 host:
   description: |
     The name or ID of the host to which the server is evacuated.
     If you omit this parameter, the scheduler chooses a host.
+
+    .. warning:: Prior to microversion 2.29, specifying a host will bypass
+      validation by the scheduler, which could result in failures to actually
+      evacuate the instance to the specified host, or over-subscription of the
+      host. It is recommended to either not specify a host so that the
+      scheduler will pick one, or specify a host with microversion >= 2.29 and
+      without ``force=True`` set.
   in: body
   required: false
   type: string
@@ -2825,11 +2975,26 @@ host_memory_mb:
   type: integer
 host_migration:
   description: |
-    The host to which to migrate the server. If this parameter is ``None``, the scheduler
-    chooses a host.
+    The host to which to migrate the server. If this parameter is ``None``,
+    the scheduler chooses a host.
+
+    .. warning:: Prior to microversion 2.30, specifying a host will bypass
+      validation by the scheduler, which could result in failures to actually
+      migrate the instance to the specified host, or over-subscription of the
+      host. It is recommended to either not specify a host so that the
+      scheduler will pick one, or specify a host with microversion >= 2.30 and
+      without ``force=True`` set.
   in: body
   required: true
   type: string
+host_migration_2_56:
+  description: |
+    The host to which to migrate the server. If you specify ``null`` or
+    don't specify this parameter, the scheduler chooses a host.
+  in: body
+  required: false
+  type: string
+  min_version: 2.56
 host_name_body:
   description: |
     The name of the host.
@@ -3215,6 +3380,7 @@ injected_file_content_bytes:
   in: body
   required: true
   type: integer
+  max_version: 2.56
 injected_file_content_bytes_quota_details:
   description: |
     The object of detailed injected file content bytes quota,
@@ -3223,18 +3389,21 @@ injected_file_content_bytes_quota_details:
   in: body
   required: true
   type: object
+  max_version: 2.56
 injected_file_content_bytes_quota_optional:
   description: |
     The number of allowed bytes of content for each injected file.
   in: body
   required: false
   type: integer
+  max_version: 2.56
 injected_file_path_bytes:
   description: |
     The number of allowed bytes for each injected file path.
   in: body
   required: true
   type: integer
+  max_version: 2.56
 injected_file_path_bytes_quota_details:
   description: |
     The object of detailed injected file path bytes quota,
@@ -3243,18 +3412,21 @@ injected_file_path_bytes_quota_details:
   in: body
   required: true
   type: object
+  max_version: 2.56
 injected_file_path_bytes_quota_optional:
   description: |
     The number of allowed bytes for each injected file path.
   in: body
   required: false
   type: integer
+  max_version: 2.56
 injected_files: &injected_files
   description: |
     The number of allowed injected files for each tenant.
   in: body
   required: true
   type: integer
+  max_version: 2.56
 injected_files_quota_class: &injected_files_quota_class
   <<: *injected_files
   description: |
@@ -3269,12 +3441,14 @@ injected_files_quota_details:
   in: body
   required: true
   type: object
+  max_version: 2.56
 injected_files_quota_optional:
   description: |
     The number of allowed injected files for each tenant.
   in: body
   required: false
   type: integer
+  max_version: 2.56
 injectNetworkInfo:
   description: |
     The action.
@@ -3303,6 +3477,17 @@ instance_action_events_2_51:
   required: true
   type: array
   min_version: 2.51
+instance_actions_next_links:
+  description: |
+    Links pertaining to the instance action.
+    This parameter is returned when paging and more data is available.
+    See `API Guide / Links and References
+    <http://developer.openstack.org/api-guide/compute/links_and_references.html>`_
+    for more info.
+  in: body
+  required: false
+  type: array
+  min_version: 2.58
 instance_id_body:
   description: |
     The UUID of the server.
@@ -3460,7 +3645,28 @@ key_name:
   in: body
   required: false
   type: string
+key_name_rebuild_req:
+  description: |
+    Key pair name for rebuild API. If ``null`` is specified,
+    the existing keypair is unset.
 
+    .. note:: Users within the same project are able to rebuild other
+              user's instances in that project with a new keypair. Keys
+              are owned by users (which is the only resource that's true
+              of). Servers are owned by projects. Because of this a rebuild
+              with a key_name is looking up the keypair by the user calling
+              rebuild.
+  in: body
+  required: false
+  type: string
+  min_version: 2.54
+key_name_rebuild_resp:
+  description: |
+    The name of associated key pair, if any.
+  in: body
+  required: true
+  type: string
+  min_version: 2.54
 key_name_resp:
   description: |
     The name of associated key pair, if any.
@@ -3810,10 +4016,12 @@ metadata_object:
   type: object
 migrate:
   description: |
-    The action.
+    The action to cold migrate a server.
+    This parameter can be ``null``.
+    Up to microversion 2.55, this parameter should be ``null``.
   in: body
   required: true
-  type: string
+  type: object
 migrate_dest_compute:
   description: |
     The target compute for a migration.
@@ -3918,6 +4126,17 @@ migration_new_flavor_id:
   in: body
   required: true
   type: string
+migration_next_links_2_59:
+  description: |
+    Links pertaining to the migration.
+    This parameter is returned when paging and more data is available.
+    See `API Guide / Links and References
+    <http://developer.openstack.org/api-guide/compute/links_and_references.html>`_
+    for more info.
+  in: body
+  required: false
+  type: array
+  min_version: 2.59
 migration_old_flavor_id:
   description: |
     The flavor ID of the server when the migration was started.
@@ -3932,6 +4151,13 @@ migration_type_2_23:
   required: true
   type: string
   min_version: 2.23
+migration_uuid:
+  description: |
+    The UUID of the migration.
+  in: body
+  required: true
+  type: string
+  min_version: 2.59
 migrations:
   description: |
     The list of server migration objects.
@@ -4138,9 +4364,11 @@ os:
   type: string
 os-availability-zone:availability_zone:
   description: |
-    The availability zone from which to launch the server. When you provision resources,
-    you specify from which availability zone you want your instance to be built.  Typically,
-    you use availability zones to arrange OpenStack compute hosts into logical groups.
+    The availability zone from which to launch the server. When you
+    provision resources, you specify from which availability zone you
+    want your instance to be built.  Typically, an admin user will use
+    availability zones to arrange OpenStack compute hosts into logical
+    groups.
     An availability zone provides a form of physical isolation and redundancy from
     other availability zones. For instance, if some racks in your data center are
     on a separate power source, you can put servers in those racks in their own availability
@@ -4148,6 +4376,11 @@ os-availability-zone:availability_zone:
     segregating resources into availability zones, you can ensure that your application
     resources are spread across disparate machines to achieve high availability in
     the event of hardware or other failure.
+    You can list the available availability zones by calling the
+    os-availability-zone API, but you should avoid using the default
+    availability zone when booting the instance.  In general, the
+    default availability zone is named ``nova``. This AZ is only shown
+    when listing the availability zones as an admin.
   in: body
   required: false
   type: string
@@ -4396,7 +4629,22 @@ os-stop:
 os:scheduler_hints:
   description: |
     The dictionary of data to send to the scheduler. Alternatively, you can specify
-    ``OS-SCH-HNT:scheduler_hints`` as the string.
+    ``OS-SCH-HNT:scheduler_hints`` as the key in the request body.
+
+    .. note:: This is a top-level key in the request body, not part of the
+      `server` portion of the request body.
+
+    There are a few caveats with scheduler hints:
+
+    * The request validation schema is per hint. For example, some require a
+      single string value, and some accept a list of values.
+    * Hints are only used based on the cloud scheduler configuration, which
+      varies per deployment.
+    * Hints are pluggable per deployment, meaning that a cloud can have custom
+      hints which may not be available in another cloud.
+
+    For these reasons, it is important to consult each cloud's user
+    documentation to know what is available for scheduler hints.
   in: body
   required: false
   type: object
@@ -4445,6 +4693,7 @@ path:
   in: body
   required: true
   type: string
+  max_version: 2.56
 pause:
   description: |
     The action to pause a server.
@@ -4473,6 +4722,7 @@ personality:
   in: body
   required: false
   type: array
+  max_version: 2.56
 policies:
   description: |
     A list of exactly one policy name to associate with the server group. The
@@ -4587,6 +4837,8 @@ project_id_instance_action:
 project_id_query_server:
   description: |
     Filter the list of servers by the given project ID.
+
+    This filter only works when the ``all_tenants=1`` filter is also specified.
 
     .. note::
 
@@ -5650,6 +5902,23 @@ updated_consider_null:
   in: body
   required: true
   type: string
+updated_instance_action:
+  description: |
+    The date and time when the instance action or the action event of
+    instance action was updated. The date and time stamp format is
+    `ISO 8601 <https://en.wikipedia.org/wiki/ISO_8601>`_
+
+    ::
+
+      CCYY-MM-DDThh:mm:ss±hh:mm
+
+    For example, ``2015-08-27T09:49:58-05:00``. The ``±hh:mm``
+    value, if included, is the time zone as an offset from UTC.  In
+    the previous example, the offset value is ``-05:00``.
+  in: body
+  required: true
+  type: string
+  min_version: 2.58
 updated_version:
   description: |
     This is a fixed string. It is ``2011-01-21T11:33:21Z`` in version 2.0,
@@ -5714,6 +5983,22 @@ user_data:
   in: body
   required: false
   type: string
+user_data_rebuild_req:
+  description: |
+    Configuration information or scripts to use upon rebuild.
+    Must be Base64 encoded. If ``null`` is specified, the existing user_data
+    is unset.
+  in: body
+  required: false
+  type: string
+  min_version: 2.57
+user_data_rebuild_resp:
+  in: body
+  required: true
+  type: string
+  description: |
+    The current user_data for the instance.
+  min_version: 2.57
 user_id:
   description: |
     The user ID of the user who owns the server.

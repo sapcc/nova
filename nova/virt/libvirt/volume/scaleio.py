@@ -15,6 +15,7 @@
 
 """Libvirt volume driver for ScaleIO."""
 
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_log import log as logging
 
@@ -37,7 +38,7 @@ class LibvirtScaleIOVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         super(LibvirtScaleIOVolumeDriver, self).__init__(host,
                                                          is_block_dev=False)
         self.connector = connector.InitiatorConnector.factory(
-            'SCALEIO', utils.get_root_helper(),
+            initiator.SCALEIO, utils.get_root_helper(),
             device_scan_attempts=CONF.libvirt.num_volume_scan_tries)
 
     def get_config(self, connection_info, disk_info):
@@ -48,14 +49,14 @@ class LibvirtScaleIOVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         conf.source_path = connection_info['data']['device_path']
         return conf
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         device_info = self.connector.connect_volume(connection_info['data'])
         LOG.debug("Attached ScaleIO volume %s.", device_info)
         connection_info['data']['device_path'] = device_info['path']
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         self.connector.disconnect_volume(connection_info['data'], None)
-        LOG.debug("Disconnected volume %s.", disk_dev)
+        LOG.debug("Disconnected volume", instance=instance)
 
         super(LibvirtScaleIOVolumeDriver, self).disconnect_volume(
-            connection_info, disk_dev, instance)
+            connection_info, instance)

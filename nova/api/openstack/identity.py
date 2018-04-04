@@ -13,11 +13,12 @@
 # under the License.
 
 from keystoneauth1 import exceptions as kse
-from keystoneauth1 import session
 from oslo_log import log as logging
 import webob
 
 from nova.i18n import _
+from nova import utils
+
 
 LOG = logging.getLogger(__name__)
 
@@ -29,17 +30,15 @@ def verify_project_id(context, project_id):
     an HTTPBadRequest is emitted.
 
     """
-    sess = session.Session(auth=context.get_auth_plugin())
+    adap = utils.get_ksa_adapter(
+        'identity', ksa_auth=context.get_auth_plugin(),
+        min_version=(3, 0), max_version=(3, 'latest'))
+
     failure = webob.exc.HTTPBadRequest(
             explanation=_("Project ID %s is not a valid project.") %
             project_id)
     try:
-        resp = sess.get('/projects/%s' % project_id,
-                        endpoint_filter={
-                            'service_type': 'identity',
-                            'version': (3, 0)
-                        },
-                        raise_exc=False)
+        resp = adap.get('/projects/%s' % project_id, raise_exc=False)
     except kse.EndpointNotFound:
         LOG.error(
             "Keystone identity service version 3.0 was not found. This might "
@@ -48,8 +47,9 @@ def verify_project_id(context, project_id):
         raise failure
     except kse.ClientException:
         # something is wrong, like there isn't a keystone v3 endpoint,
+        # or nova isn't configured for the interface to talk to it;
         # we'll take the pass and default to everything being ok.
-        LOG.exception("Unable to contact keystone to verify project_id")
+        LOG.info("Unable to contact keystone to verify project_id")
         return True
 
     if resp:

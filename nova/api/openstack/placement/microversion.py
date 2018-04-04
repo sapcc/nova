@@ -48,6 +48,18 @@ VERSIONS = [
             # PUT /allocations
     '1.9',  # Adds GET /usages
     '1.10',  # Adds GET /allocation_candidates resource endpoint
+    '1.11',  # Adds 'allocations' link to the GET /resource_providers response
+    '1.12',  # Add project_id and user_id to GET /allocations/{consumer_uuid}
+             # and PUT to /allocations/{consumer_uuid} in the same dict form
+             # as GET. The 'allocation_requests' format in GET
+             # /allocation_candidates is updated to be the same as well.
+    '1.13',  # Adds POST /allocations to set allocations for multiple consumers
+    '1.14',  # Adds parent and root provider UUID on resource provider
+             # representation and 'in_tree' filter on GET /resource_providers
+    '1.15',  # Include last-modified and cache-control headers
+    '1.16',  # Add 'limit' query parameter to GET /allocation_candidates
+    '1.17',  # Add 'required' query parameter to GET /allocation_candidates and
+             # return traits in the provider summary.
 ]
 
 
@@ -77,30 +89,9 @@ def parse_version_string(version_string):
         return Version(*(int(value) for value
                          in version_string.split('.', 1)))
     except (ValueError, TypeError) as exc:
-        raise TypeError('invalid version string: %s; %s' % (
-            version_string, exc))
-
-
-def raise_http_status_code_if_not_version(req, status_code, min_version,
-                                          max_version=None):
-    """Utility to raise a http status code if the wanted microversion does not
-       match.
-
-    :param req: The HTTP request for the placement api
-    :param status_code: HTTP status code (integer value) to be raised
-    :param min_version: Minimum placement microversion level
-    :param max_version: Maximum placement microversion level
-    :returns: None
-    :raises: HTTP status code if the specified microversion does not match
-    :raises: KeyError if status_code is not a valid HTTP status code
-    """
-    if not isinstance(min_version, tuple):
-        min_version = parse_version_string(min_version)
-    if max_version and not isinstance(max_version, tuple):
-        max_version = parse_version_string(max_version)
-    want_version = req.environ[MICROVERSION_ENVIRON]
-    if not want_version.matches(min_version, max_version):
-        raise webob.exc.status_map[status_code]
+        raise TypeError(
+            _('invalid version string: %(version_string)s; %(exc)s') %
+                {'version_string': version_string, 'exc': exc})
 
 
 class MicroversionMiddleware(object):
@@ -190,7 +181,7 @@ def extract_version(headers):
     # version if we really need to.
     if (str(request_version) in VERSIONS and request_version.matches()):
         return request_version
-    raise ValueError('Unacceptable version header: %s' % version_string)
+    raise ValueError(_('Unacceptable version header: %s') % version_string)
 
 
 # From twisted
@@ -222,10 +213,11 @@ def _fully_qualified_name(obj):
     return name
 
 
-def _find_method(f, version):
+def _find_method(f, version, status_code):
     """Look in VERSIONED_METHODS for method with right name matching version.
 
-    If no match is found raise a 404.
+    If no match is found a HTTPError corresponding to status_code will
+    be returned.
     """
     qualified_name = _fully_qualified_name(f)
     # A KeyError shouldn't be possible here, but let's be robust
@@ -235,10 +227,10 @@ def _find_method(f, version):
         if min_version <= version <= max_version:
             return func
 
-    raise webob.exc.HTTPNotFound()
+    raise webob.exc.status_map[status_code]
 
 
-def version_handler(min_ver, max_ver=None):
+def version_handler(min_ver, max_ver=None, status_code=404):
     """Decorator for versioning API methods.
 
     Add as a decorator to a placement API handler to constrain
@@ -250,8 +242,9 @@ def version_handler(min_ver, max_ver=None):
 
     :param min_ver: A string of two numerals, X.Y indicating the
                     minimum version allowed for the decorated method.
-    :param min_ver: A string of two numerals, X.Y, indicating the
+    :param max_ver: A string of two numerals, X.Y, indicating the
                     maximum version allowed for the decorated method.
+    :param status_code: A status code to indicate error, 404 by default
     """
     def decorator(f):
         min_version = parse_version_string(min_ver)
@@ -265,7 +258,7 @@ def version_handler(min_ver, max_ver=None):
 
         def decorated_func(req, *args, **kwargs):
             version = req.environ[MICROVERSION_ENVIRON]
-            return _find_method(f, version)(req, *args, **kwargs)
+            return _find_method(f, version, status_code)(req, *args, **kwargs)
 
         # Sort highest min version to beginning of list.
         VERSIONED_METHODS[qualified_name].sort(key=lambda x: x[0],

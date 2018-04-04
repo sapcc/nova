@@ -41,7 +41,7 @@ Notifier object depends on the parameters of the get_notifier call and the
 value of the oslo.messaging configuration options `driver` and `topics`.
 There are notification configuration options in Nova which are specific for
 certain notification types like `notifications.notify_on_state_change`,
-`notifications.notify_on_api_faults`, `notifications.default_level`, etc.
+`notifications.default_level`, etc.
 
 The structure of the payload of the unversioned notifications is defined in the
 code that emits the notification and no documentation or enforced backward
@@ -96,6 +96,10 @@ notification payload:
   consume the new payload without any change.
 * a major version bump indicates a backward incompatible change of the payload
   which can mean removed fields, type change, etc in the payload.
+* there is an additional field 'nova_object.name' for every payload besides
+  'nova_object.data' and 'nova_object.version'. This field contains the name of
+  the nova internal representation of the payload type. Client code should not
+  depend on this name.
 
 There is a Nova configuration parameter `notifications.notification_format`
 that can be used to specify which notifications are emitted by Nova. The
@@ -282,6 +286,17 @@ decorated with the `notification_sample` decorator. For example the
 `doc/sample_notifications/service-update.json` and the
 ServiceUpdateNotification class is decorated accordingly.
 
+Notification payload classes can use inheritance to avoid duplicating common
+payload fragments in nova code. However the leaf classes used directly in a
+notification should be created with care to avoid future needs of adding extra
+level of inheritance that changes the name of the leaf class as that name is
+present in the payload class. If this cannot be avoided and the only change is
+the renaming then the version of the new payload shall be the same as the old
+payload was before the rename. See [3]_ as an example. If the renaming
+involves any other changes on the payload (e.g. adding new fields) then the
+version of the new payload shall be higher than the old payload was. See [4]_
+as an example.
+
 What should be in the notification payload
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 This is just a guideline. You should always consider the actual use case that
@@ -311,9 +326,19 @@ requires the notification.
 Existing versioned notifications
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. note:: Versioned notifications are added in each release, so the samples
+  represented below may not necessarily be in an older version of nova. Ensure
+  you are looking at the correct version of the documentation for the release
+  you are using.
+
+.. This is a reference anchor used in the main index page.
+.. _versioned_notification_samples:
+
 .. versioned_notifications::
 
 
 
 .. [1] http://docs.openstack.org/developer/oslo.messaging/notifier.html
 .. [2] http://docs.openstack.org/developer/oslo.versionedobjects
+.. [3] https://review.openstack.org/#/c/463001/
+.. [4] https://review.openstack.org/#/c/453077/

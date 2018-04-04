@@ -16,8 +16,10 @@ import datetime
 
 import mock
 
+from nova import context as nova_context
 from nova.notifications import base
 from nova import test
+from nova.tests import uuidsentinel as uuids
 from nova import utils
 
 
@@ -42,15 +44,61 @@ class TestNullSafeUtils(test.NoDBTestCase):
 
 class TestSendInstanceUpdateNotification(test.NoDBTestCase):
 
-    @mock.patch.object(base, 'info_from_instance',
-                       new_callable=mock.NonCallableMock)  # asserts not called
+    @mock.patch('nova.notifications.objects.base.NotificationBase.emit',
+                new_callable=mock.NonCallableMock)  # asserts not called
     # TODO(mriedem): Rather than mock is_enabled, it would be better to
     # configure oslo_messaging_notifications.driver=['noop']
     @mock.patch('nova.rpc.NOTIFIER.is_enabled', return_value=False)
-    def test_send_instance_update_notification_disabled(self, mock_enabled,
-                                                        mock_info):
-        """Tests the case that notifications are disabled which makes
-        send_instance_update_notification a noop.
+    def test_send_versioned_instance_update_notification_disabled(self,
+                                                                  mock_enabled,
+                                                                  mock_info):
+        """Tests the case that versioned notifications are disabled which makes
+        _send_versioned_instance_update_notification a noop.
         """
+        base._send_versioned_instance_update(mock.sentinel.ctxt,
+                                             mock.sentinel.instance,
+                                             mock.sentinel.payload,
+                                             mock.sentinel.host,
+                                             mock.sentinel.service)
+
+    @mock.patch.object(base, 'bandwidth_usage')
+    @mock.patch.object(base, '_compute_states_payload')
+    @mock.patch('nova.rpc.get_notifier')
+    @mock.patch.object(base, 'info_from_instance')
+    def test_send_legacy_instance_update_notification(self, mock_info,
+                                                      mock_get_notifier,
+                                                      mock_states,
+                                                      mock_bw):
+        """Tests the case that versioned notifications are disabled and
+        assert that this does not prevent sending the unversioned
+        instance.update notification.
+        """
+
+        self.flags(notification_format='unversioned', group='notifications')
         base.send_instance_update_notification(mock.sentinel.ctxt,
                                                mock.sentinel.instance)
+
+        mock_get_notifier.return_value.info.assert_called_once_with(
+            mock.sentinel.ctxt, 'compute.instance.update', mock.ANY)
+
+
+class TestBandwidthUsage(test.NoDBTestCase):
+    @mock.patch('nova.context.RequestContext.elevated')
+    @mock.patch('nova.network.API')
+    @mock.patch('nova.objects.BandwidthUsageList.get_by_uuids')
+    def test_context_elevated(self, mock_get_bw_usage, mock_nw_api,
+                              mock_elevated):
+        context = nova_context.RequestContext('fake', 'fake')
+        # We need this to not be a NovaObject so the old school
+        # get_instance_nw_info will run.
+        instance = {'uuid': uuids.instance}
+        audit_start = 'fake'
+
+        base.bandwidth_usage(context, instance, audit_start)
+
+        network_api = mock_nw_api.return_value
+        network_api.get_instance_nw_info.assert_called_once_with(
+            mock_elevated.return_value, instance)
+        mock_get_bw_usage.assert_called_once_with(
+            mock_elevated.return_value, [uuids.instance], audit_start)
+        mock_elevated.assert_called_once_with(read_deleted='yes')

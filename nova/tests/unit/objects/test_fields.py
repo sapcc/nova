@@ -346,10 +346,23 @@ class TestResourceClass(TestString):
             ('NUMA_THREAD', 'NUMA_THREAD'),
             ('NUMA_MEMORY_MB', 'NUMA_MEMORY_MB'),
             ('IPV4_ADDRESS', 'IPV4_ADDRESS'),
+            ('VGPU', 'VGPU'),
+            ('VGPU_DISPLAY_HEAD', 'VGPU_DISPLAY_HEAD'),
         ]
         self.coerce_bad_values = [object(), dict()]
         self.to_primitive_values = self.coerce_good_values[0:1]
         self.from_primitive_values = self.coerce_good_values[0:1]
+
+    def test_normalize_name(self):
+        values = [
+            ("foo", "CUSTOM_FOO"),
+            ("VCPU", "CUSTOM_VCPU"),
+            ("CUSTOM_BOB", "CUSTOM_CUSTOM_BOB"),
+            ("CUSTM_BOB", "CUSTOM_CUSTM_BOB"),
+        ]
+        for test_value, expected in values:
+            result = fields.ResourceClass.normalize_name(test_value)
+            self.assertEqual(expected, result)
 
 
 class TestInteger(TestField):
@@ -400,7 +413,7 @@ class TestBoolean(TestField):
 class TestDateTime(TestField):
     def setUp(self):
         super(TestDateTime, self).setUp()
-        self.dt = datetime.datetime(1955, 11, 5, tzinfo=iso8601.iso8601.Utc())
+        self.dt = datetime.datetime(1955, 11, 5, tzinfo=iso8601.UTC)
         self.field = fields.DateTimeField()
         self.coerce_good_values = [(self.dt, self.dt),
                                    (utils.isotime(self.dt), self.dt)]
@@ -413,7 +426,7 @@ class TestDateTime(TestField):
             '1955-11-05T18:00:00Z',
             self.field.stringify(
                 datetime.datetime(1955, 11, 5, 18, 0, 0,
-                                  tzinfo=iso8601.iso8601.Utc())))
+                                  tzinfo=iso8601.UTC)))
 
 
 class TestDict(TestField):
@@ -723,3 +736,13 @@ class TestSchemaGeneration(test.NoDBTestCase):
         expected = {'type': ['string'], 'pattern': '[a-z]+[0-9]+',
                     'readonly': False}
         self.assertEqual(expected, field.get_schema())
+
+
+class TestNotificationSource(test.NoDBTestCase):
+    def test_get_source_by_binary(self):
+        self.assertEqual('nova-api',
+                         fields.NotificationSource.get_source_by_binary(
+                             'nova-osapi_compute'))
+        self.assertEqual('nova-metadata',
+                         fields.NotificationSource.get_source_by_binary(
+                             'nova-metadata'))

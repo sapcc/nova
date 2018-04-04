@@ -15,6 +15,7 @@
 from nova import objects
 from nova.objects import migrate_data
 from nova.tests.unit.objects import test_objects
+from nova.tests import uuidsentinel as uuids
 
 
 class _TestLiveMigrateData(object):
@@ -222,6 +223,34 @@ class _TestLibvirtLiveMigrateData(object):
                          obj2.to_legacy_dict())
         self.assertEqual(obj.bdms[0].serial, obj2.bdms[0].serial)
 
+    def test_obj_make_compatible(self):
+        obj = migrate_data.LibvirtLiveMigrateData(
+            src_supports_native_luks=True,
+            old_vol_attachment_ids={uuids.volume: uuids.attachment},
+            supported_perf_events=[],
+            serial_listen_addr='127.0.0.1',
+            target_connect_addr='127.0.0.1')
+        primitive = obj.obj_to_primitive(target_version='1.0')
+        self.assertNotIn('target_connect_addr', primitive)
+        self.assertNotIn('serial_listen_addr=', primitive)
+        self.assertNotIn('supported_perf_events', primitive)
+        self.assertNotIn('old_vol_attachment_ids', primitive)
+        self.assertNotIn('src_supports_native_luks', primitive)
+        primitive = obj.obj_to_primitive(target_version='1.1')
+        self.assertNotIn('serial_listen_addr=', primitive)
+        primitive = obj.obj_to_primitive(target_version='1.2')
+        self.assertNotIn('supported_perf_events', primitive)
+        primitive = obj.obj_to_primitive(target_version='1.3')
+        self.assertNotIn('old_vol_attachment_ids', primitive)
+        primitive = obj.obj_to_primitive(target_version='1.4')
+        self.assertNotIn('src_supports_native_luks', primitive)
+
+    def test_bdm_obj_make_compatible(self):
+        obj = migrate_data.LibvirtLiveMigrateBDMInfo(
+            encryption_secret_uuid=uuids.encryption_secret_uuid)
+        primitive = obj.obj_to_primitive(target_version='1.0')
+        self.assertNotIn('encryption_secret_uuid', primitive)
+
 
 class TestLibvirtLiveMigrateData(test_objects._LocalTest,
                                  _TestLibvirtLiveMigrateData):
@@ -328,11 +357,13 @@ class _TestXenapiLiveMigrateData(object):
             destination_sr_ref='foo',
             migrate_send_data={'key': 'val'},
             sr_uuid_map={'apple': 'banana'},
-            vif_uuid_map={'orange': 'lemon'})
+            vif_uuid_map={'orange': 'lemon'},
+            old_vol_attachment_ids={uuids.volume: uuids.attachment})
         primitive = obj.obj_to_primitive('1.0')
         self.assertNotIn('vif_uuid_map', primitive['nova_object.data'])
         primitive2 = obj.obj_to_primitive('1.1')
         self.assertIn('vif_uuid_map', primitive2['nova_object.data'])
+        self.assertNotIn('old_vol_attachment_ids', primitive2)
 
 
 class TestXenapiLiveMigrateData(test_objects._LocalTest,
@@ -348,9 +379,12 @@ class TestRemoteXenapiLiveMigrateData(test_objects._RemoteTest,
 class _TestHyperVLiveMigrateData(object):
     def test_obj_make_compatible(self):
         obj = migrate_data.HyperVLiveMigrateData(
-            is_shared_instance_path=True)
+            is_shared_instance_path=True,
+            old_vol_attachment_ids={'yes': 'no'})
         primitive = obj.obj_to_primitive(target_version='1.0')
         self.assertNotIn('is_shared_instance_path', primitive)
+        primitive = obj.obj_to_primitive(target_version='1.1')
+        self.assertNotIn('old_vol_attachment_ids', primitive)
 
     def test_to_legacy_dict(self):
         obj = migrate_data.HyperVLiveMigrateData(
@@ -391,7 +425,8 @@ class _TestPowerVMLiveMigrateData(object):
             public_key='a_key',
             dest_proc_compat='POWER7',
             vol_data=dict(three=4),
-            vea_vlan_mappings=dict(five=6))
+            vea_vlan_mappings=dict(five=6),
+            old_vol_attachment_ids=dict(seven=8))
 
     @staticmethod
     def _mk_leg():
@@ -404,6 +439,7 @@ class _TestPowerVMLiveMigrateData(object):
             'dest_proc_compat': 'POWER7',
             'vol_data': {'three': '4'},
             'vea_vlan_mappings': {'five': '6'},
+            'old_vol_attachment_ids': {'seven': '8'},
         }
 
     def test_migrate_data(self):
@@ -416,6 +452,8 @@ class _TestPowerVMLiveMigrateData(object):
         obj = self._mk_obj()
         primitive = obj.obj_to_primitive(target_version='1.0')
         self.assertNotIn('vea_vlan_mappings', primitive)
+        primitive = obj.obj_to_primitive(target_version='1.1')
+        self.assertNotIn('old_vol_attachment_ids', primitive)
 
     def test_to_legacy_dict(self):
         self.assertEqual(self._mk_leg(), self._mk_obj().to_legacy_dict())

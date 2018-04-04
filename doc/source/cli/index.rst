@@ -57,7 +57,7 @@ daemonize correctly after starting up.
 WSGI Services
 -------------
 
-Starting in the Pike release, the prefered way to deploy the nova api is in a
+Starting in the Pike release, the preferred way to deploy the nova api is in a
 wsgi container (uwsgi or apache/mod_wsgi). These are the wsgi entry points to
 do that.
 
@@ -78,7 +78,6 @@ are documented for completeness and debugging if something goes wrong.
    :maxdepth: 1
 
    nova-rootwrap
-   nova-idmapshift
 
 Deprecated Services
 -------------------

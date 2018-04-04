@@ -19,12 +19,14 @@ import threading
 
 from oslo_concurrency import processutils
 from oslo_log import log
+from oslo_utils import fileutils
 import six
 
 import nova.conf
 from nova import exception
 from nova.i18n import _
-from nova import utils
+import nova.privsep.fs
+import nova.privsep.path
 
 CONF = nova.conf.CONF
 LOG = log.getLogger(__name__)
@@ -291,20 +293,19 @@ class _HostMountState(object):
                    'mountpoint': mountpoint, 'options': options,
                    'gen': self.generation})
         with self._get_locked(mountpoint) as mount:
-            if not os.path.ismount(mountpoint):
+            if os.path.ismount(mountpoint):
+                LOG.debug(('Mounting %(mountpoint)s generation %(gen)s, '
+                           'mountpoint already mounted'),
+                          {'mountpoint': mountpoint, 'gen': self.generation})
+            else:
                 LOG.debug('Mounting %(mountpoint)s generation %(gen)s',
                           {'mountpoint': mountpoint, 'gen': self.generation})
 
-                utils.execute('mkdir', '-p', mountpoint)
-
-                mount_cmd = ['mount', '-t', fstype]
-                if options is not None:
-                    mount_cmd.extend(options)
-                mount_cmd.extend([export, mountpoint])
+                fileutils.ensure_tree(mountpoint)
 
                 try:
-                    utils.execute(*mount_cmd, run_as_root=True)
-                except Exception:
+                    nova.privsep.fs.mount(fstype, export, mountpoint, options)
+                except processutils.ProcessExecutionError():
                     # Check to see if mountpoint is mounted despite the error
                     # eg it was already mounted
                     if os.path.ismount(mountpoint):
@@ -378,20 +379,13 @@ class _HostMountState(object):
                   {'mountpoint': mountpoint, 'gen': self.generation})
 
         try:
-            utils.execute('umount', mountpoint, run_as_root=True,
-                          attempts=3, delay_on_retry=True)
+            nova.privsep.fs.umount(mountpoint)
         except processutils.ProcessExecutionError as ex:
             LOG.error("Couldn't unmount %(mountpoint)s: %(reason)s",
                       {'mountpoint': mountpoint, 'reason': six.text_type(ex)})
 
         if not os.path.ismount(mountpoint):
-            try:
-                utils.execute('rmdir', mountpoint)
-            except processutils.ProcessExecutionError as ex:
-                LOG.error("Couldn't remove directory %(mountpoint)s: "
-                          "%(reason)s",
-                          {'mountpoint': mountpoint,
-                           'reason': six.text_type(ex)})
+            nova.privsep.path.rmdir(mountpoint)
             return False
 
         return True

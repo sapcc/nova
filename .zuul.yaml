@@ -1,0 +1,103 @@
+# See https://docs.openstack.org/infra/manual/drivers.html#naming-with-zuul-v3
+# for job naming conventions.
+- job:
+    name: nova-dsvm-base
+    parent: legacy-dsvm-base
+    description: |
+      The base job definition for nova devstack/tempest jobs.
+      Contains common configuration.
+    timeout: 10800
+    required-projects:
+      - openstack-infra/devstack-gate
+      - openstack/nova
+      - openstack/tempest
+    irrelevant-files:
+      - ^(placement-)?api-.*$
+      - ^(test-|)requirements.txt$
+      - ^.*\.rst$
+      - ^.git.*$
+      - ^doc/.*$
+      - ^nova/hacking/.*$
+      - ^nova/locale/.*$
+      - ^nova/tests/.*$
+      - ^releasenotes/.*$
+      - ^setup.cfg$
+      - ^tests-py3.txt$
+      - ^tools/.*$
+      - ^tox.ini$
+
+- job:
+    name: nova-tox-functional
+    parent: openstack-tox
+    description: |
+      Run tox-based functional tests for the OpenStack Nova project with Nova
+      specific irrelevant-files list. Uses tox with the ``functional``
+      environment.
+    irrelevant-files:
+      - ^.*\.rst$
+      - ^api-.*$
+      - ^doc/source/.*$
+      - ^nova/locale/.*$
+      - ^placement-api-ref/.*$
+      - ^releasenotes/.*$
+    vars:
+      tox_envlist: functional
+    timeout: 3600
+
+- job:
+    name: nova-tox-functional-py35
+    parent: openstack-tox
+    description: |
+      Run tox-based functional tests for the OpenStack Nova project
+      under cPython version 3.5. with Nova specific irrelevant-files list.
+      Uses tox with the ``functional-py35`` environment.
+    irrelevant-files:
+      - ^.*\.rst$
+      - ^api-.*$
+      - ^doc/source/.*$
+      - ^nova/locale/.*$
+      - ^placement-api-ref/.*$
+      - ^releasenotes/.*$
+    vars:
+      tox_envlist: functional-py35
+    timeout: 3600
+
+- job:
+    name: nova-lvm
+    parent: nova-dsvm-base
+    description: |
+      Run standard integration tests using LVM image backend. This is useful if
+      there are tests touching this code.
+    run: playbooks/legacy/nova-lvm/run.yaml
+    post-run: playbooks/legacy/nova-lvm/post.yaml
+
+- job:
+    name: nova-multiattach
+    parent: nova-dsvm-base
+    description: |
+      Run tempest integration tests with volume multiattach support enabled.
+      This job will only work starting with Queens.
+      It uses the default Cinder volume type in devstack (lvm) and the
+      default compute driver in devstack (libvirt). It also disables the
+      Pike Ubuntu Cloud Archive because volume multiattach support with
+      the libvirt driver only works with qemu<2.10 or libvirt>=3.10 which
+      won't work with the Pike UCA.
+    branches: ^(?!stable/(newton|ocata|pike)).*$
+    run: playbooks/legacy/nova-multiattach/run.yaml
+    post-run: playbooks/legacy/nova-multiattach/post.yaml
+
+- project:
+    # Please try to keep the list of job names sorted alphabetically.
+    check:
+      jobs:
+        - nova-multiattach
+        - nova-tox-functional
+        - nova-tox-functional-py35
+    gate:
+      jobs:
+        - nova-multiattach
+        - nova-tox-functional
+        - nova-tox-functional-py35
+    experimental:
+      jobs:
+        - nova-lvm

@@ -41,7 +41,6 @@ import webob
 from nova.api.metadata import base
 from nova.api.metadata import handler
 from nova.api.metadata import password
-from nova.api.metadata import vendordata
 from nova.api.metadata import vendordata_dynamic
 from nova import block_device
 from nova.compute import flavors
@@ -114,8 +113,7 @@ def fake_keypair_obj(name, data):
 
 def fake_InstanceMetadata(testcase, inst_data, address=None,
                           sgroups=None, content=None, extra_md=None,
-                          vd_driver=None, network_info=None,
-                          network_metadata=None):
+                          network_info=None, network_metadata=None):
     content = content or []
     extra_md = extra_md or {}
     if sgroups is None:
@@ -124,8 +122,7 @@ def fake_InstanceMetadata(testcase, inst_data, address=None,
     fakes.stub_out_secgroup_api(testcase, security_groups=sgroups)
     return base.InstanceMetadata(inst_data, address=address,
         content=content, extra_md=extra_md,
-        vd_driver=vd_driver, network_info=network_info,
-        network_metadata=network_metadata)
+        network_info=network_info, network_metadata=network_metadata)
 
 
 def fake_request(testcase, mdinst, relpath, address="127.0.0.1",
@@ -591,6 +588,24 @@ class MetadataTestCase(test.TestCase):
             self._test_as_json_with_options(is_cells=True,
                                             os_version=os_version)
 
+    @mock.patch('nova.cells.rpcapi.CellsAPI.get_keypair_at_top',
+                side_effect=exception.KeypairNotFound(
+                name='key', user_id='fake_user'))
+    @mock.patch.object(objects.Instance, 'get_by_uuid')
+    def test_as_json_deleted_keypair_in_cells_mode(self,
+                                                   mock_get_keypair_at_top,
+                                                   mock_inst_get_by_uuid):
+        self.flags(enable=True, group='cells')
+        self.flags(cell_type='compute', group='cells')
+
+        instance = self.instance.obj_clone()
+        delattr(instance, 'keypairs')
+        md = fake_InstanceMetadata(self, instance)
+        meta = md._metadata_as_json(base.OPENSTACK_VERSIONS[-1], path=None)
+        meta = jsonutils.loads(meta)
+        self.assertNotIn('keys', meta)
+        self.assertNotIn('public_keys', meta)
+
     @mock.patch.object(objects.Instance, 'get_by_uuid')
     def test_metadata_as_json_deleted_keypair(self, mock_inst_get_by_uuid):
         """Tests that we handle missing instance keypairs.
@@ -838,36 +853,6 @@ class OpenStackMetadataTestCase(test.TestCase):
         # assert that we never created a ksa session for dynamic vendordata if
         # we didn't make a request
         self.assertIsNone(mdinst.vendordata_providers['DynamicJSON'].session)
-
-    def test_vendor_data_response(self):
-        inst = self.instance.obj_clone()
-
-        mydata = {'mykey1': 'value1', 'mykey2': 'value2'}
-
-        class myVdriver(vendordata.VendorDataDriver):
-            def __init__(self, *args, **kwargs):
-                super(myVdriver, self).__init__(*args, **kwargs)
-                data = mydata.copy()
-                uuid = kwargs['instance']['uuid']
-                data.update({'inst_uuid': uuid})
-                self.data = data
-
-            def get(self):
-                return self.data
-
-        mdinst = fake_InstanceMetadata(self, inst, vd_driver=myVdriver)
-
-        # verify that 2013-10-17 has the vendor_data.json file
-        vdpath = "/openstack/2013-10-17/vendor_data.json"
-        vd = jsonutils.loads(mdinst.lookup(vdpath))
-
-        # the instance should be passed through, and our class copies the
-        # uuid through to 'inst_uuid'.
-        self.assertEqual(vd['inst_uuid'], inst['uuid'])
-
-        # check the other expected values
-        for k, v in mydata.items():
-            self.assertEqual(vd[k], v)
 
     def _test_vendordata2_response_inner(self, request_mock, response_code,
                                          include_rest_result=True):
@@ -1616,6 +1601,20 @@ class MetadataPasswordTestCase(test.TestCase):
         self.mdinst.password = 'foo'
         result = password.handle_password(request, self.mdinst)
         self.assertEqual(result, 'foo')
+
+    @mock.patch.object(objects.InstanceMapping, 'get_by_instance_uuid',
+                       return_value=objects.InstanceMapping(cell_mapping=None))
+    @mock.patch.object(objects.Instance, 'get_by_uuid')
+    def test_set_password_instance_not_found(self, get_by_uuid, get_mapping):
+        """Tests that a 400 is returned if the instance can not be found."""
+        get_by_uuid.side_effect = exception.InstanceNotFound(
+            instance_id=self.instance.uuid)
+        request = webob.Request.blank('')
+        request.method = 'POST'
+        request.val = b'foo'
+        request.content_length = len(request.body)
+        self.assertRaises(webob.exc.HTTPBadRequest, password.handle_password,
+                          request, self.mdinst)
 
     def test_bad_method(self):
         request = webob.Request.blank('')

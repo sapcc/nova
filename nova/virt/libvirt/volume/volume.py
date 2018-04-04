@@ -22,6 +22,7 @@ from oslo_log import log as logging
 import nova.conf
 from nova import exception
 from nova import profiler
+from nova.virt import block_device as driver_block_device
 from nova.virt.libvirt import config as vconfig
 import nova.virt.libvirt.driver
 from nova.virt.libvirt import utils as libvirt_utils
@@ -104,13 +105,30 @@ class LibvirtBaseVolumeDriver(object):
                 # specified.
                 conf.device_addr.unit = disk_info['unit']
 
+        if connection_info.get('multiattach', False):
+            # Note that driver_cache should be disabled (none) when using
+            # a shareable disk.
+            conf.shareable = True
+
+        volume_id = driver_block_device.get_volume_id(connection_info)
+        volume_secret = None
+        if volume_id:
+            volume_secret = self.host.find_secret('volume', volume_id)
+        if volume_secret:
+            conf.encryption = vconfig.LibvirtConfigGuestDiskEncryption()
+            secret = vconfig.LibvirtConfigGuestDiskEncryptionSecret()
+            secret.type = 'passphrase'
+            secret.uuid = volume_secret.UUIDString()
+            conf.encryption.format = 'luks'
+            conf.encryption.secret = secret
+
         return conf
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         """Connect the volume."""
         pass
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         """Disconnect the volume."""
         pass
 

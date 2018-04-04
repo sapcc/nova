@@ -24,7 +24,6 @@ from nova.cells import rpcapi as cells_rpcapi
 from nova.compute import flavors
 from nova.compute import task_states
 from nova.compute import vm_states
-from nova import context
 from nova import db
 from nova import exception
 from nova.network import model as network_model
@@ -138,7 +137,6 @@ class _TestInstanceObject(object):
     @mock.patch.object(db, 'instance_get_by_uuid')
     def test_get_with_expected(self, mock_get, mock_fault_get, mock_extra_get):
         exp_cols = instance.INSTANCE_OPTIONAL_ATTRS[:]
-        exp_cols.remove('fault')
         exp_cols.remove('numa_topology')
         exp_cols.remove('pci_requests')
         exp_cols.remove('vcpu_model')
@@ -221,6 +219,22 @@ class _TestInstanceObject(object):
         instance = objects.Instance(self.context, uuid=uuids.instance,
                                     deleted=True)
         self.assertEqual(0, len(instance.tags))
+
+    def test_lazy_load_generic_on_deleted_instance(self):
+        # For generic fields, we try to load the deleted record from the
+        # database.
+        instance = objects.Instance(self.context, uuid=uuids.instance,
+                                    user_id=self.context.user_id,
+                                    project_id=self.context.project_id)
+        instance.create()
+        instance.destroy()
+        # Re-create our local object to make sure it doesn't have sysmeta
+        # filled in by create()
+        instance = objects.Instance(self.context, uuid=uuids.instance,
+                                    user_id=self.context.user_id,
+                                    project_id=self.context.project_id)
+        self.assertNotIn('system_metadata', instance)
+        self.assertEqual(0, len(instance.system_metadata))
 
     def test_lazy_load_tags(self):
         instance = objects.Instance(self.context, uuid=uuids.instance,
@@ -314,25 +328,6 @@ class _TestInstanceObject(object):
         self.assertNotIn('keypairs', inst)
         self.assertEqual('foo', inst.keypairs[0].name)
         self.assertNotIn('keypairs', inst.obj_what_changed())
-
-    @mock.patch('nova.objects.KeyPair.get_by_name')
-    def test_lazy_load_keypairs_from_legacy(self, mock_get):
-        mock_get.return_value = objects.KeyPair(name='foo')
-
-        inst = objects.Instance(context=self.context,
-                                user_id=self.context.user_id,
-                                key_name='foo',
-                                project_id=self.context.project_id)
-        inst.create()
-
-        inst = objects.Instance.get_by_uuid(self.context, inst.uuid)
-        self.assertNotIn('keypairs', inst)
-        self.assertEqual('foo', inst.keypairs[0].name)
-        self.assertIn('keypairs', inst.obj_what_changed())
-        mock_get.assert_called_once_with(self.context,
-                                         inst.user_id,
-                                         inst.key_name,
-                                         localonly=True)
 
     @mock.patch.object(db, 'instance_get_by_uuid')
     def test_get_remote(self, mock_get):
@@ -454,7 +449,7 @@ class _TestInstanceObject(object):
         mock_db_instance_update_and_get_original.assert_called_once_with(
             self.context, fake_uuid, expected_updates,
             columns_to_join=['info_cache', 'security_groups',
-                             'system_metadata', 'extra', 'extra.flavor']
+                             'system_metadata']
         )
         if cell_type == 'api':
             mock_cells_rpcapi_CellsAPI.return_value.instance_update_from_api \
@@ -524,7 +519,7 @@ class _TestInstanceObject(object):
             columns_to_join=['info_cache', 'security_groups'])
         mock_update_and_get.assert_called_once_with(self.context, fake_uuid,
             expected_updates, columns_to_join=['info_cache', 'security_groups',
-            'system_metadata', 'extra', 'extra.flavor'])
+            'system_metadata'])
         mock_send.assert_called_once_with(self.context, mock.ANY, mock.ANY)
 
     @mock.patch('nova.db.instance_extra_update_by_uuid')
@@ -733,8 +728,7 @@ class _TestInstanceObject(object):
                 mock.call(self.context, inst.uuid,
                     {'vm_state': 'foo', 'task_state': 'bar',
                      'cell_name': 'foo!bar@baz'},
-                    columns_to_join=['tags', 'system_metadata',
-                                     'extra', 'extra.flavor']),
+                    columns_to_join=['tags', 'system_metadata']),
                 mock.call(self.context, inst.uuid,
                     {'vm_state': 'bar', 'task_state': 'foo'},
                     columns_to_join=['system_metadata', 'tags'])]
@@ -974,7 +968,7 @@ class _TestInstanceObject(object):
         self.assertEqual(fake_faults[0], dict(inst.fault.items()))
 
         mock_get.assert_called_once_with(self.context, fake_uuid,
-            columns_to_join=[])
+            columns_to_join=['fault'])
         mock_fault_get.assert_called_once_with(self.context, [fake_uuid])
 
     @mock.patch('nova.objects.EC2Ids.get_by_instance')
@@ -1848,7 +1842,7 @@ class _TestInstanceListObject(object):
         self.assertIsNone(instances[1].fault)
 
         mock_get_all.assert_called_once_with(self.context, 'host',
-            columns_to_join=[])
+            columns_to_join=['fault'])
         mock_fault_get.assert_called_once_with(self.context,
             [x['uuid'] for x in fake_insts])
 
@@ -1997,53 +1991,3 @@ class TestInstanceObjectMisc(test.TestCase):
         self.assertEqual(['metadata', 'system_metadata', 'info_cache',
                          'security_groups', 'pci_devices', 'tags', 'extra',
                          'extra.flavor'], result_list)
-
-    def test_migrate_instance_keypairs(self):
-        ctxt = context.RequestContext('foo', 'bar')
-        key = objects.KeyPair(context=ctxt,
-                              user_id=ctxt.user_id,
-                              name='testkey',
-                              public_key='keydata',
-                              type='ssh')
-        key.create()
-        inst1 = objects.Instance(context=ctxt,
-                                 user_id=ctxt.user_id,
-                                 project_id=ctxt.project_id,
-                                 key_name='testkey')
-        inst1.create()
-        inst2 = objects.Instance(context=ctxt,
-                                 user_id=ctxt.user_id,
-                                 project_id=ctxt.project_id,
-                                 key_name='testkey',
-                                 keypairs=objects.KeyPairList(
-                                     objects=[key]))
-        inst2.create()
-        inst3 = objects.Instance(context=ctxt,
-                                 user_id=ctxt.user_id,
-                                 project_id=ctxt.project_id,
-                                 key_name='missingkey')
-        inst3.create()
-
-        inst4 = objects.Instance(context=ctxt,
-                                 user_id=ctxt.user_id,
-                                 project_id=ctxt.project_id,
-                                 key_name='missingkey')
-        inst4.create()
-        inst4.destroy()
-
-        # NOTE(danms): Add an orphaned instance_extra record for
-        # a totally invalid instance to make sure we don't explode.
-        # See bug 1684861 for more information.
-        db.instance_extra_update_by_uuid(ctxt, 'foo', {})
-
-        hit, done = instance.migrate_instance_keypairs(ctxt, 10)
-        self.assertEqual(3, hit)
-        self.assertEqual(2, done)
-        db_extra = db.instance_extra_get_by_instance_uuid(
-            ctxt, inst1.uuid, ['keypairs'])
-        self.assertIsNotNone(db_extra.keypairs)
-        db_extra = db.instance_extra_get_by_instance_uuid(
-            ctxt, inst3.uuid, ['keypairs'])
-        obj = base.NovaObject.obj_from_primitive(
-            jsonutils.loads(db_extra['keypairs']))
-        self.assertEqual([], obj.objects)

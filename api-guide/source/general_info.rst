@@ -41,8 +41,12 @@ several key concepts:
 
 -  **Flavor Extra Specs**
 
-   TODO: Short description at here. The detail reference to
-   :doc:`extra_specs_and_properties`
+   Key and value pairs that can be used to describe the specification of
+   the server which more than just about CPU, disk and RAM. For example,
+   it can be used to indicate that the server created by this flavor has
+   PCI devices, etc.
+
+   For more details, please see: :doc:`extra_specs_and_properties`
 
 -  **Image**
 
@@ -55,8 +59,10 @@ several key concepts:
 
 -  **Image Properties**
 
-   TODO: Short description at here. The detail reference to
-   :doc:`extra_specs_and_properties`
+   Key and value pairs that can help end users to determine the requirements
+   of the guest os in the image.
+
+   For more details, please see: :doc:`extra_specs_and_properties`
 
 -  **Key Pair**
 
@@ -163,12 +169,12 @@ on compute hosts rather than servers.
      This service runs on every compute node, and communicates with a
      hypervisor for managing compute resources on that node.
 
-   - **nova-network**
+   - **nova-network (deprecated)**
 
      This service handles networking of virtual servers. It is no longer under
      active development, and is being replaced by Neutron.
 
-   - **nova-ec2(deprecated)**
+   - **nova-ec2 (deprecated)**
 
      This service provides AWS EC2 API compatibility.
 
@@ -242,7 +248,7 @@ on compute hosts rather than servers.
 -  **Aggregates**
 
    See `Aggregates developer information
-   <http://docs.openstack.org/developer/nova/aggregates.html>`_.
+   <https://docs.openstack.org/nova/latest/user/aggregates.html>`_.
 
 -  **Migrations**
 
@@ -269,10 +275,11 @@ We also discuss how Nova proxies setting image metadata.
 
 TODO - add more details.
 
-Interactions with Neutron and Nova-Network
-==========================================
+Interactions with neutron and nova-network (deprecated)
+=======================================================
 
-We talk about how networking can be provided be either Nova or Neutron.
+We talk about how networking can be provided be either neutron or
+nova-network (deprecated).
 
 Here we discuss about Neutron's API and how Nova users port UUIDs.
 We also discuss Nova automatically creating ports, proxying security groups,

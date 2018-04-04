@@ -220,7 +220,7 @@ class TestOpenStackClient(object):
             headers['Content-Type'] = 'application/json'
             kwargs['body'] = jsonutils.dumps(body)
 
-        kwargs.setdefault('check_response_status', [200, 201, 202])
+        kwargs.setdefault('check_response_status', [200, 201, 202, 204])
         return APIResponse(self.api_request(relative_uri, **kwargs))
 
     def api_put(self, relative_uri, body, **kwargs):
@@ -285,6 +285,14 @@ class TestOpenStackClient(object):
     def delete_server(self, server_id):
         return self.api_delete('/servers/%s' % server_id)
 
+    def force_down_service(self, host, binary, forced_down):
+        req = {
+            "host": host,
+            "binary": binary,
+            "forced_down": forced_down
+        }
+        return self.api_put('/os-services/force-down', req).body['service']
+
     def get_image(self, image_id):
         return self.api_get('/images/%s' % image_id).body['image']
 
@@ -297,6 +305,16 @@ class TestOpenStackClient(object):
 
     def delete_image(self, image_id):
         return self.api_delete('/images/%s' % image_id)
+
+    def put_image_meta_key(self, image_id, key, value):
+        """Creates or updates a given image metadata key/value pair."""
+        req_body = {
+            'meta': {
+                key: value
+            }
+        }
+        return self.api_put('/images/%s/metadata/%s' % (image_id, key),
+                            req_body)
 
     def get_flavor(self, flavor_id):
         return self.api_get('/flavors/%s' % flavor_id).body['flavor']
@@ -421,6 +439,9 @@ class TestOpenStackClient(object):
         return self.api_get('/servers/%s/os-interface' %
                             (server_id)).body['interfaceAttachments']
 
+    def attach_interface(self, server_id, post):
+        return self.api_post('/servers/%s/os-interface' % server_id, post)
+
     def detach_interface(self, server_id, port_id):
         return self.api_delete('/servers/%s/os-interface/%s' %
                                (server_id, port_id))
@@ -440,6 +461,25 @@ class TestOpenStackClient(object):
     def post_keypair(self, keypair):
         return self.api_post('/os-keypairs', keypair).body['keypair']
 
+    def delete_keypair(self, keypair_name):
+        self.api_delete('/os-keypairs/%s' % keypair_name)
+
+    def post_aggregate_action(self, aggregate_id, body):
+        return self.api_post(
+            '/os-aggregates/%s/action' % aggregate_id, body).body['aggregate']
+
     def get_active_migrations(self, server_id):
         return self.api_get('/servers/%s/migrations' %
                             server_id).body['migrations']
+
+    def get_migrations(self):
+        return self.api_get('os-migrations').body['migrations']
+
+    def force_complete_migration(self, server_id, migration_id):
+        return self.api_post(
+            '/servers/%s/migrations/%s/action' % (server_id, migration_id),
+            {'force_complete': None})
+
+    def delete_migration(self, server_id, migration_id):
+        return self.api_delete(
+            '/servers/%s/migrations/%s' % (server_id, migration_id))

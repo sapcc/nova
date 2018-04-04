@@ -253,12 +253,16 @@ class LibvirtBlockInfoTest(test.NoDBTestCase):
                                              image_meta,
                                              rescue=True)
 
+        expect_disk_config_rescue = {
+            'bus': 'ide', 'dev': 'hda', 'type': 'cdrom'}
+        if blockinfo.libvirt_utils.get_arch({}) == 'aarch64':
+            expect_disk_config_rescue['bus'] = 'scsi'
+            expect_disk_config_rescue['dev'] = 'sda'
         expect = {
             'disk.rescue': {'bus': 'virtio', 'dev': 'vda',
                             'type': 'disk', 'boot_index': '1'},
             'disk': {'bus': 'virtio', 'dev': 'vdb', 'type': 'disk'},
-            'disk.config.rescue': {'bus': 'ide', 'dev': 'hda',
-                                   'type': 'cdrom'},
+            'disk.config.rescue': expect_disk_config_rescue,
             'root': {'bus': 'virtio', 'dev': 'vda',
                      'type': 'disk', 'boot_index': '1'},
             }
@@ -844,7 +848,9 @@ class LibvirtBlockInfoTest(test.NoDBTestCase):
                  'disk_bus': 'scsi',
                  'boot_index': 1,
                  'device_type': 'lame_type',
-                 'delete_on_termination': True}]
+                 'delete_on_termination': True},
+                {'disk_bus': 'sata', 'guest_format': None,
+                 'device_name': '/dev/sda', 'size': 3}]
         expected = [{'dev': 'vds', 'type': 'disk', 'bus': 'usb'},
                     {'dev': 'vdb', 'type': 'disk',
                      'bus': 'virtio', 'format': 'ext4'},
@@ -852,7 +858,8 @@ class LibvirtBlockInfoTest(test.NoDBTestCase):
                     {'dev': 'sdr', 'type': 'cdrom',
                      'bus': 'scsi', 'boot_index': '1'},
                     {'dev': 'vdo', 'type': 'disk',
-                     'bus': 'scsi', 'boot_index': '2'}]
+                     'bus': 'scsi', 'boot_index': '2'},
+                    {'dev': 'sda', 'type': 'disk', 'bus': 'sata'}]
 
         image_meta = objects.ImageMeta.from_dict(self.test_image_meta)
         for bdm, expected in zip(bdms, expected):

@@ -16,6 +16,7 @@ import six
 
 from nova.compute import power_state
 from nova.conductor.tasks import base
+from nova.conductor.tasks import migrate
 import nova.conf
 from nova import exception
 from nova.i18n import _
@@ -25,6 +26,12 @@ from nova import utils
 
 LOG = logging.getLogger(__name__)
 CONF = nova.conf.CONF
+
+
+def should_do_migration_allocation(context):
+    minver = objects.Service.get_minimum_version_multi(context,
+                                                       ['nova-compute'])
+    return minver >= 25
 
 
 class LiveMigrationTask(base.TaskBase):
@@ -43,19 +50,29 @@ class LiveMigrationTask(base.TaskBase):
         self.servicegroup_api = servicegroup_api
         self.scheduler_client = scheduler_client
         self.request_spec = request_spec
+        self._source_cn = None
+        self._held_allocations = None
 
     def _execute(self):
         self._check_instance_is_active()
         self._check_host_is_up(self.source)
+
+        if should_do_migration_allocation(self.context):
+            self._source_cn, self._held_allocations = (
+                # NOTE(danms): This may raise various exceptions, which will
+                # propagate to the API and cause a 500. This is what we
+                # want, as it would indicate internal data structure corruption
+                # (such as missing migrations, compute nodes, etc).
+                migrate.replace_allocation_with_migration(self.context,
+                                                          self.instance,
+                                                          self.migration))
 
         if not self.destination:
             # Either no host was specified in the API request and the user
             # wants the scheduler to pick a destination host, or a host was
             # specified but is not forcing it, so they want the scheduler
             # filters to run on the specified host, like a scheduler hint.
-            self.destination = self._find_destination()
-            self.migration.dest_compute = self.destination
-            self.migration.save()
+            self.destination, dest_node = self._find_destination()
         else:
             # This is the case that the user specified the 'force' flag when
             # live migrating with a specific destination host so the scheduler
@@ -71,7 +88,21 @@ class LiveMigrationTask(base.TaskBase):
             # skip_filters=True flag so the scheduler does the work of claiming
             # resources on the destination in Placement but still bypass the
             # scheduler filters, which honors the 'force' flag in the API.
-            self._claim_resources_on_destination(source_node, dest_node)
+            # This raises NoValidHost which will be handled in
+            # ComputeTaskManager.
+            scheduler_utils.claim_resources_on_destination(
+                self.context, self.scheduler_client.reportclient,
+                self.instance, source_node, dest_node,
+                source_node_allocations=self._held_allocations)
+
+            # dest_node is a ComputeNode object, so we need to get the actual
+            # node name off it to set in the Migration object below.
+            dest_node = dest_node.hypervisor_hostname
+
+        self.migration.source_node = self.instance.node
+        self.migration.dest_node = dest_node
+        self.migration.dest_compute = self.destination
+        self.migration.save()
 
         # TODO(johngarbutt) need to move complexity out of compute manager
         # TODO(johngarbutt) disk_over_commit?
@@ -89,7 +120,12 @@ class LiveMigrationTask(base.TaskBase):
         # calls, since this class currently makes no state changes,
         # except to call the compute method, that has no matching
         # rollback call right now.
-        pass
+        if self._held_allocations:
+            migrate.revert_allocation_for_migration(self.context,
+                                                    self._source_cn,
+                                                    self.instance,
+                                                    self.migration,
+                                                    self._held_allocations)
 
     def _check_instance_is_active(self):
         if self.instance.power_state not in (power_state.RUNNING,
@@ -128,72 +164,6 @@ class LiveMigrationTask(base.TaskBase):
                 reason=(_('Unable to force live migrate instance %s '
                           'across cells.') % self.instance.uuid))
         return source_node, dest_node
-
-    def _claim_resources_on_destination(self, source_node, dest_node):
-        """Copies allocations from source node to dest node in Placement
-
-        :param source_node: source ComputeNode where the instance currently
-                            lives
-        :param dest_node: destination ComputeNode where the instance is being
-                          forced to live migrate.
-        """
-        reportclient = self.scheduler_client.reportclient
-        # Get the current allocations for the source node and the instance.
-        source_node_allocations = reportclient.get_allocations_for_instance(
-            source_node.uuid, self.instance)
-        if source_node_allocations:
-            # Generate an allocation request for the destination node.
-            alloc_request = {
-                'allocations': [
-                    {
-                        'resource_provider': {
-                            'uuid': dest_node.uuid
-                        },
-                        'resources': source_node_allocations
-                    }
-                ]
-            }
-            # The claim_resources method will check for existing allocations
-            # for the instance and effectively "double up" the allocations for
-            # both the source and destination node. That's why when requesting
-            # allocations for resources on the destination node before we live
-            # migrate, we use the existing resource allocations from the
-            # source node.
-            if reportclient.claim_resources(
-                    self.instance.uuid, alloc_request,
-                    self.instance.project_id, self.instance.user_id):
-                LOG.debug('Instance allocations successfully created on '
-                          'destination node %(dest)s: %(alloc_request)s',
-                          {'dest': dest_node.uuid,
-                           'alloc_request': alloc_request},
-                          instance=self.instance)
-            else:
-                # We have to fail even though the user requested that we force
-                # the host. This is because we need Placement to have an
-                # accurate reflection of what's allocated on all nodes so the
-                # scheduler can make accurate decisions about which nodes have
-                # capacity for building an instance. We also cannot rely on the
-                # resource tracker in the compute service automatically healing
-                # the allocations since that code is going away in Queens.
-                reason = (_('Unable to migrate instance %(instance_uuid)s to '
-                            'host %(host)s. There is not enough capacity on '
-                            'the host for the instance.') %
-                          {'instance_uuid': self.instance.uuid,
-                           'host': self.destination})
-                raise exception.MigrationPreCheckError(reason=reason)
-        else:
-            # This shouldn't happen, but it could be a case where there are
-            # older (Ocata) computes still so the existing allocations are
-            # getting overwritten by the update_available_resource periodic
-            # task in the compute service.
-            # TODO(mriedem): Make this an error when the auto-heal
-            # compatibility code in the resource tracker is removed.
-            LOG.warning('No instance allocations found for source node '
-                        '%(source)s in Placement. Not creating allocations '
-                        'for destination node %(dest)s and assuming the '
-                        'compute service will heal the allocations.',
-                        {'source': source_node.uuid, 'dest': dest_node.uuid},
-                        instance=self.instance)
 
     def _check_destination_is_not_source(self):
         if self.destination == self.source:
@@ -286,9 +256,16 @@ class LiveMigrationTask(base.TaskBase):
                 reason=(_('Unable to determine in which cell '
                           'destination host %s lives.') % self.destination))
 
-    def _find_destination(self):
-        # TODO(johngarbutt) this retry loop should be shared
-        attempted_hosts = [self.source]
+    def _get_request_spec_for_select_destinations(self, attempted_hosts=None):
+        """Builds a RequestSpec that can be passed to select_destinations
+
+        Used when calling the scheduler to pick a destination host for live
+        migrating the instance.
+
+        :param attempted_hosts: List of host names to ignore in the scheduler.
+            This is generally at least seeded with the source host.
+        :returns: nova.objects.RequestSpec object
+        """
         image = utils.get_image_from_system_metadata(
             self.instance.system_metadata)
         filter_properties = {'ignore_hosts': attempted_hosts}
@@ -324,13 +301,28 @@ class LiveMigrationTask(base.TaskBase):
             request_spec.requested_destination = objects.Destination(
                 cell=cell_mapping)
 
+        request_spec.ensure_project_id(self.instance)
+
+        return request_spec
+
+    def _find_destination(self):
+        # TODO(johngarbutt) this retry loop should be shared
+        attempted_hosts = [self.source]
+        request_spec = self._get_request_spec_for_select_destinations(
+            attempted_hosts)
+
         host = None
         while host is None:
             self._check_not_over_max_retries(attempted_hosts)
             request_spec.ignore_hosts = attempted_hosts
             try:
-                host = self.scheduler_client.select_destinations(self.context,
-                        request_spec, [self.instance.uuid])[0]['host']
+                selection_lists = self.scheduler_client.select_destinations(
+                        self.context, request_spec, [self.instance.uuid],
+                        return_objects=True, return_alternates=False)
+                # We only need the first item in the first list, as there is
+                # only one instance, and we don't care about any alternates.
+                selection = selection_lists[0][0]
+                host = selection.service_host
             except messaging.RemoteError as ex:
                 # TODO(ShaoHe Feng) There maybe multi-scheduler, and the
                 # scheduling algorithm is R-R, we can let other scheduler try.
@@ -346,8 +338,46 @@ class LiveMigrationTask(base.TaskBase):
                 LOG.debug("Skipping host: %(host)s because: %(e)s",
                     {"host": host, "e": e})
                 attempted_hosts.append(host)
+                # The scheduler would have created allocations against the
+                # selected destination host in Placement, so we need to remove
+                # those before moving on.
+                self._remove_host_allocations(host, selection.nodename)
                 host = None
-        return host
+        return selection.service_host, selection.nodename
+
+    def _remove_host_allocations(self, host, node):
+        """Removes instance allocations against the given host from Placement
+
+        :param host: The name of the host.
+        :param node: The name of the node.
+        """
+        # Get the compute node object since we need the UUID.
+        # TODO(mriedem): If the result of select_destinations eventually
+        # returns the compute node uuid, we wouldn't need to look it
+        # up via host/node and we can save some time.
+        try:
+            compute_node = objects.ComputeNode.get_by_host_and_nodename(
+                self.context, host, node)
+        except exception.ComputeHostNotFound:
+            # This shouldn't happen, but we're being careful.
+            LOG.info('Unable to remove instance allocations from host %s '
+                     'and node %s since it was not found.', host, node,
+                     instance=self.instance)
+            return
+
+        # Calculate the resource class amounts to subtract from the allocations
+        # on the node based on the instance flavor.
+        resources = scheduler_utils.resources_from_flavor(
+            self.instance, self.instance.flavor)
+
+        # Now remove the allocations for our instance against that node.
+        # Note that this does not remove allocations against any other node
+        # or shared resource provider, it's just undoing what the scheduler
+        # allocated for the given (destination) node.
+        self.scheduler_client.reportclient.\
+            remove_provider_from_instance_allocation(
+                self.instance.uuid, compute_node.uuid, self.instance.user_id,
+                self.instance.project_id, resources)
 
     def _check_not_over_max_retries(self, attempted_hosts):
         if CONF.migrate_max_retries == -1:

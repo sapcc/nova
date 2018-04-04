@@ -50,6 +50,8 @@ class RequestSpec(base.NovaObject):
                                             nullable=True),
         'pci_requests': fields.ObjectField('InstancePCIRequests',
                                            nullable=True),
+        # TODO(mriedem): The project_id shouldn't be nullable since the
+        # scheduler relies on it being set.
         'project_id': fields.StringField(nullable=True),
         'availability_zone': fields.StringField(nullable=True),
         'flavor': fields.ObjectField('Flavor', nullable=False),
@@ -212,8 +214,12 @@ class RequestSpec(base.NovaObject):
             # Set the value anyway to avoid any call to obj_attr_is_set for it
             self.instance_group = None
 
-    def _from_limits(self, limits_dict):
-        self.limits = SchedulerLimits.from_dict(limits_dict)
+    def _from_limits(self, limits):
+        if isinstance(limits, dict):
+            self.limits = SchedulerLimits.from_dict(limits)
+        else:
+            # Already a SchedulerLimits object.
+            self.limits = limits
 
     def _from_hints(self, hints_dict):
         if hints_dict is None:
@@ -264,6 +270,8 @@ class RequestSpec(base.NovaObject):
         spec._populate_group_info(filter_properties)
         scheduler_hints = filter_properties.get('scheduler_hints', {})
         spec._from_hints(scheduler_hints)
+        spec.requested_destination = filter_properties.get(
+            'requested_destination')
 
         # NOTE(sbauza): Default the other fields that are not part of the
         # original contract
@@ -320,7 +328,8 @@ class RequestSpec(base.NovaObject):
         # the existing dictionary as a primitive.
         return {'group_updated': True,
                 'group_hosts': set(self.instance_group.hosts),
-                'group_policies': set(self.instance_group.policies)}
+                'group_policies': set(self.instance_group.policies),
+                'group_members': set(self.instance_group.members)}
 
     def to_legacy_request_spec_dict(self):
         """Returns a legacy request_spec dict from the RequestSpec object.
@@ -371,12 +380,15 @@ class RequestSpec(base.NovaObject):
             # we had to hydrate the field by putting a single item into a list.
             filt_props['scheduler_hints'] = {hint: self.get_scheduler_hint(
                 hint) for hint in self.scheduler_hints}
+        if self.obj_attr_is_set('requested_destination'
+                                ) and self.requested_destination:
+            filt_props['requested_destination'] = self.requested_destination
         return filt_props
 
     @classmethod
     def from_components(cls, context, instance_uuid, image, flavor,
             numa_topology, pci_requests, filter_properties, instance_group,
-            availability_zone, security_groups=None):
+            availability_zone, security_groups=None, project_id=None):
         """Returns a new RequestSpec object hydrated by various components.
 
         This helper is useful in creating the RequestSpec from the various
@@ -395,6 +407,8 @@ class RequestSpec(base.NovaObject):
         :param availability_zone: an availability_zone string
         :param security_groups: A SecurityGroupList object. If None, don't
                                 set security_groups on the resulting object.
+        :param project_id: The project_id for the requestspec (should match
+                           the instance project_id).
         """
         spec_obj = cls(context)
         spec_obj.num_instances = 1
@@ -402,7 +416,7 @@ class RequestSpec(base.NovaObject):
         spec_obj.instance_group = instance_group
         if spec_obj.instance_group is None and filter_properties:
             spec_obj._populate_group_info(filter_properties)
-        spec_obj.project_id = context.project_id
+        spec_obj.project_id = project_id or context.project_id
         spec_obj._image_meta_from_image(image)
         spec_obj._from_flavor(flavor)
         spec_obj._from_instance_pci_requests(pci_requests)
@@ -416,11 +430,17 @@ class RequestSpec(base.NovaObject):
         spec_obj.availability_zone = availability_zone
         if security_groups is not None:
             spec_obj.security_groups = security_groups
+        spec_obj.requested_destination = filter_properties.get(
+            'requested_destination')
 
         # NOTE(sbauza): Default the other fields that are not part of the
         # original contract
         spec_obj.obj_set_defaults()
         return spec_obj
+
+    def ensure_project_id(self, instance):
+        if 'project_id' not in self or self.project_id is None:
+            self.project_id = instance.project_id
 
     @staticmethod
     def _from_db_object(context, spec, db_spec):
@@ -433,6 +453,18 @@ class RequestSpec(base.NovaObject):
             else:
                 setattr(spec, key, getattr(spec_obj, key))
         spec._context = context
+
+        if 'instance_group' in spec and spec.instance_group:
+            # NOTE(danms): We don't store the full instance group in
+            # the reqspec since it would be stale almost immediately.
+            # Instead, load it by uuid here so it's up-to-date.
+            try:
+                spec.instance_group = objects.InstanceGroup.get_by_uuid(
+                    context, spec.instance_group.uuid)
+            except exception.InstanceGroupNotFound:
+                # NOTE(danms): Instance group may have been deleted
+                spec.instance_group = None
+
         spec.obj_reset_changes()
         return spec
 
@@ -472,7 +504,14 @@ class RequestSpec(base.NovaObject):
         # NOTE(alaski): The db schema is the full serialized object in a
         # 'spec' column.  If anything has changed we rewrite the full thing.
         if updates:
-            db_updates = {'spec': jsonutils.dumps(self.obj_to_primitive())}
+            # NOTE(danms): Don't persist the could-be-large and could-be-stale
+            # properties of InstanceGroup
+            spec = self.obj_clone()
+            if 'instance_group' in spec and spec.instance_group:
+                spec.instance_group.members = None
+                spec.instance_group.hosts = None
+
+            db_updates = {'spec': jsonutils.dumps(spec.obj_to_primitive())}
             if 'instance_uuid' in updates:
                 db_updates['instance_uuid'] = updates['instance_uuid']
         return db_updates
@@ -517,6 +556,17 @@ class RequestSpec(base.NovaObject):
     @base.remotable
     def destroy(self):
         self._destroy_in_db(self._context, self.instance_uuid)
+
+    @staticmethod
+    @db.api_context_manager.writer
+    def _destroy_bulk_in_db(context, instance_uuids):
+        return context.session.query(api_models.RequestSpec).filter(
+                api_models.RequestSpec.instance_uuid.in_(instance_uuids)).\
+                delete(synchronize_session=False)
+
+    @classmethod
+    def destroy_bulk(cls, context, instance_uuids):
+        return cls._destroy_bulk_in_db(context, instance_uuids)
 
     def reset_forced_destinations(self):
         """Clears the forced destination fields from the RequestSpec object.
@@ -574,7 +624,8 @@ def _create_minimal_request_spec(context, instance):
         context, instance.uuid, image,
         instance.flavor, instance.numa_topology,
         instance.pci_requests,
-        {}, None, instance.availability_zone
+        {}, None, instance.availability_zone,
+        project_id=instance.project_id
     )
     scheduler_utils.setup_instance_group(context, request_spec)
     request_spec.create()

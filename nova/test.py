@@ -61,6 +61,7 @@ from nova.tests.unit import conf_fixture
 from nova.tests.unit import policy_fixture
 from nova.tests import uuidsentinel as uuids
 from nova import utils
+from nova.virt import images
 
 
 CONF = cfg.CONF
@@ -209,6 +210,13 @@ class TestCase(testtools.TestCase):
     USES_DB_SELF = False
     REQUIRES_LOCKING = False
 
+    # Setting to True makes the test use the RPCFixture.
+    STUB_RPC = True
+
+    # The number of non-cell0 cells to create. This is only used in the
+    # base class when USES_DB is True.
+    NUMBER_OF_CELLS = 1
+
     TIMEOUT_SCALING_FACTOR = 1
 
     def setUp(self):
@@ -222,7 +230,8 @@ class TestCase(testtools.TestCase):
         self.useFixture(fixtures.TempHomeDir())
         self.useFixture(log_fixture.get_logging_handle_error_fixture())
 
-        self.useFixture(nova_fixtures.OutputStreamCapture())
+        self.output = nova_fixtures.OutputStreamCapture()
+        self.useFixture(self.output)
 
         self.stdlog = nova_fixtures.StandardLogging()
         self.useFixture(self.stdlog)
@@ -246,7 +255,9 @@ class TestCase(testtools.TestCase):
                                 group='oslo_concurrency')
 
         self.useFixture(conf_fixture.ConfFixture(CONF))
-        self.useFixture(nova_fixtures.RPCFixture('nova.test'))
+
+        if self.STUB_RPC:
+            self.useFixture(nova_fixtures.RPCFixture('nova.test'))
 
         # we cannot set this in the ConfFixture as oslo only registers the
         # notification opts at the first instantiation of a Notifier that
@@ -297,8 +308,11 @@ class TestCase(testtools.TestCase):
         # caching of that value.
         utils._IS_NEUTRON = None
 
-        # Reset the traits sync flag
+        # Reset the traits sync and rc cache flags
         objects.resource_provider._TRAITS_SYNCED = False
+        objects.resource_provider._RC_CACHE = None
+        # Reset the global QEMU version flag.
+        images.QEMU_VERSION = None
 
         mox_fixture = self.useFixture(moxstubout.MoxStubout())
         self.mox = mox_fixture.mox
@@ -313,6 +327,9 @@ class TestCase(testtools.TestCase):
 
         self.useFixture(nova_fixtures.ForbidNewLegacyNotificationFixture())
 
+        # NOTE(mikal): make sure we don't load a privsep helper accidentally
+        self.useFixture(nova_fixtures.PrivsepNoHelperFixture())
+
     def _setup_cells(self):
         """Setup a normal cellsv2 environment.
 
@@ -321,9 +338,6 @@ class TestCase(testtools.TestCase):
         cells-aware code can find those two databases.
         """
         celldbs = nova_fixtures.CellDatabases()
-        celldbs.add_cell_database(objects.CellMapping.CELL0_UUID)
-        celldbs.add_cell_database(uuids.cell1, default=True)
-        self.useFixture(celldbs)
 
         ctxt = context.get_context()
         fake_transport = 'fake://nowhere/'
@@ -335,16 +349,24 @@ class TestCase(testtools.TestCase):
             transport_url=fake_transport,
             database_connection=objects.CellMapping.CELL0_UUID)
         c0.create()
+        self.cell_mappings[c0.name] = c0
+        celldbs.add_cell_database(objects.CellMapping.CELL0_UUID)
 
-        c1 = objects.CellMapping(
-            context=ctxt,
-            uuid=uuids.cell1,
-            name=CELL1_NAME,
-            transport_url=fake_transport,
-            database_connection=uuids.cell1)
-        c1.create()
+        for x in range(self.NUMBER_OF_CELLS):
+            name = 'cell%i' % (x + 1)
+            uuid = getattr(uuids, name)
+            cell = objects.CellMapping(
+                context=ctxt,
+                uuid=uuid,
+                name=name,
+                transport_url=fake_transport,
+                database_connection=uuid)
+            cell.create()
+            self.cell_mappings[name] = cell
+            # cell1 is the default cell
+            celldbs.add_cell_database(uuid, default=(x == 0))
 
-        self.cell_mappings = {cm.name: cm for cm in (c0, c1)}
+        self.useFixture(celldbs)
 
     def _restore_obj_registry(self):
         objects_base.NovaObjectRegistry._registry._obj_classes = \
@@ -393,11 +415,33 @@ class TestCase(testtools.TestCase):
                                      cell_mapping=cell)
             hm.create()
             self.host_mappings[hm.host] = hm
-
+            if host is not None:
+                # Make sure that CONF.host is relevant to the right hostname
+                self.useFixture(nova_fixtures.ConfPatcher(host=host))
         svc = self.useFixture(
             nova_fixtures.ServiceFixture(name, host, **kwargs))
 
         return svc.service
+
+    def restart_compute_service(self, compute):
+        """Restart a compute service in a realistic way.
+
+        :param:compute: the nova-compute service to be restarted
+        """
+
+        # NOTE(gibi): The service interface cannot be used to simulate a real
+        # service restart as the manager object will not be recreated after a
+        # service.stop() and service.start() therefore the manager state will
+        # survive. For example the resource tracker will not be recreated after
+        # a stop start. The service.kill() call cannot help as it deletes
+        # the service from the DB which is unrealistic and causes that some
+        # operation that refers to the killed host (e.g. evacuate) fails.
+        # So this helper method tries to simulate a better compute service
+        # restart by cleaning up some of the internal state of the compute
+        # manager.
+        compute.stop()
+        compute.manager._resource_tracker = None
+        compute.start()
 
     def assertJsonEqual(self, expected, observed, message=''):
         """Asserts that 2 complex data structures are json equivalent.

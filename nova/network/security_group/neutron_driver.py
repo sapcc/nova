@@ -15,6 +15,7 @@
 
 import sys
 
+import netaddr
 from neutronclient.common import exceptions as n_exc
 from neutronclient.neutron import v2_0 as neutronv20
 from oslo_log import log as logging
@@ -242,7 +243,6 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
                 LOG.exception("Neutron Error: %s", e)
                 self.raise_invalid_property(six.text_type(e))
             else:
-                LOG.exception("Neutron Error:")
                 six.reraise(*exc_info)
         converted_rules = []
         for rule in rules:
@@ -273,7 +273,8 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
             if not rule.get('cidr'):
                 new_rule['ethertype'] = 'IPv4'
             else:
-                new_rule['ethertype'] = utils.get_ip_version(rule.get('cidr'))
+                version = netaddr.IPNetwork(rule.get('cidr')).version
+                new_rule['ethertype'] = 'IPv6' if version == 6 else 'IPv4'
             new_rule['remote_ip_prefix'] = rule.get('cidr')
             new_rule['security_group_id'] = rule.get('parent_group_id')
             new_rule['remote_group_id'] = rule.get('group_id')
@@ -439,7 +440,6 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
                         'project': context.project_id})
                 self.raise_not_found(msg)
             else:
-                LOG.exception("Neutron Error:")
                 six.reraise(*exc_info)
         params = {'device_id': instance.uuid}
         try:
@@ -472,6 +472,13 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
                          {'security_group_id': security_group_id,
                           'port_id': port['id']})
                 neutron.update_port(port['id'], {'port': updated_port})
+            except n_exc.NeutronClientException as e:
+                exc_info = sys.exc_info()
+                if e.status_code == 400:
+                    raise exception.SecurityGroupCannotBeApplied(
+                        six.text_type(e))
+                else:
+                    six.reraise(*exc_info)
             except Exception:
                 with excutils.save_and_reraise_exception():
                     LOG.exception("Neutron Error:")
@@ -493,7 +500,6 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
                         'project': context.project_id})
                 self.raise_not_found(msg)
             else:
-                LOG.exception("Neutron Error:")
                 six.reraise(*exc_info)
         params = {'device_id': instance.uuid}
         try:
@@ -521,7 +527,7 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
 
             updated_port = {'security_groups': port['security_groups']}
             try:
-                LOG.info("Adding security group %(security_group_id)s to "
+                LOG.info("Removing security group %(security_group_id)s from "
                          "port %(port_id)s",
                          {'security_group_id': security_group_id,
                           'port_id': port['id']})

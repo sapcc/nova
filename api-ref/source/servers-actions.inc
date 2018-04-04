@@ -458,12 +458,14 @@ Rebuilds a server.
 
 Specify the ``rebuild`` action in the request body.
 
-To rebuild the server with preservation of the ephemeral partition,
-set the ``preserve_ephemeral`` parameter to ``true``.
+.. note:: There is a `known limitation`_ where the root disk is not
+   replaced for volume-backed instances during a rebuild.
+
+.. _known limitation: https://bugs.launchpad.net/nova/+bug/1482040
 
 Normal response codes: 202
 
-Error response codes: badRequest(400),unauthorized(401), forbidden(403),
+Error response codes: badRequest(400), unauthorized(401), forbidden(403),
 itemNotFound(404), conflict(409)
 
 Request
@@ -485,10 +487,12 @@ Request
   - personality.contents: contents
   - preserve_ephemeral: preserve_ephemeral
   - description: server_description
+  - key_name: key_name_rebuild_req
+  - user_data: user_data_rebuild_req
 
-**Example Rebuild Server (rebuild Action) (v2.47)**
+**Example Rebuild Server (rebuild Action) (v2.54)**
 
-.. literalinclude:: ../../doc/api_samples/servers/v2.47/server-action-rebuild.json
+.. literalinclude:: ../../doc/api_samples/servers/v2.54/server-action-rebuild.json
    :language: javascript
 
 Response
@@ -532,10 +536,12 @@ Response
   - locked: locked
   - description: server_description_resp
   - tags: tags
+  - key_name: key_name_rebuild_resp
+  - user_data: user_data_rebuild_resp
 
-**Example Rebuild Server (rebuild Action) (v2.47)**
+**Example Rebuild Server (rebuild Action) (v2.54)**
 
-.. literalinclude:: ../../doc/api_samples/servers/v2.47/server-action-rebuild-resp.json
+.. literalinclude:: ../../doc/api_samples/servers/v2.54/server-action-rebuild-resp.json
    :language: javascript
 
 Remove (Disassociate) Floating Ip (removeFloatingIp Action) (DEPRECATED)

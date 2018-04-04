@@ -13,7 +13,9 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import base64
 import uuid
+import zlib
 
 try:
     import xmlrpclib
@@ -23,7 +25,6 @@ except ImportError:
 from eventlet import greenthread
 import mock
 from os_xenapi.client import host_xenstore
-from os_xenapi.client import session as xenapi_session
 import six
 
 from nova.compute import power_state
@@ -56,8 +57,8 @@ class VMOpsTestBase(stubs.XenAPITestBaseNoDB):
 
     def _setup_mock_vmops(self, product_brand=None, product_version=None):
         stubs.stubout_session(self.stubs, xenapi_fake.SessionBase)
-        self._session = xenapi_session.XenAPISession('test_url', 'root',
-                                                     'test_pass')
+        self._session = xenapi_fake.SessionBase(
+            'http://localhost', 'root', 'test_pass')
         self.vmops = vmops.VMOps(self._session, fake.FakeVirtAPI())
 
     def create_vm(self, name, state="Running"):
@@ -235,8 +236,15 @@ class InjectAutoDiskConfigTestCase(VMOpsTestBase):
 
 
 class GetConsoleOutputTestCase(VMOpsTestBase):
-    def test_get_console_output_works(self):
+    def _mock_console_log(self, session, domid):
+        if domid == 0:
+            raise session.XenAPI.Failure('No console')
+        return base64.b64encode(zlib.compress(six.b('dom_id: %s' % domid)))
+
+    @mock.patch.object(vmops.vm_management, 'get_console_log')
+    def test_get_console_output_works(self, mock_console_log):
         ctxt = context.RequestContext('user', 'project')
+        mock_console_log.side_effect = self._mock_console_log
         instance = fake_instance.fake_instance_obj(ctxt)
         with mock.patch.object(self.vmops, '_get_last_dom_id',
                                return_value=42) as mock_last_dom:
@@ -244,7 +252,9 @@ class GetConsoleOutputTestCase(VMOpsTestBase):
                              self.vmops.get_console_output(instance))
             mock_last_dom.assert_called_once_with(instance, check_rescue=True)
 
-    def test_get_console_output_not_available(self):
+    @mock.patch.object(vmops.vm_management, 'get_console_log')
+    def test_get_console_output_not_available(self, mock_console_log):
+        mock_console_log.side_effect = self._mock_console_log
         ctxt = context.RequestContext('user', 'project')
         instance = fake_instance.fake_instance_obj(ctxt)
         # dom_id=0 used to trigger exception in fake XenAPI
@@ -326,6 +336,7 @@ class SpawnTestCase(VMOpsTestBase):
                                  'apply_instance_filter')
         self.mox.StubOutWithMock(self.vmops, '_update_last_dom_id')
         self.mox.StubOutWithMock(self.vmops._session, 'call_xenapi')
+        self.mox.StubOutWithMock(self.vmops, '_attach_vgpu')
 
     @staticmethod
     def _new_instance(obj):
@@ -337,7 +348,7 @@ class SpawnTestCase(VMOpsTestBase):
     def _test_spawn(self, name_label_param=None, block_device_info_param=None,
                     rescue=False, include_root_vdi=True, throw_exception=None,
                     attach_pci_dev=False, neutron_exception=False,
-                    network_info=None):
+                    network_info=None, vgpu_info=None):
         self._stub_out_common()
 
         instance = self._new_instance({"name": "dummy", "uuid": "fake_uuid",
@@ -422,6 +433,9 @@ class SpawnTestCase(VMOpsTestBase):
                                           "0/0000:00:00.0")
         else:
             pci_manager.get_instance_pci_devs(instance).AndReturn([])
+
+        self.vmops._attach_vgpu(vm_ref, vgpu_info, instance)
+
         step += 1
         self.vmops._update_instance_progress(context, instance, step, steps)
 
@@ -491,8 +505,8 @@ class SpawnTestCase(VMOpsTestBase):
 
         self.mox.ReplayAll()
         self.vmops.spawn(context, instance, image_meta, injected_files,
-                         admin_password, network_info,
-                         block_device_info_param, name_label_param, rescue)
+                         admin_password, network_info, block_device_info_param,
+                         vgpu_info, name_label_param, rescue)
 
     def test_spawn(self):
         self._test_spawn()
@@ -504,6 +518,11 @@ class SpawnTestCase(VMOpsTestBase):
 
     def test_spawn_with_pci_available_on_the_host(self):
         self._test_spawn(attach_pci_dev=True)
+
+    def test_spawn_with_vgpu(self):
+        vgpu_info = {'grp_uuid': uuids.gpu_group_1,
+                     'vgpu_type_uuid': uuids.vgpu_type_1}
+        self._test_spawn(vgpu_info=vgpu_info)
 
     def test_spawn_performs_rollback_and_throws_exception(self):
         self.assertRaises(test.TestingException, self._test_spawn,
@@ -645,7 +664,8 @@ class SpawnTestCase(VMOpsTestBase):
                           self._test_spawn, neutron_exception=True)
 
     def _test_finish_migration(self, power_on=True, resize_instance=True,
-                               throw_exception=None, booted_from_volume=False):
+                               throw_exception=None, booted_from_volume=False,
+                               vgpu_info=None):
         self._stub_out_common()
         self.mox.StubOutWithMock(volumeops.VolumeOps, "connect_volume")
         self.mox.StubOutWithMock(vm_utils, "import_all_migrated_disks")
@@ -703,6 +723,8 @@ class SpawnTestCase(VMOpsTestBase):
                             None, None)
         self.vmops._attach_mapped_block_devices(instance, block_device_info)
         pci_manager.get_instance_pci_devs(instance).AndReturn([])
+
+        self.vmops._attach_vgpu(vm_ref, vgpu_info, instance)
 
         self.vmops._inject_instance_metadata(instance, vm_ref)
         self.vmops._inject_auto_disk_config(instance, vm_ref)
@@ -1793,8 +1815,8 @@ class LiveMigrateHelperTestCase(VMOpsTestBase):
                                'get_other_config') as mock_other_config, \
              mock.patch.object(self._session.VM,
                               'get_VIFs') as mock_get_vif:
-            mock_other_config.side_effect = [{'nicira-iface-id': 'vif_id_a'},
-                                             {'nicira-iface-id': 'vif_id_b'}]
+            mock_other_config.side_effect = [{'neutron-port-id': 'vif_id_a'},
+                                             {'neutron-port-id': 'vif_id_b'}]
             mock_get_vif.return_value = ['vif_ref1']
             vif_uuid_map = {'': 'default_net_ref'}
             vif_map = self.vmops._generate_vif_network_map('vm_ref',

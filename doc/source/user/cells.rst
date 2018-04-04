@@ -76,6 +76,7 @@ Cells V2
 
 * `Newton Summit Video - Nova Cells V2: What's Going On? <https://www.openstack.org/videos/austin-2016/nova-cells-v2-whats-going-on>`_
 * `Pike Summit Video - Scaling Nova: How CellsV2 Affects Your Deployment <https://www.openstack.org/videos/boston-2017/scaling-nova-how-cellsv2-affects-your-deployment>`_
+* `Queens Summit Video - Add Cellsv2 to your existing Nova deployment <https://www.openstack.org/videos/sydney-2017/adding-cellsv2-to-your-existing-nova-deployment>`_
 
 Manifesto
 ~~~~~~~~~
@@ -583,9 +584,9 @@ FAQs
       cell you can run this and it will report any hosts that are not yet
       mapped to a cell and map them. This command is idempotent.
 
-   In the future, we may add a flag to the ``nova-manage cell_v2 list_cells``
-   command or add another command to list hosts in a specific cell (or all
-   cells).
+   3. Run ``nova-manage cell_v2 list_hosts``. This will list hosts in all
+      cells. If you want to list hosts in a specific cell, you can run
+      ``nova-manage cell_v2 list_hosts --cell_uuid <cell_uuid>``.
 
 #. I updated the database_connection and/or transport_url in a cell using the
    ``nova-manage cell_v2 update_cell`` command but the API is still trying to

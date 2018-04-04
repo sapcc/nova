@@ -7,7 +7,7 @@ defaults:
         x-auth-token: admin
         content-type: application/json
         accept: application/json
-        OpenStack-API-Version: placement latest
+        openstack-api-version: placement latest
 
 tests:
 
@@ -41,7 +41,7 @@ tests:
 - name: list resource providers providing resources filter before API 1.4
   GET: /resource_providers?resources=VCPU:1
   request_headers:
-      OpenStack-API-Version: placement 1.3
+      openstack-api-version: placement 1.3
   status: 400
   response_strings:
       - 'Invalid query string parameters'
@@ -93,6 +93,13 @@ tests:
       - 'Got: .'
   response_json_paths:
       $.errors[0].title: Bad Request
+
+- name: list resource providers providing empty resources
+  GET: /resource_providers?resources=
+  status: 400
+  response_strings:
+      - Badly formed resources parameter. Expected resources query string parameter in form
+      - 'Got: empty string.'
 
 - name: list resource providers providing disk resources
   GET: /resource_providers?resources=DISK_GB:500

@@ -40,7 +40,7 @@ import six
 from nova.compute import power_state
 from nova import exception
 from nova.i18n import _
-from nova import utils
+from nova.privsep import libvirt as libvirt_privsep
 from nova.virt import hardware
 from nova.virt.libvirt import compat
 from nova.virt.libvirt import config as vconfig
@@ -200,12 +200,7 @@ class Guest(object):
         interfaces = self.get_interfaces()
         try:
             for interface in interfaces:
-                utils.execute(
-                    'tee',
-                    '/sys/class/net/%s/brport/hairpin_mode' % interface,
-                    process_input='1',
-                    run_as_root=True,
-                    check_exit_code=[0, 1])
+                libvirt_privsep.enable_hairpin(interface)
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.error('Error enabling hairpin mode with XML: %s',
@@ -548,11 +543,7 @@ class Guest(object):
 
         return hardware.InstanceInfo(
             state=LIBVIRT_POWER_STATE[dom_info[0]],
-            max_mem_kb=dom_info[1],
-            mem_kb=dom_info[2],
-            num_cpu=dom_info[3],
-            cpu_time_ns=dom_info[4],
-            id=self.id)
+            internal_id=self.id)
 
     def get_power_state(self, host):
         return self.get_info(host).state
@@ -649,10 +640,31 @@ class Guest(object):
                 destination, flags=flags, bandwidth=bandwidth)
         else:
             if params:
+                # Due to a quirk in the libvirt python bindings,
+                # VIR_MIGRATE_NON_SHARED_INC with an empty migrate_disks is
+                # interpreted as "block migrate all writable disks" rather than
+                # "don't block migrate any disks". This includes attached
+                # volumes, which will potentially corrupt data on those
+                # volumes. Consequently we need to explicitly unset
+                # VIR_MIGRATE_NON_SHARED_INC if there are no disks to be block
+                # migrated.
+                if (flags & libvirt.VIR_MIGRATE_NON_SHARED_INC != 0 and
+                        not params.get('migrate_disks')):
+                    flags &= ~libvirt.VIR_MIGRATE_NON_SHARED_INC
+
+                # In migrateToURI3 these parameters are extracted from the
+                # `params` dict
                 if migrate_uri:
-                    # In migrateToURI3 this parameter is searched in
-                    # the `params` dict
                     params['migrate_uri'] = migrate_uri
+                params['bandwidth'] = bandwidth
+
+                # In the python2 libvirt bindings, strings passed to
+                # migrateToURI3 via params must not be unicode.
+                if six.PY2:
+                    params = {key: str(value) if isinstance(value, unicode)
+                                              else value
+                              for key, value in params.items()}
+
                 self._domain.migrateToURI3(
                     destination, params=params, flags=flags)
             else:
@@ -670,6 +682,13 @@ class Guest(object):
         :param mstime: Downtime in milliseconds.
         """
         self._domain.migrateSetMaxDowntime(mstime)
+
+    def migrate_configure_max_speed(self, bandwidth):
+        """The maximum bandwidth that will be used to do migration
+
+        :param bw: Bandwidth in MiB/s
+        """
+        self._domain.migrateSetMaxSpeed(bandwidth)
 
     def migrate_start_postcopy(self):
         """Switch running live migration to post-copy mode"""

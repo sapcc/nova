@@ -107,7 +107,7 @@ class LibvirtMountedFileSystemVolumeDriver(LibvirtBaseFileSystemVolumeDriver):
 
         self.fstype = fstype
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         """Connect the volume."""
         export = connection_info['data']['export']
         vol_name = connection_info['data']['name']
@@ -119,7 +119,7 @@ class LibvirtMountedFileSystemVolumeDriver(LibvirtBaseFileSystemVolumeDriver):
         connection_info['data']['device_path'] = \
             self._get_device_path(connection_info)
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         """Disconnect the volume."""
         vol_name = connection_info['data']['name']
         mountpoint = self._get_mount_path(connection_info)

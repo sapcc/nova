@@ -104,7 +104,7 @@ devstack repo:
 
 .. code-block:: bash
 
-  $ sudo dnf -y install git
+  $ sudo dnf install git
   $ git clone git://github.com/openstack-dev/devstack.git
   $ cd devstack
 
@@ -120,7 +120,6 @@ For example:
   SERVICE_DIR=$DEST/status
 
   LOGFILE=$DATA_DIR/logs/stack.log
-  SCREEN_LOGDIR=$DATA_DIR/logs
   VERBOSE=True
 
   disable_service n-net

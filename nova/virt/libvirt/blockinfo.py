@@ -197,8 +197,8 @@ def find_disk_dev_for_disk_bus(mapping, bus,
 
 def is_disk_bus_valid_for_virt(virt_type, disk_bus):
     valid_bus = {
-        'qemu': ['virtio', 'scsi', 'ide', 'usb', 'fdc'],
-        'kvm': ['virtio', 'scsi', 'ide', 'usb', 'fdc'],
+        'qemu': ['virtio', 'scsi', 'ide', 'usb', 'fdc', 'sata'],
+        'kvm': ['virtio', 'scsi', 'ide', 'usb', 'fdc', 'sata'],
         'xen': ['xen', 'ide'],
         'uml': ['uml'],
         'lxc': ['lxc'],
@@ -550,7 +550,7 @@ def get_disk_mapping(virt_type, instance,
         driver.block_device_info_get_mapping(block_device_info))
 
     root_device_name = block_device.strip_dev(
-        driver.block_device_info_get_root(block_device_info))
+        driver.block_device_info_get_root_device(block_device_info))
     root_info = get_root_info(
         instance, virt_type, image_meta, root_bdm,
         disk_bus, cdrom_bus, root_device_name)

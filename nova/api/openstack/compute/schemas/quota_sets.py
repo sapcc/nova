@@ -46,7 +46,7 @@ quota_resources = {
 update_quota_set = copy.deepcopy(quota_resources)
 update_quota_set.update({'force': parameter_types.boolean})
 
-update_quota_set_v236 = copy.deepcopy(quota_resources)
+update_quota_set_v236 = copy.deepcopy(update_quota_set)
 del update_quota_set_v236['fixed_ips']
 del update_quota_set_v236['floating_ips']
 del update_quota_set_v236['security_groups']
@@ -68,3 +68,23 @@ update = {
 
 update_v236 = copy.deepcopy(update)
 update_v236['properties']['quota_set']['properties'] = update_quota_set_v236
+
+# 2.57 builds on 2.36 and removes injected_file* quotas.
+update_quota_set_v257 = copy.deepcopy(update_quota_set_v236)
+del update_quota_set_v257['injected_files']
+del update_quota_set_v257['injected_file_content_bytes']
+del update_quota_set_v257['injected_file_path_bytes']
+update_v257 = copy.deepcopy(update_v236)
+update_v257['properties']['quota_set']['properties'] = update_quota_set_v257
+
+query_schema = {
+    'type': 'object',
+    'properties': {
+        'user_id': parameter_types.multi_params({'type': 'string'})
+    },
+    # NOTE(gmann): This is kept True to keep backward compatibility.
+    # As of now Schema validation stripped out the additional parameters and
+    # does not raise 400. In the future, we may block the additional parameters
+    # by bump in Microversion.
+    'additionalProperties': True
+}

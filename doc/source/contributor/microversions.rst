@@ -216,6 +216,18 @@ A microversion is not needed in the following situation:
     returned with a 503 or 3xx response, so it may be removed without bumping
     the microversion.
 
+  - An obvious regression bug in an admin-only API where the bug can still
+    be fixed upstream on active stable branches. Admin-only APIs are less of
+    a concern for interoperability and generally a regression in behavior can
+    be dealt with as a bug fix when the documentation clearly shows the API
+    behavior was unexpectedly regressed. See [#f3]_ for an example. Intentional
+    behavior changes to an admin-only API *do* require a microversion, like the
+    :ref:`2.53 microversion <2.53-microversion>` for example.
+
+**Footnotes**
+
+.. [#f3] https://review.openstack.org/#/c/523194/
+
 In Code
 -------
 
@@ -342,9 +354,10 @@ necessary to add changes to other places which describe your change:
   ``nova/api/openstack/api_version_request.py``
 
 * Add a verbose description to
-  ``nova/api/openstack/compute/rest_api_version_history.rst``.  There should
-  be enough information that it could be used by the docs team for
-  release notes.
+  ``nova/api/openstack/compute/rest_api_version_history.rst``.
+
+* Add a `release note`_ with a ``features`` section announcing the new or
+  changed feature and the microversion.
 
 * Update the expected versions in affected tests, for example in
   ``nova/tests/unit/api/openstack/compute/test_versions.py``.
@@ -358,6 +371,12 @@ necessary to add changes to other places which describe your change:
 
 * If the microversion changes the response schema, a new schema and test for
   the microversion must be added to Tempest.
+
+* Update the `API Reference`_ documentation as appropriate.  The source is
+  located under `api-ref/source/`.
+
+.. _release note: https://docs.openstack.org/nova/latest/contributor/releasenotes.html
+.. _API Reference: https://developer.openstack.org/api-ref/compute/
 
 Allocating a microversion
 -------------------------

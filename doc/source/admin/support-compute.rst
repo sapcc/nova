@@ -64,8 +64,7 @@ The report has the following sections:
 * Configuration: Lists all configuration options currently accessible through
   the CONF object for the current process.
 
-For more information, see `Guru Meditation Reports
-<https://docs.openstack.org/developer/nova/devref/gmr.html>`_.
+For more information, see :doc:`/reference/gmr`.
 
 .. _compute-common-errors-and-fixes:
 
@@ -273,9 +272,8 @@ Solution
 On the KVM host, run :command:`cat /proc/cpuinfo`. Make sure the ``vmx`` or
 ``svm`` flags are set.
 
-Follow the instructions in the `Enable KVM
-<https://docs.openstack.org/ocata/config-reference/compute/hypervisor-kvm.html#enable-kvm>`__
-section in the OpenStack Configuration Reference to enable hardware
+Follow the instructions in the :ref:`enable-kvm`
+section in the Nova Configuration Reference to enable hardware
 virtualization support in your BIOS.
 
 Failed to attach volume after detaching

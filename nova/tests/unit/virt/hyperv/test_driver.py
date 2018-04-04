@@ -51,13 +51,20 @@ class HyperVDriverTestCase(test_base.HyperVBaseTestCase):
         self.driver._serialconsoleops = mock.MagicMock()
         self.driver._imagecache = mock.MagicMock()
 
+    @mock.patch.object(driver.LOG, 'warning')
     @mock.patch.object(driver.utilsfactory, 'get_hostutils')
-    def test_check_minimum_windows_version(self, mock_get_hostutils):
+    def test_check_minimum_windows_version(self, mock_get_hostutils,
+                                           mock_warning):
         mock_hostutils = mock_get_hostutils.return_value
         mock_hostutils.check_min_windows_version.return_value = False
 
         self.assertRaises(exception.HypervisorTooOld,
                           self.driver._check_minimum_windows_version)
+
+        mock_hostutils.check_min_windows_version.side_effect = [True, False]
+
+        self.driver._check_minimum_windows_version()
+        self.assertTrue(mock_warning.called)
 
     def test_public_api_signatures(self):
         # NOTE(claudiub): wrapped functions do not keep the same signature in
@@ -139,8 +146,8 @@ class HyperVDriverTestCase(test_base.HyperVBaseTestCase):
         self.driver.spawn(
             mock.sentinel.context, mock.sentinel.instance,
             mock.sentinel.image_meta, mock.sentinel.injected_files,
-            mock.sentinel.admin_password, mock.sentinel.network_info,
-            mock.sentinel.block_device_info)
+            mock.sentinel.admin_password, mock.sentinel.allocations,
+            mock.sentinel.network_info, mock.sentinel.block_device_info)
 
         self.driver._vmops.spawn.assert_called_once_with(
             mock.sentinel.context, mock.sentinel.instance,

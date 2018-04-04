@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from keystoneauth1 import discover as ks_disc
 from keystoneauth1 import loading as ks_loading
 from oslo_log import log as logging
 from oslo_utils import importutils
@@ -20,6 +21,7 @@ from oslo_utils import importutils
 import nova.conf
 from nova import exception
 from nova.i18n import _
+from nova import utils
 
 
 LOG = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ ironic = None
 IRONIC_GROUP = nova.conf.ironic.ironic_group
 
 # The API version required by the Ironic driver
-IRONIC_API_VERSION = (1, 32)
+IRONIC_API_VERSION = (1, 37)
 
 
 class IronicClientWrapper(object):
@@ -52,10 +54,6 @@ class IronicClientWrapper(object):
             if not hasattr(ironic, 'client'):
                 ironic.client = importutils.import_module(
                                                     'ironicclient.client')
-        self._cached_client = None
-
-    def _invalidate_cached_client(self):
-        """Tell the wrapper to invalidate the cached ironic-client."""
         self._cached_client = None
 
     def _get_auth_plugin(self):
@@ -89,10 +87,26 @@ class IronicClientWrapper(object):
         kwargs['retry_interval'] = retry_interval
         kwargs['os_ironic_api_version'] = '%d.%d' % IRONIC_API_VERSION
 
-        # NOTE(clenimar): by default, the endpoint is taken from the service
-        # catalog. Use `api_endpoint` if you want to override it.
-        ironic_url = (CONF.ironic.api_endpoint
-                      if CONF.ironic.api_endpoint else None)
+        # NOTE(clenimar/efried): by default, the endpoint is taken from the
+        # service catalog. Use `endpoint_override` if you want to override it.
+        if CONF.ironic.api_endpoint:
+            # NOTE(efried): `api_endpoint` still overrides service catalog and
+            # `endpoint_override` conf options. This will be removed in a
+            # future release.
+            ironic_url = CONF.ironic.api_endpoint
+        else:
+            try:
+                ksa_adap = utils.get_ksa_adapter(
+                    nova.conf.ironic.DEFAULT_SERVICE_TYPE,
+                    ksa_auth=auth_plugin, ksa_session=sess,
+                    min_version=IRONIC_API_VERSION,
+                    max_version=(IRONIC_API_VERSION[0], ks_disc.LATEST))
+                ironic_url = ksa_adap.get_endpoint()
+            except exception.ServiceNotFound:
+                # NOTE(efried): No reason to believe service catalog lookup
+                # won't also fail in ironic client init, but this way will
+                # yield the expected exception/behavior.
+                ironic_url = None
 
         try:
             cli = ironic.client.get_client(IRONIC_API_VERSION[0],
@@ -137,21 +151,8 @@ class IronicClientWrapper(object):
         """
         retry_on_conflict = kwargs.pop('retry_on_conflict', True)
 
-        # NOTE(dtantsur): allow for authentication retry, other retries are
-        # handled by ironicclient starting with 0.8.0
-        for attempt in range(2):
-            client = self._get_client(retry_on_conflict=retry_on_conflict)
-
-            try:
-                return self._multi_getattr(client, method)(*args, **kwargs)
-            except ironic.exc.Unauthorized:
-                # In this case, the authorization token of the cached
-                # ironic-client probably expired. So invalidate the cached
-                # client and the next try will start with a fresh one.
-                if not attempt:
-                    self._invalidate_cached_client()
-                    LOG.debug("The Ironic client became unauthorized. "
-                              "Will attempt to reauthorize and try again.")
-                else:
-                    # This code should be unreachable actually
-                    raise
+        # authentication retry for token expiration is handled in keystone
+        # session, other retries are handled by ironicclient starting with
+        # 0.8.0
+        client = self._get_client(retry_on_conflict=retry_on_conflict)
+        return self._multi_getattr(client, method)(*args, **kwargs)

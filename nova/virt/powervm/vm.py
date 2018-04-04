@@ -22,6 +22,7 @@ from oslo_utils import strutils as stru
 from pypowervm import exceptions as pvm_exc
 from pypowervm.helpers import log_helper as pvm_log
 from pypowervm.tasks import power
+from pypowervm.tasks import power_opts as popts
 from pypowervm.tasks import vterm
 from pypowervm import util as pvm_u
 from pypowervm.utils import lpar_builder as lpar_bldr
@@ -29,6 +30,7 @@ from pypowervm.utils import uuid as pvm_uuid
 from pypowervm.utils import validation as pvm_vldn
 from pypowervm.wrappers import base_partition as pvm_bp
 from pypowervm.wrappers import logical_partition as pvm_lpar
+from pypowervm.wrappers import network as pvm_net
 from pypowervm.wrappers import shared_proc_pool as pvm_spp
 import six
 
@@ -70,6 +72,23 @@ _POWERVM_TO_NOVA_STATE = {
     pvm_bp.LPARState.SUSPENDED: power_state.SUSPENDED,
 
     pvm_bp.LPARState.ERROR: power_state.CRASHED}
+
+
+def get_cnas(adapter, instance, **search):
+    """Returns the (possibly filtered) current CNAs on the instance.
+
+    The Client Network Adapters are the Ethernet adapters for a VM.
+
+    :param adapter: The pypowervm adapter.
+    :param instance: The nova instance.
+    :param search: Keyword arguments for CNA.search.  If omitted, all CNAs are
+                   returned.
+    :return The CNA wrappers that represent the ClientNetworkAdapters on the VM
+    """
+    meth = pvm_net.CNA.search if search else pvm_net.CNA.get
+
+    return meth(adapter, parent_type=pvm_lpar.LPAR,
+                parent_uuid=get_pvm_uuid(instance), **search)
 
 
 def get_lpar_names(adp):
@@ -151,19 +170,20 @@ def power_off(adapter, instance, force_immediate=False, timeout=None):
     with lockutils.lock('power_%s' % instance.uuid):
         entry = get_instance_wrapper(adapter, instance)
         # Get the current state and see if we can stop the VM
-        LOG.debug("Powering off request for instance %(inst)s which is in "
-                  "state %(state)s.  Force Immediate Flag: %(force)s.",
-                  {'inst': instance.name, 'state': entry.state,
-                   'force': force_immediate})
+        LOG.debug("Powering off request for instance in state %(state)s. "
+                  "Force Immediate Flag: %(force)s.",
+                  {'state': entry.state, 'force': force_immediate},
+                  instance=instance)
         if entry.state in _POWERVM_STOPPABLE_STATE:
             # Now stop the lpar
             try:
-                LOG.debug("Power off executing for instance %(inst)s.",
-                          {'inst': instance.name})
+                LOG.debug("Power off executing.", instance=instance)
                 kwargs = {'timeout': timeout} if timeout else {}
-                force = (power.Force.TRUE if force_immediate
-                         else power.Force.ON_FAILURE)
-                power.power_off(entry, None, force_immediate=force, **kwargs)
+                if force_immediate:
+                    power.PowerOp.stop(
+                        entry, opts=popts.PowerOffOpts().vsp_hard(), **kwargs)
+                else:
+                    power.power_off_progressive(entry, **kwargs)
             except pvm_exc.Error as e:
                 LOG.exception("PowerVM error during power_off.",
                               instance=instance)
@@ -186,8 +206,11 @@ def reboot(adapter, instance, hard):
         try:
             entry = get_instance_wrapper(adapter, instance)
             if entry.state != pvm_bp.LPARState.NOT_ACTIVATED:
-                power.power_off(entry, None, force_immediate=hard,
-                                restart=True)
+                if hard:
+                    power.PowerOp.stop(
+                        entry, opts=popts.PowerOffOpts().vsp_hard().restart())
+                else:
+                    power.power_off_progressive(entry, restart=True)
             else:
                 # pypowervm does NOT throw an exception if "already down".
                 # Any other exception from pypowervm is a legitimate failure;
@@ -306,6 +329,34 @@ def get_vm_qp(adapter, lpar_uuid, qprop=None, log_errors=True):
                 raise exc.InstanceNotFound(instance_id=lpar_uuid)
             # else raise the original exception
     return jsonutils.loads(resp.body)
+
+
+def get_vm_info(adapter, instance):
+    """Get the InstanceInfo for an instance.
+
+    :param adapter: The pypowervm.adapter.Adapter for the PowerVM REST API.
+    :param instance: nova.objects.instance.Instance object
+    :returns: An InstanceInfo object.
+    """
+    pvm_uuid = get_pvm_uuid(instance)
+    pvm_state = get_vm_qp(adapter, pvm_uuid, 'PartitionState')
+    nova_state = _translate_vm_state(pvm_state)
+    return hardware.InstanceInfo(nova_state)
+
+
+def norm_mac(mac):
+    """Normalizes a MAC address from pypowervm format to OpenStack.
+
+    That means that the format will be converted to lower case and will
+    have colons added.
+
+    :param mac: A pypowervm mac address.  Ex. 1234567890AB
+    :return: A mac that matches the standard neutron format.
+             Ex. 12:34:56:78:90:ab
+    """
+    # Need the replacement if the mac is already normalized.
+    mac = mac.lower().replace(':', '')
+    return ':'.join(mac[i:i + 2] for i in range(0, len(mac), 2))
 
 
 class VMBuilder(object):
@@ -488,32 +539,3 @@ class VMBuilder(object):
 
         # Return the singular pool id.
         return pool_wraps[0].id
-
-
-class InstanceInfo(hardware.InstanceInfo):
-    """Instance Information
-
-    This object tries to lazy load the attributes since the compute
-    manager retrieves it a lot just to check the status and doesn't need
-    all the attributes.
-
-    :param adapter: pypowervm adapter
-    :param instance: nova instance
-    """
-    _QP_STATE = 'PartitionState'
-
-    def __init__(self, adapter, instance):
-        self._adapter = adapter
-        # This is the PowerVM LPAR UUID (not the instance (UU)ID).
-        self.id = get_pvm_uuid(instance)
-        self._state = None
-
-    @property
-    def state(self):
-        # return the state if we previously loaded it
-        if self._state is not None:
-            return self._state
-        # otherwise, fetch the value now
-        pvm_state = get_vm_qp(self._adapter, self.id, self._QP_STATE)
-        self._state = _translate_vm_state(pvm_state)
-        return self._state

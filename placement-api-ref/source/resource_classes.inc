@@ -6,7 +6,7 @@ Resource classes are entities that indicate standard or
 deployer-specific resources that can be provided by a resource
 provider.
 
-.. note:: Resource class API calls are availiable starting from version 1.2.
+.. note:: Resource class API calls are available starting from version 1.2.
 
 List resource classes
 =====================
@@ -37,11 +37,15 @@ Create resource class
 
 .. rest_method:: POST /resource_classes
 
-Create a new resource class.
+Create a new resource class. The new class must be a *custom* resource class,
+prefixed with `CUSTOM_` and distinct from the standard resource classes.
 
 Normal Response Codes: 201
 
 Error response codes: badRequest(400), conflict(409)
+
+A `400 BadRequest` response code will be returned if the resource class
+does not have prefix `CUSTOM_`.
 
 A `409 Conflict` response code will
 be returned if another resource class exists with the provided name.
@@ -51,7 +55,7 @@ Request
 
 .. rest_parameters:: parameters.yaml
 
-  - name: resource_class
+  - name: resource_class_custom
 
 Request example
 ---------------
@@ -61,5 +65,9 @@ Request example
 
 Response
 --------
+
+.. rest_parameters:: parameters.yaml
+
+  - Location: location
 
 No body content is returned on a successful POST.

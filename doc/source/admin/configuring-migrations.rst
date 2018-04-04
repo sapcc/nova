@@ -21,13 +21,11 @@ This document covers live migrations using the
    Not all Compute service hypervisor drivers support live-migration, or
    support all live-migration features.
 
-   Consult the `Hypervisor Support Matrix
-   <https://docs.openstack.org/developer/nova/support-matrix.html>`_ to
-   determine which hypervisors support live-migration.
+   Consult :doc:`/user/support-matrix` to determine which hypervisors
+   support live-migration.
 
-   See the `Hypervisor configuration pages
-   <https://docs.openstack.org/ocata/config-reference/compute/hypervisors.html>`_
-   for details on hypervisor-specific configuration settings.
+   See the :doc:`/configuration/index` for details
+   on hypervisor configuration settings.
 
 The migration types are:
 
@@ -54,8 +52,7 @@ The migration types are:
   - **Block live migration**, or simply block migration.  The instance has
     ephemeral disks that are not shared between the source and destination
     hosts.  Block migration is incompatible with read-only devices such as
-    CD-ROMs and `Configuration Drive (config\_drive)
-    <https://docs.openstack.org/user-guide/cli-config-drive.html>`_.
+    CD-ROMs and Configuration Drive (config\_drive).
 
   - **Volume-backed live migration**. Instances use volumes rather than
     ephemeral disks.
@@ -91,7 +88,7 @@ the instructions below:
 
 #. Set the following parameters in ``nova.conf`` on all compute hosts:
 
-   - ``vncserver_listen=0.0.0.0``
+   - ``server_listen=0.0.0.0``
 
      You must not make the VNC server listen to the IP address of its compute
      host, since that addresses changes when the instance is migrated.
@@ -158,11 +155,12 @@ disk array LUNs, Ceph or GlusterFS.
 
 The next steps show how a regular Linux system might be configured as an NFS v4
 server for live migration.  For detailed information and alternative ways to
-configure NFS on Linux, see instructions for `Ubuntu
-<https://help.ubuntu.com/community/SettingUpNFSHowTo>`_, `RHEL and derivatives
-<https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/7/html/Storage_Administration_Guide/nfs-serverconfig.html>`_
-or `SLES and OpenSUSE
-<https://www.suse.com/documentation/sles-12/book_sle_admin/data/sec_nfs_configuring-nfs-server.html>`_.
+configure NFS on Linux, see instructions for `Ubuntu`_, `RHEL and derivatives`_
+or `SLES and OpenSUSE`_.
+
+.. _`Ubuntu`: https://help.ubuntu.com/community/SettingUpNFSHowTo
+.. _`RHEL and derivatives`: https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/7/html/Storage_Administration_Guide/nfs-serverconfig.html
+.. _`SLES and OpenSUSE`: https://www.suse.com/documentation/sles-12/book_sle_admin/data/sec_nfs_configuring-nfs-server.html
 
 #. Ensure that UID and GID of the nova user are identical on the compute hosts
    and the NFS server.
@@ -280,7 +278,7 @@ memory-intensive instances succeed.
    CPU when memory copy delays are detected.
 
    Auto-convergence is disabled by default.  You can enable it by setting
-   ``live_migration_permit_auto_convergence=true``.
+   ``live_migration_permit_auto_converge=true``.
 
    .. caution::
 
@@ -316,8 +314,7 @@ memory-intensive instances succeed.
 .. but perhaps I am missing something.
 
 The full list of live migration configuration parameters is documented in the
-`OpenStack Configuration Reference Guide
-<https://docs.openstack.org/ocata/config-reference/compute/config-options.html>`_
+:doc:`Nova Configuration Options </configuration/config>`
 
 .. _configuring-migrations-xenserver:
 
@@ -344,11 +341,11 @@ Shared storage
 
   An NFS export, visible to all XenServer hosts.
 
-   .. note::
+  .. note::
 
-      For the supported NFS versions, see the `NFS VHD
-      <http://docs.vmd.citrix.com/XenServer/6.0.0/1.0/en_gb/reference.html#id1002701>`_
-      section of the XenServer Administrator's Guide.
+     For the supported NFS versions, see the `NFS VHD
+     <http://docs.vmd.citrix.com/XenServer/6.0.0/1.0/en_gb/reference.html#id1002701>`_
+     section of the XenServer Administrator's Guide.
 
 To use shared storage live migration with XenServer hypervisors, the hosts must
 be joined to a XenServer pool. To create that pool, a host aggregate must be
@@ -414,10 +411,10 @@ Block migration
   The hypervisors must support the Storage XenMotion feature.  See your
   XenServer manual to make sure your edition has this feature.
 
-   .. note::
+  .. note::
 
-      - To use block migration, you must use the ``--block-migrate`` parameter
-        with the live migration command.
+     - To use block migration, you must use the ``--block-migrate`` parameter
+       with the live migration command.
 
-      - Block migration works only with EXT local storage storage repositories,
-        and the server must not have any volumes attached.
+     - Block migration works only with EXT local storage storage repositories,
+       and the server must not have any volumes attached.

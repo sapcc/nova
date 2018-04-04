@@ -13,21 +13,21 @@ CLI interface for nova status commands
 :Manual section: 1
 :Manual group: cloud computing
 
-SYNOPSIS
+Synopsis
 ========
 
   nova-status <category> <action> [<args>]
 
-DESCRIPTION
+Description
 ===========
 
-The nova-status command provides routines for checking the status of a Nova
-deployment.
+`nova-status` is a tool that provides routines for checking the status of a
+Nova deployment.
 
-OPTIONS
+Options
 =======
 
-The standard pattern for executing a nova-status command is::
+The standard pattern for executing a `nova-status` command is::
 
     nova-status <category> <command> [<args>]
 
@@ -37,16 +37,17 @@ Run without arguments to see a list of available command categories::
 
 Categories are:
 
-* upgrade
+* ``upgrade``
 
 Detailed descriptions are below.
 
-You can also run with a category argument such as "upgrade" to see a list of
+You can also run with a category argument such as ``upgrade`` to see a list of
 all commands in that category::
 
     nova-status upgrade
 
-These sections describe the available categories and arguments for nova-status.
+These sections describe the available categories and arguments for
+`nova-status`.
 
 Upgrade
 ~~~~~~~
@@ -93,20 +94,23 @@ Upgrade
     make a successful request to the endpoint. The command also checks to
     see that there are compute node resource providers checking in with the
     Placement service. More information on the Placement service can be found
-    at: `<http://docs.openstack.org/developer/nova/placement.html>`_
+    at: `<https://docs.openstack.org/nova/latest/user/placement.html>`_
 
   **16.0.0 (Pike)**
 
   * Checks for the Placement API are modified to require version 1.4, that
     is needed in Pike and further for nova-scheduler to work correctly.
 
+  **17.0.0 (Queens)**
 
-SEE ALSO
+  * Checks for the Placement API are modified to require version 1.17.
+
+See Also
 ========
 
-* OpenStack Nova Docs: `<http://docs.openstack.org/developer/nova/>`_
+* OpenStack Nova Docs: `<https://docs.openstack.org/nova/latest/>`_
 
-BUGS
+Bugs
 ====
 
-* Nova bugs are managed at Launchpad: `<https://bugs.launchpad.net/nova>`_
+* Nova bugs are managed at `Launchpad <https://bugs.launchpad.net/nova>`_

@@ -30,7 +30,7 @@ def create_image(disk_format, path, size):
     pass
 
 
-def create_cow_image(backing_file, path):
+def create_cow_image(backing_file, path, size=None):
     pass
 
 
@@ -82,14 +82,6 @@ def write_to_file(path, contents, umask=None):
     pass
 
 
-def chown(path, owner):
-    pass
-
-
-def update_mtime(path):
-    pass
-
-
 def extract_snapshot(disk_path, source_fmt, out_path, dest_fmt):
     files[out_path] = b''
 
@@ -136,10 +128,6 @@ def logical_volume_info(path):
     return {}
 
 
-def file_delete(path):
-    return True
-
-
 def get_fs_info(path):
     return {'total': 128 * (1024 ** 3),
             'used': 44 * (1024 ** 3),
@@ -177,7 +165,3 @@ def chown_for_id_maps(path, id_maps):
 
 def get_arch(image_meta):
     return libvirt_utils.get_arch(image_meta)
-
-
-def last_bytes(file_like_object, num):
-    return libvirt_utils.last_bytes(file_like_object, num)

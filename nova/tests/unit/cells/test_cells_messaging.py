@@ -26,6 +26,7 @@ from oslo_utils import timeutils
 from nova.cells import messaging
 from nova.cells import rpcapi as cells_rpcapi
 from nova.cells import utils as cells_utils
+from nova.compute import instance_actions
 from nova.compute import task_states
 from nova.compute import vm_states
 import nova.conf
@@ -1342,8 +1343,9 @@ class CellsTargetedMethodsTestCase(test.NoDBTestCase):
         self._test_instance_action_method('inject_network_info',
                                           (), {}, (), {}, False)
 
-    def test_snapshot_instance(self):
-        inst = objects.Instance()
+    @mock.patch.object(objects.InstanceAction, 'action_start')
+    def test_snapshot_instance(self, action_start):
+        inst = objects.Instance(uuid=uuids.instance)
         meth_cls = self.tgt_methods_cls
 
         self.mox.StubOutWithMock(inst, 'refresh')
@@ -1370,9 +1372,13 @@ class CellsTargetedMethodsTestCase(test.NoDBTestCase):
         message.need_response = False
 
         meth_cls.snapshot_instance(message, inst, image_id='image-id')
+        action_start.assert_called_once_with(
+            message.ctxt, inst.uuid, instance_actions.CREATE_IMAGE,
+            want_result=False)
 
-    def test_backup_instance(self):
-        inst = objects.Instance()
+    @mock.patch.object(objects.InstanceAction, 'action_start')
+    def test_backup_instance(self, action_start):
+        inst = objects.Instance(uuid=uuids.instance)
         meth_cls = self.tgt_methods_cls
 
         self.mox.StubOutWithMock(inst, 'refresh')
@@ -1404,6 +1410,9 @@ class CellsTargetedMethodsTestCase(test.NoDBTestCase):
                                  image_id='image-id',
                                  backup_type='backup-type',
                                  rotation='rotation')
+        action_start.assert_called_once_with(
+            message.ctxt, inst.uuid, instance_actions.BACKUP,
+            want_result=False)
 
     def test_set_admin_password(self):
         args = ['fake-password']
@@ -1499,18 +1508,11 @@ class CellsBroadcastMethodsTestCase(test.NoDBTestCase):
         fake_instance = objects.Instance(**fake_attrs)
         expected_cell_name = 'api-cell!child-cell2!grandchild-cell1'
 
-        def fake_save(instance):
-            self.assertEqual(fake_uuid, instance.uuid)
-            self.assertEqual(expected_cell_name, instance.cell_name)
-            self.assertEqual(fake_info_cache, instance.info_cache)
-            self.assertEqual(fake_sys_metadata, instance.system_metadata)
-
         @mock.patch.object(objects.Instance, 'save')
         @mock.patch.object(objects.Instance, 'create')
-        def do_test(mock_create, mock_save):
-            if exists:
-                mock_save.side_effect = fake_save
-            else:
+        @mock.patch('nova.utils.get_obj_repr_unicode')
+        def do_test(mock_goru, mock_create, mock_save):
+            if not exists:
                 error = exception.InstanceNotFound(instance_id=fake_uuid)
                 mock_save.side_effect = error
 
@@ -1520,6 +1522,13 @@ class CellsBroadcastMethodsTestCase(test.NoDBTestCase):
                 mock_save.assert_called_once_with(expected_vm_state=None,
                                                   expected_task_state=None)
                 self.assertFalse(mock_create.called)
+
+                instance = mock_goru.call_args_list[0][0][0]
+                self.assertEqual(fake_uuid, instance.uuid)
+                self.assertEqual(expected_cell_name, instance.cell_name)
+                self.assertEqual(fake_info_cache.instance_uuid,
+                                 instance.info_cache.instance_uuid)
+                self.assertEqual(fake_sys_metadata, instance.system_metadata)
             else:
                 mock_save.assert_called_once_with(expected_vm_state=None,
                                                   expected_task_state=None)

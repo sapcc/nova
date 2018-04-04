@@ -102,7 +102,7 @@ There are many standard filter classes which may be used
   fall back to the global default ``cpu_allocation_ratio``. If more than one value
   is found for a host (meaning the host is in two different aggregates with
   different ratio settings), the minimum value will be used.
-* |IsolatedHostsFilter| - filter based on ``image_isolated``, ``host_isolated``
+* |IsolatedHostsFilter| - filter based on ``isolated_images``, ``isolated_hosts``
   and ``restrict_isolated_hosts_to_isolated_images`` flags.
 * |JsonFilter| - allows simple JSON-based grammar for selecting hosts.
 * |RamFilter| - filters hosts by their RAM. Only hosts with sufficient RAM
@@ -154,25 +154,6 @@ There are many standard filter classes which may be used
   a set of instances.
 * |RetryFilter| - filters hosts that have been attempted for scheduling.
   Only passes hosts that have not been previously attempted.
-* |TrustedFilter| (EXPERIMENTAL) - filters hosts based on their trust.  Only
-  passes hosts that meet the trust requirements specified in the instance
-  properties.
-
-  .. warning:: TrustedFilter is deprecated for removal in the 17.0.0 Queens
-     release. There is no replacement planned for this filter. It has been
-     marked experimental since its inception. It is incomplete and not tested.
-
-* |TypeAffinityFilter| - Only passes hosts that are not already running an
-  instance of the requested type.
-
-  .. warning:: TypeAffinityFilter is deprecated for removal in the
-    17.0.0 Queens release. There is no replacement planned for this
-    filter. It is fundamentally flawed in that it relies on the
-    ``flavors.id`` primary key and if a flavor "changed", i.e. deleted
-    and re-created with new values, it will result in this filter
-    thinking it is a different flavor, thus breaking the usefulness of
-    this filter.
-
 * |AggregateTypeAffinityFilter| - limits instance_type by aggregate.
    This filter passes hosts if no instance_type key is set or
    the instance_type aggregate metadata value contains the name of the
@@ -255,9 +236,9 @@ enabled and operational.
 Now we are going to |IsolatedHostsFilter|. There can be some special hosts
 reserved for specific images. These hosts are called **isolated**. So the
 images to run on the isolated hosts are also called isolated. The filter
-checks if ``image_isolated`` flag named in instance specifications is the same
-as the host. Isolated hosts can run non isolated images if the flag
-``restrict_isolated_hosts_to_isolated_images`` is set to false.
+checks if ``isolated_images`` flag named in instance specifications is the same
+as the host specified in ``isolated_hosts``. Isolated hosts can run non-isolated
+images if the flag ``restrict_isolated_hosts_to_isolated_images`` is set to false.
 
 |DifferentHostFilter| - method ``host_passes`` returns ``True`` if the host to
 place an instance on is different from all the hosts used by a set of instances.
@@ -303,14 +284,6 @@ RetryFilter will return 0 hosts and the scheduler will raise a NoValidHost
 exception even if the problem is related to 1:N compute nodes. If you see that
 case in the scheduler logs, then your problem is most likely related to a
 compute problem and you should check the compute logs.
-
-The |TrustedFilter| filters hosts based on their trust.  Only passes hosts
-that match the trust requested in the ``extra_specs`` for the flavor. The key
-for this filter must be scope format as ``trust:trusted_host``, where ``trust``
-is the scope of the key and ``trusted_host`` is the actual key value.
-The value of this pair (``trusted``/``untrusted``) must match the
-integrity of a host (obtained from the Attestation service) before it is
-passed by the |TrustedFilter|.
 
 The |NUMATopologyFilter| considers the NUMA topology that was specified for the instance
 through the use of flavor extra_specs in combination with the image properties, as
@@ -501,8 +474,6 @@ in :mod:`nova.tests.scheduler`.
 .. |DifferentHostFilter| replace:: :class:`DifferentHostFilter <nova.scheduler.filters.affinity_filter.DifferentHostFilter>`
 .. |SameHostFilter| replace:: :class:`SameHostFilter <nova.scheduler.filters.affinity_filter.SameHostFilter>`
 .. |RetryFilter| replace:: :class:`RetryFilter <nova.scheduler.filters.retry_filter.RetryFilter>`
-.. |TrustedFilter| replace:: :class:`TrustedFilter <nova.scheduler.filters.trusted_filter.TrustedFilter>`
-.. |TypeAffinityFilter| replace:: :class:`TypeAffinityFilter <nova.scheduler.filters.type_filter.TypeAffinityFilter>`
 .. |AggregateTypeAffinityFilter| replace:: :class:`AggregateTypeAffinityFilter <nova.scheduler.filters.type_filter.AggregateTypeAffinityFilter>`
 .. |ServerGroupAntiAffinityFilter| replace:: :class:`ServerGroupAntiAffinityFilter <nova.scheduler.filters.affinity_filter.ServerGroupAntiAffinityFilter>`
 .. |ServerGroupAffinityFilter| replace:: :class:`ServerGroupAffinityFilter <nova.scheduler.filters.affinity_filter.ServerGroupAffinityFilter>`

@@ -37,6 +37,8 @@ from nova.i18n import _
 from nova.network import model as network_model
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
+from nova import objects
+from nova.virt.vmwareapi import cluster_util
 
 LOG = logging.getLogger(__name__)
 
@@ -92,7 +94,7 @@ class ExtraSpecs(object):
     def __init__(self, cpu_limits=None, hw_version=None,
                  storage_policy=None, cores_per_socket=None,
                  memory_limits=None, disk_io_limits=None,
-                 vif_limits=None):
+                 vif_limits=None, firmware=None, hw_video_ram=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -101,6 +103,8 @@ class ExtraSpecs(object):
         self.hw_version = hw_version
         self.storage_policy = storage_policy
         self.cores_per_socket = cores_per_socket
+        self.firmware = firmware
+        self.hw_video_ram = hw_video_ram
 
 
 def vm_refs_cache_reset():
@@ -150,6 +154,8 @@ VmdkInfo = collections.namedtuple('VmdkInfo', ['path', 'adapter_type',
                                                'disk_type',
                                                'capacity_in_bytes',
                                                'device'])
+
+GroupInfo = collections.namedtuple('GroupInfo', ['uuid', 'policies'])
 
 
 def _iface_id_option_value(client_factory, iface_id, port_index):
@@ -243,6 +249,9 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
             client_factory, extra_specs.memory_limits,
             'ns0:ResourceAllocationInfo')
 
+    if extra_specs.firmware:
+        config_spec.firmware = extra_specs.firmware
+
     devices = []
     for vif_info in vif_infos:
         vif_spec = _create_vif_spec(client_factory, vif_info,
@@ -252,6 +261,10 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     serial_port_spec = create_serial_port_spec(client_factory)
     if serial_port_spec:
         devices.append(serial_port_spec)
+
+    virtual_device_config_spec = create_video_card_spec(client_factory, extra_specs)
+    if virtual_device_config_spec:
+        devices.append(virtual_device_config_spec)
 
     config_spec.deviceChange = devices
 
@@ -293,6 +306,15 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     return config_spec
 
+def create_video_card_spec(client_factory, extra_specs):
+    if extra_specs.hw_video_ram:
+        video_card = client_factory.create('ns0:VirtualMachineVideoCard')
+        video_card.videoRamSizeInKB = extra_specs.hw_video_ram
+        video_card.key = -1
+        virtual_device_config_spec = client_factory.create('ns0:VirtualDeviceConfigSpec')
+        virtual_device_config_spec.operation = "add"
+        virtual_device_config_spec.device = video_card
+        return virtual_device_config_spec
 
 def create_serial_port_spec(client_factory):
     """Creates config spec for serial port."""
@@ -933,15 +955,24 @@ def clone_vm_spec(client_factory, location,
     return clone_spec
 
 
-def relocate_vm_spec(client_factory, datastore=None, host=None,
+def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
                      disk_move_type="moveAllDiskBackingsAndAllowSharing"):
-    """Builds the VM relocation spec."""
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
     rel_spec.datastore = datastore
+    rel_spec.host = host
+    rel_spec.pool = res_pool
     rel_spec.diskMoveType = disk_move_type
-    if host:
-        rel_spec.host = host
     return rel_spec
+
+
+def relocate_vm(session, vm_ref, res_pool=None, datastore=None, host=None,
+                disk_move_type="moveAllDiskBackingsAndAllowSharing"):
+    client_factory = session.vim.client.factory
+    rel_spec = relocate_vm_spec(client_factory, res_pool, datastore, host,
+                                disk_move_type)
+    relocate_task = session._call_method(session.vim, "RelocateVM_Task",
+                                         vm_ref, spec=rel_spec)
+    session._wait_for_task(relocate_task)
 
 
 def get_machine_id_change_spec(client_factory, machine_id_str):
@@ -1150,7 +1181,10 @@ def get_vm_state(session, instance):
 def get_stats_from_cluster(session, cluster):
     """Get the aggregate resource stats of a cluster."""
     vcpus = 0
-    mem_info = {'total': 0, 'free': 0}
+    max_vcpus_per_host = 0
+    used_mem_mb = 0
+    total_mem_mb = 0
+    max_mem_mb_per_host = 0
     # Get the Host and Resource Pool Managed Object Refs
     prop_dict = session._call_method(vutil,
                                      "get_object_properties_dict",
@@ -1163,29 +1197,50 @@ def get_stats_from_cluster(session, cluster):
             result = session._call_method(vim_util,
                          "get_properties_for_a_collection_of_objects",
                          "HostSystem", host_mors,
-                         ["summary.hardware", "summary.runtime"])
+                         ["summary.hardware", "summary.runtime",
+                          "summary.quickStats"])
             for obj in result.objects:
-                hardware_summary = obj.propSet[0].val
-                runtime_summary = obj.propSet[1].val
+                host_props = propset_dict(obj.propSet)
+                hardware_summary = host_props['summary.hardware']
+                runtime_summary = host_props['summary.runtime']
+                stats_summary = host_props['summary.quickStats']
                 if (runtime_summary.inMaintenanceMode is False and
                     runtime_summary.connectionState == "connected"):
                     # Total vcpus is the sum of all pCPUs of individual hosts
                     # The overcommitment ratio is factored in by the scheduler
-                    vcpus += hardware_summary.numCpuThreads
-
-        res_mor = prop_dict.get('resourcePool')
-        if res_mor:
-            res_usage = session._call_method(vutil, "get_object_property",
-                                             res_mor, "summary.runtime.memory")
-            if res_usage:
-                # maxUsage is the memory limit of the cluster available to VM's
-                mem_info['total'] = int(res_usage.maxUsage / units.Mi)
-                # overallUsage is the hypervisor's view of memory usage by VM's
-                consumed = int(res_usage.overallUsage / units.Mi)
-                mem_info['free'] = mem_info['total'] - consumed
-    stats = {'vcpus': vcpus, 'mem': mem_info}
+                    threads = hardware_summary.numCpuThreads
+                    vcpus += threads
+                    max_vcpus_per_host = max(max_vcpus_per_host, threads)
+                    used_mem_mb += stats_summary.overallMemoryUsage
+                    mem_mb = hardware_summary.memorySize // units.Mi
+                    total_mem_mb += mem_mb
+                    max_mem_mb_per_host = max(max_mem_mb_per_host, mem_mb)
+    stats = {'cpu': {'vcpus': vcpus,
+                     'max_vcpus_per_host': max_vcpus_per_host},
+             'mem': {'total': total_mem_mb,
+                     'free': total_mem_mb - used_mem_mb,
+                     'max_mem_mb_per_host': max_mem_mb_per_host}}
     return stats
 
+def _get_server_group(context, instance):
+    server_group_info = None
+    try:
+        instance_group_object = objects.instance_group.InstanceGroup
+        server_group = instance_group_object.get_by_instance_uuid(
+            context, instance.uuid)
+        if server_group:
+            server_group_info = GroupInfo(server_group.uuid, server_group.policies)
+    except nova.exception.InstanceGroupNotFound as e:
+        LOG.debug('An exception occurred while retrieving the server group: ' + '%s ', e)
+
+    return server_group_info
+
+
+def update_cluster_placement(session, context, instance, cluster, vm_ref):
+    server_group_info = _get_server_group(context, instance)
+    if server_group_info is None:
+        return
+    cluster_util.update_placement(session, cluster, vm_ref, server_group_info)
 
 def get_host_ref(session, cluster=None):
     """Get reference to a host within the cluster specified."""
@@ -1234,7 +1289,7 @@ def get_vmdk_backed_disk_device(hardware_devices, uuid):
         if (device.__class__.__name__ == "VirtualDisk" and
                 device.backing.__class__.__name__ ==
                 "VirtualDiskFlatVer2BackingInfo" and
-                device.backing.uuid == uuid):
+                getattr(device.backing, 'uuid', None) == uuid):
             return device
 
 

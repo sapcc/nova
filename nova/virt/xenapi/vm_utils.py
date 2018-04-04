@@ -53,6 +53,7 @@ from nova.i18n import _
 from nova.network import model as network_model
 from nova.objects import diagnostics
 from nova.objects import fields as obj_fields
+import nova.privsep.fs
 from nova import utils
 from nova.virt import configdrive
 from nova.virt.disk import api as disk
@@ -315,15 +316,29 @@ def is_enough_free_mem(session, instance):
 
 
 def _should_retry_unplug_vbd(err):
-    # Retry if unplug failed with DEVICE_DETACH_REJECTED
-    # For reasons which we don't understand,
-    # we're seeing the device still in use, even when all processes
-    # using the device should be dead.
-    # Since XenServer 6.2, we also need to retry if we get
-    # INTERNAL_ERROR, as that error goes away when you retry.
-    return (err == 'DEVICE_DETACH_REJECTED'
-            or
-            err == 'INTERNAL_ERROR')
+    """Retry if failed with some specific errors.
+
+    The retrable errors include:
+    1. DEVICE_DETACH_REJECTED
+       For reasons which we don't understand, we're seeing the device
+       still in use, even when all processes using the device should
+       be dead.
+    2. INTERNAL_ERROR
+       Since XenServer 6.2, we also need to retry if we get INTERNAL_ERROR,
+       as that error goes away when you retry.
+    3. VM_MISSING_PV_DRIVERS
+       NOTE(jianghuaw): It requires some time for PV(Paravirtualization)
+       driver to be connected at VM booting, so retry if unplug failed
+       with VM_MISSING_PV_DRIVERS.
+    """
+
+    can_retry_errs = (
+        'DEVICE_DETACH_REJECTED',
+        'INTERNAL_ERROR',
+        'VM_MISSING_PV_DRIVERS',
+    )
+
+    return err in can_retry_errs
 
 
 def unplug_vbd(session, vbd_ref, this_vm_ref):
@@ -715,7 +730,8 @@ def get_sr_path(session, sr_ref=None):
     return os.path.join(CONF.xenserver.sr_base_path, sr_uuid)
 
 
-def destroy_cached_images(session, sr_ref, all_cached=False, dry_run=False):
+def destroy_cached_images(session, sr_ref, all_cached=False, dry_run=False,
+                          keep_days=0):
     """Destroy used or unused cached images.
 
     A cached image that is being used by at least one VM is said to be 'used'.
@@ -727,6 +743,10 @@ def destroy_cached_images(session, sr_ref, all_cached=False, dry_run=False):
 
     The default behavior of this function is to destroy only 'unused' cached
     images. To destroy all cached images, use the `all_cached=True` kwarg.
+
+    `keep_days` is used to destroy images based on when they were created.
+    Only the images which were created `keep_days` ago will be deleted if the
+    argument has been set.
     """
     cached_images = _find_cached_images(session, sr_ref)
     destroyed = set()
@@ -737,7 +757,8 @@ def destroy_cached_images(session, sr_ref, all_cached=False, dry_run=False):
             destroy_vdi(session, vdi_ref)
         destroyed.add(vdi_uuid)
 
-    for vdi_ref in cached_images.values():
+    for vdi_dict in cached_images.values():
+        vdi_ref = vdi_dict['vdi_ref']
         vdi_uuid = session.call_xenapi('VDI.get_uuid', vdi_ref)
 
         if all_cached:
@@ -759,13 +780,22 @@ def destroy_cached_images(session, sr_ref, all_cached=False, dry_run=False):
             if len(children) > 1:
                 continue
 
-        destroy_cached_vdi(vdi_uuid, vdi_ref)
+        cached_time = vdi_dict.get('cached_time')
+        if cached_time is not None:
+            if (int(time.time()) - int(cached_time)) / (3600 * 24) \
+               >= keep_days:
+                destroy_cached_vdi(vdi_uuid, vdi_ref)
+        else:
+            LOG.debug("vdi %s can't be destroyed because the cached time is"
+                      " not specified", vdi_uuid)
 
     return destroyed
 
 
 def _find_cached_images(session, sr_ref):
-    """Return a dict(uuid=vdi_ref) representing all cached images."""
+    """Return a dict {image_id: {'vdi_ref': vdi_ref, 'cached_time':
+    cached_time}} representing all cached images.
+    """
     cached_images = {}
     for vdi_ref, vdi_rec in _get_all_vdis_in_sr(session, sr_ref):
         try:
@@ -773,7 +803,9 @@ def _find_cached_images(session, sr_ref):
         except KeyError:
             continue
 
-        cached_images[image_id] = vdi_ref
+        cached_time = vdi_rec['other_config'].get('cached-time')
+        cached_images[image_id] = {'vdi_ref': vdi_ref,
+                                   'cached_time': cached_time}
 
     return cached_images
 
@@ -941,23 +973,16 @@ def _make_partition(session, dev, partition_start, partition_end):
 
     # NOTE(bobball) If this runs in Dom0, parted will error trying
     # to re-read the partition table and return a generic error
-    utils.execute('parted', '--script', dev_path,
-                  'mklabel', 'msdos', run_as_root=True,
-                  check_exit_code=not session.is_local_connection)
-
-    utils.execute('parted', '--script', dev_path, '--',
-                  'mkpart', 'primary',
-                  partition_start,
-                  partition_end,
-                  run_as_root=True,
-                  check_exit_code=not session.is_local_connection)
+    nova.privsep.fs.create_partition_table(
+        dev_path, 'msdos', check_exit_code=not session.is_local_connection)
+    nova.privsep.fs.create_partition(
+        dev_path, 'primary', partition_start, partition_end,
+        check_exit_code=not session.is_local_connection)
 
     partition_path = utils.make_dev_path(dev, partition=1)
     if session.is_local_connection:
         # Need to refresh the partitions
-        utils.trycmd('kpartx', '-a', dev_path,
-                     run_as_root=True,
-                     discard_warnings=True)
+        nova.privsep.fs.create_device_maps(dev_path)
 
         # Sometimes the partition gets created under /dev/mapper, depending
         # on the setup in dom0.
@@ -1225,6 +1250,10 @@ def _create_cached_image(context, session, instance, name_label,
                                 'root')
             session.call_xenapi('VDI.add_to_other_config',
                                 cache_vdi_ref, 'image-id', str(image_id))
+            session.call_xenapi('VDI.add_to_other_config',
+                                cache_vdi_ref,
+                                'cached-time',
+                                str(int(time.time())))
 
         if CONF.use_cow_images:
             new_vdi_ref = _clone_vdi(session, cache_vdi_ref)
@@ -1685,15 +1714,7 @@ def _vm_query_data_source(session, *args):
 
 def compile_info(session, vm_ref):
     """Fill record with VM status information."""
-    power_state = get_power_state(session, vm_ref)
-    max_mem = session.call_xenapi("VM.get_memory_static_max", vm_ref)
-    mem = session.call_xenapi("VM.get_memory_dynamic_max", vm_ref)
-    num_cpu = session.call_xenapi("VM.get_VCPUs_max", vm_ref)
-
-    return hardware.InstanceInfo(state=power_state,
-                                 max_mem_kb=int(max_mem) >> 10,
-                                 mem_kb=int(mem) >> 10,
-                                 num_cpu=num_cpu)
+    return hardware.InstanceInfo(state=get_power_state(session, vm_ref))
 
 
 def compile_instance_diagnostics(session, instance, vm_ref):
@@ -2100,27 +2121,6 @@ def _wait_for_vhd_coalesce(session, instance, sr_ref, vdi_ref,
     raise exception.NovaException(msg)
 
 
-def _remap_vbd_dev(dev):
-    """Return the appropriate location for a plugged-in VBD device
-
-    Ubuntu Maverick moved xvd? -> sd?. This is considered a bug and will be
-    fixed in future versions:
-        https://bugs.launchpad.net/ubuntu/+source/linux/+bug/684875
-
-    For now, we work around it by just doing a string replace.
-    """
-    # NOTE(sirp): This hack can go away when we pull support for Maverick
-    should_remap = CONF.xenserver.remap_vbd_dev
-    if not should_remap:
-        return dev
-
-    old_prefix = 'xvd'
-    new_prefix = CONF.xenserver.remap_vbd_dev_prefix
-    remapped_dev = dev.replace(old_prefix, new_prefix)
-
-    return remapped_dev
-
-
 def _wait_for_device(session, dev, dom0, max_seconds):
     """Wait for device node to appear."""
     dev_path = utils.make_dev_path(dev)
@@ -2179,14 +2179,9 @@ def vdi_attached(session, vdi_ref, read_only=False, dom0=False):
         session.VBD.plug(vbd_ref, this_vm_ref)
         try:
             LOG.debug('Plugging VBD %s done.', vbd_ref)
-            orig_dev = session.call_xenapi("VBD.get_device", vbd_ref)
-            LOG.debug('VBD %(vbd_ref)s plugged as %(orig_dev)s',
-                      {'vbd_ref': vbd_ref, 'orig_dev': orig_dev})
-            dev = _remap_vbd_dev(orig_dev)
-            if dev != orig_dev:
-                LOG.debug('VBD %(vbd_ref)s plugged into wrong dev, '
-                          'remapping to %(dev)s',
-                          {'vbd_ref': vbd_ref, 'dev': dev})
+            dev = session.call_xenapi("VBD.get_device", vbd_ref)
+            LOG.debug('VBD %(vbd_ref)s plugged as %(dev)s',
+                      {'vbd_ref': vbd_ref, 'dev': dev})
             _wait_for_device(session, dev, dom0,
                              CONF.xenserver.block_device_creation_timeout)
             yield dev
@@ -2253,27 +2248,7 @@ def _get_this_vm_ref(session):
 
 
 def _get_partitions(dev):
-    """Return partition information (num, size, type) for a device."""
-    dev_path = utils.make_dev_path(dev)
-    out, _err = utils.execute('parted', '--script', '--machine',
-                             dev_path, 'unit s', 'print',
-                             run_as_root=True)
-    lines = [line for line in out.split('\n') if line]
-    partitions = []
-
-    LOG.debug("Partitions:")
-    for line in lines[2:]:
-        line = line.rstrip(';')
-        num, start, end, size, fstype, name, flags = line.split(':')
-        num = int(num)
-        start = int(start.rstrip('s'))
-        end = int(end.rstrip('s'))
-        size = int(size.rstrip('s'))
-        LOG.debug("  %(num)s: %(fstype)s %(size)d sectors",
-                  {'num': num, 'fstype': fstype, 'size': size})
-        partitions.append((num, start, size, fstype, name, flags))
-
-    return partitions
+    return nova.privsep.fs.list_partitions(utils.make_dev_path(dev))
 
 
 def _stream_disk(session, image_service_func, image_type, virtual_size, dev):
@@ -2342,17 +2317,8 @@ def _resize_part_and_fs(dev, start, old_sectors, new_sectors, flags):
                        "enough free space on your disk.")
             raise exception.ResizeError(reason=reason)
 
-    utils.execute('parted', '--script', dev_path, 'rm', '1',
-                  run_as_root=True)
-    utils.execute('parted', '--script', dev_path, 'mkpart',
-                  'primary',
-                  '%ds' % start,
-                  '%ds' % end,
-                  run_as_root=True)
-    if "boot" in flags.lower():
-        utils.execute('parted', '--script', dev_path,
-                      'set', '1', 'boot', 'on',
-                      run_as_root=True)
+    nova.privsep.fs.resize_partition(dev_path, start, end,
+                                     'boot' in flags.lower())
 
     if new_sectors > old_sectors:
         # Resizing up, resize filesystem after partition resize
@@ -2448,12 +2414,11 @@ def _copy_partition(session, src_ref, dst_ref, partition, virtual_size):
                               run_as_root=True)
 
 
-def _mount_filesystem(dev_path, dir):
-    """mounts the device specified by dev_path in dir."""
+def _mount_filesystem(dev_path, mount_point):
+    """mounts the device specified by dev_path in mount_point."""
     try:
-        _out, err = utils.execute('mount',
-                                 '-t', 'ext2,ext3,ext4,reiserfs',
-                                 dev_path, dir, run_as_root=True)
+        _out, err = nova.privsep.fs.mount('ext2,ext3,ext4,reiserfs',
+                                          dev_path, mount_point, None)
     except processutils.ProcessExecutionError as e:
         err = six.text_type(e)
     return err
@@ -2486,7 +2451,7 @@ def _mounted_processing(device, key, net, metadata):
                     disk.inject_data_into_fs(vfs,
                                              key, net, metadata, None, None)
             finally:
-                utils.execute('umount', dev_path, run_as_root=True)
+                nova.privsep.fs.umount(dev_path)
         else:
             LOG.info('Failed to mount filesystem (expected for '
                      'non-linux instances): %s', err)

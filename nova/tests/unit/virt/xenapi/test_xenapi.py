@@ -25,7 +25,6 @@ import re
 import mock
 from mox3 import mox
 from os_xenapi.client import host_management
-from os_xenapi.client import session as xenapi_session
 from os_xenapi.client import XenAPI
 from oslo_concurrency import lockutils
 from oslo_config import fixture as config_fixture
@@ -143,7 +142,7 @@ IMAGE_FIXTURES = {
 
 
 def get_session():
-    return xenapi_session.XenAPISession('test_url', 'root', 'test_pass')
+    return xenapi_fake.SessionBase('http://localhost', 'root', 'test_pass')
 
 
 def set_image_fixtures():
@@ -234,7 +233,7 @@ class XenAPIVolumeTestCase(stubs.XenAPITestBaseNoDB):
                             group='oslo_concurrency')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'
                                    'Dom0IptablesFirewallDriver')
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
 
@@ -294,7 +293,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase,
         self.flags(instance_name_template='%d',
                    firewall_driver='nova.virt.xenapi.firewall.'
                                    'Dom0IptablesFirewallDriver')
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         db_fakes.stub_out_db_instance_api(self)
@@ -623,8 +622,6 @@ class XenAPIVMTestCase(stubs.XenAPITestBase,
         vcpus = flavor['vcpus']
         vcpu_weight = flavor['vcpu_weight']
 
-        self.assertEqual(self.vm_info.max_mem_kb, mem_kib)
-        self.assertEqual(self.vm_info.mem_kb, mem_kib)
         self.assertEqual(self.vm['memory_static_max'], mem_bytes)
         self.assertEqual(self.vm['memory_dynamic_max'], mem_bytes)
         self.assertEqual(self.vm['memory_dynamic_min'], mem_bytes)
@@ -767,7 +764,7 @@ class XenAPIVMTestCase(stubs.XenAPITestBase,
         image_meta = objects.ImageMeta.from_dict(
             IMAGE_FIXTURES[image_ref]["image_meta"])
         self.conn.spawn(self.context, instance, image_meta, injected_files,
-                        'herp', network_info, block_device_info)
+                        'herp', {}, network_info, block_device_info)
         self.create_vm_record(self.conn, os_type, instance['name'])
         self.check_vm_record(self.conn, instance_type_id, check_injection)
         self.assertEqual(instance['os_type'], os_type)
@@ -949,55 +946,27 @@ class XenAPIVMTestCase(stubs.XenAPITestBase,
 
     @testtools.skipIf(test_utils.is_osx(),
                       'IPv6 pretty-printing broken on OSX, see bug 1409135')
-    def test_spawn_netinject_file(self):
+    @mock.patch.object(nova.privsep.path, 'readlink')
+    @mock.patch.object(nova.privsep.path, 'writefile')
+    @mock.patch.object(nova.privsep.path, 'makedirs')
+    @mock.patch.object(nova.privsep.path, 'chown')
+    @mock.patch.object(nova.privsep.path, 'chmod')
+    @mock.patch.object(nova.privsep.fs, 'mount', return_value=(None, None))
+    @mock.patch.object(nova.privsep.fs, 'umount')
+    def test_spawn_netinject_file(self, umount, mount, chmod, chown, mkdir,
+                                  write_file, read_link):
         self.flags(flat_injected=True)
         db_fakes.stub_out_db_instance_api(self, injected=True)
 
-        self._tee_executed = False
-
-        def _tee_handler(cmd, **kwargs):
-            actual = kwargs.get('process_input', None)
-            expected = """\
-# Injected by Nova on instance boot
-#
-# This file describes the network interfaces available on your system
-# and how to activate them. For more information, see interfaces(5).
-
-# The loopback network interface
-auto lo
-iface lo inet loopback
-
-auto eth0
-iface eth0 inet static
-    hwaddress ether DE:AD:BE:EF:00:01
-    address 192.168.1.100
-    netmask 255.255.255.0
-    broadcast 192.168.1.255
-    gateway 192.168.1.1
-    dns-nameservers 192.168.1.3 192.168.1.4
-iface eth0 inet6 static
-    hwaddress ether DE:AD:BE:EF:00:01
-    address 2001:db8:0:1:dcad:beff:feef:1
-    netmask 64
-    gateway 2001:db8:0:1::1
-"""
-            self.assertEqual(expected, actual)
-            self._tee_executed = True
-            return '', ''
-
-        def _readlink_handler(cmd_parts, **kwargs):
-            return os.path.realpath(cmd_parts[2]), ''
-
-        fake_processutils.fake_execute_set_repliers([
-            # Capture the tee .../etc/network/interfaces command
-            (r'tee.*interfaces', _tee_handler),
-            (r'readlink -nm.*', _readlink_handler),
-        ])
         self._test_spawn(IMAGE_MACHINE,
                          IMAGE_KERNEL,
                          IMAGE_RAMDISK,
                          check_injection=True)
-        self.assertTrue(self._tee_executed)
+        read_link.assert_called()
+        mkdir.assert_called()
+        chown.assert_called()
+        chmod.assert_called()
+        write_file.assert_called()
 
     @testtools.skipIf(test_utils.is_osx(),
                       'IPv6 pretty-printing broken on OSX, see bug 1409135')
@@ -1053,7 +1022,7 @@ iface eth0 inet6 static
         self.mox.ReplayAll()
         image_meta = objects.ImageMeta.from_dict(
             IMAGE_FIXTURES[IMAGE_MACHINE]["image_meta"])
-        self.conn.spawn(self.context, instance, image_meta, [], 'herp', '')
+        self.conn.spawn(self.context, instance, image_meta, [], 'herp', {}, '')
 
     def test_spawn_vlanmanager(self):
         self.flags(network_manager='nova.network.manager.VlanManager',
@@ -1559,7 +1528,7 @@ iface eth0 inet6 static
              'disk_format': 'vhd'})
         if spawn:
             self.conn.spawn(self.context, instance, image_meta, [], 'herp',
-                            network_info)
+                            {}, network_info)
         if obj:
             return instance
         return base.obj_to_primitive(instance)
@@ -1637,7 +1606,7 @@ class XenAPIMigrateInstance(stubs.XenAPITestBase):
 
     def setUp(self):
         super(XenAPIMigrateInstance, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'
@@ -2125,7 +2094,7 @@ class XenAPIHostTestCase(stubs.XenAPITestBase):
 
     def setUp(self):
         super(XenAPIHostTestCase, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         stubs.stubout_session(self.stubs, stubs.FakeSessionForVMTests)
@@ -2259,12 +2228,14 @@ class XenAPIHostTestCase(stubs.XenAPITestBase):
 
     @mock.patch.object(host.HostState, 'get_disk_used')
     @mock.patch.object(host.HostState, '_get_passthrough_devices')
+    @mock.patch.object(host.HostState, '_get_vgpu_stats')
     @mock.patch.object(jsonutils, 'loads')
     @mock.patch.object(vm_utils, 'list_vms')
     @mock.patch.object(vm_utils, 'scan_default_sr')
     @mock.patch.object(host_management, 'get_host_data')
     def test_update_stats_caches_hostname(self, mock_host_data, mock_scan_sr,
                                           mock_list_vms, mock_loads,
+                                          mock_vgpus_stats,
                                           mock_devices, mock_dis_used):
         data = {'disk_total': 0,
                 'disk_used': 0,
@@ -2295,10 +2266,12 @@ class XenAPIHostTestCase(stubs.XenAPITestBase):
             self.assertEqual(2, mock_host_data.call_count)
             self.assertEqual(2, mock_scan_sr.call_count)
             self.assertEqual(2, mock_devices.call_count)
+            self.assertEqual(2, mock_vgpus_stats.call_count)
             mock_loads.assert_called_with(data)
             mock_host_data.assert_called_with(self.conn._session)
             mock_scan_sr.assert_called_with(self.conn._session)
             mock_devices.assert_called_with()
+            mock_vgpus_stats.assert_called_with()
 
 
 @mock.patch.object(host.HostState, 'update_status')
@@ -2396,7 +2369,7 @@ class ToSupportedInstancesTestCase(test.NoDBTestCase):
 class XenAPIAutoDiskConfigTestCase(stubs.XenAPITestBase):
     def setUp(self):
         super(XenAPIAutoDiskConfigTestCase, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'
@@ -2523,7 +2496,7 @@ class XenAPIGenerateLocal(stubs.XenAPITestBase):
     """Test generating of local disks, like swap and ephemeral."""
     def setUp(self):
         super(XenAPIGenerateLocal, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'
@@ -2641,7 +2614,7 @@ class XenAPIBWCountersTestCase(stubs.XenAPITestBaseNoDB):
         super(XenAPIBWCountersTestCase, self).setUp()
         self.stubs.Set(vm_utils, 'list_vms',
                        XenAPIBWCountersTestCase._fake_list_vms)
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'
@@ -2777,7 +2750,7 @@ class XenAPIDom0IptablesFirewallTestCase(stubs.XenAPITestBase):
 
     def setUp(self):
         super(XenAPIDom0IptablesFirewallTestCase, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(instance_name_template='%d',
@@ -3061,7 +3034,7 @@ class XenAPIAggregateTestCase(stubs.XenAPITestBase):
     """Unit tests for aggregate operations."""
     def setUp(self):
         super(XenAPIAggregateTestCase, self).setUp()
-        self.flags(connection_url='http://test_url',
+        self.flags(connection_url='http://localhost',
                    connection_username='test_user',
                    connection_password='test_pass',
                    group='xenserver')
@@ -3441,7 +3414,7 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBaseNoDB):
     """Unit tests for live_migration."""
     def setUp(self):
         super(XenAPILiveMigrateTestCase, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'
@@ -3765,7 +3738,9 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBaseNoDB):
         self.stubs.Set(self.conn._vmops._session, "call_xenapi",
                        fake_call_xenapi)
 
-        def recover_method(context, instance, destination_hostname):
+        def recover_method(context, instance, destination_hostname,
+                           migrate_data=None):
+            self.assertIsNotNone(migrate_data, 'migrate_data should be passed')
             recover_method.called = True
         migrate_data = objects.XenapiLiveMigrateData(
             destination_sr_ref="foo",
@@ -3833,7 +3808,9 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBaseNoDB):
 
         self._add_default_live_migrate_stubs(self.conn)
 
-        def recover_method(context, instance, destination_hostname):
+        def recover_method(context, instance, destination_hostname,
+                           migrate_data=None):
+            self.assertIsNotNone(migrate_data, 'migrate_data should be passed')
             recover_method.called = True
         # pass block_migration = True and migrate data
         migrate_data = objects.XenapiLiveMigrateData(
@@ -3950,7 +3927,7 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBaseNoDB):
 class XenAPIInjectMetadataTestCase(stubs.XenAPITestBaseNoDB):
     def setUp(self):
         super(XenAPIInjectMetadataTestCase, self).setUp()
-        self.flags(connection_url='test_url',
+        self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
                    group='xenserver')
         self.flags(firewall_driver='nova.virt.xenapi.firewall.'

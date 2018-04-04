@@ -15,6 +15,7 @@
 #    under the License.
 #
 
+import copy
 import time
 
 from keystoneauth1 import loading as ks_loading
@@ -41,6 +42,7 @@ from nova.pci import whitelist as pci_whitelist
 from nova.policies import servers as servers_policies
 from nova import profiler
 from nova import service_auth
+from nova import utils
 
 CONF = nova.conf.CONF
 
@@ -72,6 +74,19 @@ def _load_auth_plugin(conf):
 
     err_msg = _('Unknown auth type: %s') % conf.neutron.auth_type
     raise neutron_client_exc.Unauthorized(message=err_msg)
+
+
+def _get_binding_profile(port):
+    """Convenience method to get the binding:profile from the port
+
+    The binding:profile in the port is undefined in the networking service
+    API and is dependent on backend configuration. This means it could be
+    an empty dict, None, or have some values.
+
+    :param port: dict port response body from the networking service API
+    :returns: The port binding:profile dict; empty if not set on the port
+    """
+    return port.get(BINDING_PROFILE, {}) or {}
 
 
 @profiler.trace_cls("neutron_api")
@@ -114,7 +129,7 @@ class ClientWrapper(clientv20.Client):
                           "admin credential located in nova.conf")
                 raise exception.NeutronAdminCredentialConfigurationInvalid()
             except neutron_client_exc.Forbidden as e:
-                raise exception.Forbidden(e)
+                raise exception.Forbidden(six.text_type(e))
             return ret
         return wrapper
 
@@ -146,13 +161,35 @@ def get_client(context, admin=False):
         # an admin token so log an error
         raise exception.Unauthorized()
 
-    return ClientWrapper(
-        clientv20.Client(session=_SESSION,
-                         auth=auth_plugin,
-                         endpoint_override=CONF.neutron.url,
-                         region_name=CONF.neutron.region_name,
-                         global_request_id=context.global_id),
-        admin=admin or context.is_admin)
+    client_args = dict(session=_SESSION,
+                       auth=auth_plugin,
+                       global_request_id=context.global_request_id)
+
+    if CONF.neutron.url:
+        # TODO(efried): Remove in Rocky
+        client_args = dict(client_args,
+                           endpoint_override=CONF.neutron.url,
+                           # NOTE(efried): The legacy behavior was to default
+                           # region_name in the conf.
+                           region_name=CONF.neutron.region_name or 'RegionOne')
+    else:
+        # The new way
+        # NOTE(efried): We build an adapter
+        #               to pull conf options
+        #               to pass to neutronclient
+        #               which uses them to build an Adapter.
+        # This should be unwound at some point.
+        adap = utils.get_ksa_adapter(
+            'network', ksa_auth=auth_plugin, ksa_session=_SESSION)
+        client_args = dict(client_args,
+                           service_type=adap.service_type,
+                           service_name=adap.service_name,
+                           interface=adap.interface,
+                           region_name=adap.region_name,
+                           endpoint_override=adap.endpoint_override)
+
+    return ClientWrapper(clientv20.Client(**client_args),
+                         admin=admin or context.is_admin)
 
 
 def _is_not_duplicate(item, items, items_list_name, instance):
@@ -178,11 +215,14 @@ def _ensure_no_port_binding_failure(port):
         raise exception.PortBindingFailed(port_id=port['id'])
 
 
-def _filter_hypervisor_macs(instance, ports, hypervisor_macs):
+def _filter_hypervisor_macs(instance, requested_ports_dict, hypervisor_macs):
     """Removes macs from set if used by existing ports
 
-    :param requested_networks: list of NetworkRequests
-    :type requested_networks: nova.objects.NetworkRequestList
+    :param instance: The server instance.
+    :type instance: nova.objects.instance.Instance
+    :param requested_ports_dict: dict, keyed by port ID, of ports requested by
+        the user
+    :type requested_ports_dict: dict
     :param hypervisor_macs: None or a set of MAC addresses that the
         instance should use. hypervisor_macs are supplied by the hypervisor
         driver (contrast with requested_networks which is user supplied).
@@ -204,10 +244,10 @@ def _filter_hypervisor_macs(instance, ports, hypervisor_macs):
     # to create a port on a network. If we find a mac with a
     # pre-allocated port we also remove it from this set.
     available_macs = set(hypervisor_macs)
-    if not ports:
+    if not requested_ports_dict:
         return available_macs
 
-    for port in ports.values():
+    for port in requested_ports_dict.values():
         mac = port['mac_address']
         if mac not in hypervisor_macs:
             LOG.debug("Port %(port)s mac address %(mac)s is "
@@ -257,7 +297,7 @@ class API(base_api.NetworkAPI):
             # If the port already has a migration profile and if
             # it is to be torn down, then we need to clean up
             # the migration profile.
-            port_profile = p.get(BINDING_PROFILE)
+            port_profile = _get_binding_profile(p)
             if not port_profile:
                 continue
             if MIGRATING_ATTR in port_profile:
@@ -278,7 +318,7 @@ class API(base_api.NetworkAPI):
             # the given 'host'.
             host_id = p.get(BINDING_HOST_ID)
             if host_id != host:
-                port_profile = p.get(BINDING_PROFILE, {})
+                port_profile = _get_binding_profile(p)
                 port_profile[MIGRATING_ATTR] = host
                 self._update_port_with_migration_profile(
                     instance, p['id'], port_profile, admin_client)
@@ -492,14 +532,38 @@ class API(base_api.NetworkAPI):
                 continue
             port_req_body = {'port': {'device_id': '', 'device_owner': ''}}
             port_req_body['port'][BINDING_HOST_ID] = None
-            port_req_body['port'][BINDING_PROFILE] = {}
-            if constants.DNS_INTEGRATION in self.extensions:
+            try:
+                port = self._show_port(context, port_id,
+                                       neutron_client=neutron,
+                                       fields=BINDING_PROFILE)
+            except exception.PortNotFound:
+                LOG.debug('Unable to show port %s as it no longer '
+                          'exists.', port_id)
+                return
+            except Exception:
+                # NOTE: In case we can't retrieve the binding:profile assume
+                # that they are empty
+                LOG.exception("Unable to get binding:profile for port '%s'",
+                              port_id)
+                port_profile = {}
+            else:
+                port_profile = port.get(BINDING_PROFILE, {})
+
+            # NOTE: We're doing this to remove the binding information
+            # for the physical device but don't want to overwrite the other
+            # information in the binding profile.
+            for profile_key in ('pci_vendor_info', 'pci_slot'):
+                if profile_key in port_profile:
+                    del port_profile[profile_key]
+            port_req_body['port'][BINDING_PROFILE] = port_profile
+            if self._has_dns_extension():
                 port_req_body['port']['dns_name'] = ''
+
             try:
                 port_client.update_port(port_id, port_req_body)
             except neutron_client_exc.PortNotFoundClient:
-                LOG.debug('Unable to unbind port %s as it no longer exists.',
-                          port_id)
+                LOG.debug('Unable to unbind port %s as it no longer '
+                          'exists.', port_id)
             except Exception:
                 LOG.exception("Unable to clear device ID for port '%s'",
                               port_id)
@@ -509,13 +573,17 @@ class API(base_api.NetworkAPI):
         """Processes and validates requested networks for allocation.
 
         Iterates over the list of NetworkRequest objects, validating the
-        request and building sets of ports, networks and MAC addresses to
+        request and building sets of ports and networks to
         use for allocating ports for the instance.
 
+        :param context: The user request context.
+        :type context: nova.context.RequestContext
         :param instance: allocate networks on this instance
         :type instance: nova.objects.Instance
         :param neutron: neutron client session
         :type neutron: neutronclient.v2_0.client.Client
+        :param requested_networks: List of user-requested networks and/or ports
+        :type requested_networks: nova.objects.NetworkRequestList
         :returns: tuple of:
             - ports: dict mapping of port id to port dict
             - ordered_networks: list of nova.objects.NetworkRequest objects
@@ -666,10 +734,19 @@ class API(base_api.NetworkAPI):
 
         :param context: The request context.
         :param instance: nova.objects.instance.Instance object.
-        :param requested_networks: value containing
-            network_id, fixed_ip, and port_id
+        :param neutron: neutron client
+        :param requested_networks: nova.objects.NetworkRequestList, list of
+            user-requested networks and/or ports; may be empty
         :param ordered_networks: output from _validate_requested_port_ids
             that will be used to create and update ports
+        :returns: dict, keyed by network ID, of networks to use
+        :raises InterfaceAttachFailedNoNetwork: If no specific networks were
+            requested and none are available.
+        :raises NetworkAmbiguous: If no specific networks were requested but
+            more than one is available.
+        :raises ExternalNetworkAttachForbidden: If the policy rules forbid
+            the request context from using an external non-shared network but
+            one was requested (or available).
         """
 
         # Get networks from Neutron
@@ -737,9 +814,12 @@ class API(base_api.NetworkAPI):
         :param instance: nova.objects.instance.Instance object.
         :param ordered_networks: objects.NetworkRequestList in requested order
         :param nets: a dict of network_id to networks returned from neutron
-        :param neutron: neutronclient using built from users request context
-        :param security_group_ids: a list of security_groups to go to neutron
-        :returns a list of pairs (NetworkRequest, created_port_uuid)
+        :param neutron: neutronclient built from users request context
+        :param security_group_ids: a list of security group IDs to be applied
+            to any ports created
+        :returns a list of pairs (NetworkRequest, created_port_uuid); note that
+            created_port_uuid will be None for the pair where a pre-existing
+            port was part of the user request
         """
         created_port_ids = []
         requests_and_created_ports = []
@@ -824,10 +904,15 @@ class API(base_api.NetworkAPI):
         neutron = get_client(context)
 
         #
-        # Validate ports and networks with neutron
+        # Validate ports and networks with neutron. The requested_ports_dict
+        # variable is a dict, keyed by port ID, of ports that were on the user
+        # request and may be empty. The ordered_networks variable is a list of
+        # NetworkRequest objects for any networks or ports specifically
+        # requested by the user, which again may be empty.
         #
-        ports, ordered_networks = self._validate_requested_port_ids(
-            context, instance, neutron, requested_networks)
+        requested_ports_dict, ordered_networks = (
+            self._validate_requested_port_ids(
+                context, instance, neutron, requested_networks))
 
         nets = self._validate_requested_network_ids(
             context, instance, neutron, requested_networks, ordered_networks)
@@ -835,14 +920,19 @@ class API(base_api.NetworkAPI):
             LOG.debug("No network configured", instance=instance)
             return network_model.NetworkInfo([])
 
-        #
-        # Create any ports that might be required,
-        # after validating requested security groups
-        #
+        # Validate requested security groups
         security_groups = self._clean_security_groups(security_groups)
         security_group_ids = self._process_security_groups(
                                     instance, neutron, security_groups)
 
+        # Create ports from the list of ordered_networks. The returned
+        # requests_and_created_ports variable is a list of 2-item tuples of
+        # the form (NetworkRequest, created_port_id). Note that a tuple pair
+        # will have None for the created_port_id if the NetworkRequest already
+        # contains a port_id, meaning the user requested a specific
+        # pre-existing port so one wasn't created here. The ports will be
+        # updated later in _update_ports_for_instance to be bound to the
+        # instance and compute host.
         requests_and_created_ports = self._create_ports_for_instance(
             context, instance, ordered_networks, nets, neutron,
             security_group_ids)
@@ -850,17 +940,18 @@ class API(base_api.NetworkAPI):
         #
         # Update existing and newly created ports
         #
-        available_macs = _filter_hypervisor_macs(instance, ports, macs)
+        available_macs = _filter_hypervisor_macs(
+            instance, requested_ports_dict, macs)
 
         # We always need admin_client to build nw_info,
         # we sometimes need it when updating ports
         admin_client = get_client(context, admin=True)
 
-        ordered_nets, ordered_ports, preexisting_port_ids, \
+        ordered_nets, ordered_port_ids, preexisting_port_ids, \
             created_port_ids = self._update_ports_for_instance(
                 context, instance,
                 neutron, admin_client, requests_and_created_ports, nets,
-                bind_host_id, available_macs)
+                bind_host_id, available_macs, requested_ports_dict)
 
         #
         # Perform a full update of the network_info_cache,
@@ -868,7 +959,7 @@ class API(base_api.NetworkAPI):
         #
         nw_info = self.get_instance_nw_info(
             context, instance, networks=ordered_nets,
-            port_ids=ordered_ports,
+            port_ids=ordered_port_ids,
             admin_client=admin_client,
             preexisting_port_ids=preexisting_port_ids,
             update_cells=True)
@@ -885,7 +976,7 @@ class API(base_api.NetworkAPI):
 
     def _update_ports_for_instance(self, context, instance, neutron,
             admin_client, requests_and_created_ports, nets,
-            bind_host_id, available_macs):
+            bind_host_id, available_macs, requested_ports_dict):
         """Update ports from network_requests.
 
         Updates the pre-existing ports and the ones created in
@@ -897,10 +988,22 @@ class API(base_api.NetworkAPI):
         :param instance: nova.objects.instance.Instance object.
         :param neutron: client using user context
         :param admin_client: client using admin context
-        :param requests_and_created_ports: [(NetworkRequest, created_port_id)]
+        :param requests_and_created_ports: [(NetworkRequest, created_port_id)];
+            Note that created_port_id will be None for any user-requested
+            pre-existing port.
         :param nets: a dict of network_id to networks returned from neutron
         :param bind_host_id: a string for port['binding:host_id']
         :param available_macs: a list of available mac addresses
+        :param requested_ports_dict: dict, keyed by port ID, of ports requested
+            by the user
+        :returns: tuple with the following::
+
+            * list of network dicts in their requested order
+            * list of port IDs in their requested order - note that does not
+              mean the port was requested by the user, it could be a port
+              created on a network requested by the user
+            * list of pre-existing port IDs requested by the user
+            * list of created port IDs
         """
 
         # We currently require admin creds to set port bindings.
@@ -927,6 +1030,11 @@ class API(base_api.NetworkAPI):
             zone = 'compute:%s' % instance.availability_zone
             port_req_body = {'port': {'device_id': instance.uuid,
                                       'device_owner': zone}}
+            if (requested_ports_dict and
+                request.port_id in requested_ports_dict and
+                requested_ports_dict[request.port_id].get(BINDING_PROFILE)):
+                port_req_body['port'][BINDING_PROFILE] = (
+                    requested_ports_dict[request.port_id][BINDING_PROFILE])
             try:
                 self._populate_neutron_extension_values(
                     context, instance, request.pci_request_id, port_req_body,
@@ -993,15 +1101,20 @@ class API(base_api.NetworkAPI):
             self.extensions.clear()
             self.extensions = {ext['name']: ext for ext in extensions_list}
 
-    def _has_auto_allocate_extension(self, context, refresh_cache=False,
-                                     neutron=None):
-        if refresh_cache or not self.extensions:
-            self._refresh_neutron_extensions_cache(context, neutron=neutron)
-        return constants.AUTO_ALLOCATE_TOPO_EXT in self.extensions
-
     def _has_multi_provider_extension(self, context, neutron=None):
         self._refresh_neutron_extensions_cache(context, neutron=neutron)
         return constants.MULTI_NET_EXT in self.extensions
+
+    def _has_dns_extension(self):
+        return constants.DNS_INTEGRATION in self.extensions
+
+    def _has_qos_queue_extension(self, context, neutron=None):
+        self._refresh_neutron_extensions_cache(context, neutron=neutron)
+        return constants.QOS_QUEUE in self.extensions
+
+    def has_substr_port_filtering_extension(self, context):
+        self._refresh_neutron_extensions_cache(context)
+        return constants.SUBSTR_PORT_FILTERING in self.extensions
 
     def _get_pci_device_profile(self, pci_dev):
         dev_spec = self.pci_whitelist.get_devspec(pci_dev)
@@ -1023,7 +1136,10 @@ class API(base_api.NetworkAPI):
         if pci_request_id:
             pci_dev = pci_manager.get_instance_pci_devs(
                 instance, pci_request_id).pop()
-            profile = self._get_pci_device_profile(pci_dev)
+            if port_req_body['port'].get(BINDING_PROFILE) is None:
+                port_req_body['port'][BINDING_PROFILE] = {}
+            profile = copy.deepcopy(port_req_body['port'][BINDING_PROFILE])
+            profile.update(self._get_pci_device_profile(pci_dev))
             port_req_body['port'][BINDING_PROFILE] = profile
 
     @staticmethod
@@ -1066,8 +1182,7 @@ class API(base_api.NetworkAPI):
 
         If the extensions loaded contain QOS_QUEUE then pass the rxtx_factor.
         """
-        self._refresh_neutron_extensions_cache(context, neutron=neutron)
-        if constants.QOS_QUEUE in self.extensions:
+        if self._has_qos_queue_extension(context, neutron=neutron):
             flavor = instance.get_flavor()
             rxtx_factor = flavor.get('rxtx_factor')
             port_req_body['port']['rxtx_factor'] = rxtx_factor
@@ -1076,7 +1191,7 @@ class API(base_api.NetworkAPI):
                                                pci_request_id,
                                                port_req_body)
 
-        if constants.DNS_INTEGRATION in self.extensions:
+        if self._has_dns_extension():
             # If the DNS integration extension is enabled in Neutron, most
             # ports will get their dns_name attribute set in the port create or
             # update requests in allocate_for_instance. So we just add the
@@ -1102,8 +1217,7 @@ class API(base_api.NetworkAPI):
         an additional update request. Only a very small fraction of ports will
         require this additional update request.
         """
-        if (constants.DNS_INTEGRATION in self.extensions and
-            network.get('dns_domain')):
+        if self._has_dns_extension() and network.get('dns_domain'):
             try:
                 port_req_body = {'port': {'dns_name': instance.hostname}}
                 neutron.update_port(port_id, port_req_body)
@@ -1487,23 +1601,17 @@ class API(base_api.NetworkAPI):
         :returns: True if it's possible to auto-allocate networks, False
                   otherwise.
         """
-        # check that the auto-allocated-topology extension is available
-        if self._has_auto_allocate_extension(context, neutron=neutron):
-            # run the dry-run validation, which will raise a 409 if not ready
-            try:
-                neutron.validate_auto_allocated_topology_requirements(
-                    context.project_id)
-                LOG.debug('Network auto-allocation is available for project '
-                          '%s', context.project_id)
-            except neutron_client_exc.Conflict as ex:
-                LOG.debug('Unable to auto-allocate networks. %s',
-                          six.text_type(ex))
-            else:
-                return True
-        else:
-            LOG.debug('Unable to auto-allocate networks. The neutron '
-                      'auto-allocated-topology extension is not available.')
-        return False
+        # run the dry-run validation, which will raise a 409 if not ready
+        try:
+            neutron.validate_auto_allocated_topology_requirements(
+                context.project_id)
+            LOG.debug('Network auto-allocation is available for project '
+                      '%s', context.project_id)
+            return True
+        except neutron_client_exc.Conflict as ex:
+            LOG.debug('Unable to auto-allocate networks. %s',
+                      six.text_type(ex))
+            return False
 
     def _auto_allocate_network(self, instance, neutron):
         """Automatically allocates a network for the given project.
@@ -2171,7 +2279,7 @@ class API(base_api.NetworkAPI):
             mtu=network_mtu
             )
         network['subnets'] = subnets
-        port_profile = port.get(BINDING_PROFILE)
+        port_profile = _get_binding_profile(port)
         if port_profile:
             physical_network = port_profile.get('physical_network')
             if physical_network:
@@ -2238,7 +2346,7 @@ class API(base_api.NetworkAPI):
             vnic_type=current_neutron_port.get('binding:vnic_type',
                                                network_model.VNIC_TYPE_NORMAL),
             type=current_neutron_port.get('binding:vif_type'),
-            profile=current_neutron_port.get(BINDING_PROFILE),
+            profile=_get_binding_profile(current_neutron_port),
             details=current_neutron_port.get('binding:vif_details'),
             ovs_interfaceid=ovs_interfaceid,
             devname=devname,
@@ -2399,9 +2507,11 @@ class API(base_api.NetworkAPI):
         """Create a private DNS domain with optional nova project."""
         raise NotImplementedError()
 
-    def setup_instance_network_on_host(self, context, instance, host):
+    def setup_instance_network_on_host(self, context, instance, host,
+                                       migration=None):
         """Setup network for specified instance on host."""
-        self._update_port_binding_for_instance(context, instance, host)
+        self._update_port_binding_for_instance(context, instance, host,
+                                               migration)
 
     def cleanup_instance_network_on_host(self, context, instance, host):
         """Cleanup network for specified instance on host."""
@@ -2458,7 +2568,7 @@ class API(base_api.NetworkAPI):
         ports = data['ports']
         for p in ports:
             updates = {}
-            binding_profile = p.get(BINDING_PROFILE, {})
+            binding_profile = _get_binding_profile(p)
 
             # If the host hasn't changed, like in the case of resizing to the
             # same host, there is nothing to do.

@@ -193,7 +193,7 @@ To view quota values for a project user
 
    .. code-block:: console
 
-      $ nova quota-show --user $projecUser --tenant $project
+      $ nova quota-show --user $projectUser --tenant $project
       +-----------------------------+-------+
       | Quota                       | Limit |
       +-----------------------------+-------+
@@ -276,7 +276,7 @@ current quota values and the current quota usage:
 
 .. code-block:: console
 
-   $ nova limits --tenant PROJET_NAME
+   $ nova limits --tenant PROJECT_NAME
 
    +------+-----+-------+--------+------+----------------+
    | Verb | URI | Value | Remain | Unit | Next_Available |

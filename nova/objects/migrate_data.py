@@ -29,6 +29,10 @@ class LiveMigrateData(obj_base.NovaObject):
     fields = {
         'is_volume_backed': fields.BooleanField(),
         'migration': fields.ObjectField('Migration'),
+        # old_vol_attachment_ids is a dict used to store the old attachment_ids
+        # for each volume so they can be restored on a migration rollback. The
+        # key is the volume_id, and the value is the attachment_id.
+        'old_vol_attachment_ids': fields.DictOfStringsField(),
     }
 
     def to_legacy_dict(self, pre_migration_result=False):
@@ -64,7 +68,10 @@ class LiveMigrateData(obj_base.NovaObject):
 
 @obj_base.NovaObjectRegistry.register
 class LibvirtLiveMigrateBDMInfo(obj_base.NovaObject):
-    VERSION = '1.0'
+    # VERSION 1.0 : Initial version
+    # VERSION 1.1 : Added encryption_secret_uuid for tracking volume secret
+    #               uuid created on dest during migration with encrypted vols.
+    VERSION = '1.1'
 
     fields = {
         # FIXME(danms): some of these can be enums?
@@ -75,7 +82,15 @@ class LibvirtLiveMigrateBDMInfo(obj_base.NovaObject):
         'format': fields.StringField(nullable=True),
         'boot_index': fields.IntegerField(nullable=True),
         'connection_info_json': fields.StringField(),
+        'encryption_secret_uuid': fields.UUIDField(nullable=True),
     }
+
+    def obj_make_compatible(self, primitive, target_version):
+        super(LibvirtLiveMigrateBDMInfo, self).obj_make_compatible(
+            primitive, target_version)
+        target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 1) and 'encryption_secret_uuid' in primitive:
+            del primitive['encryption_secret_uuid']
 
     # NOTE(danms): We don't have a connection_info object right
     # now, and instead mostly store/pass it as JSON that we're
@@ -110,7 +125,9 @@ class LibvirtLiveMigrateData(LiveMigrateData):
     # Version 1.2: Added 'serial_listen_ports' to allow live migration with
     #              serial console.
     # Version 1.3: Added 'supported_perf_events'
-    VERSION = '1.3'
+    # Version 1.4: Added old_vol_attachment_ids
+    # Version 1.5: Added src_supports_native_luks
+    VERSION = '1.5'
 
     fields = {
         'filename': fields.StringField(),
@@ -129,12 +146,19 @@ class LibvirtLiveMigrateData(LiveMigrateData):
         'bdms': fields.ListOfObjectsField('LibvirtLiveMigrateBDMInfo'),
         'target_connect_addr': fields.StringField(nullable=True),
         'supported_perf_events': fields.ListOfStringsField(),
+        'src_supports_native_luks': fields.BooleanField(),
     }
 
     def obj_make_compatible(self, primitive, target_version):
         super(LibvirtLiveMigrateData, self).obj_make_compatible(
             primitive, target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 5):
+            if 'src_supports_native_luks' in primitive:
+                del primitive['src_supports_native_luks']
+        if target_version < (1, 4):
+            if 'old_vol_attachment_ids' in primitive:
+                del primitive['old_vol_attachment_ids']
         if target_version < (1, 3):
             if 'supported_perf_events' in primitive:
                 del primitive['supported_perf_events']
@@ -223,7 +247,8 @@ class LibvirtLiveMigrateData(LiveMigrateData):
 class XenapiLiveMigrateData(LiveMigrateData):
     # Version 1.0: Initial version
     # Version 1.1: Added vif_uuid_map
-    VERSION = '1.1'
+    # Version 1.2: Added old_vol_attachment_ids
+    VERSION = '1.2'
 
     fields = {
         'block_migration': fields.BooleanField(nullable=True),
@@ -275,6 +300,9 @@ class XenapiLiveMigrateData(LiveMigrateData):
         super(XenapiLiveMigrateData, self).obj_make_compatible(
             primitive, target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 2):
+            if 'old_vol_attachment_ids' in primitive:
+                del primitive['old_vol_attachment_ids']
         if target_version < (1, 1):
             if 'vif_uuid_map' in primitive:
                 del primitive['vif_uuid_map']
@@ -284,7 +312,8 @@ class XenapiLiveMigrateData(LiveMigrateData):
 class HyperVLiveMigrateData(LiveMigrateData):
     # Version 1.0: Initial version
     # Version 1.1: Added is_shared_instance_path
-    VERSION = '1.1'
+    # Version 1.2: Added old_vol_attachment_ids
+    VERSION = '1.2'
 
     fields = {'is_shared_instance_path': fields.BooleanField()}
 
@@ -292,6 +321,9 @@ class HyperVLiveMigrateData(LiveMigrateData):
         super(HyperVLiveMigrateData, self).obj_make_compatible(
             primitive, target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 2):
+            if 'old_vol_attachment_ids' in primitive:
+                del primitive['old_vol_attachment_ids']
         if target_version < (1, 1):
             if 'is_shared_instance_path' in primitive:
                 del primitive['is_shared_instance_path']
@@ -313,7 +345,8 @@ class HyperVLiveMigrateData(LiveMigrateData):
 class PowerVMLiveMigrateData(LiveMigrateData):
     # Version 1.0: Initial version
     # Version 1.1: Added the Virtual Ethernet Adapter VLAN mappings.
-    VERSION = '1.1'
+    # Version 1.2: Added old_vol_attachment_ids
+    VERSION = '1.2'
 
     fields = {
         'host_mig_data': fields.DictOfNullableStringsField(),
@@ -330,6 +363,9 @@ class PowerVMLiveMigrateData(LiveMigrateData):
         super(PowerVMLiveMigrateData, self).obj_make_compatible(
             primitive, target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 2):
+            if 'old_vol_attachment_ids' in primitive:
+                del primitive['old_vol_attachment_ids']
         if target_version < (1, 1):
             if 'vea_vlan_mappings' in primitive:
                 del primitive['vea_vlan_mappings']

@@ -49,6 +49,9 @@ class FlavorsTestV21(test.TestCase):
     fake_request = fakes.HTTPRequestV21
     _rspv = "v2/fake"
     _fake = "/fake"
+    microversion = '2.1'
+    # Flag to tell the test if a description should be expected in a response.
+    expect_description = False
 
     def setUp(self):
         super(FlavorsTestV21, self).setUp()
@@ -57,6 +60,10 @@ class FlavorsTestV21(test.TestCase):
         fakes.stub_out_flavor_get_by_flavor_id(self)
         self.controller = self.Controller()
 
+    def _build_request(self, url):
+        return self.fake_request.blank(
+            self._prefix + url, version=self.microversion)
+
     def _set_expected_body(self, expected, flavor):
         # NOTE(oomichi): On v2.1 API, some extensions of v2.0 are merged
         # as core features and we can get the following parameters as the
@@ -64,16 +71,18 @@ class FlavorsTestV21(test.TestCase):
         expected['OS-FLV-EXT-DATA:ephemeral'] = flavor.ephemeral_gb
         expected['OS-FLV-DISABLED:disabled'] = flavor.disabled
         expected['swap'] = flavor.swap
+        if self.expect_description:
+            expected['description'] = flavor.description
 
     @mock.patch('nova.objects.Flavor.get_by_flavor_id',
                 side_effect=return_flavor_not_found)
     def test_get_flavor_by_invalid_id(self, mock_get):
-        req = self.fake_request.blank(self._prefix + '/flavors/asdf')
+        req = self._build_request('/flavors/asdf')
         self.assertRaises(webob.exc.HTTPNotFound,
                           self.controller.show, req, 'asdf')
 
     def test_get_flavor_by_id(self):
-        req = self.fake_request.blank(self._prefix + '/flavors/1')
+        req = self._build_request('/flavors/1')
         flavor = self.controller.show(req, '1')
         expected = {
             "flavor": {
@@ -82,6 +91,8 @@ class FlavorsTestV21(test.TestCase):
                 "ram": fakes.FLAVORS['1'].memory_mb,
                 "disk": fakes.FLAVORS['1'].root_gb,
                 "vcpus": fakes.FLAVORS['1'].vcpus,
+                "os-flavor-access:is_public": True,
+                "rxtx_factor": 1.0,
                 "links": [
                     {
                         "rel": "self",
@@ -103,7 +114,7 @@ class FlavorsTestV21(test.TestCase):
         self.flags(compute_link_prefix='http://zoo.com:42',
                    glance_link_prefix='http://circus.com:34',
                    group='api')
-        req = self.fake_request.blank(self._prefix + '/flavors/1')
+        req = self._build_request('/flavors/1')
         flavor = self.controller.show(req, '1')
         expected = {
             "flavor": {
@@ -112,6 +123,8 @@ class FlavorsTestV21(test.TestCase):
                 "ram": fakes.FLAVORS['1'].memory_mb,
                 "disk": fakes.FLAVORS['1'].root_gb,
                 "vcpus": fakes.FLAVORS['1'].vcpus,
+                "os-flavor-access:is_public": True,
+                "rxtx_factor": 1.0,
                 "links": [
                     {
                         "rel": "self",
@@ -130,7 +143,7 @@ class FlavorsTestV21(test.TestCase):
         self.assertEqual(expected, flavor)
 
     def test_get_flavor_list(self):
-        req = self.fake_request.blank(self._prefix + '/flavors')
+        req = self._build_request('/flavors')
         flavor = self.controller.index(req)
         expected = {
             "flavors": [
@@ -168,12 +181,16 @@ class FlavorsTestV21(test.TestCase):
                 },
             ],
         }
+        if self.expect_description:
+            for idx, _flavor in enumerate(expected['flavors']):
+                expected['flavors'][idx]['description'] = (
+                    fakes.FLAVORS[_flavor['id']].description)
         self.assertEqual(flavor, expected)
 
     def test_get_flavor_list_with_marker(self):
         self.maxDiff = None
-        url = self._prefix + '/flavors?limit=1&marker=1'
-        req = self.fake_request.blank(url)
+        url = '/flavors?limit=1&marker=1'
+        req = self._build_request(url)
         flavor = self.controller.index(req)
         expected = {
             "flavors": [
@@ -200,16 +217,19 @@ class FlavorsTestV21(test.TestCase):
                  'rel': 'next'}
             ]
         }
+        if self.expect_description:
+            expected['flavors'][0]['description'] = (
+                fakes.FLAVORS['2'].description)
         self.assertThat(flavor, matchers.DictMatches(expected))
 
     def test_get_flavor_list_with_invalid_marker(self):
-        req = self.fake_request.blank(self._prefix + '/flavors?marker=99999')
+        req = self._build_request('/flavors?marker=99999')
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self.controller.index, req)
 
     def test_get_flavor_detail_with_limit(self):
-        url = self._prefix + '/flavors/detail?limit=1'
-        req = self.fake_request.blank(url)
+        url = '/flavors/detail?limit=1'
+        req = self._build_request(url)
         response = self.controller.detail(req)
         response_list = response["flavors"]
         response_links = response["flavors_links"]
@@ -221,6 +241,8 @@ class FlavorsTestV21(test.TestCase):
                 "ram": fakes.FLAVORS['1'].memory_mb,
                 "disk": fakes.FLAVORS['1'].root_gb,
                 "vcpus": fakes.FLAVORS['1'].vcpus,
+                "os-flavor-access:is_public": True,
+                "rxtx_factor": 1.0,
                 "links": [
                     {
                         "rel": "self",
@@ -247,7 +269,7 @@ class FlavorsTestV21(test.TestCase):
                         matchers.DictMatches(params))
 
     def test_get_flavor_with_limit(self):
-        req = self.fake_request.blank(self._prefix + '/flavors?limit=2')
+        req = self._build_request('/flavors?limit=2')
         response = self.controller.index(req)
         response_list = response["flavors"]
         response_links = response["flavors_links"]
@@ -286,6 +308,10 @@ class FlavorsTestV21(test.TestCase):
                 ],
             }
         ]
+        if self.expect_description:
+            for idx, _flavor in enumerate(expected_flavors):
+                expected_flavors[idx]['description'] = (
+                    fakes.FLAVORS[_flavor['id']].description)
         self.assertEqual(response_list, expected_flavors)
         self.assertEqual(response_links[0]['rel'], 'next')
 
@@ -330,7 +356,7 @@ class FlavorsTestV21(test.TestCase):
                         matchers.DictMatches(params))
 
     def test_get_flavor_list_detail(self):
-        req = self.fake_request.blank(self._prefix + '/flavors/detail')
+        req = self._build_request('/flavors/detail')
         flavor = self.controller.detail(req)
         expected = {
             "flavors": [
@@ -340,6 +366,8 @@ class FlavorsTestV21(test.TestCase):
                     "ram": fakes.FLAVORS['1'].memory_mb,
                     "disk": fakes.FLAVORS['1'].root_gb,
                     "vcpus": fakes.FLAVORS['1'].vcpus,
+                    "os-flavor-access:is_public": True,
+                    "rxtx_factor": 1.0,
                     "links": [
                         {
                             "rel": "self",
@@ -359,6 +387,8 @@ class FlavorsTestV21(test.TestCase):
                     "ram": fakes.FLAVORS['2'].memory_mb,
                     "disk": fakes.FLAVORS['2'].root_gb,
                     "vcpus": fakes.FLAVORS['2'].vcpus,
+                    "os-flavor-access:is_public": True,
+                    "rxtx_factor": '',
                     "links": [
                         {
                             "rel": "self",
@@ -381,14 +411,14 @@ class FlavorsTestV21(test.TestCase):
     @mock.patch('nova.objects.FlavorList.get_all',
                 return_value=objects.FlavorList())
     def test_get_empty_flavor_list(self, mock_get):
-        req = self.fake_request.blank(self._prefix + '/flavors')
+        req = self._build_request('/flavors')
         flavors = self.controller.index(req)
         expected = {'flavors': []}
         self.assertEqual(flavors, expected)
 
     def test_get_flavor_list_filter_min_ram(self):
         # Flavor lists may be filtered by minRam.
-        req = self.fake_request.blank(self._prefix + '/flavors?minRam=512')
+        req = self._build_request('/flavors?minRam=512')
         flavor = self.controller.index(req)
         expected = {
             "flavors": [
@@ -410,17 +440,20 @@ class FlavorsTestV21(test.TestCase):
                 },
             ],
         }
+        if self.expect_description:
+            expected['flavors'][0]['description'] = (
+                fakes.FLAVORS['2'].description)
         self.assertEqual(flavor, expected)
 
     def test_get_flavor_list_filter_invalid_min_ram(self):
         # Ensure you cannot list flavors with invalid minRam param.
-        req = self.fake_request.blank(self._prefix + '/flavors?minRam=NaN')
+        req = self._build_request('/flavors?minRam=NaN')
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self.controller.index, req)
 
     def test_get_flavor_list_filter_min_disk(self):
         # Flavor lists may be filtered by minDisk.
-        req = self.fake_request.blank(self._prefix + '/flavors?minDisk=20')
+        req = self._build_request('/flavors?minDisk=20')
         flavor = self.controller.index(req)
         expected = {
             "flavors": [
@@ -442,11 +475,14 @@ class FlavorsTestV21(test.TestCase):
                 },
             ],
         }
+        if self.expect_description:
+            expected['flavors'][0]['description'] = (
+                fakes.FLAVORS['2'].description)
         self.assertEqual(flavor, expected)
 
     def test_get_flavor_list_filter_invalid_min_disk(self):
         # Ensure you cannot list flavors with invalid minDisk param.
-        req = self.fake_request.blank(self._prefix + '/flavors?minDisk=NaN')
+        req = self._build_request('/flavors?minDisk=NaN')
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self.controller.index, req)
 
@@ -454,8 +490,7 @@ class FlavorsTestV21(test.TestCase):
         """Tests that filtering work on flavor details and that minRam and
         minDisk filters can be combined
         """
-        req = self.fake_request.blank(self._prefix + '/flavors/detail'
-                                      '?minRam=256&minDisk=20')
+        req = self._build_request('/flavors/detail?minRam=256&minDisk=20')
         flavor = self.controller.detail(req)
         expected = {
             "flavors": [
@@ -465,6 +500,8 @@ class FlavorsTestV21(test.TestCase):
                     "ram": fakes.FLAVORS['2'].memory_mb,
                     "disk": fakes.FLAVORS['2'].root_gb,
                     "vcpus": fakes.FLAVORS['2'].vcpus,
+                    "os-flavor-access:is_public": True,
+                    "rxtx_factor": '',
                     "links": [
                         {
                             "rel": "self",
@@ -482,6 +519,302 @@ class FlavorsTestV21(test.TestCase):
         }
         self._set_expected_body(expected['flavors'][0], fakes.FLAVORS['2'])
         self.assertEqual(expected, flavor)
+
+    def _test_list_flavors_with_invalid_filter(
+        self, url, expected_exception=exception.ValidationError):
+        controller_list = self.controller.index
+        if 'detail' in url:
+            controller_list = self.controller.detail
+        req = self.fake_request.blank(self._prefix + url)
+        self.assertRaises(expected_exception,
+                          controller_list, req)
+
+    def test_list_flavors_with_invalid_non_int_limit(self):
+        self._test_list_flavors_with_invalid_filter('/flavors?limit=-9')
+
+    def test_list_detail_flavors_with_invalid_non_int_limit(self):
+        self._test_list_flavors_with_invalid_filter('/flavors/detail?limit=-9')
+
+    def test_list_flavors_with_invalid_string_limit(self):
+        self._test_list_flavors_with_invalid_filter('/flavors?limit=abc')
+
+    def test_list_detail_flavors_with_invalid_string_limit(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors/detail?limit=abc')
+
+    def test_list_duplicate_query_with_invalid_string_limit(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors?limit=1&limit=abc')
+
+    def test_list_detail_duplicate_query_with_invalid_string_limit(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors/detail?limit=1&limit=abc')
+
+    def _test_list_flavors_duplicate_query_parameters_validation(
+        self, url, expected=None):
+        controller_list = self.controller.index
+        if 'detail' in url:
+            controller_list = self.controller.detail
+        expected_resp = [{
+            "id": fakes.FLAVORS['2'].flavorid,
+            "name": fakes.FLAVORS['2'].name,
+            "links": [
+                {
+                    "rel": "self",
+                    "href": "http://localhost/" + self._rspv +
+                         "/flavors/2",
+                },
+                {
+                    "rel": "bookmark",
+                    "href": "http://localhost" + self._fake +
+                         "/flavors/2",
+                },
+            ],
+        }]
+        if expected:
+            expected_resp[0].update(expected)
+        params = {
+            'limit': 1,
+            'marker': 1,
+            'is_public': 't',
+            'minRam': 2,
+            'minDisk': 2,
+            'sort_key': 'id',
+            'sort_dir': 'asc'
+        }
+
+        for param, value in params.items():
+            req = self.fake_request.blank(
+                self._prefix + url + '?marker=1&%s=%s&%s=%s' %
+                (param, value, param, value))
+            result = controller_list(req)
+            self.assertEqual(expected_resp, result['flavors'])
+
+    def test_list_duplicate_query_parameters_validation(self):
+        self._test_list_flavors_duplicate_query_parameters_validation(
+            '/flavors')
+
+    def test_list_detail_duplicate_query_parameters_validation(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_duplicate_query_parameters_validation(
+            '/flavors/detail', expected)
+
+    def _test_list_flavors_with_allowed_filter(
+        self, url, expected=None):
+        controller_list = self.controller.index
+        if 'detail' in url:
+            controller_list = self.controller.detail
+        expected_resp = [{
+            "id": fakes.FLAVORS['2'].flavorid,
+            "name": fakes.FLAVORS['2'].name,
+            "links": [
+                {
+                    "rel": "self",
+                    "href": "http://localhost/" + self._rspv +
+                            "/flavors/2",
+                 },
+                 {
+                    "rel": "bookmark",
+                    "href": "http://localhost" + self._fake +
+                            "/flavors/2",
+                  },
+            ],
+        }]
+        if expected:
+            expected_resp[0].update(expected)
+        req = self.fake_request.blank(self._prefix + url + '&limit=1&marker=1')
+        result = controller_list(req)
+        self.assertEqual(expected_resp, result['flavors'])
+
+    def test_list_flavors_with_additional_filter(self):
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors?limit=1&marker=1&additional=something')
+
+    def test_list_detail_flavors_with_additional_filter(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors/detail?limit=1&marker=1&additional=something',
+            expected)
+
+    def test_list_flavors_with_min_ram_filter_as_negative_int(self):
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors?minRam=-2')
+
+    def test_list_detail_flavors_with_min_ram_filter_as_negative_int(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors/detail?minRam=-2', expected)
+
+    def test_list_flavors_with_min_ram_filter_as_float(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors?minRam=1.2', expected_exception=webob.exc.HTTPBadRequest)
+
+    def test_list_detail_flavors_with_min_ram_filter_as_float(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors/detail?minRam=1.2',
+            expected_exception=webob.exc.HTTPBadRequest)
+
+    def test_list_flavors_with_min_disk_filter_as_negative_int(self):
+        self._test_list_flavors_with_allowed_filter('/flavors?minDisk=-2')
+
+    def test_list_detail_flavors_with_min_disk_filter_as_negative_int(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors/detail?minDisk=-2', expected)
+
+    def test_list_flavors_with_min_disk_filter_as_float(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors?minDisk=1.2',
+            expected_exception=webob.exc.HTTPBadRequest)
+
+    def test_list_detail_flavors_with_min_disk_filter_as_float(self):
+        self._test_list_flavors_with_invalid_filter(
+            '/flavors/detail?minDisk=1.2',
+            expected_exception=webob.exc.HTTPBadRequest)
+
+    def test_list_flavors_with_is_public_filter_as_string_none(self):
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors?is_public=none')
+
+    def test_list_detail_flavors_with_is_public_filter_as_string_none(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors/detail?is_public=none', expected)
+
+    def test_list_flavors_with_is_public_filter_as_valid_bool(self):
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors?is_public=false')
+
+    def test_list_detail_flavors_with_is_public_filter_as_valid_bool(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors/detail?is_public=false', expected)
+
+    def test_list_flavors_with_is_public_filter_as_invalid_string(self):
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors?is_public=invalid')
+
+    def test_list_detail_flavors_with_is_public_filter_as_invalid_string(self):
+        expected = {
+            "ram": fakes.FLAVORS['2'].memory_mb,
+            "disk": fakes.FLAVORS['2'].root_gb,
+            "vcpus": fakes.FLAVORS['2'].vcpus,
+            "os-flavor-access:is_public": True,
+            "rxtx_factor": '',
+            "OS-FLV-EXT-DATA:ephemeral": fakes.FLAVORS['2'].ephemeral_gb,
+            "OS-FLV-DISABLED:disabled": fakes.FLAVORS['2'].disabled,
+            "swap": fakes.FLAVORS['2'].swap
+        }
+        self._test_list_flavors_with_allowed_filter(
+            '/flavors/detail?is_public=invalid', expected)
+
+
+class FlavorsTestV2_55(FlavorsTestV21):
+    """Run the same tests as we would for v2.1 but with a description."""
+    microversion = '2.55'
+    expect_description = True
+
+
+class FlavorsPolicyEnforcementV21(test.NoDBTestCase):
+
+    def setUp(self):
+        super(FlavorsPolicyEnforcementV21, self).setUp()
+        self.flavor_controller = flavors_v21.FlavorsController()
+        fakes.stub_out_flavor_get_by_flavor_id(self)
+        fakes.stub_out_flavor_get_all(self)
+        self.req = fakes.HTTPRequest.blank('')
+
+    def test_show_flavor_access_policy_failed(self):
+        rule_name = "os_compute_api:os-flavor-access"
+        self.policy.set_rules({rule_name: "project:non_fake"})
+        resp = self.flavor_controller.show(self.req, '1')
+        self.assertNotIn('os-flavor-access:is_public', resp['flavor'])
+
+    def test_detail_flavor_access_policy_failed(self):
+        rule_name = "os_compute_api:os-flavor-access"
+        self.policy.set_rules({rule_name: "project:non_fake"})
+        resp = self.flavor_controller.detail(self.req)
+        self.assertNotIn('os-flavor-access:is_public', resp['flavors'][0])
+
+    def test_show_flavor_rxtx_policy_failed(self):
+        rule_name = "os_compute_api:os-flavor-rxtx"
+        self.policy.set_rules({rule_name: "project:non_fake"})
+        resp = self.flavor_controller.show(self.req, '1')
+        self.assertNotIn('rxtx_factor', resp['flavor'])
+
+    def test_detail_flavor_rxtx_policy_failed(self):
+        rule_name = "os_compute_api:os-flavor-rxtx"
+        self.policy.set_rules({rule_name: "project:non_fake"})
+        resp = self.flavor_controller.detail(self.req)
+        self.assertNotIn('rxtx_factor', resp['flavors'][0])
+
+    def test_create_flavor_extended_policy_failed(self):
+        rules = {"os_compute_api:os-flavor-rxtx": "project:non_fake",
+                 "os_compute_api:os-flavor-access": "project:non_fake"}
+        self.policy.set_rules(rules)
+        resp = self.flavor_controller.detail(self.req)
+        self.assertNotIn('rxtx_factor', resp['flavors'][0])
+
+    def test_update_flavor_extended_policy_failed(self):
+        rules = {"os_compute_api:os-flavor-rxtx": "project:non_fake",
+                 "os_compute_api:os-flavor-access": "project:non_fake"}
+        self.policy.set_rules(rules)
+        resp = self.flavor_controller.detail(self.req)
+        self.assertNotIn('rxtx_factor', resp['flavors'][0])
 
 
 class DisabledFlavorsWithRealDBTestV21(test.TestCase):

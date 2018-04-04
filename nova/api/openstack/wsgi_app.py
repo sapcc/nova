@@ -15,6 +15,7 @@ import os
 
 from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_service import _options as service_opts
 from paste import deploy
 
 from nova import config
@@ -41,16 +42,18 @@ def _get_config_files(env=None):
 
 
 def _setup_service(host, name):
+    binary = name if name.startswith('nova-') else "nova-%s" % name
+
     ctxt = context.get_admin_context()
     service_ref = objects.Service.get_by_host_and_binary(
-        ctxt, host, name)
+        ctxt, host, binary)
     if service_ref:
         service._update_service_ref(service_ref)
     else:
         try:
             service_obj = objects.Service(ctxt)
             service_obj.host = host
-            service_obj.binary = 'nova-%s' % name
+            service_obj.binary = binary
             service_obj.topic = None
             service_obj.report_count = 0
             service_obj.create()
@@ -79,6 +82,18 @@ def init_application(name):
         _setup_service(CONF.host, name)
     except exception.ServiceTooOld as exc:
         return error_application(exc, name)
+
+    service.setup_profiler(name, CONF.host)
+
+    # dump conf at debug (log_options option comes from oslo.service)
+    # FIXME(mriedem): This is gross but we don't have a public hook into
+    # oslo.service to register these options, so we are doing it manually for
+    # now; remove this when we have a hook method into oslo.service.
+    CONF.register_opts(service_opts.service_opts)
+    if CONF.log_options:
+        CONF.log_opt_values(
+            logging.getLogger(__name__),
+            logging.DEBUG)
 
     conf = conf_files[0]
 

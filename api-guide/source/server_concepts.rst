@@ -8,10 +8,6 @@ a physical machine or a container.
 Server status
 ~~~~~~~~~~~~~
 
-TODO: This section's content is old, we need to update the status list.
-The task_state and vm_state which expose to Administrator need description to
-help user to understand the difference.
-
 You can filter the list of servers by image, flavor, name, and status
 through the respective query parameters.
 
@@ -61,14 +57,11 @@ server status is one of the following values:
 -  ``SHELVED_OFFLOADED``: The shelved server is offloaded (removed from the
    compute host) and it needs unshelved action to be used again.
 
--  ``SHUTOFF``: The server was powered down by the user,
-   but not through the OpenStack Compute API. For example, the user
-   issued a ``shutdown -h`` command from within the server. If
-   the OpenStack Compute manager detects that the VM was powered down,
-   it transitions the server to the SHUTOFF status. If you use
-   the OpenStack Compute API to restart the server, it might
-   be deleted first, depending on the value in the
-   *``shutdown_terminate``* database field on the Instance model.
+-  ``SHUTOFF``: The server was powered down by the user, either through the
+   OpenStack Compute API or from within the server. For example, the user
+   issued a ``shutdown -h`` command from within the server. If the OpenStack
+   Compute manager detects that the VM was powered down, it transitions the
+   server to the SHUTOFF status.
 
 -  ``SOFT_DELETED``: The server is marked as deleted but will remain in the
    cloud for some configurable amount of time. While soft-deleted, an
@@ -90,13 +83,19 @@ server status is one of the following values:
 -  ``VERIFY_RESIZE``: System is awaiting confirmation that the server is
    operational after a move or resize.
 
-The compute provisioning algorithm has an anti-affinity property that
-attempts to spread customer VMs across hosts. Under certain situations,
-VMs from the same customer might be placed on the same host. hostId
-represents the host your server runs on and can be used to determine
-this scenario if it is relevant to your application.
+Server status is caculated from vm_state and task_state, which
+are exposed to administrators:
 
-.. note:: HostId is unique *per account* and is not globally unique.
+- vm_state describes a VM's current stable (not transition) state. That is, if
+  there is no ongoing compute API calls (running tasks), vm_state should reflect
+  what the customer expect the VM to be. When combined with task states,
+  a better picture can be formed regarding the server's health and progress.
+  Please see: `VM States <https://docs.openstack.org/nova/latest/reference/vm-states.html>`_.
+
+- task_state represents what is happening to the instance at the
+  current moment. These tasks can be generic, such as 'spawning', or specific,
+  such as 'block_device_mapping'. These task states allow for a better view into
+  what a server is doing.
 
 Server creation
 ~~~~~~~~~~~~~~~
@@ -125,29 +124,25 @@ operations on the server.
 Server query
 ~~~~~~~~~~~~
 
-Nova allows both general user and administrator to filter the server
-query result by using query options.
+There are two APIs for querying servers ``GET /servers`` and
+``GET /servers/detail``. Both of those APIs support filtering the query result
+by using query options.
 
-For general user, ``reservation_id``, ``name``, ``status``, ``image``,
-``flavor``, ``ip``, ``changes-since``, ``ip6 (microversion 2.5)`` are
-supported options to be used. The other options will be ignored by nova
-silently only with a debug log.
+For different user roles, the user has different query options set:
 
-For administrator, there are more fields can be used. The ``all_tenants``
-option allows the servers owned by all tenants to be reported (otherwise
-only the servers associated with the calling tenant are included in
-the response). Additionally, the filter is applied to the database schema
-definition of ``class Instance``, e.g there is a field named 'locked' in
-the schema then the filter can use 'locked' as search options to filter
-servers.
+- For general user, there is limited set of attributes of the servers can be
+  used as query option. ``reservation_id``, ``name``, ``status``, ``image``,
+  ``flavor``, ``ip``, ``changes-since``, ``ip6``, ``tags``, ``tags-any``,
+  ``not-tags``, ``not-tags-any`` are supported options to be used. Other
+  options will be ignored by nova silently.
 
-Also, there are some special options such as ``changes-since`` can
-be used and interpreted by nova.
-
--  **General user & Administrator supported options**
-   General user supported options are listed above and administrator can
-   use almost all the options except the options parameters for sorting
-   and pagination.
+- For administrator, most of the server attributes can be used as query
+  options. Before the Ocata release, the fields in the database schema of
+  server are exposed as query options, which may lead to unexpected API
+  change. After the Ocata release, the definition of the query options and
+  the database schema are decoupled. That is also the reason why the naming of
+  the query options are different from the attribute naming in the servers API
+  response.
 
 .. code::
 
@@ -169,8 +164,6 @@ be used and interpreted by nova.
 
    **Example: General user query server with administrator only options**
 
-.. code::
-
    Request with non-administrator context:
    GET /servers/detail?locked=1
    Note that 'locked' is not returned through API layer
@@ -191,8 +184,6 @@ be used and interpreted by nova.
 
    **Example: Administrator query server with administrator only options**
 
-.. code::
-
    Request with administrator context:
    GET /servers/detail?locked=1
 
@@ -206,17 +197,59 @@ be used and interpreted by nova.
        ]
    }
 
--  **Exact matching and regex matching of the search options**
+There are also some speical query options:
 
-   Depending on the name of a filter, matching for that filter is performed
-   using either exact matching or as regular expression matching.
-   ``project_id``, ``user_id``, ``image_ref``, ``vm_state``,
-   ``instance_type_id``, ``uuid``, ``metadata``, ``host``, ``system_metadata``
-   are the options that are applied by exact matching when filtering.
+- ``changes-since`` returns the servers updated after the given time.
+  Please see: :doc:`polling_changes-since_parameter`
 
-   **Example: User query server using exact matching on host**
+- ``deleted`` returns (or excludes) deleted servers
+
+- ``soft_deleted`` modifies behavior of 'deleted' to either include or exclude
+  instances whose vm_state is SOFT_DELETED
+
+- ``all_tenants`` is an administrator query option, which allows the
+  administrator to query the servers in any tenant.
 
 .. code::
+
+   **Example: User query server with special keys changes-since**
+
+   Precondition:
+   GET /servers/detail
+
+   Response:
+   {
+       "servers": [
+           {
+               "name": "t1"
+               "updated": "2015-12-15T15:55:52Z"
+               ...
+           },
+           {
+               "name": "t2",
+               "updated": "2015-12-17T15:55:52Z"
+               ...
+           }
+       ]
+   }
+
+   GET /servers/detail?changes-since='2015-12-16T15:55:52Z'
+
+   Response:
+   {
+       {
+           "name": "t2",
+           "updated": "2015-12-17T15:55:52Z"
+           ...
+       }
+   }
+
+There are two kinds of matching in query options: Exact matching and
+regex matching.
+
+.. code::
+
+   **Example: User query server using exact matching on host**
 
    Precondition:
    Request with administrator context:
@@ -255,8 +288,6 @@ be used and interpreted by nova.
    }
 
    **Example: Query server using regex matching on name**
-
-.. code::
 
    Precondition:
    Request with administrator context:
@@ -310,8 +341,6 @@ be used and interpreted by nova.
    **Example: User query server using exact matching on host and
    regex matching on name**
 
-.. code::
-
    Precondition:
    Request with administrator context:
    GET /servers/detail
@@ -353,28 +382,6 @@ be used and interpreted by nova.
        ]
    }
 
--  **Special keys are used to tweak the query**
-   ``changes-since`` returns instances updated after the given time,
-   ``deleted`` return (or exclude) deleted instances and ``soft_deleted``
-   modify behavior of 'deleted' to either include or exclude instances whose
-   vm_state is SOFT_DELETED. Please see: :doc:`polling_changes-since_parameter`
-
-   **Example: User query server with special keys changes-since**
-
-.. code::
-
-   Precondition:
-   GET /servers/detail
-
-   Response:
-   {
-       "servers": [
-           {
-               "name": "t1"
-               "updated": "2015-12-15T15:55:52Z"
-               ...
-           },
-           {
                "name": "t2",
                "updated": "2015-12-17T15:55:52Z"
                ...
@@ -409,7 +416,8 @@ Server actions
 -  **Rebuild**
 
    Use this function to remove all data on the server and replaces it
-   with the specified image. Server ID and IP addresses remain the same.
+   with the specified image. Server ID, flavor and IP addresses remain
+   the same.
 
 -  **Evacuate**
 
@@ -605,7 +613,17 @@ TODO: Add description about how to custom scheduling policy for server booting.
 Server Consoles
 ~~~~~~~~~~~~~~~
 
-TODO: We have multiple endpoints about consoles, we should explain that.
+Server Consoles can also be supplied after server launched.
+There are several server console services available.
+First, users can get the console output from the specified server
+and can limit the lines of console text by setting the length.
+Second, users can access multiple types of remote consoles.
+The user can use novnc, xvpvnc, rdp-html5, spice-html5, serial,
+and webmks(start from microversion 2.8) through either the OpenStack
+dashboard or the command line. Please see `Configure remote console access
+<https://docs.openstack.org/nova/latest/admin/remote-console-access.html>`_.
+Specifically for Xenserver, it provides the ability to create,
+delete, detail, list specified server vnc consoles.
 
 Server networks
 ~~~~~~~~~~~~~~~
@@ -864,8 +882,10 @@ Configure Guest OS
 
 Metadata API
 ------------
-
-TODO
+Nova provides a metadata api for servers to retrieve server specific metadata.
+Neutron ensures this metadata api can be accessed through a predefined ip
+address (169.254.169.254). For more details, see
+`Metadata Service <https://docs.openstack.org/nova/latest/admin/networking-nova.html#metadata-service>`_.
 
 Config Drive
 ------------

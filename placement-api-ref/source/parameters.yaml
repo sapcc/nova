@@ -1,5 +1,14 @@
+# variables in header
+location:
+  description: |
+    The location URL of the resource created,
+    HTTP header "Location: <Location URL>" will be returned.
+  in: header
+  required: true
+  type: string
+
 # variables in path
-consumer_uuid:
+consumer_uuid: &consumer_uuid
   type: string
   in: path
   required: true
@@ -11,6 +20,14 @@ resource_class_path: &resource_class_path
   required: true
   description: >
     The name of one resource class.
+resource_class_path_custom: &resource_class_path_custom
+  type: string
+  in: path
+  required: true
+  description: >
+    The name of one resource class. The name must start with
+    the prefix ``CUSTOM_``. If not, the request returns a ``Bad Request (400)``
+    response code.
 resource_provider_uuid_path: &resource_provider_uuid_path
   type: string
   in: path
@@ -25,14 +42,37 @@ trait_name:
     The name of a trait.
 
 # variables in query
+allocation_candidates_limit:
+  type: integer
+  in: query
+  required: false
+  min_version: 1.16
+  description: >
+    A positive integer used to limit the maximum number of allocation
+    candidates returned in the response.
+allocation_candidates_required:
+  type: string
+  in: query
+  required: false
+  min_version: 1.17
+  description: >
+    Accepts a list of comma-separated traits. Allocation requests in the
+    response will be for resource providers that have capacity for all
+    requested resources and the set of those resource providers will
+    *collectively* contain all of the required traits.
 member_of:
   type: string
   in: query
   required: false
   description: >
-    A comma-separated list of strings representing aggregate uuids.
-    The returned resource providers must be associated with at
-    least one of the aggregates identified by uuid.
+    A string representing an aggregate uuid; or the prefix ``in:`` followed by
+    a comma-separated list of strings representing aggregate uuids. The
+    returned resource providers must be associated with at least one of the
+    aggregates identified by uuid::
+
+        member_of=5e08ea53-c4c6-448e-9334-ac4953de3cfa
+        member_of=in:42896e0d-205d-4fe3-bd1e-100924931787,5e08ea53-c4c6-448e-9334-ac4953de3cfa
+  min_version: 1.3
 project_id: &project_id
   type: string
   in: query
@@ -45,11 +85,19 @@ resource_provider_name_query:
   required: false
   description: >
     The name of a resource provider to filter the list.
+resource_provider_tree_query:
+  type: string
+  in: query
+  required: false
+  description: >
+    A UUID of a resource provider. The returned resource providers will be in
+    the same "provider tree" as the specified provider.
+  min_version: 1.14
 resource_provider_uuid_query:
   <<: *resource_provider_uuid_path
   in: query
   required: false
-resources_query: &resources_query
+resources_query:
   type: string
   in: query
   required: false
@@ -59,9 +107,17 @@ resources_query: &resources_query
     capacity to serve::
 
         resources=VCPU:4,DISK_GB:64,MEMORY_MB:2048
+  min_version: 1.4
 resources_query_required:
-  <<: *resources_query
+  type: string
+  in: query
   required: true
+  description: |
+    A comma-separated list of strings indicating an amount of
+    resource of a specified class that a provider must have the
+    capacity to serve::
+
+        resources=VCPU:4,DISK_GB:64,MEMORY_MB:2048
 trait_associated:
   type: string
   in: query
@@ -77,8 +133,8 @@ trait_name_query:
   description: |
     A string to filter traits. The following options are available:
 
-    `starts_with` operator filters the traits whose name begins with a
-    specific prefix, e.g. name=starts_with:CUSTOM,
+    `startswith` operator filters the traits whose name begins with a
+    specific prefix, e.g. name=startswith:CUSTOM,
 
     `in` operator filters the traits whose name is in the specified list, e.g.
     name=in:HW_CPU_X86_AVX,HW_CPU_X86_SSE,HW_CPU_X86_INVALID_FEATURE.
@@ -134,12 +190,28 @@ allocations_by_resource_provider:
   required: true
   description: >
     A dictionary of allocations keyed by resource provider uuid.
+allocations_dict: &allocations_dict
+  type: object
+  in: body
+  required: true
+  description: >
+    A dictionary of resource allocations keyed by resource provider uuid.
+allocations_dict_empty:
+  <<: *allocations_dict
+  description: >
+    A dictionary of resource allocations keyed by resource provider uuid.
+    If this is an empty object, allocations for this consumer will be
+    removed.
+  min_version: null
 capacity:
   type: integer
   in: body
   required: true
   description: >
     The amount of the resource that the provider can accommodate.
+consumer_uuid_body:
+  <<: *consumer_uuid
+  in: body
 inventories:
   type: object
   in: body
@@ -164,9 +236,14 @@ min_unit: &min_unit
 min_unit_opt:
   <<: *min_unit
   required: false
-project_id_body:
+project_id_body: &project_id_body
   <<: *project_id
   in: body
+project_id_body_1_12:
+  <<: *project_id_body
+  min_version: 1.12
+project_id_body_1_8:
+  <<: *project_id_body
   min_version: 1.8
 provider_summaries:
   type: object
@@ -174,7 +251,9 @@ provider_summaries:
   required: true
   description: >
     A dictionary keyed by resource provider UUID,
-    of dictionaries of inventory/capacity information.
+    of dictionaries of inventory/capacity information. The list of traits
+    the resource provider has associated with it is included in version `1.17`
+    and above.
 reserved: &reserved
   type: integer
   in: body
@@ -186,6 +265,9 @@ reserved_opt:
   required: false
 resource_class:
   <<: *resource_class_path
+  in: body
+resource_class_custom:
+  <<: *resource_class_path_custom
   in: body
 resource_class_links:
   type: array
@@ -205,13 +287,21 @@ resource_provider_allocations:
   required: true
   description: >
     A dictionary of allocation records keyed by consumer uuid.
-resource_provider_generation:
+resource_provider_generation: &resource_provider_generation
   type: integer
   in: body
   required: true
   description: >
     A consistent view marker that assists with the management of
     concurrent resource provider updates.
+resource_provider_generation_optional:
+  <<: *resource_provider_generation
+  required: false
+  description: >
+    A consistent view marker that assists with the management of
+    concurrent resource provider updates. The value is ignored;
+    it is present to preserve symmetry between read and
+    write representations.
 resource_provider_links:
   type: array
   in: body
@@ -219,7 +309,11 @@ resource_provider_links:
   description: |
     A list of links associated with one resource provider.
 
-    .. note:: Trait relationship link is available starting from version 1.6.
+    .. note::
+
+      Aggregates relationship link is available starting from version 1.1.
+      Traits relationship link is available starting from version 1.6.
+      Allocations relationship link is available starting from version 1.11.
 
 resource_provider_name:
   type: string
@@ -233,6 +327,23 @@ resource_provider_object:
   required: true
   description: >
     A dictionary which contains the UUID of the resource provider.
+resource_provider_parent_provider_uuid: &resource_provider_parent_provider_uuid
+  type: string
+  in: body
+  required: false
+  description: >
+    The UUID of the immediate parent of the resource provider.
+  min_version: 1.14
+resource_provider_parent_provider_uuid_required:
+  <<: *resource_provider_parent_provider_uuid
+  required: true
+resource_provider_root_provider_uuid_required:
+  type: string
+  in: body
+  required: true
+  description: >
+    Read-only UUID of the top-most provider in this provider tree.
+  min_version: 1.14
 resource_provider_usages:
   type: object
   in: body
@@ -289,10 +400,15 @@ used:
   required: true
   description: >
     The amount of the resource that has been already allocated.
-user_id_body:
+user_id_body: &user_id_body
   <<: *user_id
   in: body
   required: true
+user_id_body_1_12:
+  <<: *user_id_body
+  min_version: 1.12
+user_id_body_1_8:
+  <<: *user_id_body
   min_version: 1.8
 version_id:
   type: string

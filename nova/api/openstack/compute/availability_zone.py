@@ -12,8 +12,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova.api.openstack.compute.schemas import availability_zone as schema
-from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova import availability_zones
 from nova import compute
@@ -103,7 +101,7 @@ class AvailabilityZoneController(wsgi.Controller):
                            "hosts": None})
         return {'availabilityZoneInfo': result}
 
-    @extensions.expected_errors(())
+    @wsgi.expected_errors(())
     def index(self, req):
         """Returns a summary list of availability zone."""
         context = req.environ['nova.context']
@@ -111,26 +109,10 @@ class AvailabilityZoneController(wsgi.Controller):
 
         return self._describe_availability_zones(context)
 
-    @extensions.expected_errors(())
+    @wsgi.expected_errors(())
     def detail(self, req):
         """Returns a detailed list of availability zone."""
         context = req.environ['nova.context']
         context.can(az_policies.POLICY_ROOT % 'detail')
 
         return self._describe_availability_zones_verbose(context)
-
-
-# NOTE(gmann): This function is not supposed to use 'body_deprecated_param'
-# parameter as this is placed to handle scheduler_hint extension for V2.1.
-def server_create(server_dict, create_kwargs, body_deprecated_param):
-    # NOTE(alex_xu): For v2.1 compat mode, we strip the spaces when create
-    # availability_zone. But we don't strip at here for backward-compatible
-    # with some users already created availability_zone with
-    # leading/trailing spaces with legacy v2 API.
-    create_kwargs['availability_zone'] = server_dict.get(ATTRIBUTE_NAME)
-
-
-def get_server_create_schema(version):
-    if version == "2.0":
-        return schema.server_create_v20
-    return schema.server_create

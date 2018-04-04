@@ -50,7 +50,7 @@
             "reservation_id":"r-npxv0e40",
             "state":"shelved_offloaded",
             "task_state":null,
-            "power_state":"running",
+            "power_state":"shutdown",
             "tenant_id":"6f70656e737461636b20342065766572",
             "terminated_at":null,
             "auto_disk_config":"MANUAL",
@@ -71,9 +71,10 @@
                     "projects": null,
                     "swap": 0,
                     "is_public": true,
-                    "vcpu_weight": 0
+                    "vcpu_weight": 0,
+                    "description":null
                 },
-                "nova_object.version": "1.3",
+                "nova_object.version": "1.4",
                 "nova_object.namespace": "nova"
             },
             "user_id":"fake",

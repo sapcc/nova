@@ -44,13 +44,12 @@ hypervisor to use can be difficult, and you must take budget, resource
 constraints, supported features, and required technical specifications into
 account. However, the majority of OpenStack development is done on systems
 using KVM and Xen-based hypervisors. For a detailed list of features and
-support across different hypervisors, see the `Feature Support Matrix
-<https://docs.openstack.org/developer/nova/support-matrix.html>`_.
+support across different hypervisors, see :doc:`/user/support-matrix`.
 
 You can also orchestrate clouds using multiple hypervisors in different
 availability zones. Compute supports the following hypervisors:
 
-- `Baremetal <https://wiki.openstack.org/wiki/Ironic>`__
+- `Baremetal <https://docs.openstack.org/ironic/latest/>`__
 
 - `Docker <https://www.docker.io>`__
 
@@ -67,13 +66,13 @@ availability zones. Compute supports the following hypervisors:
 - `User Mode Linux (UML) <http://user-mode-linux.sourceforge.net/>`__
 
 - `VMware vSphere
-  <http://www.vmware.com/products/vsphere-hypervisor/support.html>`__
+  <https://www.vmware.com/support/vsphere-hypervisor.html>`__
 
 - `Xen <http://www.xen.org/support/documentation.html>`__
 
-For more information about hypervisors, see the `Hypervisors
-<https://docs.openstack.org/ocata/config-reference/compute/hypervisors.html>`__
-section in the OpenStack Configuration Reference.
+For more information about hypervisors, see
+:doc:`/admin/configuration/hypervisors`
+section in the Nova Configuration Reference.
 
 Projects, users, and roles
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -175,7 +174,7 @@ ephemeral storage, depending on the flavor selected. In this case, the root
 file system can be on the persistent volume, and its state is maintained, even
 if the instance is shut down. For more information about this type of
 configuration, see `Introduction to the Block Storage service
-<https://docs.openstack.org/ocata/config-reference/block-storage/block-storage-overview.html>`_
+<https://docs.openstack.org/cinder/latest/configuration/block-storage/block-storage-overview.html>`_
 in the OpenStack Configuration Reference.
 
 .. note::
@@ -231,6 +230,7 @@ Virtual hardware templates are called ``flavors``. By default, these are
 configurable by admin users, however that behavior can be changed by redefining
 the access controls for ``compute_extension:flavormanage`` in
 ``/etc/nova/policy.json`` on the ``compute-api`` server.
+For more information, refer to :doc:`/configuration/policy`.
 
 For a list of flavors that are available on your system:
 

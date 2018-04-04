@@ -22,6 +22,7 @@ import sys
 
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
+from oslo_reports import opts as gmr_opts
 
 import nova.conf
 from nova.conf import novnc
@@ -31,6 +32,7 @@ from nova import version
 
 CONF = nova.conf.CONF
 novnc.register_cli_opts(CONF)
+gmr_opts.set_defaults(CONF)
 
 
 def exit_with_error(msg, errno=-1):
@@ -38,7 +40,16 @@ def exit_with_error(msg, errno=-1):
     sys.exit(errno)
 
 
-def proxy(host, port):
+def proxy(host, port, security_proxy=None):
+    """:param host: local address to listen on
+    :param port: local port to listen on
+    :param security_proxy: instance of
+        nova.console.securityproxy.base.SecurityProxy
+
+    Setup a proxy listening on @host:@port. If the
+    @security_proxy parameter is not None, this instance
+    is used to negotiate security layer with the proxy target
+    """
 
     if CONF.ssl_only and not os.path.exists(CONF.cert):
         exit_with_error("SSL only and %s not found" % CONF.cert)
@@ -49,7 +60,7 @@ def proxy(host, port):
 
     logging.setup(CONF, "nova")
 
-    gmr.TextGuruMeditation.setup_autorun(version)
+    gmr.TextGuruMeditation.setup_autorun(version, conf=CONF)
 
     # Create and start the NovaWebSockets proxy
     websocketproxy.NovaWebSocketProxy(
@@ -64,5 +75,6 @@ def proxy(host, port):
         traffic=not CONF.daemon,
         web=CONF.web,
         file_only=True,
-        RequestHandlerClass=websocketproxy.NovaProxyRequestHandler
+        RequestHandlerClass=websocketproxy.NovaProxyRequestHandler,
+        security_proxy=security_proxy,
     ).start_server()

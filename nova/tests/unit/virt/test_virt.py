@@ -49,10 +49,11 @@ class TestVirtDriver(test.NoDBTestCase):
         empty_block_device_info = {}
 
         self.assertEqual(
-            driver.block_device_info_get_root(block_device_info), '/dev/sda')
+            driver.block_device_info_get_root_device(block_device_info),
+            '/dev/sda')
         self.assertIsNone(
-            driver.block_device_info_get_root(empty_block_device_info))
-        self.assertIsNone(driver.block_device_info_get_root(None))
+            driver.block_device_info_get_root_device(empty_block_device_info))
+        self.assertIsNone(driver.block_device_info_get_root_device(None))
 
         self.assertEqual(
             driver.block_device_info_get_swap(block_device_info), swap)
@@ -182,6 +183,8 @@ class TestDiskImage(test.NoDBTestCase):
 class TestVirtDisk(test.NoDBTestCase):
     def setUp(self):
         super(TestVirtDisk, self).setUp()
+
+        # TODO(mikal): this can probably be removed post privsep cleanup.
         self.executes = []
 
         def fake_execute(*cmd, **kwargs):
@@ -209,7 +212,15 @@ class TestVirtDisk(test.NoDBTestCase):
         self.assertEqual(disk_api.setup_container(image, container_dir),
                          '/dev/fake')
 
-    def test_lxc_teardown_container(self):
+    @mock.patch('os.path.exists', return_value=True)
+    @mock.patch('nova.privsep.fs.loopremove')
+    @mock.patch('nova.privsep.fs.umount')
+    @mock.patch('nova.privsep.fs.nbd_disconnect')
+    @mock.patch('nova.privsep.fs.remove_device_maps')
+    @mock.patch('nova.privsep.fs.blockdev_flush')
+    def test_lxc_teardown_container(
+            self, mock_blockdev_flush, mock_remove_maps, mock_nbd_disconnect,
+            mock_umount, mock_loopremove, mock_exist):
 
         def proc_mounts(mount_point):
             mount_points = {
@@ -220,74 +231,68 @@ class TestVirtDisk(test.NoDBTestCase):
             }
             return mount_points[mount_point]
 
-        self.stub_out('os.path.exists', lambda _: True)
         self.stub_out('nova.virt.disk.api._DiskImage._device_for_path',
                       proc_mounts)
-        expected_commands = []
 
         disk_api.teardown_container('/mnt/loop/nopart')
-        expected_commands += [
-                              ('umount', '/dev/loop0'),
-                              ('losetup', '--detach', '/dev/loop0'),
-                             ]
+        mock_loopremove.assert_has_calls([mock.call('/dev/loop0')])
+        mock_loopremove.reset_mock()
+        mock_umount.assert_has_calls([mock.call('/dev/loop0')])
+        mock_umount.reset_mock()
 
         disk_api.teardown_container('/mnt/loop/part')
-        expected_commands += [
-                              ('umount', '/dev/mapper/loop0p1'),
-                              ('kpartx', '-d', '/dev/loop0'),
-                              ('losetup', '--detach', '/dev/loop0'),
-                             ]
+        mock_loopremove.assert_has_calls([mock.call('/dev/loop0')])
+        mock_loopremove.reset_mock()
+        mock_umount.assert_has_calls([mock.call('/dev/mapper/loop0p1')])
+        mock_umount.reset_mock()
+        mock_remove_maps.assert_has_calls([mock.call('/dev/loop0')])
+        mock_remove_maps.reset_mock()
 
         disk_api.teardown_container('/mnt/nbd/nopart')
-        expected_commands += [
-                              ('blockdev', '--flushbufs', '/dev/nbd15'),
-                              ('umount', '/dev/nbd15'),
-                              ('qemu-nbd', '-d', '/dev/nbd15'),
-                             ]
+        mock_nbd_disconnect.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_umount.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_blockdev_flush.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_nbd_disconnect.reset_mock()
+        mock_umount.reset_mock()
+        mock_blockdev_flush.reset_mock()
 
         disk_api.teardown_container('/mnt/nbd/part')
-        expected_commands += [
-                              ('blockdev', '--flushbufs', '/dev/nbd15'),
-                              ('umount', '/dev/mapper/nbd15p1'),
-                              ('kpartx', '-d', '/dev/nbd15'),
-                              ('qemu-nbd', '-d', '/dev/nbd15'),
-                             ]
+        mock_nbd_disconnect.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_umount.assert_has_calls([mock.call('/dev/mapper/nbd15p1')])
+        mock_blockdev_flush.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_nbd_disconnect.reset_mock()
+        mock_umount.reset_mock()
+        mock_remove_maps.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_remove_maps.reset_mock()
+        mock_blockdev_flush.reset_mock()
 
         # NOTE(thomasem): Not adding any commands in this case, because we're
         # not expecting an additional umount for LocalBlockImages. This is to
         # assert that no additional commands are run in this case.
         disk_api.teardown_container('/dev/volume-group/uuid_disk')
+        mock_umount.assert_not_called()
 
-        self.assertEqual(self.executes, expected_commands)
-
-    def test_lxc_teardown_container_with_namespace_cleaned(self):
-
-        def proc_mounts(mount_point):
-            return None
-
-        self.stub_out('os.path.exists', lambda _: True)
-        self.stub_out('nova.virt.disk.api._DiskImage._device_for_path',
-                      proc_mounts)
-        expected_commands = []
+    @mock.patch('os.path.exists', return_value=True)
+    @mock.patch('nova.virt.disk.api._DiskImage._device_for_path',
+                return_value=None)
+    @mock.patch('nova.privsep.fs.loopremove')
+    @mock.patch('nova.privsep.fs.nbd_disconnect')
+    def test_lxc_teardown_container_with_namespace_cleaned(
+            self, mock_nbd_disconnect, mock_loopremove, mock_device_for_path,
+            mock_exists):
 
         disk_api.teardown_container('/mnt/loop/nopart', '/dev/loop0')
-        expected_commands += [
-                              ('losetup', '--detach', '/dev/loop0'),
-                             ]
+        mock_loopremove.assert_has_calls([mock.call('/dev/loop0')])
+        mock_loopremove.reset_mock()
 
         disk_api.teardown_container('/mnt/loop/part', '/dev/loop0')
-        expected_commands += [
-                              ('losetup', '--detach', '/dev/loop0'),
-                             ]
+        mock_loopremove.assert_has_calls([mock.call('/dev/loop0')])
+        mock_loopremove.reset_mock()
 
         disk_api.teardown_container('/mnt/nbd/nopart', '/dev/nbd15')
-        expected_commands += [
-                              ('qemu-nbd', '-d', '/dev/nbd15'),
-                             ]
+        mock_nbd_disconnect.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_nbd_disconnect.reset_mock()
 
         disk_api.teardown_container('/mnt/nbd/part', '/dev/nbd15')
-        expected_commands += [
-                              ('qemu-nbd', '-d', '/dev/nbd15'),
-                             ]
-
-        self.assertEqual(self.executes, expected_commands)
+        mock_nbd_disconnect.assert_has_calls([mock.call('/dev/nbd15')])
+        mock_nbd_disconnect.reset_mock()

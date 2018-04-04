@@ -33,11 +33,12 @@ if os.name != 'nt':
 from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
-from oslo_utils import units
 
 import nova.conf
 from nova import exception
 from nova.i18n import _
+import nova.privsep.fs
+import nova.privsep.libvirt
 from nova import utils
 from nova.virt.disk.mount import api as mount
 from nova.virt.disk.vfs import api as vfs
@@ -120,20 +121,10 @@ def mkfs(os_type, fs_label, target, run_as_root=True, specified_fs=None):
 
 
 def resize2fs(image, check_exit_code=False, run_as_root=False):
-    try:
-        utils.execute('e2fsck',
-                      '-fp',
-                      image,
-                      check_exit_code=[0, 1, 2],
-                      run_as_root=run_as_root)
-    except processutils.ProcessExecutionError as exc:
-        LOG.debug("Checking the file system with e2fsck has failed, "
-                  "the resize will be aborted. (%s)", exc)
+    if run_as_root:
+        nova.privsep.fs.resize2fs(image, check_exit_code)
     else:
-        utils.execute('resize2fs',
-                      image,
-                      check_exit_code=check_exit_code,
-                      run_as_root=run_as_root)
+        nova.privsep.fs.unprivileged_resize2fs(image, check_exit_code)
 
 
 def get_disk_size(path):
@@ -157,17 +148,11 @@ def extend(image, size):
     if not isinstance(image, imgmodel.LocalImage):
         return
 
-    if (image.format == imgmodel.FORMAT_PLOOP):
-        if not can_resize_image(image.path, size):
-            return
-
-        utils.execute('prl_disk_tool', 'resize',
-                      '--size', '%dM' % (size // units.Mi),
-                      '--resize_partition',
-                      '--hdd', image.path, run_as_root=True)
+    if not can_resize_image(image.path, size):
         return
 
-    if not can_resize_image(image.path, size):
+    if (image.format == imgmodel.FORMAT_PLOOP):
+        nova.privsep.libvirt.ploop_resize(image.path, size)
         return
 
     utils.execute('qemu-img', 'resize', image.path, size)
@@ -453,12 +438,10 @@ def teardown_container(container_dir, container_root_device=None):
         if container_root_device:
             if 'loop' in container_root_device:
                 LOG.debug("Release loop device %s", container_root_device)
-                utils.execute('losetup', '--detach', container_root_device,
-                              run_as_root=True, attempts=3)
+                nova.privsep.fs.loopremove(container_root_device)
             elif 'nbd' in container_root_device:
                 LOG.debug('Release nbd device %s', container_root_device)
-                utils.execute('qemu-nbd', '-d', container_root_device,
-                              run_as_root=True)
+                nova.privsep.fs.nbd_disconnect(container_root_device)
             else:
                 LOG.debug('No release necessary for block device %s',
                           container_root_device)

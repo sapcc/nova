@@ -15,6 +15,7 @@
 
 """Libvirt volume driver for HyperScale."""
 
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_log import log as logging
 
@@ -36,9 +37,9 @@ class LibvirtHyperScaleVolumeDriver(libvirt_volume.LibvirtVolumeDriver):
     def __init__(self, connection):
         super(LibvirtHyperScaleVolumeDriver, self).__init__(connection)
         self.connector = connector.InitiatorConnector.factory(
-            'VERITAS_HYPERSCALE', utils.get_root_helper())
+            initiator.VERITAS_HYPERSCALE, utils.get_root_helper())
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         # The os-brick connector may raise BrickException.
         # The convention in nova is to just propagate it up.
         # Note that the device path is returned from the os-brick connector
@@ -50,7 +51,8 @@ class LibvirtHyperScaleVolumeDriver(libvirt_volume.LibvirtVolumeDriver):
         LOG.info("connect_volume: device path %(device_path)s",
             {'device_path': connection_info['data']['device_path']})
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         self.connector.disconnect_volume(connection_info['data'], None)
-        LOG.info("Disconnected volume %(vol_id)s",
-                 {'vol_id': connection_info['data']['name']})
+        LOG.debug("Disconnected volume %(vol_id)s",
+                  {'vol_id': connection_info['data']['name']},
+                  instance=instance)

@@ -26,7 +26,6 @@ from nova.api.openstack.compute.views import images as views_images
 from nova import context as nova_context
 from nova import exception
 from nova import objects
-from nova.objects import base as obj_base
 from nova.policies import flavor_extra_specs as fes_policies
 from nova import utils
 
@@ -80,7 +79,7 @@ class ViewBuilder(common.ViewBuilder):
             },
         }
 
-    def basic(self, request, instance):
+    def basic(self, request, instance, show_extra_specs=False):
         """Generic, non-detailed view of an instance."""
         return {
             "server": {
@@ -112,10 +111,20 @@ class ViewBuilder(common.ViewBuilder):
         # results.
         return sorted(list(set(self._show_expected_attrs + expected_attrs)))
 
-    def show(self, request, instance, extend_address=True):
+    def show(self, request, instance, extend_address=True,
+             show_extra_specs=None):
         """Detailed view of a single instance."""
         ip_v4 = instance.get('access_ip_v4')
         ip_v6 = instance.get('access_ip_v6')
+
+        if show_extra_specs is None:
+            # detail will pre-calculate this for us. If we're doing show,
+            # then figure it out here.
+            show_extra_specs = False
+            if api_version_request.is_supported(request, min_version='2.47'):
+                context = request.environ['nova.context']
+                show_extra_specs = context.can(
+                    fes_policies.POLICY_ROOT % 'index', fatal=False)
 
         server = {
             "server": {
@@ -127,7 +136,8 @@ class ViewBuilder(common.ViewBuilder):
                 "metadata": self._get_metadata(instance),
                 "hostId": self._get_host_id(instance) or "",
                 "image": self._get_image(request, instance),
-                "flavor": self._get_flavor(request, instance),
+                "flavor": self._get_flavor(request, instance,
+                                           show_extra_specs),
                 "created": utils.isotime(instance["created_at"]),
                 "updated": utils.isotime(instance["updated_at"]),
                 "addresses": self._get_addresses(request, instance,
@@ -168,14 +178,26 @@ class ViewBuilder(common.ViewBuilder):
     def index(self, request, instances):
         """Show a list of servers without many details."""
         coll_name = self._collection_name
-        return self._list_view(self.basic, request, instances, coll_name)
+        return self._list_view(self.basic, request, instances, coll_name,
+                               False)
 
     def detail(self, request, instances):
         """Detailed view of a list of instance."""
         coll_name = self._collection_name + '/detail'
-        return self._list_view(self.show, request, instances, coll_name)
 
-    def _list_view(self, func, request, servers, coll_name):
+        if api_version_request.is_supported(request, min_version='2.47'):
+            # Determine if we should show extra_specs in the inlined flavor
+            # once before we iterate the list of instances
+            context = request.environ['nova.context']
+            show_extra_specs = context.can(fes_policies.POLICY_ROOT % 'index',
+                                           fatal=False)
+        else:
+            show_extra_specs = False
+
+        return self._list_view(self.show, request, instances, coll_name,
+                               show_extra_specs)
+
+    def _list_view(self, func, request, servers, coll_name, show_extra_specs):
         """Provide a view for a list of servers.
 
         :param func: Function used to format the server data
@@ -185,7 +207,9 @@ class ViewBuilder(common.ViewBuilder):
                           for a pagination query
         :returns: Server data in dictionary format
         """
-        server_list = [func(request, server)["server"] for server in servers]
+        server_list = [func(request, server,
+                            show_extra_specs=show_extra_specs)["server"]
+                       for server in servers]
         servers_links = self._get_collection_links(request,
                                                    servers,
                                                    coll_name)
@@ -198,12 +222,7 @@ class ViewBuilder(common.ViewBuilder):
 
     @staticmethod
     def _get_metadata(instance):
-        # FIXME(danms): Transitional support for objects
-        metadata = instance.get('metadata')
-        if isinstance(instance, obj_base.NovaObject):
-            return metadata or {}
-        else:
-            return utils.instance_meta(instance)
+        return instance.metadata or {}
 
     @staticmethod
     def _get_vm_status(instance):
@@ -245,7 +264,7 @@ class ViewBuilder(common.ViewBuilder):
         else:
             return ""
 
-    def _get_flavor_dict(self, request, instance_type):
+    def _get_flavor_dict(self, request, instance_type, show_extra_specs):
         flavordict = {
             "vcpus": instance_type.vcpus,
             "ram": instance_type.memory_mb,
@@ -254,12 +273,11 @@ class ViewBuilder(common.ViewBuilder):
             "swap": instance_type.swap,
             "original_name": instance_type.name
         }
-        context = request.environ['nova.context']
-        if context.can(fes_policies.POLICY_ROOT % 'index', fatal=False):
+        if show_extra_specs:
             flavordict['extra_specs'] = instance_type.extra_specs
         return flavordict
 
-    def _get_flavor(self, request, instance):
+    def _get_flavor(self, request, instance, show_extra_specs):
         instance_type = instance.get_flavor()
         if not instance_type:
             LOG.warning("Instance has had its instance_type removed "
@@ -267,7 +285,8 @@ class ViewBuilder(common.ViewBuilder):
             return {}
 
         if api_version_request.is_supported(request, min_version="2.47"):
-            return self._get_flavor_dict(request, instance_type)
+            return self._get_flavor_dict(request, instance_type,
+                                         show_extra_specs)
 
         flavor_id = instance_type["flavorid"]
         flavor_bookmark = self._flavor_builder._get_bookmark_link(request,

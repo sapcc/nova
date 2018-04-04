@@ -45,26 +45,10 @@ CONF = nova.conf.CONF
 QUOTAS = quota.QUOTAS
 
 
-def _host_state_obj_to_dict(host_state):
-    limits = dict(host_state.limits)
-    # The NUMATopologyFilter can set 'numa_topology' in the limits dict
-    # to a NUMATopologyLimits object which we need to convert to a primitive
-    # before this hits jsonutils.to_primitive(). We only check for that known
-    # case specifically as we don't care about handling out of tree filters
-    # or drivers injecting non-serializable things in the limits dict.
-    if 'numa_topology' in limits:
-        limits['numa_topology'] = limits['numa_topology'].obj_to_primitive()
-    return {
-        'host': host_state.host,
-        'nodename': host_state.nodename,
-        'limits': limits
-    }
-
-
 class SchedulerManager(manager.Manager):
     """Chooses a host to run instances on."""
 
-    target = messaging.Target(version='4.4')
+    target = messaging.Target(version='4.5')
 
     _sentinel = object()
 
@@ -79,10 +63,6 @@ class SchedulerManager(manager.Manager):
                 invoke_on_load=True).driver
         super(SchedulerManager, self).__init__(service_name='scheduler',
                                                *args, **kwargs)
-
-    @periodic_task.periodic_task
-    def _expire_reservations(self, context):
-        QUOTAS.expire(context)
 
     @periodic_task.periodic_task(
         spacing=CONF.scheduler.discover_hosts_in_cells_interval,
@@ -102,13 +82,30 @@ class SchedulerManager(manager.Manager):
         self.driver.run_periodic_tasks(context)
 
     @messaging.expected_exceptions(exception.NoValidHost)
-    def select_destinations(self, ctxt,
-                            request_spec=None, filter_properties=None,
-                            spec_obj=_sentinel, instance_uuids=None):
+    def select_destinations(self, ctxt, request_spec=None,
+            filter_properties=None, spec_obj=_sentinel, instance_uuids=None,
+            return_objects=False, return_alternates=False):
         """Returns destinations(s) best suited for this RequestSpec.
 
-        The result should be a list of dicts with 'host', 'nodename' and
-        'limits' as keys.
+        Starting in Queens, this method returns a list of lists of Selection
+        objects, with one list for each requested instance. Each instance's
+        list will have its first element be the Selection object representing
+        the chosen host for the instance, and if return_alternates is True,
+        zero or more alternate objects that could also satisfy the request. The
+        number of alternates is determined by the configuration option
+        `CONF.scheduler.max_attempts`.
+
+        The ability of a calling method to handle this format of returned
+        destinations is indicated by a True value in the parameter
+        `return_objects`. However, there may still be some older conductors in
+        a deployment that have not been updated to Queens, and in that case
+        return_objects will be False, and the result will be a list of dicts
+        with 'host', 'nodename' and 'limits' as keys. When return_objects is
+        False, the value of return_alternates has no effect. The reason there
+        are two kwarg parameters return_objects and return_alternates is so we
+        can differentiate between callers that understand the Selection object
+        format but *don't* want to get alternate hosts, as is the case with the
+        conductors that handle certain move operations.
         """
         LOG.debug("Starting to schedule for instances: %s", instance_uuids)
 
@@ -119,16 +116,19 @@ class SchedulerManager(manager.Manager):
                                                            request_spec,
                                                            filter_properties)
         resources = utils.resources_from_request_spec(spec_obj)
-        alloc_reqs_by_rp_uuid, provider_summaries = None, None
+        alloc_reqs_by_rp_uuid, provider_summaries, allocation_request_version \
+            = None, None, None
         if self.driver.USES_ALLOCATION_CANDIDATES:
             res = self.placement_client.get_allocation_candidates(resources)
             if res is None:
                 # We have to handle the case that we failed to connect to the
                 # Placement service and the safe_connect decorator on
                 # get_allocation_candidates returns None.
-                alloc_reqs, provider_summaries = None, None
+                alloc_reqs, provider_summaries, allocation_request_version = (
+                        None, None, None)
             else:
-                alloc_reqs, provider_summaries = res
+                (alloc_reqs, provider_summaries,
+                            allocation_request_version) = res
             if not alloc_reqs:
                 LOG.debug("Got no allocation candidates from the Placement "
                           "API. This may be a temporary occurrence as compute "
@@ -141,14 +141,21 @@ class SchedulerManager(manager.Manager):
                 # a host, we can grab an allocation request easily
                 alloc_reqs_by_rp_uuid = collections.defaultdict(list)
                 for ar in alloc_reqs:
-                    for rr in ar['allocations']:
-                        rp_uuid = rr['resource_provider']['uuid']
+                    for rp_uuid in ar['allocations']:
                         alloc_reqs_by_rp_uuid[rp_uuid].append(ar)
 
-        dests = self.driver.select_destinations(ctxt, spec_obj, instance_uuids,
-            alloc_reqs_by_rp_uuid, provider_summaries)
-        dest_dicts = [_host_state_obj_to_dict(d) for d in dests]
-        return jsonutils.to_primitive(dest_dicts)
+        # Only return alternates if both return_objects and return_alternates
+        # are True.
+        return_alternates = return_alternates and return_objects
+        selections = self.driver.select_destinations(ctxt, spec_obj,
+                instance_uuids, alloc_reqs_by_rp_uuid, provider_summaries,
+                allocation_request_version, return_alternates)
+        # If `return_objects` is False, we need to convert the selections to
+        # the older format, which is a list of host state dicts.
+        if not return_objects:
+            selection_dicts = [sel[0].to_dict() for sel in selections]
+            return jsonutils.to_primitive(selection_dicts)
+        return selections
 
     def update_aggregates(self, ctxt, aggregates):
         """Updates HostManager internal aggregates information.

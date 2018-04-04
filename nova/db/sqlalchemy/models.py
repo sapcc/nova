@@ -305,8 +305,8 @@ class Instance(BASE, NovaBase, models.SoftDeleteMixin):
     # An instance may have moved to another host by live migration.
     launched_on = Column(MediumText())
 
-    # NOTE(jdillaman): locked deprecated in favor of locked_by,
-    # to be removed in Icehouse
+    # locked is superseded by locked_by and locked is not really
+    # necessary but still used in API code so it remains.
     locked = Column(Boolean)
     locked_by = Column(Enum('owner', 'admin'))
 
@@ -583,10 +583,18 @@ class BlockDeviceMapping(BASE, NovaBase, models.SoftDeleteMixin):
         Index('block_device_mapping_instance_uuid_volume_id_idx',
               'instance_uuid', 'volume_id'),
         Index('block_device_mapping_instance_uuid_idx', 'instance_uuid'),
+        schema.UniqueConstraint('uuid', name='uniq_block_device_mapping0uuid'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     instance_uuid = Column(String(36), ForeignKey('instances.uuid'))
+    # NOTE(mdbooth): The REST API for BDMs includes a UUID field. That uuid
+    # refers to an image, volume, or snapshot which will be used in the
+    # initialisation of the BDM. It is only relevant during the API call, and
+    # is not persisted directly. This is the UUID of the BDM itself.
+    # FIXME(danms): This should eventually be non-nullable, but we need a
+    # transition period first.
+    uuid = Column(String(36))
     instance = orm.relationship(Instance,
                             backref=orm.backref('block_device_mapping'),
                             foreign_keys=instance_uuid,
@@ -752,6 +760,8 @@ class Migration(BASE, NovaBase, models.SoftDeleteMixin):
         Index('migrations_by_host_nodes_and_status_idx', 'deleted',
               'source_compute', 'dest_compute', 'source_node', 'dest_node',
               'status'),
+        Index('migrations_uuid', 'uuid', unique=True),
+        Index('migrations_updated_at_idx', 'updated_at'),
     )
     id = Column(Integer, primary_key=True, nullable=False)
     # NOTE(tr3buchet): the ____compute variables are instance['host']
@@ -765,6 +775,7 @@ class Migration(BASE, NovaBase, models.SoftDeleteMixin):
     old_instance_type_id = Column(Integer())
     new_instance_type_id = Column(Integer())
     instance_uuid = Column(String(36), ForeignKey('instances.uuid'))
+    uuid = Column(String(36), nullable=True)
     # TODO(_cerberus_): enum
     status = Column(String(255))
     migration_type = Column(Enum('migration', 'resize', 'live-migration',
@@ -1276,7 +1287,9 @@ class InstanceAction(BASE, NovaBase, models.SoftDeleteMixin):
     __tablename__ = 'instance_actions'
     __table_args__ = (
         Index('instance_uuid_idx', 'instance_uuid'),
-        Index('request_id_idx', 'request_id')
+        Index('request_id_idx', 'request_id'),
+        Index('instance_actions_instance_uuid_updated_at_idx',
+              'instance_uuid', 'updated_at')
     )
 
     id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
@@ -1453,10 +1466,10 @@ class PciDevice(BASE, NovaBase, models.SoftDeleteMixin):
 
     parent_addr = Column(String(12), nullable=True)
     instance = orm.relationship(Instance, backref="pci_devices",
-                            foreign_keys=instance_uuid,
-                            primaryjoin='and_('
-                            'PciDevice.instance_uuid == Instance.uuid,'
-                            'PciDevice.deleted == 0)')
+                                foreign_keys=instance_uuid,
+                                primaryjoin='and_('
+                                'PciDevice.instance_uuid == Instance.uuid,'
+                                'PciDevice.deleted == 0)')
 
 
 class Tag(BASE, models.ModelBase):
@@ -1578,6 +1591,8 @@ class ConsoleAuthToken(BASE, NovaBase):
         Index('console_auth_tokens_instance_uuid_idx', 'instance_uuid'),
         Index('console_auth_tokens_host_expires_idx', 'host', 'expires'),
         Index('console_auth_tokens_token_hash_idx', 'token_hash'),
+        Index('console_auth_tokens_token_hash_instance_uuid_idx', 'token_hash',
+              'instance_uuid'),
         schema.UniqueConstraint("token_hash",
                                 name="uniq_console_auth_tokens0token_hash")
     )
@@ -1589,6 +1604,7 @@ class ConsoleAuthToken(BASE, NovaBase):
     internal_access_path = Column(String(255))
     instance_uuid = Column(String(36), nullable=False)
     expires = Column(Integer, nullable=False)
+    access_url_base = Column(String(255))
 
     instance = orm.relationship(
         "Instance",

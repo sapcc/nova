@@ -10,6 +10,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_log import log as logging
 
@@ -32,7 +33,7 @@ class LibvirtFibreChannelVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         # Call the factory here so we can support
         # more than x86 architectures.
         self.connector = connector.InitiatorConnector.factory(
-            'FIBRE_CHANNEL', utils.get_root_helper(),
+            initiator.FIBRE_CHANNEL, utils.get_root_helper(),
             use_multipath=CONF.libvirt.volume_use_multipath,
             device_scan_attempts=CONF.libvirt.num_volume_scan_tries)
 
@@ -46,7 +47,7 @@ class LibvirtFibreChannelVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         conf.driver_io = "native"
         return conf
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         """Attach the volume to instance_name."""
 
         LOG.debug("Calling os-brick to attach FC Volume")
@@ -58,10 +59,10 @@ class LibvirtFibreChannelVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
             connection_info['data']['multipath_id'] = \
                 device_info['multipath_id']
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         """Detach the volume from instance_name."""
 
-        LOG.debug("calling os-brick to detach FC Volume")
+        LOG.debug("calling os-brick to detach FC Volume", instance=instance)
         # TODO(walter-boring) eliminated the need for preserving
         # multipath_id.  Use scsi_id instead of multipath -ll
         # This will then eliminate the need to pass anything in
@@ -69,10 +70,10 @@ class LibvirtFibreChannelVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         # with the rest of the connectors.
         self.connector.disconnect_volume(connection_info['data'],
                                          connection_info['data'])
-        LOG.debug("Disconnected FC Volume %s", disk_dev)
+        LOG.debug("Disconnected FC Volume", instance=instance)
 
         super(LibvirtFibreChannelVolumeDriver,
-              self).disconnect_volume(connection_info, disk_dev, instance)
+              self).disconnect_volume(connection_info, instance)
 
     def extend_volume(self, connection_info, instance):
         """Extend the volume."""

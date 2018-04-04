@@ -361,8 +361,8 @@ Install and configure components
         [vnc]
         enabled = true
         # ...
-        vncserver_listen = $my_ip
-        vncserver_proxyclient_address = $my_ip
+        server_listen = $my_ip
+        server_proxyclient_address = $my_ip
 
    * In the ``[glance]`` section, configure the location of the Image service
      API:
@@ -382,10 +382,6 @@ Install and configure components
         [oslo_concurrency]
         # ...
         lock_path = /var/lib/nova/tmp
-
-   .. todo::
-
-      https://bugs.launchpad.net/ubuntu/+source/nova/+bug/1506667
 
    * Due to a packaging bug, remove the ``log_dir`` option from the
      ``[DEFAULT]`` section.

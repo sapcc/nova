@@ -24,10 +24,11 @@ of all filters are merged with a boolean `AND`.
 
 .. rest_parameters:: parameters.yaml
 
-  - resources: resources_query
-  - member_of: member_of
-  - uuid: resource_provider_uuid_query
   - name: resource_provider_name_query
+  - uuid: resource_provider_uuid_query
+  - member_of: member_of
+  - resources: resources_query
+  - in_tree: resource_provider_tree_query
 
 Response
 --------
@@ -39,7 +40,8 @@ Response
   - uuid: resource_provider_uuid
   - links: resource_provider_links
   - name: resource_provider_name
-
+  - parent_provider_uuid: resource_provider_parent_provider_uuid_required
+  - root_provider_uuid: resource_provider_root_provider_uuid_required
 
 Response Example
 ----------------
@@ -69,6 +71,7 @@ Request
 
   - name: resource_provider_name
   - uuid: resource_provider_uuid_opt
+  - parent_provider_uuid: resource_provider_parent_provider_uuid
 
 Request example
 ---------------
@@ -78,5 +81,9 @@ Request example
 
 Response
 --------
+
+.. rest_parameters:: parameters.yaml
+
+  - Location: location
 
 No body content is returned on a successful POST.

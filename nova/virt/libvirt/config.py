@@ -75,9 +75,8 @@ class LibvirtConfigObject(object):
 
     def to_xml(self, pretty_print=True):
         root = self.format_dom()
-        xml_str = etree.tostring(root, pretty_print=pretty_print)
-        if six.PY3 and isinstance(xml_str, six.binary_type):
-            xml_str = xml_str.decode("utf-8")
+        xml_str = etree.tostring(root, encoding='unicode',
+                                 pretty_print=pretty_print)
         return xml_str
 
 
@@ -717,6 +716,7 @@ class LibvirtConfigGuestDisk(LibvirtConfigGuestDevice):
         self.device_addr = None
         self.boot_order = None
         self.mirror = None
+        self.encryption = None
 
     def format_dom(self):
         dev = super(LibvirtConfigGuestDisk, self).format_dom()
@@ -827,6 +827,9 @@ class LibvirtConfigGuestDisk(LibvirtConfigGuestDevice):
         if self.device_addr:
             dev.append(self.device_addr.format_dom())
 
+        if self.encryption:
+            dev.append(self.encryption.format_dom())
+
         return dev
 
     def parse_dom(self, xmldoc):
@@ -883,6 +886,10 @@ class LibvirtConfigGuestDisk(LibvirtConfigGuestDevice):
                 m = LibvirtConfigGuestDiskMirror()
                 m.parse_dom(c)
                 self.mirror = m
+            elif c.tag == 'encryption':
+                e = LibvirtConfigGuestDiskEncryption()
+                e.parse_dom(c)
+                self.encryption = e
 
 
 class LibvirtConfigGuestDiskBackingStore(LibvirtConfigObject):
@@ -1106,6 +1113,47 @@ class LibvirtConfigGuestFilesys(LibvirtConfigGuestDevice):
                     self.source_dir = c.get('dir')
             elif c.tag == 'target':
                 self.target_dir = c.get('dir')
+
+
+class LibvirtConfigGuestDiskEncryptionSecret(LibvirtConfigObject):
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestDiskEncryptionSecret, self).__init__(**kwargs)
+        self.type = None
+        self.uuid = None
+
+    def parse_dom(self, xmldoc):
+        self.type = xmldoc.get('type')
+        self.uuid = xmldoc.get('uuid')
+
+    def format_dom(self):
+        obj = etree.Element("secret")
+        obj.set("type", self.type)
+        obj.set("uuid", self.uuid)
+        return obj
+
+
+class LibvirtConfigGuestDiskEncryption(LibvirtConfigObject):
+    """https://libvirt.org/formatstorageencryption.html
+    """
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestDiskEncryption, self).__init__(**kwargs)
+        self.format = None
+        self.secret = None
+
+    def parse_dom(self, xmldoc):
+        self.format = xmldoc.get('format')
+        for c in xmldoc.getchildren():
+            if c.tag == 'secret':
+                m = LibvirtConfigGuestDiskEncryptionSecret()
+                m.parse_dom(c)
+                self.secret = m
+
+    def format_dom(self):
+        obj = etree.Element("encryption")
+        obj.set("format", self.format)
+        obj.append(self.secret.format_dom())
+
+        return obj
 
 
 class LibvirtConfigGuestDiskMirror(LibvirtConfigObject):
@@ -1590,13 +1638,22 @@ class LibvirtConfigGuestController(LibvirtConfigGuestDevice):
         return controller
 
 
+class LibvirtConfigGuestUSBHostController(LibvirtConfigGuestController):
+
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestUSBHostController, self).__init__(**kwargs)
+        self.type = 'usb'
+
+
 class LibvirtConfigGuestHostdev(LibvirtConfigGuestDevice):
     def __init__(self, **kwargs):
         super(LibvirtConfigGuestHostdev, self).\
                 __init__(root_name="hostdev", **kwargs)
         self.mode = kwargs.get('mode')
         self.type = kwargs.get('type')
-        self.managed = 'yes'
+        # managed attribute is only used by PCI devices but mediated devices
+        # need to say managed=no
+        self.managed = kwargs.get('managed', 'yes')
 
     def format_dom(self):
         dev = super(LibvirtConfigGuestHostdev, self).format_dom()
@@ -1646,6 +1703,37 @@ class LibvirtConfigGuestHostdevPCI(LibvirtConfigGuestHostdev):
                         self.bus = sub.get('bus')
                         self.slot = sub.get('slot')
                         self.function = sub.get('function')
+
+
+class LibvirtConfigGuestHostdevMDEV(LibvirtConfigGuestHostdev):
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestHostdevMDEV, self).__init__(
+            mode='subsystem', type='mdev', managed='no', **kwargs)
+        # model attribute is only supported by mediated devices
+        self.model = kwargs.get('model', 'vfio-pci')
+        self.uuid = None
+
+    def format_dom(self):
+        dev = super(LibvirtConfigGuestHostdevMDEV, self).format_dom()
+        if self.model:
+            dev.set("model", self.model)
+
+        address = etree.Element("address", uuid=self.uuid)
+        source = etree.Element("source")
+        source.append(address)
+        dev.append(source)
+        return dev
+
+    def parse_dom(self, xmldoc):
+        children = super(LibvirtConfigGuestHostdevMDEV, self).parse_dom(xmldoc)
+        if xmldoc.get('model'):
+            self.model = xmldoc.get('model')
+        for c in children:
+            if c.tag == "source":
+                for sub in c.getchildren():
+                    if sub.tag == 'address':
+                        self.uuid = sub.get('uuid')
+                        return
 
 
 class LibvirtConfigGuestCharBase(LibvirtConfigGuestDevice):
@@ -2282,6 +2370,7 @@ class LibvirtConfigGuest(LibvirtConfigObject):
         # Note: This cover only for: LibvirtConfigGuestDisks
         #                            LibvirtConfigGuestFilesys
         #                            LibvirtConfigGuestHostdevPCI
+        #                            LibvirtConfigGuestHostdevMDEV
         #                            LibvirtConfigGuestInterface
         #                            LibvirtConfigGuestUidMap
         #                            LibvirtConfigGuestGidMap
@@ -2299,6 +2388,10 @@ class LibvirtConfigGuest(LibvirtConfigObject):
                         self.devices.append(obj)
                     elif d.tag == 'hostdev' and d.get('type') == 'pci':
                         obj = LibvirtConfigGuestHostdevPCI()
+                        obj.parse_dom(d)
+                        self.devices.append(obj)
+                    elif d.tag == 'hostdev' and d.get('type') == 'mdev':
+                        obj = LibvirtConfigGuestHostdevMDEV()
                         obj.parse_dom(d)
                         self.devices.append(obj)
                     elif d.tag == 'interface':
@@ -2378,6 +2471,7 @@ class LibvirtConfigNodeDevice(LibvirtConfigObject):
         self.parent = None
         self.driver = None
         self.pci_capability = None
+        self.mdev_information = None
 
     def parse_dom(self, xmldoc):
         super(LibvirtConfigNodeDevice, self).parse_dom(xmldoc)
@@ -2391,6 +2485,10 @@ class LibvirtConfigNodeDevice(LibvirtConfigObject):
                 pcicap = LibvirtConfigNodeDevicePciCap()
                 pcicap.parse_dom(c)
                 self.pci_capability = pcicap
+            elif c.tag == "capability" and c.get("type") in ['mdev']:
+                mdev_info = LibvirtConfigNodeDeviceMdevInformation()
+                mdev_info.parse_dom(c)
+                self.mdev_information = mdev_info
 
 
 class LibvirtConfigNodeDevicePciCap(LibvirtConfigObject):
@@ -2409,6 +2507,7 @@ class LibvirtConfigNodeDevicePciCap(LibvirtConfigObject):
         self.vendor_id = None
         self.numa_node = None
         self.fun_capability = []
+        self.mdev_capability = []
         self.interface = None
         self.address = None
         self.link_state = None
@@ -2447,6 +2546,10 @@ class LibvirtConfigNodeDevicePciCap(LibvirtConfigObject):
                 funcap = LibvirtConfigNodeDevicePciSubFunctionCap()
                 funcap.parse_dom(c)
                 self.fun_capability.append(funcap)
+            elif c.tag == "capability" and c.get('type') in ('mdev_types',):
+                mdevcap = LibvirtConfigNodeDeviceMdevCapableSubFunctionCap()
+                mdevcap.parse_dom(c)
+                self.mdev_capability.append(mdevcap)
 
 
 class LibvirtConfigNodeDevicePciSubFunctionCap(LibvirtConfigObject):
@@ -2465,6 +2568,45 @@ class LibvirtConfigNodeDevicePciSubFunctionCap(LibvirtConfigObject):
                                           int(c.get('bus'), 16),
                                           int(c.get('slot'), 16),
                                           int(c.get('function'), 16)))
+
+
+class LibvirtConfigNodeDeviceMdevCapableSubFunctionCap(LibvirtConfigObject):
+    def __init__(self, **kwargs):
+        super(LibvirtConfigNodeDeviceMdevCapableSubFunctionCap, self).__init__(
+                                        root_name="capability", **kwargs)
+        # mdev_types is a list of dictionaries where each item looks like:
+        # {'type': 'nvidia-11', 'name': 'GRID M60-0B', 'deviceAPI': 'vfio-pci',
+        #  'availableInstances': 16}
+        self.mdev_types = list()
+
+    def parse_dom(self, xmldoc):
+        super(LibvirtConfigNodeDeviceMdevCapableSubFunctionCap,
+              self).parse_dom(xmldoc)
+        for c in xmldoc.getchildren():
+            if c.tag == "type":
+                mdev_type = {'type': c.get('id')}
+                for e in c.getchildren():
+                    mdev_type[e.tag] = (int(e.text)
+                                        if e.tag == 'availableInstances'
+                                        else e.text)
+                self.mdev_types.append(mdev_type)
+
+
+class LibvirtConfigNodeDeviceMdevInformation(LibvirtConfigObject):
+    def __init__(self, **kwargs):
+        super(LibvirtConfigNodeDeviceMdevInformation, self).__init__(
+                                        root_name="capability", **kwargs)
+        self.type = None
+        self.iommu_group = None
+
+    def parse_dom(self, xmldoc):
+        super(LibvirtConfigNodeDeviceMdevInformation,
+              self).parse_dom(xmldoc)
+        for c in xmldoc.getchildren():
+            if c.tag == "type":
+                self.type = c.get('id')
+            if c.tag == "iommuGroup":
+                self.iommu_group = int(c.get('number'))
 
 
 class LibvirtConfigGuestRng(LibvirtConfigGuestDevice):

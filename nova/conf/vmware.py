@@ -92,6 +92,13 @@ Related options:
 This option is ignored if serial_port_service_uri is not specified.
 * serial_port_service_uri
 """),
+    cfg.StrOpt('serial_log_dir',
+               default='/opt/vmware/vspc',
+               help="""
+Specifies the directory where the Virtual Serial Port Concentrator is
+storing console log files. It should match the 'serial_log_dir' config
+value of VSPC.
+"""),
 ]
 
 vmwareapi_opts = [
@@ -191,6 +198,16 @@ operation from the cache location to the hypervisor file directory
 in the shared datastore. If set to true, the above copy operation
 is avoided as it creates copy of the virtual machine that shares
 virtual disks with its parent VM.
+"""),
+    cfg.IntOpt('connection_pool_size',
+               min=10,
+               default=10,
+               help="""
+This option sets the http connection pool size
+
+The connection pool size is the maximum number of connections from nova to
+vSphere.  It should only be increased if there are warnings indicating that
+the connection pool is full, otherwise, the default should suffice.
 """)
 ]
 

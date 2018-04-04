@@ -24,6 +24,13 @@ tests:
       openstack-api-version: placement 1.8
   status: 404
 
+- name: get allocation candidates empty resources
+  GET: /allocation_candidates?resources=
+  status: 400
+  response_strings:
+      - Badly formed resources parameter. Expected resources query string parameter in form
+      - 'Got: empty string.'
+
 - name: get allocation candidates no resources
   GET: /allocation_candidates
   status: 400
@@ -35,6 +42,42 @@ tests:
   status: 400
   response_strings:
       - Invalid resource class in resources parameter
+
+- name: get bad limit microversion
+  GET: /allocation_candidates?resources=VCPU:1&limit=5
+  request_headers:
+      openstack-api-version: placement 1.15
+  status: 400
+  response_strings:
+      - Invalid query string parameters
+      - "'limit' was unexpected"
+
+- name: get bad limit type
+  GET: /allocation_candidates?resources=VCPU:1&limit=cow
+  request_headers:
+      openstack-api-version: placement 1.16
+  status: 400
+  response_strings:
+      - Invalid query string parameters
+      - "Failed validating 'pattern'"
+
+- name: get bad limit value negative
+  GET: /allocation_candidates?resources=VCPU:1&limit=-99
+  request_headers:
+      openstack-api-version: placement 1.16
+  status: 400
+  response_strings:
+      - Invalid query string parameters
+      - "Failed validating 'pattern'"
+
+- name: get bad limit value zero
+  GET: /allocation_candidates?resources=VCPU:1&limit=0
+  request_headers:
+      openstack-api-version: placement 1.16
+  status: 400
+  response_strings:
+      - Invalid query string parameters
+      - "Failed validating 'pattern'"
 
 - name: get allocation candidates no allocations yet
   GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100
@@ -76,3 +119,131 @@ tests:
       # storage show correct capacity and usage
       $.provider_summaries["$ENVIRON['SS_UUID']"].resources[DISK_GB].capacity: 1900 # 1.0 * 2000 - 100G
       $.provider_summaries["$ENVIRON['SS_UUID']"].resources[DISK_GB].used: 0
+  response_forbidden_headers:
+      # In the default microversion in this file (1.10) the cache headers
+      # are not preset.
+      - cache-control
+      - last-modified
+
+# Verify the 1.12 format of the allocation_requests sub object which
+# changes from a list-list to dict-ish format.
+- name: get allocation candidates 1.12 dictish
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100
+  request_headers:
+      openstack-api-version: placement 1.12
+  response_json_paths:
+      # There are 3 providers involved. 2 compute nodes, 1 shared storage
+      # provider
+      $.provider_summaries.`len`: 3
+      # However, there are only 2 allocation requests, one for each compute
+      # node that provides the VCPU/MEMORY_MB and DISK_GB provided by the
+      # shared storage provider
+      $.allocation_requests.`len`: 2
+      # Verify that compute node #1 only has VCPU and MEMORY_MB listed in the
+      # resource requests. This validates the entire resources key.
+      $.allocation_requests..allocations["$ENVIRON['CN1_UUID']"].resources:
+          VCPU: 1
+          MEMORY_MB: 1024
+      # Verify that compute node #2 only has VCPU and MEMORY_MB listed in the
+      # resource requests
+      $.allocation_requests..allocations["$ENVIRON['CN2_UUID']"].resources:
+          VCPU: 1
+          MEMORY_MB: 1024
+      # Verify that shared storage provider only has DISK_GB listed in the
+      # resource requests, but is listed twice
+      $.allocation_requests..allocations["$ENVIRON['SS_UUID']"].resources[DISK_GB]: [100, 100]
+
+- name: get allocation candidates cache headers
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100
+  request_headers:
+      # microversion 1.15 to cause cache headers
+      openstack-api-version: placement 1.15
+  response_headers:
+      cache-control: no-cache
+      # Does last-modified look like a legit timestamp?
+      last-modified:  /^\w+, \d+ \w+ \d{4} [\d:]+ GMT$/
+
+- name: get allocation candidates with limit
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&limit=1
+  status: 200
+  request_headers:
+      openstack-api-version: placement 1.16
+  response_json_paths:
+      $.allocation_requests.`len`: 1
+
+- name: get allocation candidates with required traits in old version
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=HW_CPU_X86_SSE
+  status: 400
+  request_headers:
+      openstack-api-version: placement 1.16
+  response_strings:
+      - Invalid query string parameters
+      - "'required' was unexpected"
+
+- name: get allocation candidates without traits summary in old version
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100
+  status: 200
+  request_headers:
+      openstack-api-version: placement 1.16
+  response_json_paths:
+       $.provider_summaries["$ENVIRON['CN1_UUID']"].`len`: 1
+       $.provider_summaries["$ENVIRON['CN2_UUID']"].`len`: 1
+
+- name: get allocation candidates with invalid trait
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=INVALID_TRAIT
+  status: 400
+  request_headers:
+      openstack-api-version: placement 1.17
+  response_strings:
+      - No such trait(s)
+
+- name: get allocation candidates with empty required value
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=
+  status: 400
+  request_headers:
+      openstack-api-version: placement 1.17
+  response_strings:
+      - "Invalid query string parameters: Expected 'required' parameter value of the form: HW_CPU_X86_VMX,CUSTOM_MAGIC."
+
+- name: get allocation candidates with invalid required value
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=,,
+  status: 400
+  request_headers:
+      openstack-api-version: placement 1.17
+  response_strings:
+      - "Invalid query string parameters: Expected 'required' parameter value of the form: HW_CPU_X86_VMX,CUSTOM_MAGIC."
+
+- name: get allocation candidates with required trait
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=HW_CPU_X86_SSE
+  status: 200
+  request_headers:
+      openstack-api-version: placement 1.17
+  response_json_paths:
+      $.allocation_requests.`len`: 1
+      $.provider_summaries.`len`: 2
+      $.provider_summaries["$ENVIRON['CN1_UUID']"].`len`: 2
+      $.provider_summaries["$ENVIRON['CN1_UUID']"].traits.`sorted`:
+          - HW_CPU_X86_SSE
+          - HW_CPU_X86_SSE2
+
+- name: get allocation candidates with multiple required traits
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=HW_CPU_X86_SSE,HW_CPU_X86_SSE2
+  status: 200
+  request_headers:
+      openstack-api-version: placement 1.17
+  response_json_paths:
+      $.allocation_requests.`len`: 1
+      $.provider_summaries.`len`: 2
+      $.provider_summaries["$ENVIRON['CN1_UUID']"].`len`: 2
+      $.provider_summaries["$ENVIRON['CN1_UUID']"].traits.`sorted`:
+          - HW_CPU_X86_SSE
+          - HW_CPU_X86_SSE2
+
+- name: get allocation candidates with required trait and no matching
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:1024,DISK_GB:100&required=HW_CPU_X86_SSE3
+  status: 200
+  request_headers:
+      openstack-api-version: placement 1.17
+  response_json_paths:
+      $.allocation_requests.`len`: 0
+      $.provider_summaries.`len`: 0

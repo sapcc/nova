@@ -19,12 +19,12 @@ import sys
 import mock
 from oslo_utils import encodeutils
 import six
+import testtools
 
 from nova import context
 from nova import exception
 from nova import test
 from nova.tests.unit.virt.libvirt import fakelibvirt
-from nova import utils
 from nova.virt.libvirt import config as vconfig
 from nova.virt.libvirt import guest as libvirt_guest
 from nova.virt.libvirt import host
@@ -85,26 +85,23 @@ class GuestTestCase(test.NoDBTestCase):
         self.assertRaises(test.TestingException, self.guest.launch)
         self.assertEqual(1, mock_safe_decode.called)
 
-    @mock.patch.object(utils, 'execute')
+    @mock.patch('nova.privsep.libvirt.enable_hairpin')
     @mock.patch.object(libvirt_guest.Guest, 'get_interfaces')
-    def test_enable_hairpin(self, mock_get_interfaces, mock_execute):
+    def test_enable_hairpin(self, mock_get_interfaces, mock_writefile):
         mock_get_interfaces.return_value = ["vnet0", "vnet1"]
         self.guest.enable_hairpin()
-        mock_execute.assert_has_calls([
-            mock.call(
-                'tee', '/sys/class/net/vnet0/brport/hairpin_mode',
-                run_as_root=True, process_input='1', check_exit_code=[0, 1]),
-            mock.call(
-                'tee', '/sys/class/net/vnet1/brport/hairpin_mode',
-                run_as_root=True, process_input='1', check_exit_code=[0, 1])])
+        mock_writefile.assert_has_calls([
+            mock.call('vnet0'),
+            mock.call('vnet1')]
+        )
 
     @mock.patch.object(encodeutils, 'safe_decode')
-    @mock.patch.object(utils, 'execute')
+    @mock.patch('nova.privsep.libvirt.enable_hairpin')
     @mock.patch.object(libvirt_guest.Guest, 'get_interfaces')
     def test_enable_hairpin_exception(self, mock_get_interfaces,
-                            mock_execute, mock_safe_decode):
+                            mock_writefile, mock_safe_decode):
         mock_get_interfaces.return_value = ["foo"]
-        mock_execute.side_effect = test.TestingException('oops')
+        mock_writefile.side_effect = test.TestingException
 
         self.assertRaises(test.TestingException, self.guest.enable_hairpin)
         self.assertEqual(1, mock_safe_decode.called)
@@ -554,11 +551,7 @@ class GuestTestCase(test.NoDBTestCase):
         info = self.guest.get_info(self.host)
         self.domain.info.assert_called_once_with()
         self.assertEqual(1, info.state)
-        self.assertEqual(2, info.max_mem_kb)
-        self.assertEqual(3, info.mem_kb)
-        self.assertEqual(4, info.num_cpu)
-        self.assertEqual(5, info.cpu_time_ns)
-        self.assertEqual(6, info.id)
+        self.assertEqual(6, info.internal_id)
 
     def test_get_power_state(self):
         self.domain.info.return_value = (1, 2, 3, 4, 5)
@@ -652,7 +645,16 @@ class GuestTestCase(test.NoDBTestCase):
         self.guest.migrate('an-uri', domain_xml='</xml>',
                            params={'p1': 'v1'}, flags=1, bandwidth=2)
         self.domain.migrateToURI3.assert_called_once_with(
-            'an-uri', flags=1, params={'p1': 'v1'})
+            'an-uri', flags=1, params={'p1': 'v1', 'bandwidth': 2})
+
+    @testtools.skipIf(not six.PY2, 'libvirt python3 bindings accept unicode')
+    def test_migrate_v3_unicode(self):
+        self.guest.migrate('an-uri', domain_xml=u'</xml>',
+                           params={'p1': u'v1', 'p2': 'v2', 'p3': 3},
+                           flags=1, bandwidth=2)
+        self.domain.migrateToURI3.assert_called_once_with(
+                'an-uri', flags=1, params={'p1': 'v1', 'p2': 'v2', 'p3': 3,
+                                           'bandwidth': 2})
 
     def test_abort_job(self):
         self.guest.abort_job()
@@ -661,6 +663,10 @@ class GuestTestCase(test.NoDBTestCase):
     def test_migrate_configure_max_downtime(self):
         self.guest.migrate_configure_max_downtime(1000)
         self.domain.migrateSetMaxDowntime.assert_called_once_with(1000)
+
+    def test_migrate_configure_max_speed(self):
+        self.guest.migrate_configure_max_speed(1000)
+        self.domain.migrateSetMaxSpeed.assert_called_once_with(1000)
 
 
 class GuestBlockTestCase(test.NoDBTestCase):

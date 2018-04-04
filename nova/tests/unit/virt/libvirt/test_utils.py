@@ -35,7 +35,6 @@ from nova.tests import uuidsentinel as uuids
 from nova import utils
 from nova.virt.disk import api as disk
 from nova.virt import images
-from nova.virt.libvirt import config as vconfig
 from nova.virt.libvirt import guest as libvirt_guest
 from nova.virt.libvirt import utils as libvirt_utils
 
@@ -163,6 +162,31 @@ blah BLAH: bb
         image_info = images.qemu_img_info(path)
         mock_execute.assert_called_once_with('env', 'LC_ALL=C', 'LANG=C',
                                              'qemu-img', 'info', path,
+                                             prlimit=images.QEMU_IMG_LIMITS)
+        mock_exists.assert_called_once_with(path)
+        self.assertEqual('disk.config', image_info.image)
+        self.assertEqual('raw', image_info.file_format)
+        self.assertEqual(67108864, image_info.virtual_size)
+        self.assertEqual(98304, image_info.disk_size)
+        self.assertEqual(65536, image_info.cluster_size)
+
+    @mock.patch('os.path.exists', return_value=True)
+    @mock.patch('nova.utils.execute')
+    def test_qemu_info_canon_qemu_2_10(self, mock_execute, mock_exists):
+        images.QEMU_VERSION = images.QEMU_VERSION_REQ_SHARED
+        path = "disk.config"
+        example_output = """image: disk.config
+file format: raw
+virtual size: 64M (67108864 bytes)
+cluster_size: 65536
+disk size: 96K
+blah BLAH: bb
+"""
+        mock_execute.return_value = (example_output, '')
+        image_info = images.qemu_img_info(path)
+        mock_execute.assert_called_once_with('env', 'LC_ALL=C', 'LANG=C',
+                                             'qemu-img', 'info', path,
+                                             '--force-share',
                                              prlimit=images.QEMU_IMG_LIMITS)
         mock_exists.assert_called_once_with(path)
         self.assertEqual('disk.config', image_info.image)
@@ -351,18 +375,17 @@ ID        TAG                 VM SIZE                DATE       VM CLOCK
     def test_create_ploop_image(self, fs_type,
                                 default_eph_format,
                                 expected_fs_type):
-        with mock.patch('nova.utils.execute') as mock_execute:
+        with test.nested(mock.patch('oslo_utils.fileutils.ensure_tree'),
+                         mock.patch('nova.privsep.libvirt.ploop_init')
+                         ) as (mock_ensure_tree, mock_ploop_init):
             self.flags(default_ephemeral_format=default_eph_format)
             libvirt_utils.create_ploop_image('expanded', '/some/path',
                                              '5G', fs_type)
-            mock_execute.assert_has_calls([
-                mock.call('mkdir', '-p', '/some/path'),
-                mock.call('ploop', 'init', '-s', '5G',
-                          '-f', 'expanded', '-t', expected_fs_type,
-                          '/some/path/root.hds',
-                          run_as_root=True, check_exit_code=True),
-                mock.call('chmod', '-R', 'a+r', '/some/path',
-                          run_as_root=True, check_exit_code=True)])
+            mock_ensure_tree.assert_has_calls([
+                mock.call('/some/path')])
+            mock_ploop_init.assert_has_calls([
+                mock.call('5G', 'expanded', expected_fs_type,
+                          '/some/path/root.hds')])
 
     def test_pick_disk_driver_name(self):
         type_map = {'kvm': ([True, 'qemu'], [False, 'qemu'], [None, 'qemu']),
@@ -379,10 +402,11 @@ ID        TAG                 VM SIZE                DATE       VM CLOCK
                                                              is_block_dev)
                 self.assertEqual(result, expected_result)
 
+    @mock.patch('nova.privsep.libvirt.xend_probe')
     @mock.patch('nova.utils.execute')
-    def test_pick_disk_driver_name_xen(self, mock_execute):
+    def test_pick_disk_driver_name_xen(self, mock_execute, mock_xend_probe):
 
-        def side_effect(*args, **kwargs):
+        def execute_side_effect(*args, **kwargs):
             if args == ('tap-ctl', 'check'):
                 if mock_execute.blktap is True:
                     return ('ok\n', '')
@@ -390,15 +414,17 @@ ID        TAG                 VM SIZE                DATE       VM CLOCK
                     return ('some error\n', '')
                 else:
                     raise OSError(2, "No such file or directory")
-            elif args == ('xend', 'status'):
-                if mock_execute.xend is True:
-                    return ('', '')
-                elif mock_execute.xend is False:
-                    raise processutils.ProcessExecutionError("error")
-                else:
-                    raise OSError(2, "No such file or directory")
             raise Exception('Unexpected call')
-        mock_execute.side_effect = side_effect
+        mock_execute.side_effect = execute_side_effect
+
+        def xend_probe_side_effect():
+            if mock_execute.xend is True:
+                return ('', '')
+            elif mock_execute.xend is False:
+                raise processutils.ProcessExecutionError("error")
+            else:
+                raise OSError(2, "No such file or directory")
+        mock_xend_probe.side_effect = xend_probe_side_effect
 
         self.flags(virt_type="xen", group='libvirt')
         versions = [4000000, 4001000, 4002000, 4003000, 4005000]
@@ -490,35 +516,6 @@ disk size: 4.4M
             self.assertEqual(mode & 0o277, 0)
         finally:
             os.unlink(dst_path)
-
-    @mock.patch.object(utils, 'execute')
-    def test_chown(self, mock_execute):
-        libvirt_utils.chown('/some/path', 'soren')
-        mock_execute.assert_called_once_with('chown', 'soren', '/some/path',
-                                             run_as_root=True)
-
-    @mock.patch.object(utils, 'execute')
-    def test_chown_for_id_maps(self, mock_execute):
-        id_maps = [vconfig.LibvirtConfigGuestUIDMap(),
-                   vconfig.LibvirtConfigGuestUIDMap(),
-                   vconfig.LibvirtConfigGuestGIDMap(),
-                   vconfig.LibvirtConfigGuestGIDMap()]
-        id_maps[0].target = 10000
-        id_maps[0].count = 2000
-        id_maps[1].start = 2000
-        id_maps[1].target = 40000
-        id_maps[1].count = 2000
-        id_maps[2].target = 10000
-        id_maps[2].count = 2000
-        id_maps[3].start = 2000
-        id_maps[3].target = 40000
-        id_maps[3].count = 2000
-        libvirt_utils.chown_for_id_maps('/some/path', id_maps)
-        execute_args = ('nova-idmapshift', '-i',
-                        '-u', '0:10000:2000,2000:40000:2000',
-                        '-g', '0:10000:2000,2000:40000:2000',
-                        '/some/path')
-        mock_execute.assert_called_once_with(*execute_args, run_as_root=True)
 
     def _do_test_extract_snapshot(self, mock_execute, src_format='qcow2',
                                   dest_format='raw', out_format='raw'):
@@ -631,7 +628,8 @@ disk size: 4.4M
         mock_images.assert_called_once_with(
             _context, image_id, target)
 
-    def test_fetch_raw_image(self):
+    @mock.patch('nova.utils.supports_direct_io', return_value=True)
+    def test_fetch_raw_image(self, mock_direct_io):
 
         def fake_execute(*cmd, **kwargs):
             self.executes.append(cmd)
@@ -763,13 +761,6 @@ disk size: 4.4M
             {'properties': {'architecture': "X86_64"}})
         image_arch = libvirt_utils.get_arch(image_meta)
         self.assertEqual(obj_fields.Architecture.X86_64, image_arch)
-
-    def test_update_mtime_error(self):
-        with mock.patch('nova.utils.execute',
-                        side_effect=processutils.ProcessExecutionError):
-            with mock.patch.object(libvirt_utils.LOG, 'warning') as mock_log:
-                libvirt_utils.update_mtime(mock.sentinel.path)
-        self.assertTrue(mock_log.called)
 
     def test_is_mounted(self):
         mount_path = "/var/lib/nova/mnt"
@@ -939,32 +930,3 @@ sunrpc /var/lib/nfs/rpc_pipefs rpc_pipefs rw,relatime 0 0
         disk_path, format = libvirt_utils.find_disk(guest)
         self.assertEqual('/test/disk', disk_path)
         self.assertEqual('ploop', format)
-
-
-class LastBytesTestCase(test.NoDBTestCase):
-    """Test the last_bytes() utility method."""
-
-    def setUp(self):
-        super(LastBytesTestCase, self).setUp()
-        self.f = six.BytesIO(b'1234567890')
-
-    def test_truncated(self):
-        self.f.seek(0, os.SEEK_SET)
-        out, remaining = libvirt_utils.last_bytes(self.f, 5)
-        self.assertEqual(out, b'67890')
-        self.assertGreater(remaining, 0)
-
-    def test_read_all(self):
-        self.f.seek(0, os.SEEK_SET)
-        out, remaining = libvirt_utils.last_bytes(self.f, 1000)
-        self.assertEqual(out, b'1234567890')
-        self.assertFalse(remaining > 0)
-
-    def test_seek_too_far_real_file(self):
-        # StringIO doesn't raise IOError if you see past the start of the file.
-        with tempfile.TemporaryFile() as flo:
-            content = b'1234567890'
-            flo.write(content)
-            self.assertEqual(
-                (content, 0),
-                libvirt_utils.last_bytes(flo, 1000))

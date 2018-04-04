@@ -95,6 +95,17 @@ def setup_profiler(binary, host):
         LOG.info(_LI("OSProfiler is enabled."))
 
 
+def assert_eventlet_uses_monotonic_clock():
+    import eventlet.hubs as hubs
+    import monotonic
+
+    hub = hubs.get_hub()
+    if hub.clock is not monotonic.monotonic:
+        raise RuntimeError(
+            'eventlet hub is not using a monotonic clock - '
+            'periodic tasks will be affected by drifts of system time.')
+
+
 class Service(service.Service):
     """Service object for binaries running on hosts.
 
@@ -136,6 +147,13 @@ class Service(service.Service):
                 }
 
     def start(self):
+        """Start the service.
+
+        This includes starting an RPC service, initializing
+        periodic tasks, etc.
+        """
+        assert_eventlet_uses_monotonic_clock()
+
         verstr = version.version_string_with_package()
         LOG.info(_LI('Starting %(topic)s node (version %(version)s)'),
                   {'topic': self.topic, 'version': verstr})
@@ -256,6 +274,7 @@ class Service(service.Service):
             LOG.warning(_LW('Service killed that has no database entry'))
 
     def stop(self):
+        """stop the service and clean up."""
         try:
             self.rpcserver.stop()
             self.rpcserver.wait()
@@ -286,6 +305,7 @@ class Service(service.Service):
             sys.exit(1)
 
     def reset(self):
+        """reset the service."""
         self.manager.reset()
 
 

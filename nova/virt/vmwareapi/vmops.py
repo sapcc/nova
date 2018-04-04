@@ -24,6 +24,7 @@ import os
 import time
 
 import decorator
+import cluster_util
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
@@ -46,6 +47,7 @@ from nova import exception
 from nova.i18n import _
 from nova import network
 from nova import objects
+from nova.objects import fields
 from nova import utils
 from nova import version
 from nova.virt import configdrive
@@ -266,7 +268,7 @@ class VMwareVMOps(object):
         # We cannot truncate the 'id' as this is unique across OpenStack.
         return '%s (%s)' % (name[:40], id[:36])
 
-    def build_virtual_machine(self, instance, image_info,
+    def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
         vif_infos = vmwarevif.get_vif_info(self._session,
@@ -299,6 +301,8 @@ class VMwareVMOps(object):
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
                                    config_spec, self._root_resource_pool)
+
+        vm_util.update_cluster_placement(self._session, context, instance, self._cluster, vm_ref)
         return vm_ref
 
     def _get_extra_specs(self, flavor, image_meta=None):
@@ -317,8 +321,23 @@ class VMwareVMOps(object):
         extra_specs.memory_limits.validate()
         extra_specs.disk_io_limits.validate()
         extra_specs.vif_limits.validate()
+        hw_firmware_type = image_meta.properties.get('hw_firmware_type')
+        if hw_firmware_type == fields.FirmwareType.UEFI:
+            extra_specs.firmware = 'efi'
+        elif hw_firmware_type == fields.FirmwareType.BIOS:
+            extra_specs.firmware = 'bios'
         hw_version = flavor.extra_specs.get('vmware:hw_version')
         extra_specs.hw_version = hw_version
+
+        video_ram = image_meta.properties.get('hw_video_ram', 0)
+        max_vram = int(flavor.extra_specs.get('hw_video:ram_max_mb', 0))
+
+        if video_ram and video_ram:
+            if video_ram > max_vram:
+                raise exception.RequestedVRamTooHigh(req_vram=video_ram,
+                                                     max_vram=max_vram)
+            extra_specs.hw_video_ram = video_ram * units.Mi / units.Ki
+
         if CONF.vmware.pbm_enabled:
             storage_policy = flavor.extra_specs.get('vmware:storage_policy',
                     CONF.vmware.pbm_default_policy)
@@ -718,6 +737,7 @@ class VMwareVMOps(object):
         image_info = images.VMwareImage.from_image(context,
                                                    instance.image_ref,
                                                    image_meta)
+
         extra_specs = self._get_extra_specs(instance.flavor, image_meta)
 
         vi = self._get_vm_config_info(instance, image_info,
@@ -727,6 +747,7 @@ class VMwareVMOps(object):
         # Creates the virtual machine. The virtual machine reference returned
         # is unique within Virtual Center.
         vm_ref = self.build_virtual_machine(instance,
+                                            context,
                                             image_info,
                                             vi.dc_info,
                                             vi.datastore,
@@ -1047,10 +1068,25 @@ class VMwareVMOps(object):
             self._session._wait_for_task(reset_task)
             LOG.debug("Did hard reboot of VM", instance=instance)
 
-    def _destroy_instance(self, instance, destroy_disks=True):
+    def _destroy_instance(self, context, instance, destroy_disks=True):
         # Destroy a VM instance
         try:
             vm_ref = vm_util.get_vm_ref(self._session, instance)
+
+            server_group_info = vm_util._get_server_group(context, instance)
+            if server_group_info:
+                cluster = cluster_util.validate_vm_group(self._session, vm_ref)
+
+                for key, group in enumerate(cluster.propSet[0].val.group):
+                    if not hasattr(group, 'vm'):
+                        continue
+
+                    for vm in group.vm:
+                        if vm.value == vm_ref.value and len(group.vm) == 1:
+                            cluster_util.delete_vm_group(self._session, cluster.obj, cluster.propSet[0].val.group[key])
+                            break
+                    break
+
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vutil,
@@ -1111,7 +1147,7 @@ class VMwareVMOps(object):
         finally:
             vm_util.vm_ref_cache_delete(instance.uuid)
 
-    def destroy(self, instance, destroy_disks=True):
+    def destroy(self, context, instance, destroy_disks=True):
         """Destroy a VM instance.
 
         Steps followed for each VM are:
@@ -1120,7 +1156,7 @@ class VMwareVMOps(object):
         3. Delete the contents of the folder holding the VM related data.
         """
         LOG.debug("Destroying instance", instance=instance)
-        self._destroy_instance(instance, destroy_disks=destroy_disks)
+        self._destroy_instance(context, instance, destroy_disks=destroy_disks)
         LOG.debug("Instance destroyed", instance=instance)
 
     def pause(self, instance):
@@ -1244,12 +1280,79 @@ class VMwareVMOps(object):
         if power_on:
             vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 
-    def power_off(self, instance):
+    def power_off(self, instance, timeout=0, retry_interval=0):
         """Power off the specified instance.
 
         :param instance: nova.objects.instance.Instance
+        :param timeout: How long to wait in seconds for the instance to
+                        shutdown
+        :param retry_interval: Interval to check if instance is already
+                               shutdown in seconds.
         """
+        if timeout and self._clean_shutdown(instance,
+                                            timeout,
+                                            retry_interval):
+            return
+
         vm_util.power_off_instance(self._session, instance)
+
+    def _clean_shutdown(self, instance, timeout, retry_interval):
+        """Perform a soft shutdown on the VM.
+        :param instance: nova.objects.instance.Instance
+        :param timeout: How long to wait in seconds for the instance to
+                        shutdown
+        :param retry_interval: Interval to check if instance is already
+                               shutdown in seconds.
+           :return: True if the instance was shutdown within time limit,
+                    False otherwise.
+        """
+        LOG.debug("Performing Soft shutdown on instance",
+                 instance=instance)
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+
+        props = self._get_instance_props(vm_ref)
+
+        if props.get("runtime.powerState") != "poweredOn":
+            LOG.debug("Instance not in poweredOn state.",
+                      instance=instance)
+            return False
+
+        if ((props.get("summary.guest.toolsStatus") == "toolsOk") and
+            (props.get("summary.guest.toolsRunningStatus") ==
+             "guestToolsRunning")):
+
+            LOG.debug("Soft shutdown instance, timeout: %d",
+                     timeout, instance=instance)
+            self._session._call_method(self._session.vim,
+                                       "ShutdownGuest",
+                                       vm_ref)
+
+            while timeout > 0:
+                wait_time = min(retry_interval, timeout)
+                props = self._get_instance_props(vm_ref)
+
+                if props.get("runtime.powerState") == "poweredOff":
+                    LOG.info("Soft shutdown succeeded.",
+                             instance=instance)
+                    return True
+
+                time.sleep(wait_time)
+                timeout -= retry_interval
+
+            LOG.warning("Timed out while waiting for soft shutdown.",
+                        instance=instance)
+        else:
+            LOG.debug("VMware Tools not running", instance=instance)
+
+        return False
+
+    def _get_instance_props(self, vm_ref):
+        lst_properties = ["summary.guest.toolsStatus",
+                          "runtime.powerState",
+                          "summary.guest.toolsRunningStatus"]
+        return self._session._call_method(vutil,
+                                          "get_object_properties_dict",
+                                          vm_ref, lst_properties)
 
     def power_on(self, instance):
         vm_util.power_on_instance(self._session, instance)
@@ -1497,9 +1600,7 @@ class VMwareVMOps(object):
         """Return data about the VM instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
-        lst_properties = ["summary.config.numCpu",
-                    "summary.config.memorySizeMB",
-                    "runtime.powerState"]
+        lst_properties = ["runtime.powerState"]
         try:
             vm_props = self._session._call_method(vutil,
                                                   "get_object_properties_dict",
@@ -1507,13 +1608,8 @@ class VMwareVMOps(object):
                                                   lst_properties)
         except vexc.ManagedObjectNotFoundException:
             raise exception.InstanceNotFound(instance_id=instance.uuid)
-        max_mem = int(vm_props.get('summary.config.memorySizeMB', 0)) * 1024
-        num_cpu = int(vm_props.get('summary.config.numCpu', 0))
         return hardware.InstanceInfo(
-            state=constants.POWER_STATES[vm_props['runtime.powerState']],
-            max_mem_kb=max_mem,
-            mem_kb=max_mem,
-            num_cpu=num_cpu)
+            state=constants.POWER_STATES[vm_props['runtime.powerState']])
 
     def _get_diagnostics(self, instance):
         """Return data about VM diagnostics."""
@@ -1642,17 +1738,6 @@ class VMwareVMOps(object):
                                                     "browser")
             self._datastore_browser_mapping[ds_ref.value] = ds_browser
         return ds_browser
-
-    def _get_host_ref_from_name(self, host_name):
-        """Get reference to the host with the name specified."""
-        host_objs = self._session._call_method(vim_util, "get_objects",
-                    "HostSystem", ["name"])
-        vm_util._cancel_retrieve_if_necessary(self._session, host_objs)
-        for host in host_objs:
-            if hasattr(host, 'propSet'):
-                if host.propSet[0].val == host_name:
-                    return host.obj
-        return None
 
     def _create_folder_if_missing(self, ds_name, ds_ref, folder):
         """Create a folder if it does not exist.

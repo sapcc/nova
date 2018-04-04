@@ -10,6 +10,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_log import log as logging
 
@@ -31,7 +32,7 @@ class LibvirtAOEVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         # Call the factory here so we can support
         # more than x86 architectures.
         self.connector = connector.InitiatorConnector.factory(
-            'AOE', utils.get_root_helper(),
+            initiator.AOE, utils.get_root_helper(),
             device_scan_attempts=CONF.libvirt.num_aoe_discover_tries)
 
     def get_config(self, connection_info, disk_info):
@@ -43,20 +44,19 @@ class LibvirtAOEVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         conf.source_path = connection_info['data']['device_path']
         return conf
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         LOG.debug("Calling os-brick to attach AoE Volume")
         device_info = self.connector.connect_volume(connection_info['data'])
         LOG.debug("Attached AoE volume %s", device_info)
 
         connection_info['data']['device_path'] = device_info['path']
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+    def disconnect_volume(self, connection_info, instance):
         """Detach the volume from instance_name."""
 
-        LOG.debug("calling os-brick to detach AoE Volume %s",
-                  connection_info)
+        LOG.debug("calling os-brick to detach AoE Volume", instance=instance)
         self.connector.disconnect_volume(connection_info['data'], None)
-        LOG.debug("Disconnected AoE Volume %s", disk_dev)
+        LOG.debug("Disconnected AoE Volume", instance=instance)
 
         super(LibvirtAOEVolumeDriver,
-              self).disconnect_volume(connection_info, disk_dev, instance)
+              self).disconnect_volume(connection_info, instance)

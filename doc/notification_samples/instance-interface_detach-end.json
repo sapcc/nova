@@ -1,0 +1,6 @@
+{
+    "publisher_id": "nova-compute:compute",
+    "event_type": "instance.interface_detach.end",
+    "priority": "INFO",
+    "payload":{"$ref":"common_payloads/InstanceActionPayload.json#"}
+}

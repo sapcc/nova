@@ -59,8 +59,7 @@ class LibvirtHyperScaleVolumeDriverTestCase(
         disk_info = {'name': DEVICE_NAME}
         connection_info = {'data': disk_info}
 
-        hs.connect_volume(
-            connection_info, disk_info, mock.sentinel.instance)
+        hs.connect_volume(connection_info, mock.sentinel.instance)
 
         # expect connect_volume to add device_path to connection_info:
         self.assertEqual(connection_info['data']['device_path'], DEVICE_PATH)
@@ -73,11 +72,9 @@ class LibvirtHyperScaleVolumeDriverTestCase(
         hs = vrtshyperscale.LibvirtHyperScaleVolumeDriver(self.fake_host)
 
         # dummy arguments are just passed through to mock connector
-        disk_info = {'name': DEVICE_NAME}
-        connection_info = {'data': disk_info}
+        conn_data = {'name': DEVICE_NAME}
+        connection_info = {'data': conn_data}
 
-        hs.disconnect_volume(
-            connection_info, disk_info, mock.sentinel.instance)
+        hs.disconnect_volume(connection_info, mock.sentinel.instance)
 
-        hs.connector.disconnect_volume.assert_called_once_with(
-            connection_info['data'], None)
+        hs.connector.disconnect_volume.assert_called_once_with(conn_data, None)

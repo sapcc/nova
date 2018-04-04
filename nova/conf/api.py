@@ -71,7 +71,8 @@ Possible values:
 * Any string that represents zero or more versions, separated by spaces.
 """),
     cfg.ListOpt('vendordata_providers',
-        default=[],
+        item_type=cfg.types.String(choices=['StaticJSON', 'DynamicJSON']),
+        default=['StaticJSON'],
         deprecated_group="DEFAULT",
         help="""
 A list of vendordata providers.
@@ -283,6 +284,14 @@ osapi_hide_opts = [
         default=[BUILDING],
         deprecated_group="DEFAULT",
         deprecated_name="osapi_hide_server_address_states",
+        deprecated_for_removal=True,
+        deprecated_since="17.0.0",
+        deprecated_reason="This option hide the server address in server "
+                          "representation for configured server states. "
+                          "Which makes GET server API controlled by this "
+                          "config options. Due to this config options, user "
+                          "would not be able to discover the API behavior on "
+                          "different clouds which leads to the interop issue.",
         help="""
 This option is a list of all instance states for which network address
 information should not be returned from the API.
@@ -351,52 +360,6 @@ so if your hypervisor does not support password injection, set this to False.
 """)
 ]
 
-deprecated_opts = [
-    cfg.StrOpt("vendordata_driver",
-        default="nova.api.metadata.vendordata_json.JsonFileVendorData",
-        deprecated_for_removal=True,
-        deprecated_since="13.0.0",
-        help="""
-When returning instance metadata, this is the class that is used
-for getting vendor metadata when that class isn't specified in the individual
-request. The value should be the full dot-separated path to the class to use.
-
-Possible values:
-
-* Any valid dot-separated class path that can be imported.
-"""),
-    cfg.BoolOpt("enable_network_quota",
-        deprecated_for_removal=True,
-        deprecated_since="14.0.0",
-        deprecated_reason="""
-CRUD operations on tenant networks are only available when using nova-network
-and nova-network is itself deprecated.""",
-        default=False,
-        help="""
-This option is used to enable or disable quota checking for tenant networks.
-
-Related options:
-
-* quota_networks
-"""),
-    cfg.IntOpt("quota_networks",
-        deprecated_for_removal=True,
-        deprecated_since="14.0.0",
-        deprecated_reason="""
-CRUD operations on tenant networks are only available when using nova-network
-and nova-network is itself deprecated.""",
-        default=3,
-        min=0,
-        help="""
-This option controls the number of private networks that can be created per
-project (or per tenant).
-
-Related options:
-
-* enable_network_quota
-"""),
-]
-
 API_OPTS = (auth_opts +
             metadata_opts +
             file_opts +
@@ -411,9 +374,7 @@ API_OPTS = (auth_opts +
 def register_opts(conf):
     conf.register_group(api_group)
     conf.register_opts(API_OPTS, group=api_group)
-    conf.register_opts(deprecated_opts)
 
 
 def list_opts():
-    return {api_group: API_OPTS,
-            'DEFAULT': deprecated_opts}
+    return {api_group: API_OPTS}

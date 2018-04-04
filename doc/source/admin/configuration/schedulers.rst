@@ -258,7 +258,7 @@ This filter passes hosts if no ``instance_type`` key is set or the
 is a string that may contain either a single ``instance_type`` name or a
 comma-separated list of ``instance_type`` names, such as ``m1.nano`` or
 ``m1.nano,m1.small``.  For information about how to use this filter, see
-:ref:`host-aggregates`.  See also :ref:`TypeAffinityFilter`.
+:ref:`host-aggregates`.
 
 AllHostsFilter
 --------------
@@ -514,6 +514,7 @@ configuration options. For example:
 
 .. code-block:: ini
 
+   [filter_scheduler]
    isolated_hosts = server1, server2
    isolated_images = 342b492c-128f-4a42-8d3a-c5088cf27d13, ebd267a6-ca86-4d6c-9a0e-bd132d6b7d09
 
@@ -753,21 +754,6 @@ With the API, use the ``os:scheduler_hints`` key:
        }
    }
 
-TrustedFilter
--------------
-
-Filters hosts based on their trust. Only passes hosts that meet the trust
-requirements specified in the instance properties.
-
-.. _TypeAffinityFilter:
-
-TypeAffinityFilter
-------------------
-
-Dynamically limits hosts to one instance type. An instance can only be launched
-on a host, if no instance with different instances types are running on it, or
-if the host has no running instances at all.
-
 Cell filters
 ~~~~~~~~~~~~
 
@@ -783,7 +769,7 @@ advantage of this filter, the requester must pass a scheduler hint, using
 ImagePropertiesFilter
 ---------------------
 
-Filters cells based on properties defined on the instance’s image.  This
+Filters cells based on properties defined on the instance's image.  This
 filter works specifying the hypervisor required in the image metadata and the
 supported hypervisor version in cell capabilities.
 
@@ -986,16 +972,16 @@ aggregate-related commands.
 nova aggregate-list
   Print a list of all aggregates.
 
-nova aggregate-create <name> [availability-zone]
+nova aggregate-create <name> [<availability-zone>]
   Create a new aggregate named ``<name>``, and optionally in availability zone
-  ``[availability-zone]`` if specified. The command returns the ID of the newly
-  created aggregate. Hosts can be made available to multiple host aggregates.
-  Be careful when adding a host to an additional host aggregate when the host
-  is also in an availability zone. Pay attention when using the :command:`nova
-  aggregate-set-metadata` and :command:`nova aggregate-update` commands to
-  avoid user confusion when they boot instances in different availability
-  zones.  An error occurs if you cannot add a particular host to an aggregate
-  zone for which it is not intended.
+  ``[<availability-zone>]`` if specified. The command returns the ID of the
+  newly created aggregate. Hosts can be made available to multiple host
+  aggregates. Be careful when adding a host to an additional host aggregate
+  when the host is also in an availability zone. Pay attention when using the
+  :command:`nova aggregate-set-metadata` and :command:`nova aggregate-update`
+  commands to avoid user confusion when they boot instances in different
+  availability zones.  An error occurs if you cannot add a particular host to
+  an aggregate zone for which it is not intended.
 
 nova aggregate-delete <aggregate>
   Delete an aggregate with its ``<id>`` or ``<name>``.
@@ -1014,14 +1000,26 @@ nova aggregate-set-metadata <aggregate> <key=value> [<key=value> ...]
   Add or update metadata (key-value pairs) associated with the aggregate with
   its ``<id>`` or ``<name>``.
 
-nova aggregate-update <id> <name> [<availability_zone>]
-  Update the name and availability zone (optional) for the aggregate.
+nova aggregate-update [--name <name>] [--availability-zone <availability-zone>] <aggregate>
+  Update the name and/or availability zone for the aggregate.
 
 nova host-list
-  List all hosts by service.
+  List all hosts by service. It has been depricated since microversion 2.43.
+  Use :command:`nova hypervisor-list` instead.
 
-nova host-update --maintenance [enable | disable]
-  Put/resume host into/from maintenance.
+nova hypervisor-list [--matching <hostname>] [--marker <marker>] [--limit <limit>]
+  List hypervisors.
+
+nova host-update [--status <enable|disable>] [--maintenance <enable|disable>] <hostname>
+  Put/resume host into/from maintenance. It has been depricated since
+  microversion 2.43. To enable or disable a service,
+  use :command:`nova service-enable` or :command:`nova service-disable` instead.
+
+nova service-enable <id>
+  Enable the service.
+
+nova service-disable [--reason <reason>] <id>
+  Disable the service.
 
 .. note::
 
@@ -1119,7 +1117,7 @@ the aggregate. Then, you add the ``node1``, and ``node2`` compute nodes to it.
    | created_at        | 2016-12-22T07:31:13.000000                       |
    | deleted           | False                                            |
    | deleted_at        | None                                             |
-   | hosts             | [u'node2']                                       |
+   | hosts             | [u'node1', u'node2']                             |
    | id                | 1                                                |
    | metadata          | {u'ssd': u'true', u'availability_zone': u'nova'} |
    | name              | fast-io                                          |

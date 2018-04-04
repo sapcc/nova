@@ -48,7 +48,12 @@ class EventType(NotificationObject):
     #              NotificationActionField enum
     # Version 1.5: Aggregate related values have been added to
     #              NotificationActionField enum
-    VERSION = '1.5'
+    # Version 1.6: ADD_FIX_IP replaced with INTERFACE_ATTACH in
+    #              NotificationActionField enum
+    # Version 1.7: REMOVE_FIXED_IP replaced with INTERFACE_DETACH in
+    #              NotificationActionField enum
+    # Version 1.8: IMPORT value is added to NotificationActionField enum
+    VERSION = '1.8'
 
     fields = {
         'object': fields.StringField(nullable=False),
@@ -142,7 +147,8 @@ class NotificationPublisher(NotificationObject):
     #         2.1: The type of the source field changed from string to enum.
     #              This only needs a minor bump as the enum uses the possible
     #              values of the previous string field
-    VERSION = '2.1'
+    #         2.2: New enum for source fields added
+    VERSION = '2.2'
 
     fields = {
         'host': fields.StringField(nullable=False),
@@ -156,7 +162,8 @@ class NotificationPublisher(NotificationObject):
 
     @classmethod
     def from_service_obj(cls, service):
-        return cls(host=service.host, source=service.binary)
+        source = fields.NotificationSource.get_source_by_binary(service.binary)
+        return cls(host=service.host, source=source)
 
 
 @base.NovaObjectRegistry.register_if(False)

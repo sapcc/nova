@@ -35,7 +35,6 @@ def generate_flavor(flavorid, ispublic):
         'root_gb': 1,
         'ephemeral_gb': 1,
         'name': u'test',
-        'deleted': False,
         'created_at': datetime.datetime(2012, 1, 1, 1, 1, 1, 1),
         'updated_at': None,
         'memory_mb': 512,
@@ -44,9 +43,9 @@ def generate_flavor(flavorid, ispublic):
         'rxtx_factor': 1.0,
         'disabled': False,
         'extra_specs': {},
-        'deleted_at': None,
         'vcpu_weight': None,
-        'is_public': bool(ispublic)
+        'is_public': bool(ispublic),
+        'description': None
     }
 
 
@@ -66,11 +65,11 @@ def fake_get_flavor_access_by_flavor_id(context, flavorid):
     res = []
     for access in ACCESS_LIST:
         if access['flavor_id'] == flavorid:
-            res.append(access)
+            res.append(access['project_id'])
     return res
 
 
-def fake_get_flavor_by_flavor_id(context, flavorid, read_deleted=None):
+def fake_get_flavor_by_flavor_id(context, flavorid):
     return INSTANCE_TYPES[flavorid]
 
 
@@ -145,18 +144,12 @@ class FlavorAccessTestV21(test.NoDBTestCase):
         self.req = FakeRequest()
         self.req.environ = {"nova.context": context.RequestContext('fake_user',
                                                                    'fake')}
-        self.stub_out('nova.db.flavor_get_by_flavor_id',
+        self.stub_out('nova.objects.Flavor._flavor_get_by_flavor_id_from_db',
                       fake_get_flavor_by_flavor_id)
-        self.stub_out('nova.db.flavor_get_all',
-                      fake_get_all_flavors_sorted_list)
-        self.stub_out('nova.db.flavor_access_get_by_flavor_id',
-                      fake_get_flavor_access_by_flavor_id)
-        # Simulate no API flavors right now
         self.stub_out('nova.objects.flavor._flavor_get_all_from_db',
-                      lambda *a, **k: [])
-        self.stub_out('nova.objects.Flavor.in_api', False)
+                      fake_get_all_flavors_sorted_list)
         self.stub_out('nova.objects.flavor._get_projects_from_db',
-                      fake_get_flavor_projects_from_db)
+                      fake_get_flavor_access_by_flavor_id)
 
         self.flavor_access_controller = self.FlavorAccessController()
         self.flavor_action_controller = self.FlavorActionController()
@@ -176,9 +169,7 @@ class FlavorAccessTestV21(test.NoDBTestCase):
                           self.flavor_access_controller.index,
                           self.req, '1')
 
-    @mock.patch('nova.objects.Flavor._flavor_get_by_flavor_id_from_db',
-                side_effect=exception.FlavorNotFound(flavor_id='foo'))
-    def test_list_flavor_access_private(self, mock_api_get):
+    def test_list_flavor_access_private(self):
         expected = {'flavor_access': [
             {'flavor_id': '2', 'tenant_id': 'proj2'},
             {'flavor_id': '2', 'tenant_id': 'proj3'}]}
@@ -266,35 +257,11 @@ class FlavorAccessTestV21(test.NoDBTestCase):
         result = self.flavor_controller.index(req)
         self._verify_flavor_list(result['flavors'], expected['flavors'])
 
-    def test_show(self):
-        resp = FakeResponse()
-        self.flavor_action_controller.show(self.req, resp, '0')
-        self.assertEqual({'id': '0', 'os-flavor-access:is_public': True},
-                         resp.obj['flavor'])
-        self.flavor_action_controller.show(self.req, resp, '2')
-        self.assertEqual({'id': '0', 'os-flavor-access:is_public': False},
-                         resp.obj['flavor'])
-
-    def test_detail(self):
-        resp = FakeResponse()
-        self.flavor_action_controller.detail(self.req, resp)
-        self.assertEqual([{'id': '0', 'os-flavor-access:is_public': True},
-                          {'id': '2', 'os-flavor-access:is_public': False}],
-                         resp.obj['flavors'])
-
-    def test_create(self):
-        resp = FakeResponse()
-        self.flavor_action_controller.create(self.req, {}, resp)
-        self.assertEqual({'id': '0', 'os-flavor-access:is_public': True},
-                         resp.obj['flavor'])
-
-    @mock.patch('nova.objects.Flavor._flavor_get_by_flavor_id_from_db',
-                side_effect=exception.FlavorNotFound(flavor_id='foo'))
-    def test_add_tenant_access(self, mock_api_get):
-        def stub_add_flavor_access(context, flavorid, projectid):
-            self.assertEqual('3', flavorid, "flavorid")
+    def test_add_tenant_access(self):
+        def stub_add_flavor_access(context, flavor_id, projectid):
+            self.assertEqual(3, flavor_id, "flavor_id")
             self.assertEqual("proj2", projectid, "projectid")
-        self.stub_out('nova.db.flavor_access_add',
+        self.stub_out('nova.objects.Flavor._flavor_add_project',
                       stub_add_flavor_access)
         expected = {'flavor_access':
             [{'flavor_id': '3', 'tenant_id': 'proj3'}]}
@@ -328,35 +295,29 @@ class FlavorAccessTestV21(test.NoDBTestCase):
                           self.flavor_action_controller._add_tenant_access,
                           req, '2', body=body)
 
-    @mock.patch('nova.objects.Flavor._flavor_get_by_flavor_id_from_db',
-                side_effect=exception.FlavorNotFound(flavor_id='foo'))
-    def test_add_tenant_access_with_already_added_access(self, mock_api_get):
+    def test_add_tenant_access_with_already_added_access(self):
         def stub_add_flavor_access(context, flavorid, projectid):
             raise exception.FlavorAccessExists(flavor_id=flavorid,
                                                project_id=projectid)
-        self.stub_out('nova.db.flavor_access_add',
+        self.stub_out('nova.objects.Flavor._flavor_add_project',
                       stub_add_flavor_access)
         body = {'addTenantAccess': {'tenant': 'proj2'}}
         self.assertRaises(exc.HTTPConflict,
                           self.flavor_action_controller._add_tenant_access,
                           self.req, '3', body=body)
 
-    @mock.patch('nova.objects.Flavor._flavor_get_by_flavor_id_from_db',
-                side_effect=exception.FlavorNotFound(flavor_id='foo'))
-    def test_remove_tenant_access_with_bad_access(self, mock_api_get):
+    def test_remove_tenant_access_with_bad_access(self):
         def stub_remove_flavor_access(context, flavorid, projectid):
             raise exception.FlavorAccessNotFound(flavor_id=flavorid,
                                                  project_id=projectid)
-        self.stub_out('nova.db.flavor_access_remove',
+        self.stub_out('nova.objects.Flavor._flavor_del_project',
                       stub_remove_flavor_access)
         body = {'removeTenantAccess': {'tenant': 'proj2'}}
         self.assertRaises(exc.HTTPNotFound,
                           self.flavor_action_controller._remove_tenant_access,
                           self.req, '3', body=body)
 
-    @mock.patch('nova.objects.Flavor._flavor_get_by_flavor_id_from_db',
-                side_effect=exception.FlavorNotFound(flavor_id='foo'))
-    def test_add_tenant_access_is_public(self, mock_api_get):
+    def test_add_tenant_access_is_public(self):
         body = {'addTenantAccess': {'tenant': 'proj2'}}
         req = fakes.HTTPRequest.blank(self._prefix + '/flavors/2/action',
                                       use_admin_context=True)
@@ -439,21 +400,6 @@ class FlavorAccessPolicyEnforcementV21(test.NoDBTestCase):
         self.assertEqual(
             "Policy doesn't allow %s to be performed." % rule_name,
             exc.format_message())
-
-    def test_extend_create_policy_failed(self):
-        rule_name = "os_compute_api:os-flavor-access"
-        self.policy.set_rules({rule_name: "project:non_fake"})
-        self.act_controller.create(self.req, None, None)
-
-    def test_extend_show_policy_failed(self):
-        rule_name = "os_compute_api:os-flavor-access"
-        self.policy.set_rules({rule_name: "project:non_fake"})
-        self.act_controller.show(self.req, None, None)
-
-    def test_extend_detail_policy_failed(self):
-        rule_name = "os_compute_api:os-flavor-access"
-        self.policy.set_rules({rule_name: "project:non_fake"})
-        self.act_controller.detail(self.req, None)
 
     def test_index_policy_failed(self):
         rule_name = "os_compute_api:os-flavor-access"

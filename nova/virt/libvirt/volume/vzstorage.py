@@ -13,6 +13,7 @@
 import collections
 import re
 
+from os_brick import initiator
 from os_brick.initiator import connector
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -33,6 +34,7 @@ class LibvirtVZStorageVolumeDriver(fs.LibvirtBaseFileSystemVolumeDriver):
     """Class implements libvirt part of volume driver for VzStorage."""
 
     SHARE_FORMAT_REGEX = r'(?:(\S+):/)?([a-zA-Z0-9_-]+)(?::(\S+))?$'
+    SHARE_LOCK_NAME = "vz_share-%s"
 
     def __init__(self, connection):
         super(LibvirtVZStorageVolumeDriver, self).__init__(connection)
@@ -57,7 +59,7 @@ class LibvirtVZStorageVolumeDriver(fs.LibvirtBaseFileSystemVolumeDriver):
         # Call the factory here so we can support
         # more than x86 architectures.
         self.connector = connector.InitiatorConnector.factory(
-            'vzstorage', utils.get_root_helper(),
+            initiator.VZSTORAGE, utils.get_root_helper(),
             vzstorage_mount_point_base=CONF.libvirt.vzstorage_mount_point_base)
 
     def _get_mount_point_base(self):
@@ -108,20 +110,25 @@ class LibvirtVZStorageVolumeDriver(fs.LibvirtBaseFileSystemVolumeDriver):
 
         return ' '.join(mount_opts)
 
-    def connect_volume(self, connection_info, disk_info, instance):
+    def connect_volume(self, connection_info, instance):
         """Attach the volume to instance_name."""
-
-        LOG.debug("Calling os-brick to mount vzstorage")
         vz_share = connection_info['data']['export']
-        connection_info['data']['options'] = self._get_mount_opts(vz_share)
-        device_info = self.connector.connect_volume(connection_info['data'])
-        LOG.debug("Attached vzstorage volume %s", device_info)
+        share_lock = self.SHARE_LOCK_NAME % vz_share
 
-        connection_info['data']['device_path'] = device_info['path']
+        @utils.synchronized(share_lock)
+        def _connect_volume(connection_info, instance):
+            LOG.debug("Calling os-brick to mount vzstorage")
+            connection_info['data']['options'] = self._get_mount_opts(vz_share)
+            device_info = self.connector.connect_volume(
+                connection_info['data'])
+            LOG.debug("Attached vzstorage volume %s", device_info)
+            connection_info['data']['device_path'] = device_info['path']
 
-    def disconnect_volume(self, connection_info, disk_dev, instance):
+        return _connect_volume(connection_info, instance)
+
+    def disconnect_volume(self, connection_info, instance):
         """Detach the volume from instance_name."""
-
-        LOG.debug("calling os-brick to detach Vzstorage Volume")
+        LOG.debug("calling os-brick to detach Vzstorage Volume",
+                instance=instance)
         self.connector.disconnect_volume(connection_info['data'], None)
-        LOG.debug("Disconnected Vzstorage Volume %s", disk_dev)
+        LOG.debug("Disconnected Vzstorage Volume", instance=instance)

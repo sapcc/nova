@@ -19,84 +19,14 @@ from oslo_utils import encodeutils
 import webob
 
 from nova.api.openstack.placement import microversion
+from nova.api.openstack.placement.schemas import inventory as schema
 from nova.api.openstack.placement import util
 from nova.api.openstack.placement import wsgi_wrapper
 from nova import db
 from nova import exception
 from nova.i18n import _
-from nova import objects
+from nova.objects import resource_provider as rp_obj
 
-RESOURCE_CLASS_IDENTIFIER = "^[A-Z0-9_]+$"
-BASE_INVENTORY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "resource_provider_generation": {
-            "type": "integer"
-        },
-        "total": {
-            "type": "integer",
-            "maximum": db.MAX_INT,
-            "minimum": 1,
-        },
-        "reserved": {
-            "type": "integer",
-            "maximum": db.MAX_INT,
-            "minimum": 0,
-        },
-        "min_unit": {
-            "type": "integer",
-            "maximum": db.MAX_INT,
-            "minimum": 1
-        },
-        "max_unit": {
-            "type": "integer",
-            "maximum": db.MAX_INT,
-            "minimum": 1
-        },
-        "step_size": {
-            "type": "integer",
-            "maximum": db.MAX_INT,
-            "minimum": 1
-        },
-        "allocation_ratio": {
-            "type": "number",
-            "maximum": db.SQL_SP_FLOAT_MAX
-        },
-    },
-    "required": [
-        "total",
-        "resource_provider_generation"
-    ],
-    "additionalProperties": False
-}
-POST_INVENTORY_SCHEMA = copy.deepcopy(BASE_INVENTORY_SCHEMA)
-POST_INVENTORY_SCHEMA['properties']['resource_class'] = {
-    "type": "string",
-    "pattern": RESOURCE_CLASS_IDENTIFIER,
-}
-POST_INVENTORY_SCHEMA['required'].append('resource_class')
-POST_INVENTORY_SCHEMA['required'].remove('resource_provider_generation')
-PUT_INVENTORY_RECORD_SCHEMA = copy.deepcopy(BASE_INVENTORY_SCHEMA)
-PUT_INVENTORY_RECORD_SCHEMA['required'].remove('resource_provider_generation')
-PUT_INVENTORY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "resource_provider_generation": {
-            "type": "integer"
-        },
-        "inventories": {
-            "type": "object",
-            "patternProperties": {
-                RESOURCE_CLASS_IDENTIFIER: PUT_INVENTORY_RECORD_SCHEMA,
-            }
-        }
-    },
-    "required": [
-        "resource_provider_generation",
-        "inventories"
-    ],
-    "additionalProperties": False
-}
 
 # NOTE(cdent): We keep our own representation of inventory defaults
 # and output fields, separate from the versioned object to avoid
@@ -149,7 +79,7 @@ def _make_inventory_object(resource_provider, resource_class, **data):
     # 0) for non-negative integers. It's not clear if that is
     # duplication or decoupling so leaving it as this for now.
     try:
-        inventory = objects.Inventory(
+        inventory = rp_obj.Inventory(
             resource_provider=resource_provider,
             resource_class=resource_class, **data)
     except (ValueError, TypeError) as exc:
@@ -161,21 +91,33 @@ def _make_inventory_object(resource_provider, resource_class, **data):
     return inventory
 
 
-def _send_inventories(response, resource_provider, inventories):
+def _send_inventories(req, resource_provider, inventories):
     """Send a JSON representation of a list of inventories."""
+    response = req.response
     response.status = 200
-    response.body = encodeutils.to_utf8(jsonutils.dumps(
-        _serialize_inventories(inventories, resource_provider.generation)))
+    output, last_modified = _serialize_inventories(
+        inventories, resource_provider.generation)
+    response.body = encodeutils.to_utf8(jsonutils.dumps(output))
     response.content_type = 'application/json'
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
+    if want_version.matches((1, 15)):
+        response.last_modified = last_modified
+        response.cache_control = 'no-cache'
     return response
 
 
-def _send_inventory(response, resource_provider, inventory, status=200):
+def _send_inventory(req, resource_provider, inventory, status=200):
     """Send a JSON representation of one single inventory."""
+    response = req.response
     response.status = status
     response.body = encodeutils.to_utf8(jsonutils.dumps(_serialize_inventory(
         inventory, generation=resource_provider.generation)))
     response.content_type = 'application/json'
+    want_version = req.environ[microversion.MICROVERSION_ENVIRON]
+    if want_version.matches((1, 15)):
+        modified = util.pick_last_modified(None, inventory)
+        response.last_modified = modified
+        response.cache_control = 'no-cache'
     return response
 
 
@@ -195,11 +137,13 @@ def _serialize_inventories(inventories, generation):
     inventories_by_class = {inventory.resource_class: inventory
                             for inventory in inventories}
     inventories_dict = {}
+    last_modified = None
     for resource_class, inventory in inventories_by_class.items():
+        last_modified = util.pick_last_modified(last_modified, inventory)
         inventories_dict[resource_class] = _serialize_inventory(
             inventory, generation=None)
-    return {'resource_provider_generation': generation,
-            'inventories': inventories_dict}
+    return ({'resource_provider_generation': generation,
+             'inventories': inventories_dict}, last_modified)
 
 
 @wsgi_wrapper.PlacementWsgify
@@ -213,9 +157,9 @@ def create_inventory(req):
     """
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
-    resource_provider = objects.ResourceProvider.get_by_uuid(
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(
         context, uuid)
-    data = _extract_inventory(req.body, POST_INVENTORY_SCHEMA)
+    data = _extract_inventory(req.body, schema.POST_INVENTORY_SCHEMA)
     resource_class = data.pop('resource_class')
 
     inventory = _make_inventory_object(resource_provider,
@@ -238,7 +182,7 @@ def create_inventory(req):
     response = req.response
     response.location = util.inventory_url(
         req.environ, resource_provider, resource_class)
-    return _send_inventory(response, resource_provider, inventory,
+    return _send_inventory(req, resource_provider, inventory,
                            status=201)
 
 
@@ -255,7 +199,7 @@ def delete_inventory(req):
     uuid = util.wsgi_path_item(req.environ, 'uuid')
     resource_class = util.wsgi_path_item(req.environ, 'resource_class')
 
-    resource_provider = objects.ResourceProvider.get_by_uuid(
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(
         context, uuid)
     try:
         resource_provider.delete_inventory(resource_class)
@@ -286,17 +230,15 @@ def get_inventories(req):
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
     try:
-        resource_provider = objects.ResourceProvider.get_by_uuid(
-            context, uuid)
+        rp = rp_obj.ResourceProvider.get_by_uuid(context, uuid)
     except exception.NotFound as exc:
         raise webob.exc.HTTPNotFound(
             _("No resource provider with uuid %(uuid)s found : %(error)s") %
              {'uuid': uuid, 'error': exc})
 
-    inventories = objects.InventoryList.get_all_by_resource_provider_uuid(
-        context, resource_provider.uuid)
+    inv_list = rp_obj.InventoryList.get_all_by_resource_provider(context, rp)
 
-    return _send_inventories(req.response, resource_provider, inventories)
+    return _send_inventories(req, rp, inv_list)
 
 
 @wsgi_wrapper.PlacementWsgify
@@ -310,18 +252,22 @@ def get_inventory(req):
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
     resource_class = util.wsgi_path_item(req.environ, 'resource_class')
+    try:
+        rp = rp_obj.ResourceProvider.get_by_uuid(context, uuid)
+    except exception.NotFound as exc:
+        raise webob.exc.HTTPNotFound(
+            _("No resource provider with uuid %(uuid)s found : %(error)s") %
+             {'uuid': uuid, 'error': exc})
 
-    resource_provider = objects.ResourceProvider.get_by_uuid(
-        context, uuid)
-    inventory = objects.InventoryList.get_all_by_resource_provider_uuid(
-        context, resource_provider.uuid).find(resource_class)
+    inv_list = rp_obj.InventoryList.get_all_by_resource_provider(context, rp)
+    inventory = inv_list.find(resource_class)
 
     if not inventory:
         raise webob.exc.HTTPNotFound(
             _('No inventory of class %(class)s for %(rp_uuid)s') %
-            {'class': resource_class, 'rp_uuid': resource_provider.uuid})
+            {'class': resource_class, 'rp_uuid': uuid})
 
-    return _send_inventory(req.response, resource_provider, inventory)
+    return _send_inventory(req, rp, inventory)
 
 
 @wsgi_wrapper.PlacementWsgify
@@ -342,10 +288,10 @@ def set_inventories(req):
     """
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
-    resource_provider = objects.ResourceProvider.get_by_uuid(
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(
         context, uuid)
 
-    data = _extract_inventories(req.body, PUT_INVENTORY_SCHEMA)
+    data = _extract_inventories(req.body, schema.PUT_INVENTORY_SCHEMA)
     if data['resource_provider_generation'] != resource_provider.generation:
         raise webob.exc.HTTPConflict(
             _('resource provider generation conflict'))
@@ -355,7 +301,7 @@ def set_inventories(req):
         inventory = _make_inventory_object(
             resource_provider, res_class, **inventory_data)
         inv_list.append(inventory)
-    inventories = objects.InventoryList(objects=inv_list)
+    inventories = rp_obj.InventoryList(objects=inv_list)
 
     try:
         resource_provider.set_inventory(inventories)
@@ -381,10 +327,11 @@ def set_inventories(req):
               '%(rp_uuid)s: %(error)s') % {'rp_uuid': resource_provider.uuid,
                                           'error': exc})
 
-    return _send_inventories(req.response, resource_provider, inventories)
+    return _send_inventories(req, resource_provider, inventories)
 
 
 @wsgi_wrapper.PlacementWsgify
+@microversion.version_handler('1.5', status_code=405)
 def delete_inventories(req):
     """DELETE all inventory for a resource provider.
 
@@ -393,13 +340,12 @@ def delete_inventories(req):
     On success return a 204 No content.
     Return 405 Method Not Allowed if the wanted microversion does not match.
     """
-    microversion.raise_http_status_code_if_not_version(req, 405, (1, 5))
     context = req.environ['placement.context']
     uuid = util.wsgi_path_item(req.environ, 'uuid')
-    resource_provider = objects.ResourceProvider.get_by_uuid(
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(
         context, uuid)
 
-    inventories = objects.InventoryList(objects=[])
+    inventories = rp_obj.InventoryList(objects=[])
 
     try:
         resource_provider.set_inventory(inventories)
@@ -437,10 +383,10 @@ def update_inventory(req):
     uuid = util.wsgi_path_item(req.environ, 'uuid')
     resource_class = util.wsgi_path_item(req.environ, 'resource_class')
 
-    resource_provider = objects.ResourceProvider.get_by_uuid(
+    resource_provider = rp_obj.ResourceProvider.get_by_uuid(
         context, uuid)
 
-    data = _extract_inventory(req.body, BASE_INVENTORY_SCHEMA)
+    data = _extract_inventory(req.body, schema.BASE_INVENTORY_SCHEMA)
     if data['resource_provider_generation'] != resource_provider.generation:
         raise webob.exc.HTTPConflict(
             _('resource provider generation conflict'))
@@ -466,4 +412,4 @@ def update_inventory(req):
               '%(rp_uuid)s: %(error)s') % {'rp_uuid': resource_provider.uuid,
                                           'error': exc})
 
-    return _send_inventory(req.response, resource_provider, inventory)
+    return _send_inventory(req, resource_provider, inventory)

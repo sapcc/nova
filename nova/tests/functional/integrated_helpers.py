@@ -79,7 +79,8 @@ class _IntegratedTestBase(test.TestCase):
         nova.tests.unit.image.fake.stub_out_image_service(self)
 
         self.useFixture(cast_as_call.CastAsCall(self))
-        self.useFixture(nova_fixtures.PlacementFixture())
+        placement = self.useFixture(nova_fixtures.PlacementFixture())
+        self.placement_api = placement.api
 
         self._setup_services()
 
@@ -100,8 +101,11 @@ class _IntegratedTestBase(test.TestCase):
         self.conductor = self.start_service('conductor')
         self.consoleauth = self.start_service('consoleauth')
 
-        self.network = self.start_service('network',
-                                          manager=CONF.network_manager)
+        if self.USE_NEUTRON:
+            self.neutron = self.useFixture(nova_fixtures.NeutronFixture(self))
+        else:
+            self.network = self.start_service('network',
+                                              manager=CONF.network_manager)
         self.scheduler = self._setup_scheduler_service()
 
         self.compute = self._setup_compute_service()
@@ -136,11 +140,14 @@ class _IntegratedTestBase(test.TestCase):
     def get_invalid_image(self):
         return uuids.fake
 
-    def _build_minimal_create_server_request(self):
+    def _build_minimal_create_server_request(self, image_uuid=None):
         server = {}
 
-        # We now have a valid imageId
-        server[self._image_ref_parameter] = self.api.get_images()[0]['id']
+        # NOTE(takashin): In API version 2.36, image APIs were deprecated.
+        # In API version 2.36 or greater, self.api.get_images() returns
+        # a 404 error. In that case, 'image_uuid' should be specified.
+        server[self._image_ref_parameter] = (image_uuid or
+                                             self.api.get_images()[0]['id'])
 
         # Set a valid flavorId
         flavor = self.api.get_flavors()[0]
@@ -182,13 +189,16 @@ class _IntegratedTestBase(test.TestCase):
             self.api_fixture.admin_api.post_extra_spec(flv_id, spec)
         return flv_id
 
-    def _build_server(self, flavor_id):
+    def _build_server(self, flavor_id, image=None):
         server = {}
-        image = self.api.get_images()[0]
-        LOG.debug("Image: %s", image)
+        if image is None:
+            image = self.api.get_images()[0]
+            LOG.debug("Image: %s", image)
 
-        # We now have a valid imageId
-        server[self._image_ref_parameter] = image['id']
+            # We now have a valid imageId
+            server[self._image_ref_parameter] = image['id']
+        else:
+            server[self._image_ref_parameter] = image
 
         # Set a valid flavorId
         flavor = self.api.get_flavor(flavor_id)
@@ -268,3 +278,60 @@ class InstanceHelperMixin(object):
             self.fail('Server failed to delete.')
         except api_client.OpenStackApiNotFoundException:
             return
+
+    def _wait_for_action_fail_completion(
+            self, server, expected_action, event_name, api=None):
+        """Polls instance action events for the given instance, action and
+        action event name until it finds the action event with an error
+        result.
+        """
+        if api is None:
+            api = self.api
+        completion_event = None
+        for attempt in range(10):
+            actions = api.get_instance_actions(server['id'])
+            # Look for the migrate action.
+            for action in actions:
+                if action['action'] == expected_action:
+                    events = (
+                        api.api_get(
+                            '/servers/%s/os-instance-actions/%s' %
+                            (server['id'], action['request_id'])
+                        ).body['instanceAction']['events'])
+                    # Look for the action event being in error state.
+                    for event in events:
+                        if (event['event'] == event_name and
+                                event['result'] is not None and
+                                event['result'].lower() == 'error'):
+                            completion_event = event
+                            # Break out of the events loop.
+                            break
+                    if completion_event:
+                        # Break out of the actions loop.
+                        break
+            # We didn't find the completion event yet, so wait a bit.
+            time.sleep(0.5)
+
+        if completion_event is None:
+            self.fail('Timed out waiting for %s failure event. Current '
+                      'instance actions: %s' % (event_name, actions))
+
+    def _wait_for_migration_status(self, server, expected_statuses):
+        """Waits for a migration record with the given statuses to be found
+        for the given server, else the test fails. The migration record, if
+        found, is returned.
+        """
+        api = getattr(self, 'admin_api', None)
+        if api is None:
+            api = self.api
+
+        statuses = [status.lower() for status in expected_statuses]
+        for attempt in range(10):
+            migrations = api.api_get('/os-migrations').body['migrations']
+            for migration in migrations:
+                if (migration['instance_uuid'] == server['id'] and
+                        migration['status'].lower() in statuses):
+                    return migration
+            time.sleep(0.5)
+        self.fail('Timed out waiting for migration with status "%s" for '
+                  'instance: %s' % (expected_statuses, server['id']))

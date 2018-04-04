@@ -108,14 +108,15 @@ class InstancePayload(base.NotificationPayloadBase):
         'auto_disk_config': fields.DiskConfigField()
     }
 
-    def __init__(self, instance):
+    def __init__(self, instance, bdms=None):
         super(InstancePayload, self).__init__()
         network_info = instance.get_network_info()
         self.ip_addresses = IpPayload.from_network_info(network_info)
         self.flavor = flavor_payload.FlavorPayload(flavor=instance.flavor)
-        # TODO(gibi): investigate the possibility to use already in scope bdm
-        # when available like in instance.create
-        self.block_devices = BlockDevicePayload.from_instance(instance)
+        if bdms is not None:
+            self.block_devices = BlockDevicePayload.from_bdms(bdms)
+        else:
+            self.block_devices = BlockDevicePayload.from_instance(instance)
 
         self.populate_schema(instance=instance)
 
@@ -134,8 +135,9 @@ class InstanceActionPayload(InstancePayload):
         'fault': fields.ObjectField('ExceptionPayload', nullable=True),
     }
 
-    def __init__(self, instance, fault):
-        super(InstanceActionPayload, self).__init__(instance=instance)
+    def __init__(self, instance, fault, bdms=None):
+        super(InstanceActionPayload, self).__init__(instance=instance,
+                                                    bdms=bdms)
         self.fault = fault
 
 
@@ -202,14 +204,32 @@ class InstanceCreatePayload(InstanceActionPayload):
         'tags': fields.ListOfStringsField(),
     }
 
-    def __init__(self, instance, fault):
+    def __init__(self, instance, fault, bdms):
         super(InstanceCreatePayload, self).__init__(
-                instance=instance,
-                fault=fault)
+            instance=instance,
+            fault=fault,
+            bdms=bdms)
         self.keypairs = [keypair_payload.KeypairPayload(keypair=keypair)
                          for keypair in instance.keypairs]
         self.tags = [instance_tag.tag
                      for instance_tag in instance.tags]
+
+
+@nova_base.NovaObjectRegistry.register_notification
+class InstanceActionResizePrepPayload(InstanceActionPayload):
+    # No SCHEMA as all the additional fields are calculated
+
+    # Version 1.0: Initial version
+    VERSION = '1.0'
+    fields = {
+        'new_flavor': fields.ObjectField('FlavorPayload', nullable=True)
+    }
+
+    def __init__(self, instance, fault, new_flavor):
+        super(InstanceActionResizePrepPayload, self).__init__(
+                instance=instance,
+                fault=fault)
+        self.new_flavor = new_flavor
 
 
 @nova_base.NovaObjectRegistry.register_notification
@@ -239,6 +259,21 @@ class InstanceUpdatePayload(InstancePayload):
         self.old_display_name = old_display_name
         self.tags = [instance_tag.tag
                      for instance_tag in instance.tags.objects]
+
+
+@nova_base.NovaObjectRegistry.register_notification
+class InstanceActionRescuePayload(InstanceActionPayload):
+    # Version 1.0: Initial version
+    VERSION = '1.0'
+    fields = {
+        'rescue_image_ref': fields.UUIDField(nullable=True)
+    }
+
+    def __init__(self, instance, fault, rescue_image_ref):
+        super(InstanceActionRescuePayload, self).__init__(
+                instance=instance,
+                fault=fault)
+        self.rescue_image_ref = rescue_image_ref
 
 
 @nova_base.NovaObjectRegistry.register_notification
@@ -352,12 +387,21 @@ class BlockDevicePayload(base.NotificationPayloadBase):
             return None
 
         instance_bdms = instance.get_bdms()
-        bdms = []
         if instance_bdms is not None:
-            for bdm in instance_bdms:
-                if bdm.volume_id is not None:
-                    bdms.append(cls(bdm))
-        return bdms
+            return cls.from_bdms(instance_bdms)
+        else:
+            return []
+
+    @classmethod
+    def from_bdms(cls, bdms):
+        """Returns a list of BlockDevicePayload objects based on the passed
+        BlockDeviceMappingList.
+        """
+        payloads = []
+        for bdm in bdms:
+            if bdm.volume_id is not None:
+                payloads.append(cls(bdm))
+        return payloads
 
 
 @nova_base.NovaObjectRegistry.register_notification
@@ -387,6 +431,7 @@ class InstanceStateUpdatePayload(base.NotificationPayloadBase):
 @base.notification_sample('instance-unpause-end.json')
 @base.notification_sample('instance-resize-start.json')
 @base.notification_sample('instance-resize-end.json')
+@base.notification_sample('instance-resize-error.json')
 @base.notification_sample('instance-suspend-start.json')
 @base.notification_sample('instance-suspend-end.json')
 @base.notification_sample('instance-power_on-start.json')
@@ -398,23 +443,22 @@ class InstanceStateUpdatePayload(base.NotificationPayloadBase):
 @base.notification_sample('instance-reboot-error.json')
 @base.notification_sample('instance-shutdown-start.json')
 @base.notification_sample('instance-shutdown-end.json')
-@base.notification_sample('instance-snapshot-start.json')
-@base.notification_sample('instance-snapshot-end.json')
-# @base.notification_sample('instance-add_fixed_ip-start.json')
-# @base.notification_sample('instance-add_fixed_ip-end.json')
+@base.notification_sample('instance-interface_attach-start.json')
+@base.notification_sample('instance-interface_attach-end.json')
+@base.notification_sample('instance-interface_attach-error.json')
 @base.notification_sample('instance-shelve-start.json')
 @base.notification_sample('instance-shelve-end.json')
 @base.notification_sample('instance-resume-start.json')
 @base.notification_sample('instance-resume-end.json')
 @base.notification_sample('instance-restore-start.json')
 @base.notification_sample('instance-restore-end.json')
-# @base.notification_sample('instance-evacuate.json')
+@base.notification_sample('instance-evacuate.json')
 @base.notification_sample('instance-resize_finish-start.json')
 @base.notification_sample('instance-resize_finish-end.json')
-# @base.notification_sample('instance-live_migration_pre-start.json')
-# @base.notification_sample('instance-live_migration_pre-end.json')
-# @base.notification_sample('instance-live_migration_abort-start.json')
-# @base.notification_sample('instance-live_migration_abort-end.json')
+@base.notification_sample('instance-live_migration_pre-start.json')
+@base.notification_sample('instance-live_migration_pre-end.json')
+@base.notification_sample('instance-live_migration_abort-start.json')
+@base.notification_sample('instance-live_migration_abort-end.json')
 # @base.notification_sample('instance-live_migration_post-start.json')
 # @base.notification_sample('instance-live_migration_post-end.json')
 # @base.notification_sample('instance-live_migration_post_dest-start.json')
@@ -426,21 +470,20 @@ class InstanceStateUpdatePayload(base.NotificationPayloadBase):
 @base.notification_sample('instance-rebuild-start.json')
 @base.notification_sample('instance-rebuild-end.json')
 @base.notification_sample('instance-rebuild-error.json')
-# @base.notification_sample('instance-remove_fixed_ip-start.json')
-# @base.notification_sample('instance-remove_fixed_ip-end.json')
-# @base.notification_sample('instance-resize_confirm-start.json')
-# @base.notification_sample('instance-resize_confirm-end.json')
-# @base.notification_sample('instance-resize_prep-start.json')
-# @base.notification_sample('instance-resize_revert-start.json')
-# @base.notification_sample('instance-resize_revert-end.json')
+@base.notification_sample('instance-interface_detach-start.json')
+@base.notification_sample('instance-interface_detach-end.json')
+@base.notification_sample('instance-resize_confirm-start.json')
+@base.notification_sample('instance-resize_confirm-end.json')
+@base.notification_sample('instance-resize_revert-start.json')
+@base.notification_sample('instance-resize_revert-end.json')
 @base.notification_sample('instance-shelve_offload-start.json')
 @base.notification_sample('instance-shelve_offload-end.json')
 @base.notification_sample('instance-soft_delete-start.json')
 @base.notification_sample('instance-soft_delete-end.json')
-# @base.notification_sample('instance-trigger_crash_dump-start.json')
-# @base.notification_sample('instance-trigger_crash_dump-end.json')
-# @base.notification_sample('instance-unrescue-start.json')
-# @base.notification_sample('instance-unrescue-end.json')
+@base.notification_sample('instance-trigger_crash_dump-start.json')
+@base.notification_sample('instance-trigger_crash_dump-end.json')
+@base.notification_sample('instance-unrescue-start.json')
+@base.notification_sample('instance-unrescue-end.json')
 @base.notification_sample('instance-unshelve-start.json')
 @base.notification_sample('instance-unshelve-end.json')
 @nova_base.NovaObjectRegistry.register_notification
@@ -503,3 +546,58 @@ class InstanceCreateNotification(base.NotificationBase):
     fields = {
         'payload': fields.ObjectField('InstanceCreatePayload')
     }
+
+
+@base.notification_sample('instance-resize_prep-start.json')
+@base.notification_sample('instance-resize_prep-end.json')
+@nova_base.NovaObjectRegistry.register_notification
+class InstanceActionResizePrepNotification(base.NotificationBase):
+    # Version 1.0: Initial version
+    VERSION = '1.0'
+
+    fields = {
+        'payload': fields.ObjectField('InstanceActionResizePrepPayload')
+    }
+
+
+@base.notification_sample('instance-snapshot-start.json')
+@base.notification_sample('instance-snapshot-end.json')
+@nova_base.NovaObjectRegistry.register_notification
+class InstanceActionSnapshotNotification(base.NotificationBase):
+    # Version 1.0: Initial version
+    VERSION = '1.0'
+
+    fields = {
+        'payload': fields.ObjectField('InstanceActionSnapshotPayload')
+    }
+
+
+@base.notification_sample('instance-rescue-start.json')
+@base.notification_sample('instance-rescue-end.json')
+@nova_base.NovaObjectRegistry.register_notification
+class InstanceActionRescueNotification(base.NotificationBase):
+    # Version 1.0: Initial version
+    VERSION = '1.0'
+
+    fields = {
+        'payload': fields.ObjectField('InstanceActionRescuePayload')
+    }
+
+
+@nova_base.NovaObjectRegistry.register_notification
+class InstanceActionSnapshotPayload(InstanceActionPayload):
+    # Version 1.6: Initial version. It starts at version 1.6 as
+    #              instance.snapshot.start and .end notifications are switched
+    #              from using InstanceActionPayload 1.5 to this new payload and
+    #              also it added a new field so we wanted to keep the version
+    #              number increasing to signal the change.
+    VERSION = '1.6'
+    fields = {
+        'snapshot_image_id': fields.UUIDField(),
+    }
+
+    def __init__(self, instance, fault, snapshot_image_id):
+        super(InstanceActionSnapshotPayload, self).__init__(
+                instance=instance,
+                fault=fault)
+        self.snapshot_image_id = snapshot_image_id
