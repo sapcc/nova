@@ -22,6 +22,7 @@ Class for VM tasks like spawn, snapshot, suspend, resume etc.
 import collections
 import os
 import time
+import re
 
 import decorator
 import cluster_util
@@ -216,8 +217,15 @@ class VMwareVMOps(object):
 
     def _extend_if_required(self, dc_info, image_info, instance,
                             root_vmdk_path):
-        """Increase the size of the root vmdk if necessary."""
-        if instance.flavor.root_gb * units.Gi > image_info.file_size:
+
+        root_vmdk = ds_obj.DatastorePath.parse(root_vmdk_path.replace(".vmdk", "-flat.vmdk"))
+
+        datastore = ds_util.get_datastore(self._session, dc_info.ref,
+                                          re.compile(r"^{}$".format(root_vmdk.datastore)))
+        ds_browser = self._get_ds_browser(datastore.ref)
+        actual_file_size = ds_util.file_size(self._session, ds_browser,
+                                             root_vmdk.parent, root_vmdk.basename)
+        if instance.flavor.root_gb * units.Gi > actual_file_size:
             size_in_kb = instance.flavor.root_gb * units.Mi
             self._extend_virtual_disk(instance, size_in_kb,
                                       root_vmdk_path, dc_info.ref)
@@ -1033,7 +1041,7 @@ class VMwareVMOps(object):
 
         if disks:
             datastore = disks[0].device.backing.datastore
-            datastore_name = datastore_name = ds_obj.DatastorePath.parse(disks[0].path).datastore
+            datastore_name = ds_obj.DatastorePath.parse(disks[0].path).datastore
         else:
             vm_path_name = self._session._call_method(vutil, 'get_object_property',
                                                       vm_ref, 'summary.config.vmPathName')
