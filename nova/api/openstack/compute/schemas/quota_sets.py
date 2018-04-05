@@ -63,7 +63,7 @@ update = {
         },
     },
     'required': ['quota_set'],
-    'additionalProperties': False,
+    'additionalProperties': True,
 }
 
 update_v236 = copy.deepcopy(update)
