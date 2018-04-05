@@ -33,6 +33,7 @@ import shutil
 import sys
 import tempfile
 import time
+import weakref
 
 import eventlet
 from keystoneauth1 import exceptions as ks_exc
@@ -52,6 +53,7 @@ from oslo_utils import timeutils
 from oslo_utils import units
 import six
 from six.moves import range
+import threading
 
 import nova.conf
 from nova import exception
@@ -1418,3 +1420,36 @@ def supports_direct_io(dirpath):
             pass
 
     return hasDirectIO
+
+# Copied and modified from oslo_concurrency.lockutils
+# - Added option for a different default value of the semaphore (e.g larger than 1)
+class Semaphores(object):
+    """A garbage collected container of semaphores.
+    This collection internally uses a weak value dictionary so that when a
+    semaphore is no longer in use (by any threads) it will automatically be
+    removed from this container by the garbage collector.
+    """
+
+    def __init__(self, semaphore_default=None):
+        self._semaphores = weakref.WeakValueDictionary()
+        self._lock = threading.Lock()
+        self._semaphore_default = semaphore_default or threading.Semaphore
+
+    def get(self, name):
+        """Gets (or creates) a semaphore with a given name.
+        :param name: The semaphore name to get/create (used to associate
+                     previously created names with the same semaphore).
+        Returns an newly constructed semaphore (or an existing one if it was
+        already created for the given name).
+        """
+        with self._lock:
+            try:
+                return self._semaphores[name]
+            except KeyError:
+                sem = self._semaphore_default()
+                self._semaphores[name] = sem
+                return sem
+
+    def __len__(self):
+        """Returns how many semaphores exist at the current time."""
+        return len(self._semaphores)
