@@ -1878,6 +1878,7 @@ class ComputeManager(manager.Manager):
                      injected_files=None, requested_networks=None,
                      security_groups=None, block_device_mapping=None,
                      node=None, limits=None):
+        LOG.debug("Build and run instance .....")
 
         @utils.synchronized(instance.uuid)
         def _locked_do_build_and_run_instance(*args, **kwargs):
@@ -1885,10 +1886,13 @@ class ComputeManager(manager.Manager):
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
-            with self._per_project_build_semaphore.get(instance.project_id):
-                with self._build_semaphore:
-                    self._do_build_and_run_instance(*args, **kwargs)
-
+            LOG.debug("locked_do_build_and_run_instance .....")
+            try:
+                with self._per_project_build_semaphore.get(instance.project_id):
+                    with self._build_semaphore:
+                        self._do_build_and_run_instance(*args, **kwargs)
+            except Exception as e:
+                LOG.exception(e)
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
