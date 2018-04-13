@@ -1887,12 +1887,13 @@ class ComputeManager(manager.Manager):
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
             LOG.debug("locked_do_build_and_run_instance .....")
-            try:
-                with self._per_project_build_semaphore.get(instance.project_id):
-                    with self._build_semaphore:
+            
+            with self._per_project_build_semaphore.get(instance.project_id):
+                with self._build_semaphore:
+                    try:
                         self._do_build_and_run_instance(*args, **kwargs)
-            except Exception as e:
-                LOG.exception(e)
+                    except Exception as e:
+                        LOG.exception(e)
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
