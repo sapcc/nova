@@ -322,6 +322,7 @@ class LibvirtDriver(driver.ComputeDriver):
         # determined in init_host.
         "supports_multiattach": False,
         "supports_trusted_certs": True,
+        "driver_specific_device_name": True
     }
 
     def __init__(self, virtapi, read_only=False):

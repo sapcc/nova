@@ -133,6 +133,7 @@ class ComputeDriver(object):
         "supports_extend_volume": False,
         "supports_multiattach": False,
         "supports_trusted_certs": False,
+        "driver_specific_device_name": False
     }
 
     requires_allocation_refresh = False
