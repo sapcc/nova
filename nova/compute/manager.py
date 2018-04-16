@@ -4720,7 +4720,14 @@ class ComputeManager(manager.Manager):
     @wrap_instance_fault
     def reserve_block_device_name(self, context, instance, device,
                                   volume_id, disk_bus, device_type):
-        @utils.synchronized(instance.uuid)
+        if inspect.getmodule(self.driver.get_device_name_for_instance) \
+                == nova.virt.driver:
+            def synchronized(f):
+                return f
+        else:
+            synchronized = utils.synchronized(instance.uuid)
+
+        @synchronized
         def do_reserve():
             bdms = (
                 objects.BlockDeviceMappingList.get_by_instance_uuid(
