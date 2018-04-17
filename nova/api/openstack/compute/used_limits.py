@@ -31,6 +31,7 @@ class UsedLimitsController(wsgi.Controller):
     def index(self, req, resp_obj):
         context = req.environ['nova.context']
         project_id = self._project_id(context, req)
+        QUOTAS.initialize()
         quotas = QUOTAS.get_project_quotas(context, project_id, usages=True)
         if api_version_request.is_supported(
                 req, min_version=MIN_WITHOUT_PROXY_API_SUPPORT_VERSION):
