@@ -415,16 +415,20 @@ def _sync_instances(context, project_id, user_id):
       SELECT t.name, COUNT(i.id), SUM(i.vcpus), SUM(i.memory_mb),
         EXISTS(SELECT 1 FROM instance_type_extra_specs
                WHERE instance_type_id = t.id
-               AND key = 'quota:separate' AND value = 'true')
+               AND key = 'quota:separate' AND value = 'true'),
+        EXISTS(SELECT 1 FROM instance_type_extra_specs
+               WHERE instance_type_id = t.id
+               AND key = 'quota:instance_only' AND value = 'true')
       FROM instances i JOIN instance_types t ON t.id = i.instance_type_id
       WHERE i.project_id = :pid AND i.user_id = :uid AND i.deleted = 0
       GROUP BY t.name, t.id
     '''
     stats = context.session.execute(query, { 'pid': project_id, 'uid': user_id })
     output = { "instances": 0, "cores": 0, "ram": 0 }
-    for flavor_name, count, vcpus, memory_mb, separate in stats:
-        output["cores"] += vcpus
-        output["ram"]   += memory_mb
+    for flavor_name, count, vcpus, memory_mb, separate, instance_only in stats:
+        if not instance_only:
+            output["cores"] += vcpus
+            output["ram"]   += memory_mb
         if separate:
             key = "instances_" + flavor_name
             output[key] = output.get(key, 0) + count
