@@ -858,7 +858,7 @@ class NoopQuotaDriver(object):
 class BaseResource(object):
     """Describe a single resource for quota checking."""
 
-    def __init__(self, name, flag=None):
+    def __init__(self, name, flag=None, default=None):
         """Initializes a Resource.
 
         :param name: The name of the resource, i.e., "instances".
@@ -869,6 +869,7 @@ class BaseResource(object):
 
         self.name = name
         self.flag = flag
+        self.default_value = default
 
     def quota(self, driver, context, **kwargs):
         """Given a driver and context, obtain the quota for this
@@ -925,7 +926,8 @@ class BaseResource(object):
         if self.flag == 'quota_networks':
             return CONF[self.flag]
 
-        return CONF.quota[self.flag] if self.flag else -1
+        return CONF.quota[self.flag] if self.flag else \
+            (self.default_value if self.default_value is not None else -1)
 
 
 class AbsoluteResource(BaseResource):
@@ -938,7 +940,7 @@ class CountableResource(AbsoluteResource):
     project ID.
     """
 
-    def __init__(self, name, count_as_dict, flag=None):
+    def __init__(self, name, count_as_dict, flag=None, default=None):
         """Initializes a CountableResource.
 
         Countable resources are those resources which directly
@@ -988,7 +990,7 @@ class CountableResource(AbsoluteResource):
                      for this resource.
         """
 
-        super(CountableResource, self).__init__(name, flag=flag)
+        super(CountableResource, self).__init__(name, flag=flag, default=default)
         self.count_as_dict = count_as_dict
 
 
@@ -1030,6 +1032,25 @@ class QuotaEngine(object):
                                   'server_group_members'),
                 ]
 
+            # construct resources for each flavor that has a separate quota
+            # (also for deleted flavors that still have running instances)
+            ctxt = context.get_admin_context()
+            for flavor_name in db.get_flavornames_with_separate_quota(ctxt):
+                resources.append(CountableResource(
+                    'instances_' + flavor_name,
+                    _instances_cores_ram_count,
+                    flag=None, default=0,
+                ))
+
+            # NOTE: An earlier version of this code included the capability to
+            # reload the resources list when flavors were changed by a user. I
+            # removed this since it would only trigger on the nova-api pod
+            # where the request comes in, so the other pods would not be
+            # updated and the API pods would become inconsistent with each
+            # other. Without the automatic reloading logic, all API pods need
+            # to be restarted when a flavor's "quota:separate" extra-spec is
+            # changed, but at least that behavior is deterministic and
+            # consistent.
             self.register_resources(resources)
             self._initialized = True
 
