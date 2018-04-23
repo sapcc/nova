@@ -2204,6 +2204,9 @@ class ComputeManager(manager.Manager):
                     reason=msg)
 
         try:
+            # Perform any driver preparation work for the driver.
+            self.driver.prepare_for_spawn(instance)
+
             # Verify that all the BDMs have a device_name set and assign a
             # default to the ones missing it with the help of the driver.
             self._default_block_device_names(context, instance, image_meta,
@@ -2224,12 +2227,14 @@ class ComputeManager(manager.Manager):
                 # Make sure the async call finishes
                 if network_info is not None:
                     network_info.wait(do_raise=False)
+                self.driver.failed_spawn_cleanup(instance)
         except (exception.UnexpectedTaskStateError,
                 exception.VolumeLimitExceeded,
                 exception.InvalidBDM) as e:
             # Make sure the async call finishes
             if network_info is not None:
                 network_info.wait(do_raise=False)
+            self.driver.failed_spawn_cleanup(instance)
             raise exception.BuildAbortException(instance_uuid=instance.uuid,
                     reason=e.format_message())
         except Exception:
@@ -2238,6 +2243,7 @@ class ComputeManager(manager.Manager):
             # Make sure the async call finishes
             if network_info is not None:
                 network_info.wait(do_raise=False)
+            self.driver.failed_spawn_cleanup(instance)
             msg = _('Failure prepping block device.')
             raise exception.BuildAbortException(instance_uuid=instance.uuid,
                     reason=msg)

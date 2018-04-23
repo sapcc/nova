@@ -337,6 +337,45 @@ class IronicDriver(virt_driver.ComputeDriver):
     def _stop_firewall(self, instance, network_info):
         self.firewall_driver.unfilter_instance(instance, network_info)
 
+    def _set_instance_uuid(self, node, instance):
+
+        patch = [{'path': '/instance_uuid', 'op': 'add',
+                  'value': instance.uuid}]
+        try:
+            # NOTE(TheJulia): Assert an instance UUID to lock the node
+            # from other deployment attempts while configuration is
+            # being set.
+            self.ironicclient.call('node.update', node.uuid, patch,
+                                   retry_on_conflict=False)
+        except ironic.exc.BadRequest:
+            msg = (_("Failed to reserve node %(node)s "
+                     "when provisioning the instance %(instance)s")
+                   % {'node': node.uuid, 'instance': instance.uuid})
+            LOG.error(msg)
+            raise exception.InstanceDeployFailure(msg)
+
+    def prepare_for_spawn(self, instance):
+        LOG.debug('Preparing to spawn instance %s.', instance.uuid)
+        node_uuid = instance.get('node')
+        if not node_uuid:
+            raise ironic.exc.BadRequest(
+                _("Ironic node uuid not supplied to "
+                  "driver for instance %s.") % instance.uuid)
+        node = self._get_node(node_uuid)
+        self._set_instance_uuid(node, instance)
+
+    def failed_spawn_cleanup(self, instance):
+        LOG.debug('Failed spawn cleanup called for instance',
+                  instance=instance)
+        try:
+            node = self._validate_instance_and_node(instance)
+        except exception.InstanceNotFound:
+            LOG.warning('Attempt to clean-up from failed spawn of '
+                        'instance %s failed due to no instance_uuid '
+                        'present on the node.', instance.uuid)
+            return
+        self._cleanup_deploy(node, instance)
+
     def _add_instance_info_to_node(self, node, instance, image_meta, flavor,
                                    preserve_ephemeral=None,
                                    block_device_info=None):
@@ -350,9 +389,6 @@ class IronicDriver(virt_driver.ComputeDriver):
                                                       preserve_ephemeral,
                                                       boot_from_volume)
 
-        # Associate the node with an instance
-        patch.append({'path': '/instance_uuid', 'op': 'add',
-                      'value': instance.uuid})
         try:
             # FIXME(lucasagomes): The "retry_on_conflict" parameter was added
             # to basically causes the deployment to fail faster in case the
