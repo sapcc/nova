@@ -2062,6 +2062,25 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         flavor_extra_specs = self._vmops._get_extra_specs(flavor, None)
         self._validate_extra_specs(expected, flavor_extra_specs)
 
+    def test_video_ram(self):
+
+        self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id, 'properties': {'hw_video_ram': 120}})
+        flavor_extra_specs = {'quota:cpu_limit': 7,
+                              'quota:cpu_reservation': 6,
+                              'hw_video:ram_max_mb':100}
+        flavor = objects.Flavor(name='my-flavor',
+                                memory_mb=6,
+                                vcpus=28,
+                                root_gb=496,
+                                ephemeral_gb=8128,
+                                swap=33550336,
+                                extra_specs=flavor_extra_specs)
+
+        self.assertRaises(exception.RequestedVRamTooHigh,
+                          self._vmops._get_extra_specs,
+                          flavor,
+                          self._image_meta)
+
     def test_extra_specs_cpu_limit(self):
         flavor_extra_specs = {'quota:cpu_limit': 7}
         cpu_limits = vm_util.Limits(limit=7)
