@@ -1822,8 +1822,8 @@ class VMwareVMOps(object):
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         lst_properties = ["summary.config.numCpu",
-                    "summary.config.memorySizeMB",
-                    "runtime.powerState"]
+                          "summary.config.memorySizeMB",
+                          "runtime.powerState"]
         try:
             vm_props = self._session._call_method(vutil,
                                                   "get_object_properties_dict",

@@ -118,7 +118,10 @@ vmwareapi_opts = [
                     'work-arounds'),
     cfg.StrOpt('vspc_username', help='Username for Virtual Serial Port Concentrator'),
     cfg.StrOpt('vspc_password', help='Password for Virtual Serial Port Concentrator'),
-    cfg.StrOpt('default_portgroup', help='Default portgroup for migration')
+    cfg.StrOpt('default_portgroup', help='Default portgroup for migration'),
+    cfg.BoolOpt('connection_pool_block',
+                default=False,
+                help='Whether to block if connection pool is full'),
 ]
 
 spbm_opts = [
@@ -848,7 +851,8 @@ class VMwareAPISession(api.VMwareAPISession):
                  scheme="https",
                  cacert=CONF.vmware.ca_file,
                  insecure=CONF.vmware.insecure,
-                 pool_size=CONF.vmware.connection_pool_size):
+                 pool_size=CONF.vmware.connection_pool_size,
+                 pool_block=CONF.vmware.connection_pool_block):
         super(VMwareAPISession, self).__init__(
             host=host_ip,
             port=host_port,
@@ -861,7 +865,8 @@ class VMwareAPISession(api.VMwareAPISession):
             wsdl_loc=CONF.vmware.wsdl_location,
             cacert=cacert,
             insecure=insecure,
-            pool_size=pool_size)
+            pool_size=pool_size,
+            pool_block=pool_block)
 
     def _is_vim_object(self, module):
         """Check if the module is a VIM Object instance."""
