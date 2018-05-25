@@ -29,6 +29,7 @@ class DifferentHostFilter(filters.BaseHostFilter):
 
     # The hosts the instances are running on doesn't change within a request
     run_filter_once_per_request = True
+    requires_instances = True
 
     def host_passes(self, host_state, spec_obj):
         affinity_uuids = spec_obj.get_scheduler_hint('different_host')
@@ -46,6 +47,7 @@ class SameHostFilter(filters.BaseHostFilter):
 
     # The hosts the instances are running on doesn't change within a request
     run_filter_once_per_request = True
+    requires_instances = True
 
     def host_passes(self, host_state, spec_obj):
         affinity_uuids = spec_obj.get_scheduler_hint('same_host')
