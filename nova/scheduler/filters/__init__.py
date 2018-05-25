@@ -20,6 +20,8 @@ from nova import filters
 
 
 class BaseHostFilter(filters.BaseFilter):
+    requires_instances = False
+
     """Base class for host filters."""
 
     # This is set to True if this filter should be run for rebuild.

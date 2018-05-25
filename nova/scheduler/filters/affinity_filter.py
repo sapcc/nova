@@ -28,6 +28,7 @@ class DifferentHostFilter(filters.BaseHostFilter):
     """Schedule the instance on a different host from a set of instances."""
     # The hosts the instances are running on doesn't change within a request
     run_filter_once_per_request = True
+    requires_instances = True
 
     RUN_ON_REBUILD = False
 
@@ -46,6 +47,7 @@ class SameHostFilter(filters.BaseHostFilter):
     """
     # The hosts the instances are running on doesn't change within a request
     run_filter_once_per_request = True
+    requires_instances = True
 
     RUN_ON_REBUILD = False
 

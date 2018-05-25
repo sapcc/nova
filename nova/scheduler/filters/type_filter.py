@@ -18,6 +18,7 @@ from nova.scheduler import filters
 from nova.scheduler.filters import utils
 
 
+    requires_instances = True
 class AggregateTypeAffinityFilter(filters.BaseHostFilter):
     """AggregateTypeAffinityFilter limits instance_type by aggregate
 

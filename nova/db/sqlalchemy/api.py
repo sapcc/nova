@@ -2725,6 +2725,25 @@ def instance_get_all_by_host(context, host, columns_to_join=None):
                                     manual_joins=columns_to_join)
 
 
+@pick_context_manager_reader_allow_async
+def instance_count(context, filters=None):
+
+    q = model_query(context,
+                    models.Instance,
+                    read_deleted="no")
+    if filters:
+        for k,v in six.iteritems(filters):
+            attr = getattr(models.Instance, k)
+            if not attr:
+                continue
+            if isinstance(v, (list, set)):
+                q = q.filter(attr.in_(v))
+            else:
+                q = q.filter(attr == v)
+
+    return q.count()
+
+
 def _instance_get_all_uuids_by_host(context, host):
     """Return a list of the instance uuids on a given host.
 
