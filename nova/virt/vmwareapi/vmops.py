@@ -298,6 +298,8 @@ class VMwareVMOps(object):
     def build_virtual_machine(self, instance, context, image_info,
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
+
+        #self.update_cached_instances()
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
@@ -1297,6 +1299,7 @@ class VMwareVMOps(object):
         except Exception:
             LOG.exception(_('Destroy instance failed'), instance=instance)
         finally:
+            LOG.debug('REMOVING INSTANCE FROM CACHE ====================================================================================')
             vm_util.vm_ref_cache_delete(instance.uuid)
 
     def destroy(self, context, instance, destroy_disks=True):
@@ -2232,3 +2235,45 @@ class VMwareVMOps(object):
                     'thumbprint': thumbprint}
         internal_access_path = jsonutils.dumps(mks_auth)
         return ctype.ConsoleMKS(ticket.host, ticket.port, internal_access_path)
+
+    def update_cached_instances(self, id=None):
+        max_objects = 100
+        vim = self._session.vim
+        options = None
+
+        self._property_collector = vim.service_content.propertyCollectorCreatePropertyCollector()
+        self._property_collector.CreateFilter(self._get_vm_monitor_spec(vim), partialUpdates=False)
+        
+        update_set = self._property_collector.WaitForUpdatesEx(version=self._property_collector_version,
+                                                                   options=options)
+                                                                   
+        while update_set:
+            self._property_collector_version = update_set.version
+            for update in update_set:
+                LOG.debug('UPDATE: ===============================================================> %s' % update)
+
+    def _get_vm_monitor_spec(self, vim):
+        traversal_spec = vutil.build_traversal_spec(
+            vim.client.factory,
+            "c_to_h",
+            "ComputeResource",
+            "host",
+            False,
+            [])
+
+        LOG.debug('TRAVERSAL SPEC: %s' % traversal_spec)
+        object_spec = vutil.build_object_spec(
+            vim.client.factory,
+            self._cluster,
+            [traversal_spec])
+        property_spec = vutil.build_property_spec(
+            vim.client.factory,
+            "HostSystem",
+            ["hardware.cpuPkg", "hardware.cpuInfo", "config.featureCapability"])
+
+        property_filter_spec = vutil.build_property_filter_spec(
+            vim.client.factory,
+            [property_spec],
+            [object_spec])
+
+        return property_filter_spec
