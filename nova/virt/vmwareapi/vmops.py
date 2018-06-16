@@ -826,6 +826,10 @@ class VMwareVMOps(object):
                                             extra_specs,
                                             metadata)
 
+        # Cache the vm_ref. This saves a remote call to the VC. This uses the
+        # instance uuid.
+        vm_util.vm_ref_cache_update(instance.uuid, vm_ref)
+
         # Update the Neutron VNIC index
         self._update_vnic_index(context, instance, network_info)
 
@@ -1299,6 +1303,8 @@ class VMwareVMOps(object):
                         instance=instance)
         except Exception:
             LOG.exception(_('Destroy instance failed'), instance=instance)
+        finally:
+            vm_util.vm_ref_cache_delete(instance.uuid)
 
     def destroy(self, context, instance, destroy_disks=True):
         """Destroy a VM instance.
