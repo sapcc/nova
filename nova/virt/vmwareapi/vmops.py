@@ -23,6 +23,7 @@ import collections
 import os
 import time
 import re
+import copy
 
 import decorator
 import cluster_util
@@ -39,6 +40,7 @@ from oslo_vmware.objects import datastore as ds_obj
 from oslo_vmware import vim_util as vutil
 from oslo_service import periodic_task
 from eventlet import sleep, spawn as spawn_background_task
+from oslo_concurrency.lockutils import lock, synchronized
 
 from nova.api.metadata import base as instance_metadata
 from nova import compute
@@ -304,7 +306,6 @@ class VMwareVMOps(object):
                               dc_info, datastore, network_info, extra_specs,
                               metadata):
 
-        #self.update_cached_instances()
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
                                            utils.is_neutron(),
@@ -1304,7 +1305,6 @@ class VMwareVMOps(object):
         except Exception:
             LOG.exception(_('Destroy instance failed'), instance=instance)
         finally:
-            LOG.debug('REMOVING INSTANCE FROM CACHE ====================================================================================')
             vm_util.vm_ref_cache_delete(instance.uuid)
 
     def destroy(self, context, instance, destroy_disks=True):
@@ -2242,53 +2242,35 @@ class VMwareVMOps(object):
         internal_access_path = jsonutils.dumps(mks_auth)
         return ctype.ConsoleMKS(ticket.host, ticket.port, internal_access_path)
 
-    @periodic_task.periodic_task(spacing=CONF.update_resources_interval, run_immediately=True)
+    @synchronized('update_cache')
     def update_cached_instances(self):
-        LOG.debug('UPDATING===============================================================================')
-        #max_objects = 100
+
         vim = self._session.vim
         options = None
-        wait_options = vim.client.factory.create("ns0:WaitOptions")
-        wait_options.maxWaitSeconds = 30
-        LOG.debug("WAIT OPTIONS: %s" % wait_options)
 
         if self._property_collector is None:
             self._property_collector = vim.service_content.propertyCollector
             vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
 
         update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
-                                                                   options=options)
+                                          options=options)
 
         while update_set:
             self._property_collector_version = update_set.version
             if update_set.filterSet and update_set.filterSet[0].objectSet:
                 for update in update_set.filterSet[0].objectSet:
                     if update.obj['_type'] == "VirtualMachine":
-                        LOG.debug("UPDATE KIND: {}".format(update))
-                        if update.kind == "enter":
-                            vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
-                            LOG.debug("CACHE: %s" % vm_util._VM_REFS_CACHE)
-                        elif update.kind == "leave":
-                            LOG.debug("LEAVING ============================================> %s" % update.obj)
-                            for k, v in vm_util._VM_REFS_CACHE.iteritems():
-                                LOG.debug('VVV: %s' % v)
-                                LOG.debug('UPDATE OBJ: %s' % update.obj)
+                        if update.kind == "leave":
+                            vm_refs_cache = copy.deepcopy(vm_util._VM_REFS_CACHE)
+                            for k, v in vm_refs_cache.iteritems():
                                 if v.value == update.obj.value:
-                                    LOG.debug("CACHE: %s" % vm_util._VM_REFS_CACHE)
-                                    LOG.debug("DELETEING FROM CACHE ======================================")
-                                    vm_util.vm_ref_cache_delete(update.changeSet[0].val)
-                                    LOG.debug("CACHE: %s" % vm_util._VM_REFS_CACHE)
-
-
-
-
-                        """if update.changeSet[0].val:
-                            for vm_ref in update.changeSet[0].val[0]:
-                                obj = self._get_instance_props(vm_ref)
-                                #self._vm_refs.append(obj.get('config.instanceUuid'))
-                                if obj.get('config.instanceUuid') not in vm_util._VM_REFS_CACHE:
-                                    vm_util.vm_ref_cache_update(obj.get('config.instanceUuid'), vm_ref)
-                                    LOG.debug("CACHE================> {}".format(vm_util._VM_REFS_CACHE))"""
+                                    vm_util.vm_ref_cache_delete(k)
+                                    LOG.info('Virtual machine reference removed from cache...')
+                        else:
+                            if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
+                                if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                    LOG.info("Adding vm to cache...")
+                                    vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
 
             update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
                                               options=options)
@@ -2324,7 +2306,7 @@ class VMwareVMOps(object):
         property_spec_vm = vutil.build_property_spec(
             vim.client.factory,
             "VirtualMachine",
-            ["config.instanceUuid"])
+            ["config.instanceUuid", "config.managedBy"])
 
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
@@ -2332,66 +2314,3 @@ class VMwareVMOps(object):
             [object_spec])
 
         return property_filter_spec
-
-    """def update_cached_instances(self):
-
-        LOG.debug('UPDATING===============================================================================')
-        # max_objects = 100
-        vim = self._session.vim
-        if self._property_collector is None:
-            self._property_collector = vim.service_content.propertyCollector
-        options = None
-
-        LOG.info("No cluster specified")
-        container = vim.service_content.rootFolder
-        LOG.debug('CONATINER: %s' % container)
-
-        container_view = vim.CreateContainerView(
-                                               container=container,
-                                               type=[vim.VirtualMachine],
-                                               recursive=True)
-
-        traversal_spec = vutil.build_traversal_spec('traverseEntities', vim.ContainerView, 'view',
-                                                       False, None)
-        object_spec = vutil.build_object_spec(container_view, [traversal_spec])
-
-        # Only static types work, so we have to get all hardware, still faster than retrieving individual items
-        vm_properties = ['runtime.powerState', 'config.hardware.device']
-        property_specs = [vutil.build_property_spec(vim.VirtualMachine, vm_properties)]
-
-        property_filter_spec = vutil.build_property_filter_spec(property_specs, [object_spec])
-
-        vim.CreateFilter(self._property_collector, spec=property_filter_spec, partialUpdates=False)
-        #return self._property_collector.CreateFilter(spec=property_filter_spec, partialUpdates=True)  # -> PropertyFilter
-
-
-
-
-
-
-        if self._property_collector is None:
-            self._property_collector = vim.service_content.propertyCollector
-            vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
-
-        update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
-                                          options=options)
-
-        LOG.debug('UPDATE: %s' % update_set)
-        while update_set:
-            self._property_collector_version = update_set.version
-            if update_set.filterSet and update_set.filterSet[0].objectSet:
-                for update in update_set.filterSet[0].objectSet:
-                    LOG.debug("UPDATE KIND: {}".format(update.kind))
-                    LOG.debug("CHANGE SET: {}".format(update.changeSet[0].val))
-                    if update.changeSet[0].val:
-                        for vm_ref in update.changeSet[0].val[0]:
-                            obj = self._get_instance_props(vm_ref)
-                            # self._vm_refs.append(obj.get('config.instanceUuid'))
-                            if obj.get('config.instanceUuid') not in vm_util._VM_REFS_CACHE:
-                                vm_util.vm_ref_cache_update(obj.get('config.instanceUuid'), vm_ref)
-                                LOG.debug("CACHE================> {}".format(vm_util._VM_REFS_CACHE))
-
-            # return
-            update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
-                                              options=options)"""
-

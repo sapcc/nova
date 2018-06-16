@@ -306,7 +306,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         The name will be of the form:
           <mo id>.<vcenter uuid>
         e.g.
-          domain-26.9d51f082-58a4-4449-beed-6fd205a5726b
+          domain-26.9d51f082-58a4-4449-beed-6self.connection.content.propertyCollector.CreatePropertyCollector()fd205a5726b
         """
 
         return '%s.%s' % (mo_id, self._vcenter_uuid)
