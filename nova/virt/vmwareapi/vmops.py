@@ -2260,7 +2260,7 @@ class VMwareVMOps(object):
                 for update in update_set.filterSet[0].objectSet:
                     if update.obj['_type'] == "VirtualMachine":
                         if update.kind == "leave":
-                            vm_refs_cache = copy.deepcopy(vm_util._VM_REFS_CACHE)
+                            vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
                             for k, v in vm_refs_cache.iteritems():
                                 if v.value == update.obj.value:
                                     vm_util.vm_ref_cache_delete(k)
