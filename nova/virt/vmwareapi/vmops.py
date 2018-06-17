@@ -2261,10 +2261,11 @@ class VMwareVMOps(object):
                     if update.obj['_type'] == "VirtualMachine":
                         if update.kind == "leave":
                             vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
-                            for k, v in vm_refs_cache.iteritems():
-                                if v.value == update.obj.value:
-                                    vm_util.vm_ref_cache_delete(k)
-                                    LOG.info('Virtual machine reference removed from cache...')
+                            inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
+
+                            cache_id_to_delete = inv_cache_map.get(update.obj.value)
+                            vm_util.vm_ref_cache_delete(cache_id_to_delete)
+                            LOG.info('Virtual machine reference removed from cache...')
                         else:
                             if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
                                 if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
