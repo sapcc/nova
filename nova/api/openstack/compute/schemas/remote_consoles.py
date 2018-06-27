@@ -77,7 +77,7 @@ get_serial_console = {
             'properties': {
                 'type': {
                     'type': 'string',
-                    'enum': ['serial'],
+                    'enum': ['serial', 'shellinabox'],
                 },
             },
             'required': ['type'],
@@ -121,7 +121,7 @@ create_v28 = {
                 },
                 'type': {
                     'enum': ['novnc', 'xvpvnc', 'rdp-html5',
-                             'spice-html5', 'serial', 'webmks'],
+                             'spice-html5', 'serial', 'webmks', 'shellinabox'],
                 },
             },
             'required': ['protocol', 'type'],
