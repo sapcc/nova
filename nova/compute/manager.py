@@ -4687,7 +4687,14 @@ class ComputeManager(manager.Manager):
         context = context.elevated()
 
         token = str(uuid.uuid4())
-        access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+
+        if console_type == 'serial':
+            access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+        elif console_type == 'shellinabox':
+            access_url = '%s?token=%s' % (
+                CONF.serial_console.shellinabox_base_url, token)
+        else:
+            raise exception.ConsoleTypeInvalid(console_type=console_type)
 
         try:
             # Retrieve connect info from driver, and then decorate with our
@@ -4711,7 +4718,7 @@ class ComputeManager(manager.Manager):
             console_info = self.driver.get_spice_console(ctxt, instance)
         elif console_type == "rdp-html5":
             console_info = self.driver.get_rdp_console(ctxt, instance)
-        elif console_type == "serial":
+        elif console_type == "serial" or console_type == "shellinabox":
             console_info = self.driver.get_serial_console(ctxt, instance)
         elif console_type == "webmks":
             console_info = self.driver.get_mks_console(ctxt, instance)
