@@ -75,6 +75,11 @@ api_retry_interval = cfg.IntOpt(
     help='How often to retry in seconds when a request '
          'does conflict')
 
+serial_console_state_timeout = cfg.IntOpt(
+    'serial_console_state_timeout',
+    default=2,
+    help='How long to wait in seconds for console state change')
+
 ALL_OPTS = [api_version,
             api_endpoint,
             admin_username,
@@ -84,7 +89,8 @@ ALL_OPTS = [api_version,
             client_log_level,
             admin_tenant_name,
             api_max_retries,
-            api_retry_interval]
+            api_retry_interval,
+            serial_console_state_timeout]
 
 
 def register_opts(conf):
