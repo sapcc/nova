@@ -25,6 +25,7 @@ import gzip
 import logging as py_logging
 import shutil
 import tempfile
+import urlparse
 import time
 
 from oslo_log import log as logging
