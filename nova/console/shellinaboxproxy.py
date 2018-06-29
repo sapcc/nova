@@ -49,7 +49,11 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
         referer = self.headers.get('Referer', None)
         if not token:
-            token = referer.split('?token=')[1]
+            # parse out from referer
+            token = referer.split('?token=')[1].split('&internal=')[0]
+        if not self.int_path:
+            # and get internal url 
+            self.int_path = referer.split('?token=')[1].split('&internal=')[1]
 
         ctxt = context.get_admin_context()
         rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
