@@ -1327,7 +1327,7 @@ class IronicDriver(virt_driver.ComputeDriver):
             scheme = url.scheme
             hostname = url.hostname
             port = url.port
-            if not (scheme and hostname and port):
+            if not (scheme and hostname):
                 raise AssertionError()
         except (ValueError, AssertionError):
             LOG.error('Invalid Socat or Shellinabox console URL "%(url)s" '
@@ -1337,9 +1337,17 @@ class IronicDriver(virt_driver.ComputeDriver):
                       instance=instance)
             raise exception.ConsoleTypeUnavailable(console_type='serial')
 
-        if scheme in ("tcp", "http", "https"):
+        if scheme == "tcp":
             return console_type.ConsoleSerial(host=hostname,
                                               port=port)
+        elif scheme == "http":
+            return console_type.ConsoleSerial(host=hostname,
+                                              port=80,
+                                              internal_access_path=url.path)
+        elif scheme == "https":
+            return console_type.ConsoleSerial(host=hostname,
+                                              port=443,
+                                              internal_access_path=url.path)
         else:
             LOG.warning('Socat serial console only supports "tcp". '
                         'Shellinabox only http and https. '
