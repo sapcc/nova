@@ -45,6 +45,8 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def _check_valid(self):
         query = urlparse.urlparse(self.path).query
         token = urlparse.parse_qs(query).get("token", [""]).pop()
+        self.int_path = urlparse.parse_qs(query).get("internal", [""]).pop()
+
         referer = self.headers.get('Referer', None)
         if not token:
             token = referer.split('?token=')[1]
@@ -85,7 +87,7 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
                 self.log_request()
                 soc.send("%s %s %s\r\n" % (
                     self.command,
-                    urlparse.urlunparse(('', '', self.path, '', '', '')),
+                    urlparse.urlunparse(('', '', self.int_path, '', '', '')),
                     self.request_version))
                 self.headers['Connection'] = 'close'
                 for key_val in self.headers.items():

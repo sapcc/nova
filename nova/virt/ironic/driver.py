@@ -1319,7 +1319,7 @@ class IronicDriver(virt_driver.ComputeDriver):
                         {'type': console_info["type"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])
 
         # Parse and check the console url
         url = urlparse.urlparse(console_info["url"])
@@ -1335,7 +1335,7 @@ class IronicDriver(virt_driver.ComputeDriver):
                       {'url': console_info["url"],
                        'node': node.uuid},
                       instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])
 
         if scheme == "tcp":
             return console_type.ConsoleSerial(host=hostname,
@@ -1355,4 +1355,4 @@ class IronicDriver(virt_driver.ComputeDriver):
                         {'url': console_info["url"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])

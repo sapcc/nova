@@ -4688,18 +4688,23 @@ class ComputeManager(manager.Manager):
 
         token = str(uuid.uuid4())
 
-        if console_type == 'serial':
-            access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
-        elif console_type == 'shellinabox':
-            access_url = '%s?token=%s' % (
-                CONF.serial_console.shellinabox_base_url, token)
-        else:
-            raise exception.ConsoleTypeInvalid(console_type=console_type)
-
         try:
             # Retrieve connect info from driver, and then decorate with our
             # access info token
             console = self.driver.get_serial_console(context, instance)
+
+            if console_type == 'serial':
+                # add only token
+                access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+            elif console_type == 'shellinabox':
+                # token and internal url for shellinabox
+                access_url = '%s?token=%s&internal=%s' % (
+                    CONF.serial_console.shellinabox_base_url,
+                    token,
+                    console.internal_access_path)
+            else:
+                raise exception.ConsoleTypeInvalid(console_type=console_type)
+
             connect_info = console.get_connection_info(token, access_url)
         except exception.InstanceNotFound:
             if instance.vm_state != vm_states.BUILDING:
