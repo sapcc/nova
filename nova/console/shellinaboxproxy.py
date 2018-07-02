@@ -14,6 +14,8 @@
 
 import select
 import socket
+import mimetypes
+import shutil
 
 import BaseHTTPServer
 import six
@@ -67,7 +69,7 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         return connect_info
 
     def do_CONNECT(self):
-        connect_info = self._check_valid()
+        #connect_info = self._check_valid()
 
         soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -82,7 +84,44 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             soc.close()
             self.connection.close()
 
-    def do_GET(self):
+    def serve_locally(self):
+        # serve only js and css locally
+        if not (self.path.endswith('.js') or self.path.endswith('.css')):
+            return False
+        path = self.path.split('/')
+        extension = '.%s' % path[-1].split('.')[-1] 
+        ctype = self.guess_mime_type(extension)
+        if ctype.startswith('text/'):
+            mode = 'r'
+        else:
+            mode = 'rb'
+        try:
+            filepath = '/shellinabox/%s' % path[-1]
+            f = open(filepath, mode)
+        except IOError:
+            return False
+        self.send_response(200)
+        self.send_header("Content-type", ctype)
+        self.end_headers()
+        shutil.copyfileobj(f, self.wfile)
+        f.close()
+        return True
+  
+    def guess_mime_type(self, extension):
+        extensions_map = mimetypes.types_map.copy()
+        if extensions_map.has_key(extension):
+            return extensions_map[extension]
+        extension = extension.lower()
+        if extensions_map.has_key(extension):
+            return extensions_map[extension]
+        else:
+            return extensions_map['']
+
+    def do_LOCAL_or_GET(self):
+        if not self.serve_locally():
+            self.proxy_GET()
+
+    def proxy_GET(self):
         connect_info = self._check_valid()
 
         soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -136,10 +175,11 @@ class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         except Exception:
             pass
 
-    do_HEAD = do_GET
-    do_POST = do_GET
-    do_PUT = do_GET
-    do_DELETE = do_GET
+    do_GET = do_LOCAL_or_GET
+    do_HEAD = do_LOCAL_or_GET
+    do_POST = do_LOCAL_or_GET
+    do_PUT = do_LOCAL_or_GET
+    do_DELETE = do_LOCAL_or_GET
 
 
 class ThreadingHTTPServer(SocketServer.ThreadingMixIn,
