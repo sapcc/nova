@@ -4698,10 +4698,10 @@ class ComputeManager(manager.Manager):
                 access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
             elif console_type == 'shellinabox':
                 # token and internal url for shellinabox
-                access_url = '%s?token=%s&internal=%s' % (
+                access_url = '%s%s?token=%s' % (
                     CONF.serial_console.shellinabox_base_url,
-                    token,
-                    console.internal_access_path)
+                    console.internal_access_path,
+                    token)
             else:
                 raise exception.ConsoleTypeInvalid(console_type=console_type)
 
