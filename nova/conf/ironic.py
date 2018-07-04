@@ -77,7 +77,7 @@ api_retry_interval = cfg.IntOpt(
 
 serial_console_state_timeout = cfg.IntOpt(
     'serial_console_state_timeout',
-    default=2,
+    default=10,
     help='How long to wait in seconds for console state change')
 
 ALL_OPTS = [api_version,
