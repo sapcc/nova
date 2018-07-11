@@ -12,181 +12,111 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import select
-import socket
-import mimetypes
-import shutil
+from sys import stdout
+from argparse import ArgumentParser
 
-import BaseHTTPServer
-import six
-import SocketServer
-import urlparse
-
-from nova.consoleauth import rpcapi as consoleauth_rpcapi
 from nova import context
-from nova import exception
+from nova.consoleauth import rpcapi as consoleauth_rpcapi
+
+from twisted.web import proxy, server
+from twisted.protocols.tls import TLSMemoryBIOFactory
+from twisted.internet import ssl, defer, task, endpoints
+from twisted.logger import globalLogBeginner, textFileLogObserver
 
 
-class ProxyHandler(BaseHTTPServer.BaseHTTPRequestHandler):
-    rbufsize = 0
+class NovaShellInABoxProxy(proxy.ReverseProxyResource, object):
 
-    def setup(self):
-        self.connection = self.request
-        self.rfile = socket._fileobject(self.request, "rb", self.rbufsize)
-        self.wfile = socket._fileobject(self.request, "wb", self.wbufsize)
+    def proxyClientFactoryClass(self, *args, **kwargs):
+        """
+        Make connections over HTTPS.
+        """
+        return TLSMemoryBIOFactory(
+            ssl.optionsForClientTLS(self.host.decode("ascii")), True,
+            super(NovaShellInABoxProxy, self)
+            .proxyClientFactoryClass(*args, **kwargs))
 
-    def _connect_to(self, connect_info, soc):
-        host_port = connect_info['host'], connect_info['port']
-        try:
-            soc.connect(host_port)
-        except socket.error as e:
-            self.send_error(404, six.text_type(e))
-            return 0
-        return 1
+    def getChild(self, path, request):
+        """
+        Ensure that implementation of C{proxyClientFactoryClass} is honored
+        down the resource chain.
+        """
+        child = super(NovaShellInABoxProxy, self).getChild(path, request)
+        return NovaShellInABoxProxy(child.host, child.port, child.path,
+                                    child.reactor)
 
-    def _check_valid(self):
-        query = urlparse.urlparse(self.path).query
-        token = urlparse.parse_qs(query).get("token", [""]).pop()
-        self.int_path = urlparse.parse_qs(query).get("internal", [""]).pop()
+    def prepare403Resp(self, message):
+        """
+        Returns the 403 page with given message.
+        """
+        return """
+<html>
+<head><title>403 Forbidden</title></head>
+<body bgcolor="white">
+<center><h1>403 Forbidden</h1></center>
+<hr><center>%s</center>
+</body>
+</html>
+""" % message
 
-        referer = self.headers.get('Referer', None)
+    def render(self, request):
+        """
+        Process the requests with Nova consoleauth token validation.
+        """
+        print "Received request with arguments: %s" % request.args
+        token = request.args.pop('token', '')
+
         if not token:
-            # parse out from referer
-            token = referer.split('?token=')[1].split('&internal=')[0]
-        if not self.int_path:
-            # and get internal url 
-            self.int_path = referer.split('?token=')[1].split('&internal=')[1]
+            # no token = no console
+            request.setResponseCode(403, message="Forbidden")
+            return self.prepare403Resp('Token is missing')
 
         ctxt = context.get_admin_context()
         rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
-        connect_info = rpcapi.check_token(ctxt, token=token)
 
-        if not connect_info:
-            self.send_error(404, 'The token is invalid or has expired')
-            self.connection.close()
-            raise exception.InvalidToken(token=token)
-
-        return connect_info
-
-    def do_CONNECT(self):
-        #connect_info = self._check_valid()
-
-        soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            if self._connect_to(connect_info, soc):
-                self.log_request(200)
-                self.wfile.write(
-                    self.protocol_version +
-                    " 200 Connection Established\r\nConnection: close\r\n\r\n")
-                self.wfile.write("\r\n")
-                self._read_write(soc, 300)
-        finally:
-            soc.close()
-            self.connection.close()
-
-    def serve_locally(self):
-        # serve only js and css locally
-        if not (self.path.endswith('.js') or self.path.endswith('.css')):
-            return False
-        path = self.path.split('/')
-        extension = '.%s' % path[-1].split('.')[-1] 
-        ctype = self.guess_mime_type(extension)
-        if ctype.startswith('text/'):
-            mode = 'r'
+        if not rpcapi.check_token(ctxt, token=token):
+            # no valid token = no console
+            request.setResponseCode(403, message="Forbidden")
+            return self.prepare403Resp('Token has expired or invalid')
         else:
-            mode = 'rb'
-        try:
-            filepath = '/shellinabox/%s' % path[-1]
-            f = open(filepath, mode)
-        except IOError:
-            return False
-        self.send_response(200)
-        self.send_header("Content-type", ctype)
-        self.end_headers()
-        shutil.copyfileobj(f, self.wfile)
-        f.close()
-        return True
-  
-    def guess_mime_type(self, extension):
-        extensions_map = mimetypes.types_map.copy()
-        if extensions_map.has_key(extension):
-            return extensions_map[extension]
-        extension = extension.lower()
-        if extensions_map.has_key(extension):
-            return extensions_map[extension]
-        else:
-            return extensions_map['']
-
-    def do_LOCAL_or_GET(self):
-        if not self.serve_locally():
-            self.proxy_GET()
-
-    def proxy_GET(self):
-        connect_info = self._check_valid()
-
-        soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            if self._connect_to(connect_info, soc):
-                self.log_request()
-                soc.send("%s %s %s\r\n" % (
-                    self.command,
-                    urlparse.urlunparse(('', '', self.int_path, '', '', '')),
-                    self.request_version))
-                self.headers['Connection'] = 'close'
-                for key_val in self.headers.items():
-                    soc.send("%s: %s\r\n" % key_val)
-                soc.send("\r\n")
-                if self.command != 'GET':
-                    length = int(self.headers['content-length'])
-                    content = self.rfile.read(length)
-                    soc.send("%s\r\n" % content)
-                soc.send("\r\n")
-                self._read_write(soc)
-        finally:
-            soc.close()
-            self.connection.close()
-
-    def _read_write(self, soc, max_idling=20):
-        iw = [self.connection, soc]
-        ow = []
-        count = 0
-        while 1:
-            count += 1
-            (ins, _, exs) = select.select(iw, ow, iw, 3)
-            if exs:
-                break
-            if ins:
-                for i in ins:
-                    if i is soc:
-                        out = self.connection
-                    else:
-                        out = soc
-                    data = i.recv(8192)
-                    if data:
-                        out.send(data)
-                        count = 0
-            if count == max_idling:
-                break
-
-    def do_OPTIONS(self):
-        try:
-            self.send_response(200)
-            self.end_headers()
-        except Exception:
-            pass
-
-    do_GET = do_LOCAL_or_GET
-    do_HEAD = do_LOCAL_or_GET
-    do_POST = do_LOCAL_or_GET
-    do_PUT = do_LOCAL_or_GET
-    do_DELETE = do_LOCAL_or_GET
+            # all good, do proxy
+            return proxy.ReverseProxyResource.render(self, request)
 
 
-class ThreadingHTTPServer(SocketServer.ThreadingMixIn,
-                          BaseHTTPServer.HTTPServer):
-    def __init__(self, server_address, RequestHandlerClass, logger=None):
-        BaseHTTPServer.HTTPServer.__init__(self, server_address,
-                                            RequestHandlerClass)
+@task.react
+def main(reactor):
+    """
+    Entry Point. Parse given arguments and start serving.
+    """
+    parser = ArgumentParser(description=('Nova Shellinabox Console Proxy '
+                                         'for Ironic Servers.'))
 
-    def service_start(self):
-        self.serve_forever()
+    parser.add_argument('--listenip', type=str,
+                        default='0.0.0.0',
+                        help=('IP of the interface to listen on. '
+                              'Default: 0.0.0.0'))
+    parser.add_argument('--listenport', type=int,
+                        default=80, help=('Port to listen on.'
+                                          'Default: 80'))
+    parser.add_argument('proxytarget', type=str,
+                        help=('Hostname or IP of the proxy target. '
+                              'Without protocol.'))
+    parser.add_argument('proxyport', type=int,
+                        help='Port of the proxy target')
+    cli_args = parser.parse_args()
+
+    # start logging to stdout from this point on
+    globalLogBeginner.beginLoggingTo([textFileLogObserver(stdout)])
+
+    serve_forever = defer.Deferred()
+    shellinabox = NovaShellInABoxProxy(cli_args.proxytarget,
+                                       cli_args.proxyport, '')
+    shellinabox.putChild('', shellinabox)
+    site = server.Site(shellinabox)
+
+    endpoint = endpoints.serverFromString(reactor,
+                                          "tcp:%d:interface=%s" %
+                                          (cli_args.listenport,
+                                           cli_args.listenip))
+    endpoint.listen(site)
+
+    return serve_forever
