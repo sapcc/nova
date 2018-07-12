@@ -12,25 +12,41 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import sys
+import subprocess
+
+from argparse import ArgumentParser
 
 import nova.conf
 from nova.conf import serial_console as serial
 from nova import config
-from nova.console import shellinaboxproxy
-
 
 CONF = nova.conf.CONF
 serial.register_cli_opts(CONF)
 
 
 def main():
-    config.parse_args(sys.argv)
+    """
+    """
+    config.parse_args([])  # we need this to configure rpc
 
-    server_address = (CONF.serial_console.shellinaboxproxy_host,
-                      CONF.serial_console.shellinaboxproxy_port)
+    parser = ArgumentParser(description=('Nova Shellinabox Console Proxy '
+                                         'for Ironic Servers.'))
 
-    proxy = shellinaboxproxy.ThreadingHTTPServer(
-        server_address,
-        shellinaboxproxy.ProxyHandler)
-    proxy.service_start()
+    parser.add_argument('proxytarget', type=str,
+                        help=('Hostname or IP of the proxy target. '
+                              'Without protocol.'))
+    parser.add_argument('--proxyport', type=int,
+                        default=443,
+                        help='Port of the proxy target')
+    parser.add_argument('--listenip', type=str,
+                        default=CONF.serial_console.shellinaboxproxy_host,
+                        help='IP of the interface to listen on.')
+    parser.add_argument('--listenport', type=int,
+                        default=int(CONF.serial_console.shellinaboxproxy_port),
+                        help='Port to listen on.')
+    cli_args = parser.parse_args()
+
+    p = subprocess.check_output(
+        "mitmproxy -R https://%s/ --port %d --bind-address %s" % (cli_args.proxytarget, cli_args.listenport, cli_args.listenip),
+        shell=True)
+
