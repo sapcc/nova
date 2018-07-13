@@ -12,11 +12,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import os
 import subprocess
 
 from argparse import ArgumentParser
 
 import nova.conf
+from nova.console import shellinaboxproxy
 from nova.conf import serial_console as serial
 from nova import config
 
@@ -47,6 +49,9 @@ def main():
     cli_args = parser.parse_args()
 
     p = subprocess.check_output(
-        "mitmproxy -R https://%s/ --port %d --bind-address %s" % (cli_args.proxytarget, cli_args.listenport, cli_args.listenip),
+        "mitmproxy -R https://%s/ --port %d --bind-address %s --script %s" % (cli_args.proxytarget,
+                                                                              cli_args.listenport,
+                                                                              cli_args.listenip,
+                                                                              os.path.abspath(shellinaboxproxy.__file__)),
         shell=True)
 
