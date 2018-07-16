@@ -81,7 +81,7 @@ _NODE_FIELDS = ('uuid', 'power_state', 'target_power_state', 'provision_state',
                 'properties', 'instance_uuid')
 
 # Console state checking interval in seconds
-_CONSOLE_STATE_CHECKING_INTERVAL = 1
+_CONSOLE_STATE_CHECKING_INTERVAL = 3
 
 
 def map_power_state(state):
@@ -1258,7 +1258,7 @@ class IronicDriver(virt_driver.ComputeDriver):
                 return timer.start(
                     starting_interval=_CONSOLE_STATE_CHECKING_INTERVAL,
                     timeout=CONF.ironic.serial_console_state_timeout,
-                    jitter=0.5).wait()
+                    jitter=0.1).wait()
             except loopingcall.LoopingCallTimeOut:
                 LOG.error('Timeout while waiting for console mode to be '
                           'set to "%(mode)s" on node %(node)s',

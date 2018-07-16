@@ -12,15 +12,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import os
-import subprocess
-
+from os import path
+from subprocess import check_output
 from argparse import ArgumentParser
 
 import nova.conf
 from nova.console import shellinaboxproxy
 from nova.conf import serial_console as serial
-from nova import config
 
 CONF = nova.conf.CONF
 serial.register_cli_opts(CONF)
@@ -28,30 +26,27 @@ serial.register_cli_opts(CONF)
 
 def main():
     """
+    Parses cli arguments and starts mitmproxy with token validation.
     """
-    config.parse_args([])  # we need this to configure rpc
-
     parser = ArgumentParser(description=('Nova Shellinabox Console Proxy '
                                          'for Ironic Servers.'))
 
     parser.add_argument('proxytarget', type=str,
                         help=('Hostname or IP of the proxy target. '
                               'Without protocol.'))
-    parser.add_argument('--proxyport', type=int,
-                        default=443,
-                        help='Port of the proxy target')
+
     parser.add_argument('--listenip', type=str,
                         default=CONF.serial_console.shellinaboxproxy_host,
                         help='IP of the interface to listen on.')
-    parser.add_argument('--listenport', type=int,
-                        default=int(CONF.serial_console.shellinaboxproxy_port),
+
+    parser.add_argument('--listenport', type=str,
+                        default=CONF.serial_console.shellinaboxproxy_port,
                         help='Port to listen on.')
     cli_args = parser.parse_args()
 
-    p = subprocess.check_output(
-        "mitmproxy -R https://%s/ --port %d --bind-address %s --script %s" % (cli_args.proxytarget,
-                                                                              cli_args.listenport,
-                                                                              cli_args.listenip,
-                                                                              os.path.abspath(shellinaboxproxy.__file__)),
-        shell=True)
-
+    # Run mitmproxy with shellinaboxproxy.py as an inline script
+    check_output("mitmdump -R %s --port %s --bind-address %s --script %s" % (
+                 cli_args.proxytarget,
+                 cli_args.listenport,
+                 cli_args.listenip,
+                 path.abspath(shellinaboxproxy.__file__)), shell=True)
