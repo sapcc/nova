@@ -63,6 +63,14 @@ admin_tenant_name = cfg.StrOpt(
     'admin_tenant_name',
     help='Ironic keystone tenant name.')
 
+admin_project_domain_name = cfg.StrOpt(
+    'admin_project_domain_name',
+    help='Ironic keystone project domain name.')
+
+admin_user_domain_name = cfg.StrOpt(
+    'admin_user_domain_name',
+    help='Ironic keystone user domain name.')
+
 api_max_retries = cfg.IntOpt(
     'api_max_retries',
     default=60,
@@ -88,6 +96,8 @@ ALL_OPTS = [api_version,
             admin_url,
             client_log_level,
             admin_tenant_name,
+            admin_project_domain_name,
+            admin_user_domain_name,
             api_max_retries,
             api_retry_interval,
             serial_console_state_timeout]

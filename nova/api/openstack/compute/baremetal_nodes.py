@@ -69,6 +69,8 @@ def _get_ironic_client():
               'os_password': CONF.ironic.admin_password,
               'os_auth_url': CONF.ironic.admin_url,
               'os_tenant_name': CONF.ironic.admin_tenant_name,
+              'os_project_domain_name': CONF.ironic.admin_project_domain_name,
+              'os_user_domain_name': CONF.ironic.admin_user_domain_name,
               'os_service_type': 'baremetal',
               'os_endpoint_type': 'public',
               'insecure': 'true',
