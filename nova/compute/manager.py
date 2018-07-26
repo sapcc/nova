@@ -57,6 +57,7 @@ from nova import block_device
 from nova.cells import rpcapi as cells_rpcapi
 from nova.cloudpipe import pipelib
 from nova import compute
+from nova import profiler
 from nova.compute import build_results
 from nova.compute import claims
 from nova.compute import power_state
@@ -100,7 +101,6 @@ from nova.virt import virtapi
 from nova import volume
 from nova.volume import encryptors
 
-
 compute_opts = [
     cfg.StrOpt('console_host',
                default=socket.gethostname(),
@@ -133,6 +133,9 @@ compute_opts = [
     cfg.IntOpt('max_concurrent_builds',
                default=10,
                help='Maximum number of instance builds to run concurrently'),
+    cfg.IntOpt('max_concurrent_builds_per_project',
+               default=0,
+               help='Maximum number of instance builds to run concurrently per project'),
     cfg.IntOpt('max_concurrent_live_migrations',
                default=1,
                help='Maximum number of live migrations to run concurrently. '
@@ -602,6 +605,7 @@ class InstanceEvents(object):
                 eventlet_event.send(event)
 
 
+@profiler.trace_cls("compute_virt_api")
 class ComputeVirtAPI(virtapi.VirtAPI):
     def __init__(self, compute):
         super(ComputeVirtAPI, self).__init__()
@@ -672,7 +676,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
                 if decision is False:
                     break
 
-
+@profiler.trace_cls("rpc")
 class ComputeManager(manager.Manager):
     """Manages the running instances from creation to destruction."""
 
@@ -705,14 +709,23 @@ class ComputeManager(manager.Manager):
         self._resource_tracker_dict = {}
         self.instance_events = InstanceEvents()
         self._sync_power_pool = eventlet.GreenPool()
+        self.instance_running_pool = eventlet.GreenPool(
+            size=CONF.instance_running_pool_size)
         self._syncs_in_progress = {}
         self.send_instance_updates = CONF.scheduler_tracks_instance_changes
-        if CONF.max_concurrent_builds != 0:
+        if CONF.max_concurrent_builds > 0:
             self._build_semaphore = eventlet.semaphore.Semaphore(
                 CONF.max_concurrent_builds)
         else:
             self._build_semaphore = compute_utils.UnlimitedSemaphore()
-        if max(CONF.max_concurrent_live_migrations, 0) != 0:
+
+        if CONF.max_concurrent_builds_per_project > 0:
+            self._per_project_build_semaphore = nova.utils.Semaphores(
+                semaphore_default=lambda: eventlet.semaphore.Semaphore(CONF.max_concurrent_builds_per_project))
+        else:
+            self._per_project_build_semaphore = nova.utils.Semaphores(compute_utils.UnlimitedSemaphore)
+
+        if CONF.max_concurrent_live_migrations > 0:
             self._live_migration_semaphore = eventlet.semaphore.Semaphore(
                 CONF.max_concurrent_live_migrations)
         else:
@@ -898,11 +911,10 @@ class ComputeManager(manager.Manager):
         instance.destroy()
         bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                 context, instance.uuid)
-        quotas = objects.Quotas(context=context)
         project_id, user_id = objects.quotas.ids_from_instance(context,
                                                                instance)
-        quotas.reserve(project_id=project_id, user_id=user_id, instances=-1,
-                       cores=-instance.vcpus, ram=-instance.memory_mb)
+
+        quotas = self._create_reservations(context, instance, project_id, user_id)
         self._complete_deletion(context,
                                 instance,
                                 bdms,
@@ -929,12 +941,15 @@ class ComputeManager(manager.Manager):
         vcpus = instance.vcpus
         mem_mb = instance.memory_mb
 
+        quota_key_instances = 'instances'
+        if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
+            quota_key_instances = 'instances_' + instance.flavor.name
+        deltas = { quota_key_instances: -1 }
+        if instance.flavor.extra_specs.get('quota:instance_only', 'false') != 'true':
+            deltas.update(cores=-vcpus, ram=-mem_mb)
+
         quotas = objects.Quotas(context=context)
-        quotas.reserve(project_id=project_id,
-                       user_id=user_id,
-                       instances=-1,
-                       cores=-vcpus,
-                       ram=-mem_mb)
+        quotas.reserve(project_id=project_id, user_id=user_id, **deltas)
         return quotas
 
     def _init_instance(self, context, instance):
@@ -1331,6 +1346,9 @@ class ComputeManager(manager.Manager):
             self._update_scheduler_instance_info(context, instances)
 
     def cleanup_host(self):
+        if self.instance_running_pool.running() > 0:
+            self.instance_running_pool.waitall()
+
         self.driver.register_event_listener(None)
         self.instance_events.cancel_all_events()
         self.driver.cleanup_host(host=self.host)
@@ -1865,6 +1883,7 @@ class ComputeManager(manager.Manager):
                      injected_files=None, requested_networks=None,
                      security_groups=None, block_device_mapping=None,
                      node=None, limits=None):
+        LOG.debug("Build and run instance .....")
 
         @utils.synchronized(instance.uuid)
         def _locked_do_build_and_run_instance(*args, **kwargs):
@@ -1872,17 +1891,22 @@ class ComputeManager(manager.Manager):
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
-            with self._build_semaphore:
-                self._do_build_and_run_instance(*args, **kwargs)
-
+            LOG.debug("locked_do_build_and_run_instance .....")
+            
+            with self._per_project_build_semaphore.get(instance.project_id):
+                with self._build_semaphore:
+                    try:
+                        self._do_build_and_run_instance(*args, **kwargs)
+                    except Exception as e:
+                        LOG.exception(e)
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
-        utils.spawn_n(_locked_do_build_and_run_instance,
-                      context, instance, image, request_spec,
-                      filter_properties, admin_password, injected_files,
-                      requested_networks, security_groups,
-                      block_device_mapping, node, limits)
+        self.instance_running_pool.spawn_n(_locked_do_build_and_run_instance,
+              context, instance, image, request_spec,
+              filter_properties, admin_password, injected_files,
+              requested_networks, security_groups,
+              block_device_mapping, node, limits)
 
     @hooks.add_hook('build_instance')
     @wrap_exception()
@@ -4668,12 +4692,24 @@ class ComputeManager(manager.Manager):
         context = context.elevated()
 
         token = str(uuid.uuid4())
-        access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
 
         try:
             # Retrieve connect info from driver, and then decorate with our
             # access info token
             console = self.driver.get_serial_console(context, instance)
+
+            if console_type == 'serial':
+                # add only token
+                access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+            elif console_type == 'shellinabox':
+                # token and internal url for shellinabox
+                access_url = '%s%s?token=%s' % (
+                    CONF.serial_console.shellinabox_base_url,
+                    console.internal_access_path,
+                    token)
+            else:
+                raise exception.ConsoleTypeInvalid(console_type=console_type)
+
             connect_info = console.get_connection_info(token, access_url)
         except exception.InstanceNotFound:
             if instance.vm_state != vm_states.BUILDING:
@@ -4692,7 +4728,7 @@ class ComputeManager(manager.Manager):
             console_info = self.driver.get_spice_console(ctxt, instance)
         elif console_type == "rdp-html5":
             console_info = self.driver.get_rdp_console(ctxt, instance)
-        elif console_type == "serial":
+        elif console_type == "serial" or console_type == "shellinabox":
             console_info = self.driver.get_serial_console(ctxt, instance)
         elif console_type == "webmks":
             console_info = self.driver.get_mks_console(ctxt, instance)
@@ -4706,7 +4742,14 @@ class ComputeManager(manager.Manager):
     @wrap_instance_fault
     def reserve_block_device_name(self, context, instance, device,
                                   volume_id, disk_bus, device_type):
-        @utils.synchronized(instance.uuid)
+        if inspect.getmodule(self.driver.get_device_name_for_instance) \
+                == nova.virt.driver:
+            def synchronized(f):
+                return f
+        else:
+            synchronized = utils.synchronized(instance.uuid)
+
+        @synchronized
         def do_reserve():
             bdms = (
                 objects.BlockDeviceMappingList.get_by_instance_uuid(
@@ -5165,6 +5208,20 @@ class ComputeManager(manager.Manager):
                                                             block_migration,
                                                             disk_over_commit)
 
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def get_migrate_server_data(self, context, instance, migrate_data):
+        data = self.driver.get_server_data(context, instance, migrate_data)
+
+        return data
+
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def neutron_bind_port(self, context, instance, host):
+        self.driver.neutron_bind_port(context, instance, host)
+
     def _do_check_can_live_migrate_destination(self, ctxt, instance,
                                                block_migration,
                                                disk_over_commit):
@@ -5222,7 +5279,7 @@ class ComputeManager(manager.Manager):
     @wrap_instance_event
     @wrap_instance_fault
     def pre_live_migration(self, context, instance, block_migration, disk,
-                           migrate_data):
+                           migrate_data, vm_networks):
         """Preparations for live migration at dest host.
 
         :param context: security context
@@ -5254,12 +5311,14 @@ class ComputeManager(manager.Manager):
                                        network_info,
                                        disk,
                                        migrate_data)
+
+        migrate_data.target_bridge_name = vm_networks
+
         LOG.debug('driver pre_live_migration data is %s' % migrate_data)
 
         # NOTE(tr3buchet): setup networks on destination host
         self.network_api.setup_networks_on_host(context, instance,
                                                          self.host)
-
         # Creating filters to hypervisors and firewalls.
         # An example is that nova-instance-instance-xxx,
         # which is written to libvirt.xml(Check "virsh nwfilter-list")
@@ -5287,7 +5346,6 @@ class ComputeManager(manager.Manager):
         # done on source/destination. For now, this is just here for status
         # reporting
         self._set_migration_status(migration, 'preparing')
-
         got_migrate_data_object = isinstance(migrate_data,
                                              migrate_data_obj.LiveMigrateData)
         if not got_migrate_data_object:
@@ -5305,9 +5363,10 @@ class ComputeManager(manager.Manager):
             else:
                 disk = None
 
+            vm_networks = self.driver.get_instance_network(instance)
             migrate_data = self.compute_rpcapi.pre_live_migration(
                 context, instance,
-                block_migration, disk, dest, migrate_data)
+                block_migration, disk, dest, migrate_data, vm_networks)
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception(_LE('Pre live migration failed at %s'),
@@ -5316,6 +5375,7 @@ class ComputeManager(manager.Manager):
                 self._rollback_live_migration(context, instance, dest,
                                               block_migration, migrate_data)
 
+        server_data = self.compute_rpcapi.get_source_server_data(context, instance, dest, migrate_data)
         self._set_migration_status(migration, 'running')
 
         if migrate_data:
@@ -5325,7 +5385,9 @@ class ComputeManager(manager.Manager):
             self.driver.live_migration(context, instance, dest,
                                        self._post_live_migration,
                                        self._rollback_live_migration,
-                                       block_migration, migrate_data)
+                                       block_migration, migrate_data, server_data)
+
+            self.compute_rpcapi.neutron_bind_port(context, instance, dest)
         except Exception:
             # Executing live migration
             # live_migration might raises exceptions, but
@@ -5358,7 +5420,7 @@ class ComputeManager(manager.Manager):
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
-        utils.spawn_n(dispatch_live_migration,
+        self.instance_running_pool.spawn_n(dispatch_live_migration,
                       context, dest, instance,
                       block_migration, migration,
                       migrate_data)

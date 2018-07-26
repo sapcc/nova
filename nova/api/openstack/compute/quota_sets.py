@@ -44,6 +44,7 @@ class QuotaSetsController(wsgi.Controller):
         else:
             result = {}
 
+        QUOTAS.initialize()
         for resource in QUOTAS.resources:
             if resource in quota_set:
                 result[resource] = quota_set[resource]
@@ -73,6 +74,7 @@ class QuotaSetsController(wsgi.Controller):
             raise webob.exc.HTTPBadRequest(explanation=msg)
 
     def _get_quotas(self, context, id, user_id=None, usages=False):
+        QUOTAS.initialize()
         if user_id:
             values = QUOTAS.get_user_quotas(context, id, user_id,
                                             usages=usages)
@@ -123,6 +125,7 @@ class QuotaSetsController(wsgi.Controller):
 
         force_update = strutils.bool_from_string(quota_set.get('force',
                                                                'False'))
+        QUOTAS.initialize()
         settable_quotas = QUOTAS.get_settable_quotas(context, project_id,
                                                      user_id=user_id)
 
@@ -131,6 +134,8 @@ class QuotaSetsController(wsgi.Controller):
         valid_quotas = {}
         for key, value in six.iteritems(body['quota_set']):
             if key == 'force' or (not value and value != 0):
+                continue
+            if key not in settable_quotas:
                 continue
             # validate whether already used and reserved exceeds the new
             # quota, this check will be ignored if admin want to force
@@ -162,6 +167,7 @@ class QuotaSetsController(wsgi.Controller):
     def defaults(self, req, id):
         context = req.environ['nova.context']
         authorize(context, action='defaults', target={'project_id': id})
+        QUOTAS.initialize()
         values = QUOTAS.get_defaults(context)
         return self._format_quota_set(id, values)
 
@@ -175,6 +181,7 @@ class QuotaSetsController(wsgi.Controller):
         authorize(context, action='delete', target={'project_id': id})
         params = urlparse.parse_qs(req.environ.get('QUERY_STRING', ''))
         user_id = params.get('user_id', [None])[0]
+        QUOTAS.initialize()
         if user_id:
             QUOTAS.destroy_all_by_project_and_user(context,
                                                    id, user_id)

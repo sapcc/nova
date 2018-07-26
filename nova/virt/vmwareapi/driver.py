@@ -20,24 +20,25 @@ A connection to the VMware vCenter platform.
 """
 
 import re
+import ssl
+import urlparse
 
+import OpenSSL
+import requests
 from oslo_config import cfg
 from oslo_log import log as logging
-from oslo_utils import excutils
-from oslo_utils import versionutils as v_utils
-from oslo_vmware import api
-from oslo_vmware import exceptions as vexc
-from oslo_vmware import pbm
-from oslo_vmware import vim
-from oslo_vmware import vim_util
 from oslo_serialization import jsonutils
-
-from nova.compute import task_states
-import nova.conf
-import urlparse
-import requests
+from oslo_utils import excutils
+from oslo_utils import units
+from oslo_utils import versionutils as v_utils
 from requests.auth import HTTPBasicAuth
+
+import nova.conf
 from nova import exception
+from nova import network
+from nova import objects
+from nova import profiler
+from nova.compute import task_states
 from nova.i18n import _, _LI, _LE, _LW
 from nova.virt import driver
 from nova.virt.vmwareapi import constants
@@ -47,6 +48,12 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+from oslo_vmware import api
+from oslo_vmware import exceptions as vexc
+from oslo_vmware import pbm
+from oslo_vmware import vim
+from oslo_vmware import vim_util
+from oslo_vmware import vim_util as vutil
 
 LOG = logging.getLogger(__name__)
 
@@ -91,6 +98,19 @@ vmwareapi_opts = [
     cfg.BoolOpt('use_linked_clone',
                 default=True,
                 help='Whether to use linked clone'),
+    cfg.IntOpt('connection_pool_size',
+               min=10,
+               default=10,
+               help="""
+    This option sets the http connection pool size
+
+    The connection pool size is the maximum number of connections from nova to
+    vSphere.  It should only be increased if there are warnings indicating that
+    the connection pool is full, otherwise, the default should suffice.
+    """),
+    cfg.BoolOpt('use_direct_url',
+                default=False,
+                help='Whether to import via direct-url, if possible'),
     cfg.StrOpt('wsdl_location',
                help='Optional VIM Service WSDL Location '
                     'e.g http://<server>/vimService.wsdl. '
@@ -98,7 +118,11 @@ vmwareapi_opts = [
                     'work-arounds'),
     cfg.StrOpt('vspc_username', help='Username for Virtual Serial Port Concentrator'),
     cfg.StrOpt('vspc_password', help='Password for Virtual Serial Port Concentrator'),
-    ]
+    cfg.StrOpt('default_portgroup', help='Default portgroup for migration'),
+    cfg.BoolOpt('connection_pool_block',
+                default=False,
+                help='Whether to block if connection pool is full'),
+]
 
 spbm_opts = [
     cfg.BoolOpt('pbm_enabled',
@@ -113,7 +137,7 @@ spbm_opts = [
                help='The PBM default policy. If pbm_wsdl_location is set and '
                     'there is no defined storage policy for the specific '
                     'request then this policy will be used.'),
-    ]
+]
 
 CONF = nova.conf.CONF
 CONF.register_opts(vmwareapi_opts, 'vmware')
@@ -122,6 +146,7 @@ CONF.register_opts(spbm_opts, 'vmware')
 TIME_BETWEEN_API_CALL_RETRIES = 1.0
 
 
+@profiler.trace_cls("vmwareapi")
 class VMwareVCDriver(driver.ComputeDriver):
     """The VC host connection object."""
 
@@ -148,10 +173,10 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
-
+        self.network_api = network.API()
         if (CONF.vmware.host_ip is None or
-            CONF.vmware.host_username is None or
-            CONF.vmware.host_password is None):
+                CONF.vmware.host_username is None or
+                CONF.vmware.host_password is None):
             raise Exception(_("Must specify host_ip, host_username and "
                               "host_password to use vmwareapi.VMwareVCDriver"))
 
@@ -161,8 +186,8 @@ class VMwareVCDriver(driver.ComputeDriver):
                 self._datastore_regex = re.compile(CONF.vmware.datastore_regex)
             except re.error:
                 raise exception.InvalidInput(reason=
-                    _("Invalid Regular Expression %s")
-                    % CONF.vmware.datastore_regex)
+                                             _("Invalid Regular Expression %s")
+                                             % CONF.vmware.datastore_regex)
 
         self._session = VMwareAPISession(scheme=scheme)
 
@@ -230,8 +255,8 @@ class VMwareVCDriver(driver.ComputeDriver):
             if not CONF.vmware.pbm_default_policy:
                 raise error_util.PbmDefaultPolicyUnspecified()
             if not pbm.get_profile_id_by_name(
-                            self._session,
-                            CONF.vmware.pbm_default_policy):
+                    self._session,
+                    CONF.vmware.pbm_default_policy):
                 raise error_util.PbmDefaultPolicyDoesNotExist()
             if CONF.vmware.datastore_regex:
                 LOG.warning(_LW(
@@ -316,6 +341,154 @@ class VMwareVCDriver(driver.ComputeDriver):
                                      network_info, image_meta, resize_instance,
                                      block_device_info, power_on)
 
+    def ensure_filtering_rules_for_instance(self, instance, network_info):
+        pass
+
+    def pre_live_migration(self, context, instance, block_device_info,
+                           network_info, disk_info, migrate_data):
+        return migrate_data
+
+    def post_live_migration_at_source(self, context, instance, network_info):
+        pass
+
+    def post_live_migration_at_destination(self, context, instance,
+                                           network_info,
+                                           block_migration=False,
+                                           block_device_info=None):
+        pass
+
+    def cleanup_live_migration_destination_check(self, context,
+                                                 dest_check_data):
+        pass
+
+    def neutron_bind_port(self, context, instance, host):
+        self.network_api.migrate_instance_finish(context, instance, host)
+
+    def live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration=False,
+                       migrate_data=None, server_data=None):
+        """Live migration of an instance to another host."""
+        self._vmops.live_migration(context, instance, dest, post_method,
+                                   recover_method, block_migration,
+                                   migrate_data, server_data)
+
+    def check_can_live_migrate_source(self, context, instance,
+                                      dest_check_data, block_device_info=None):
+        return dest_check_data
+
+    def check_can_live_migrate_destination(self, context, instance,
+                                           src_compute_info, dst_compute_info,
+                                           block_migration=False,
+                                           disk_over_commit=False):
+        # the information that we need for the destination compute node
+        # is the name of its cluster and datastore regex
+        data = objects.VMwareLiveMigrateData()
+        data.cluster_name = CONF.vmware.cluster_name
+        data.datastore_regex = CONF.vmware.datastore_regex
+        data.host_ip = CONF.vmware.host_ip
+        data.host_username = CONF.vmware.host_username
+        data.host_password = CONF.vmware.host_password
+        data.instance_uuid = self._session.vim.service_content.about.instanceUuid
+
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        data.thumbprint = x509.digest("sha1")
+
+        return data
+
+    def get_server_data(self, context, instance, migrate_data):
+
+        data = dict()
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      CONF.vmware.cluster_name)
+        cluster_hosts = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'host')
+        cluster_datastores = self._session._call_method(vutil,
+                                                        'get_object_property',
+                                                        cluster_ref,
+                                                        'datastore')
+        LOG.debug("cluster_datastores: %s", cluster_datastores)
+        if not cluster_datastores:
+            LOG.warning('No datastores found in the destination cluster')
+            return None
+
+        ds_hosts = None
+        for ds in cluster_datastores.ManagedObjectReference:
+            ds_hosts = self._session._call_method(vutil, 'get_object_property',
+                                                  ds, 'host')
+            if ds_hosts:
+                break
+
+        data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
+        for ds_host in ds_hosts.DatastoreHostMount:
+            if 'host' not in data:
+                for cluster_host in cluster_hosts.ManagedObjectReference:
+                    if ds_host.key.value == cluster_host.value:
+
+                        if self._check_host_status(cluster_host) == True:
+                            data['host'] = cluster_host.value
+                            break
+                        else:
+                            continue
+
+        networks = self._session._call_method(vutil,
+                                              'get_object_property',
+                                              vutil.get_moref(data['host'], "HostSystem"),
+                                              'network')
+
+        data['portgroup_key'] = []
+        data['dvs_uuid'] = []
+        data['portgroup_name'] = []
+        for network in networks[0]:
+            if network._type != 'Network':
+                net = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 network,
+                                                 'config')
+
+                if net.name == CONF.vmware.default_portgroup:
+                    data['portgroup_key'].append(net.key)
+                    data['portgroup_name'].append(net.name)
+                    dvs_uuid = self._session._call_method(vutil,
+                                                          'get_object_property',
+                                                          net.distributedVirtualSwitch,
+                                                          'uuid')
+                    data['dvs_uuid'].append(dvs_uuid)
+
+        data['networks'] = networks
+
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        data['res_pool'] = res_pool_ref.value
+        data['cluster_ref'] = cluster_ref
+        if res_pool_ref is None:
+            LOG.error("Cannot find resource pool", instance=instance)
+            raise exception.HostNotFound()
+
+        return data
+
+    def _check_host_status(self, host):
+        LOG.debug(host)
+        host_status = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 host,
+                                                 'runtime')
+
+        if host_status.powerState.lower() != "poweredon" or host_status.connectionState.lower() != 'connected':
+            return False
+        return True
+
+    def unfilter_instance(self, instance, network_info):
+        pass
+
+    def rollback_live_migration_at_destination(self, context, instance,
+                                               network_info,
+                                               block_device_info,
+                                               destroy_disks=True,
+                                               migrate_data=None):
+        """Clean up destination node after a failed live migration."""
+        self.destroy(context, instance, network_info, block_device_info)
+
     def get_instance_disk_info(self, instance, block_device_info=None):
         pass
 
@@ -347,25 +520,25 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def _get_available_resources(self, host_stats):
         return {'vcpus': host_stats['vcpus'],
-               'memory_mb': host_stats['host_memory_total'],
-               'local_gb': host_stats['disk_total'],
-               'vcpus_used': 0,
-               'memory_mb_used': host_stats['host_memory_total'] -
-                                 host_stats['host_memory_free'],
-               'local_gb_used': host_stats['disk_used'],
-               'hypervisor_type': host_stats['hypervisor_type'],
-               'hypervisor_version': host_stats['hypervisor_version'],
-               'hypervisor_hostname': host_stats['hypervisor_hostname'],
+                'memory_mb': host_stats['host_memory_total'],
+                'local_gb': host_stats['disk_total'],
+                'vcpus_used': 0,
+                'memory_mb_used': host_stats['host_memory_total'] -
+                                  host_stats['host_memory_free'],
+                'local_gb_used': host_stats['disk_used'],
+                'hypervisor_type': host_stats['hypervisor_type'],
+                'hypervisor_version': host_stats['hypervisor_version'],
+                'hypervisor_hostname': host_stats['hypervisor_hostname'],
                 # The VMWare driver manages multiple hosts, so there are
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
                 # model of the "host"
-               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
-               'supported_instances': host_stats['supported_instances'],
-               'numa_topology': None,
-               }
+                'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
+                'supported_instances': host_stats['supported_instances'],
+                'numa_topology': None,
+                }
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and
@@ -376,7 +549,62 @@ class VMwareVCDriver(driver.ComputeDriver):
         """
         host_stats = self._vc_state.get_host_stats(refresh=True)
         stats_dict = self._get_available_resources(host_stats)
+
         return stats_dict
+
+    def get_cluster_metrics(self):
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session, CONF.vmware.cluster_name)
+
+        lst_properties = ["summary.quickStats"]
+        self.cluster_metrics = {}
+        self.cpu_usage = 0
+        self.memory_usage = 0
+        self.datastore_free_space = 0
+        self.datastore_total = 0
+
+        cluster_data = self._session._call_method(vim_util, 'get_object_properties_dict', cluster_ref,
+                                                  ['host', 'datastore', 'summary'])
+
+        for datastore in cluster_data['datastore'][0]:
+            datastore_capacity = self._session._call_method(
+                vim_util,
+                "get_object_properties_dict",
+                datastore,
+                ['summary.freeSpace', 'summary.capacity'])
+            self.datastore_free_space += datastore_capacity['summary.freeSpace']
+            self.datastore_total += datastore_capacity['summary.capacity']
+
+        for host in cluster_data['host'][0]:
+            props = self._session._call_method(vim_util,
+                                               "get_object_properties_dict",
+                                               host,
+                                               lst_properties)
+
+            self.cpu_usage += props['summary.quickStats'].overallCpuUsage
+            self.memory_usage += props['summary.quickStats'].overallMemoryUsage
+
+        self.cluster_metrics['cpu_total'] = cluster_data['summary'].totalCpu
+        self.cluster_metrics['cpu_used'] = self.cpu_usage
+        self.cluster_metrics['cpu_free'] = cluster_data['summary'].totalCpu - self.cpu_usage
+        self.cluster_metrics['memory_total'] = float(cluster_data['summary'].totalMemory / units.Mi)
+        self.cluster_metrics['memory_used'] = self.memory_usage
+        self.cluster_metrics['memory_free'] = self.cluster_metrics['memory_total'] - self.cluster_metrics['memory_used']
+        self.cluster_metrics['datastore_total'] = float(self.datastore_total / units.Gi)
+        self.cluster_metrics['datastore_used'] = float((self.datastore_total - self.datastore_free_space) / units.Gi)
+        self.cluster_metrics['datastore_free'] = self.cluster_metrics['datastore_total'] - self.cluster_metrics[
+            'datastore_used']
+
+        perc = float(self.cluster_metrics['cpu_used']) / float(self.cluster_metrics['cpu_total'])
+        self.cluster_metrics['cpu_percent'] = int(perc * 100)
+
+        perc = float(self.cluster_metrics['memory_used'] / self.cluster_metrics['memory_total'])
+        self.cluster_metrics['memory_percent'] = int(perc * 100)
+
+        perc = float(self.cluster_metrics['datastore_used'] / units.G) / float(
+            self.cluster_metrics['datastore_total'] / units.G)
+        self.cluster_metrics['datastore_percent'] = int(perc * 100)
+
+        return self.cluster_metrics
 
     def get_available_nodes(self, refresh=False):
         """Returns nodenames of all nodes managed by the compute service.
@@ -463,11 +691,15 @@ class VMwareVCDriver(driver.ComputeDriver):
         if block_device_info is not None:
             try:
                 self._detach_instance_volumes(instance, block_device_info)
+            except exception.InstanceNotFound:
+                LOG.warning(_LW('Instance does not exists. Proceeding to '
+                                'delete instance properties on datastore'),
+                            instance=instance)
             except vexc.ManagedObjectNotFoundException:
                 LOG.warning(_LW('Instance does not exists. Proceeding to '
                                 'delete instance properties on datastore'),
                             instance=instance)
-        self._vmops.destroy(instance, destroy_disks)
+        self._vmops.destroy(context, instance, destroy_disks)
 
     def pause(self, instance):
         """Pause VM instance."""
@@ -591,10 +823,26 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         return response.content
 
+    def get_instance_network(self, instance):
+        networks = []
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_networks = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 vm_ref, 'network')
+
+        for vm_net in vm_networks[0]:
+            network = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 vm_net, 'name')
+            networks.append(network)
+        return networks
+
+
 class VMwareAPISession(api.VMwareAPISession):
     """Sets up a session with the VC/ESX host and handles all
     the calls made to the host.
     """
+
     def __init__(self, host_ip=CONF.vmware.host_ip,
                  host_port=CONF.vmware.host_port,
                  username=CONF.vmware.host_username,
@@ -602,19 +850,23 @@ class VMwareAPISession(api.VMwareAPISession):
                  retry_count=CONF.vmware.api_retry_count,
                  scheme="https",
                  cacert=CONF.vmware.ca_file,
-                 insecure=CONF.vmware.insecure):
+                 insecure=CONF.vmware.insecure,
+                 pool_size=CONF.vmware.connection_pool_size,
+                 pool_block=CONF.vmware.connection_pool_block):
         super(VMwareAPISession, self).__init__(
-                host=host_ip,
-                port=host_port,
-                server_username=username,
-                server_password=password,
-                api_retry_count=retry_count,
-                task_poll_interval=CONF.vmware.task_poll_interval,
-                scheme=scheme,
-                create_session=True,
-                wsdl_loc=CONF.vmware.wsdl_location,
-                cacert=cacert,
-                insecure=insecure)
+            host=host_ip,
+            port=host_port,
+            server_username=username,
+            server_password=password,
+            api_retry_count=retry_count,
+            task_poll_interval=CONF.vmware.task_poll_interval,
+            scheme=scheme,
+            create_session=True,
+            wsdl_loc=CONF.vmware.wsdl_location,
+            cacert=cacert,
+            insecure=insecure,
+            pool_size=pool_size,
+            pool_block=pool_block)
 
     def _is_vim_object(self, module):
         """Check if the module is a VIM Object instance."""

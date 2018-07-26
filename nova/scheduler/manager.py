@@ -31,6 +31,7 @@ from nova import exception
 from nova.i18n import _, _LW
 from nova import manager
 from nova import objects
+from nova import profiler
 from nova import quota
 
 
@@ -41,6 +42,7 @@ CONF = nova.conf.CONF
 QUOTAS = quota.QUOTAS
 
 
+@profiler.trace_cls("scheduler")
 class SchedulerManager(manager.Manager):
     """Chooses a host to run instances on."""
 
@@ -78,6 +80,7 @@ class SchedulerManager(manager.Manager):
 
     @periodic_task.periodic_task
     def _expire_reservations(self, context):
+        QUOTAS.initialize()
         QUOTAS.expire(context)
 
     @periodic_task.periodic_task(spacing=CONF.scheduler_driver_task_period,

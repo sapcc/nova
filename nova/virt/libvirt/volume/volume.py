@@ -23,6 +23,7 @@ import six
 from nova import exception
 from nova.i18n import _LE
 from nova.i18n import _LW
+from nova import profiler
 from nova.virt.libvirt import config as vconfig
 import nova.virt.libvirt.driver
 from nova.virt.libvirt import host
@@ -43,6 +44,7 @@ CONF.register_opts(volume_opts, 'libvirt')
 SHOULD_LOG_DISCARD_WARNING = True
 
 
+@profiler.trace_cls("volume_api")
 class LibvirtBaseVolumeDriver(object):
     """Base class for volume drivers."""
     def __init__(self, connection, is_block_dev):

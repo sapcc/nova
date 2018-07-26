@@ -63,6 +63,14 @@ admin_tenant_name = cfg.StrOpt(
     'admin_tenant_name',
     help='Ironic keystone tenant name.')
 
+admin_project_domain_name = cfg.StrOpt(
+    'admin_project_domain_name',
+    help='Ironic keystone project domain name.')
+
+admin_user_domain_name = cfg.StrOpt(
+    'admin_user_domain_name',
+    help='Ironic keystone user domain name.')
+
 api_max_retries = cfg.IntOpt(
     'api_max_retries',
     default=60,
@@ -75,6 +83,11 @@ api_retry_interval = cfg.IntOpt(
     help='How often to retry in seconds when a request '
          'does conflict')
 
+serial_console_state_timeout = cfg.IntOpt(
+    'serial_console_state_timeout',
+    default=10,
+    help='How long to wait in seconds for console state change')
+
 ALL_OPTS = [api_version,
             api_endpoint,
             admin_username,
@@ -83,8 +96,11 @@ ALL_OPTS = [api_version,
             admin_url,
             client_log_level,
             admin_tenant_name,
+            admin_project_domain_name,
+            admin_user_domain_name,
             api_max_retries,
-            api_retry_interval]
+            api_retry_interval,
+            serial_console_state_timeout]
 
 
 def register_opts(conf):

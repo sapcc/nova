@@ -34,6 +34,7 @@ from oslo_db.sqlalchemy import update_match
 from oslo_db.sqlalchemy import utils as sqlalchemyutils
 from oslo_log import log as logging
 from oslo_utils import excutils
+from oslo_utils import importutils
 from oslo_utils import timeutils
 from oslo_utils import uuidutils
 import six
@@ -70,6 +71,7 @@ from nova.objects import fields
 from nova import quota
 from nova import safe_utils
 
+profiler_sqlalchemy = importutils.try_import('osprofiler.sqlalchemy')
 db_opts = [
     cfg.StrOpt('osapi_compute_unique_server_name_scope',
                default='',
@@ -169,6 +171,14 @@ def _context_manager_from_context(context):
 def configure(conf):
     main_context_manager.configure(**_get_db_conf(conf.database))
     api_context_manager.configure(**_get_db_conf(conf.api_database))
+
+    if profiler_sqlalchemy and CONF.profiler.enabled \
+            and CONF.profiler.trace_sqlalchemy:
+
+        main_context_manager.append_on_engine_create(
+            lambda eng: profiler_sqlalchemy.add_tracing(sa, eng, "db"))
+        api_context_manager.append_on_engine_create(
+            lambda eng: profiler_sqlalchemy.add_tracing(sa, eng, "db"))
 
 
 def create_context_manager(connection=None):
@@ -401,9 +411,30 @@ def convert_objects_related_datetimes(values, *datetime_keys):
 
 
 def _sync_instances(context, project_id, user_id):
-    return dict(zip(('instances', 'cores', 'ram'),
-                    _instance_data_get_for_user(context, project_id, user_id)))
-
+    query = '''
+      SELECT t.name, COUNT(i.id), SUM(i.vcpus), SUM(i.memory_mb),
+        EXISTS(SELECT 1 FROM instance_type_extra_specs
+               WHERE instance_type_id = t.id
+               AND key = 'quota:separate' AND value = 'true'),
+        EXISTS(SELECT 1 FROM instance_type_extra_specs
+               WHERE instance_type_id = t.id
+               AND key = 'quota:instance_only' AND value = 'true')
+      FROM instances i JOIN instance_types t ON t.id = i.instance_type_id
+      WHERE i.project_id = :pid AND i.user_id = :uid AND i.deleted = 0
+      GROUP BY t.name, t.id
+    '''
+    stats = context.session.execute(query, { 'pid': project_id, 'uid': user_id })
+    output = { "instances": 0, "cores": 0, "ram": 0 }
+    for flavor_name, count, vcpus, memory_mb, separate, instance_only in stats:
+        if not instance_only:
+            output["cores"] += vcpus
+            output["ram"]   += memory_mb
+        if separate:
+            key = "instances_" + flavor_name
+            output[key] = output.get(key, 0) + count
+        else:
+            output["instances"] += count
+    return output
 
 def _sync_floating_ips(context, project_id, user_id):
     return dict(floating_ips=_floating_ip_count_by_project(
@@ -1086,6 +1117,7 @@ def floating_ip_bulk_destroy(context, ips):
     # been committed first.
     for project_id, count in project_id_to_quota_count.items():
         try:
+            quota.QUOTAS.initialize()
             reservations = quota.QUOTAS.reserve(context,
                                                 project_id=project_id,
                                                 floating_ips=count)
@@ -2704,6 +2736,25 @@ def instance_get_all_by_host(context, host, columns_to_join=None):
     return _instances_fill_metadata(context,
       _instance_get_all_query(context).filter_by(host=host).all(),
                               manual_joins=columns_to_join)
+
+
+@pick_context_manager_reader_allow_async
+def instance_count(context, filters=None):
+
+    q = model_query(context,
+                    models.Instance,
+                    read_deleted="no")
+    if filters:
+        for k,v in six.iteritems(filters):
+            attr = getattr(models.Instance, k)
+            if not attr:
+                continue
+            if isinstance(v, (list, set)):
+                q = q.filter(attr.in_(v))
+            else:
+                q = q.filter(attr == v)
+
+    return q.count()
 
 
 def _instance_get_all_uuids_by_host(context, host):
@@ -7063,3 +7114,17 @@ def instance_tag_exists(context, instance_uuid, tag):
     q = context.session.query(models.Tag).filter_by(
         resource_id=instance_uuid, tag=tag)
     return context.session.query(q.exists()).scalar()
+
+@main_context_manager.reader
+def get_flavornames_with_separate_quota(context):
+    query = '''
+        SELECT DISTINCT t.name FROM instance_types t
+        JOIN instance_type_extra_specs s ON t.id = s.instance_type_id
+        WHERE s.key = 'quota:separate' AND s.value = 'true'
+          AND (s.deleted = 0 OR EXISTS(
+            SELECT 1 FROM instances i
+            WHERE i.deleted = 0 AND i.instance_type_id = t.id
+          ))
+    '''
+    result = context.session.execute(query)
+    return [x[0] for x in result]

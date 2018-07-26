@@ -24,6 +24,7 @@ class TypeAffinityFilter(filters.BaseHostFilter):
     Note: this works best with ram_weight_multiplier
     (spread) set to 1 (default).
     """
+    requires_instances = True
 
     def host_passes(self, host_state, spec_obj):
         """Dynamically limits hosts to one instance type

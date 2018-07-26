@@ -19,6 +19,7 @@ Client side of the consoleauth RPC API.
 from oslo_config import cfg
 import oslo_messaging as messaging
 
+from nova import profiler
 from nova import rpc
 
 CONF = cfg.CONF
@@ -28,6 +29,7 @@ rpcapi_cap_opt = cfg.StrOpt('consoleauth',
 CONF.register_opt(rpcapi_cap_opt, 'upgrade_levels')
 
 
+@profiler.trace_cls("rpc")
 class ConsoleAuthAPI(object):
     '''Client side of the consoleauth rpc API.
 

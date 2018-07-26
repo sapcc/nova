@@ -20,6 +20,8 @@ from nova import filters
 
 
 class BaseHostFilter(filters.BaseFilter):
+    requires_instances = False
+
     """Base class for host filters."""
     def _filter_one(self, obj, filter_properties):
         """Return True if the object passes the filter, otherwise False."""

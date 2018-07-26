@@ -767,6 +767,11 @@ def instance_get_all_by_host(context, host, columns_to_join=None):
     return IMPL.instance_get_all_by_host(context, host, columns_to_join)
 
 
+def instance_count(context, filters=None):
+    """Count instances."""
+    return IMPL.instance_count(context, filters=filters)
+
+
 def instance_get_all_by_host_and_node(context, host, node,
                                       columns_to_join=None):
     """Get all instances belonging to a node."""
@@ -2031,3 +2036,6 @@ def instance_tag_delete_all(context, instance_uuid):
 def instance_tag_exists(context, instance_uuid, tag):
     """Check if specified tag exist on the instance."""
     return IMPL.instance_tag_exists(context, instance_uuid, tag)
+
+def get_flavornames_with_separate_quota(context):
+    return IMPL.get_flavornames_with_separate_quota(context)

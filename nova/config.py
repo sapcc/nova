@@ -19,6 +19,7 @@ from oslo_cache import core as cache
 from oslo_config import cfg
 from oslo_db import options
 from oslo_log import log
+from oslo_utils import importutils
 
 from nova.common import config
 from nova.db.sqlalchemy import api as sqlalchemy_api
@@ -27,6 +28,7 @@ from nova import paths
 from nova import rpc
 from nova import version
 
+profiler = importutils.try_import('osprofiler.opts')
 CONF = cfg.CONF
 
 _DEFAULT_SQL_CONNECTION = 'sqlite:///' + paths.state_path_def('nova.sqlite')
@@ -57,6 +59,10 @@ def parse_args(argv, default_config_files=None, configure_db=True,
     rpc.set_defaults(control_exchange='nova')
     cache.configure(CONF)
     debugger.register_cli_opts()
+
+    if profiler:
+        profiler.set_defaults(CONF)
+
     config.set_middleware_defaults()
 
     CONF(argv[1:],

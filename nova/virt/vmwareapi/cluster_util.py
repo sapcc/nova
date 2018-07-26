@@ -17,7 +17,7 @@ def reconfigure_cluster(session, cluster, config_spec):
 def _create_vm_group_spec(client_factory, group_info, vm_refs,
                           operation="add", group=None):
     group = group or client_factory.create('ns0:ClusterVmGroup')
-    group.name = group_info.id
+    group.name = group_info.uuid
 
     # On vCenter UI, it is not possible to create VM group without
     # VMs attached to it. But, using APIs, it is possible to create
@@ -40,6 +40,67 @@ def _get_vm_group(cluster_config, group_info):
     for group in cluster_config.group:
         if group.name == group_info.uuid:
             return group
+
+def validate_vm_group(session, vm_ref):
+    max_objects = 1
+    vim = session.vim
+    property_collector = vim.service_content.propertyCollector
+
+    traversal_spec = vutil.build_traversal_spec(
+        vim.client.factory,
+        "v_to_r",
+        "VirtualMachine",
+        "resourcePool",
+        False,
+        [vutil.build_traversal_spec(vim.client.factory,
+                                    "r_to_c",
+                                    "ResourcePool",
+                                    "parent",
+                                    False,
+                                    [])])
+
+    object_spec = vutil.build_object_spec(
+        vim.client.factory,
+        vm_ref,
+        [traversal_spec])
+    property_spec = vutil.build_property_spec(
+        vim.client.factory,
+        "ClusterComputeResource",
+        ["configurationEx"])
+
+    property_filter_spec = vutil.build_property_filter_spec(
+        vim.client.factory,
+        [property_spec],
+        [object_spec])
+    options = vim.client.factory.create('ns0:RetrieveOptions')
+    options.maxObjects = max_objects
+
+    pc_result = vim.RetrievePropertiesEx(property_collector, specSet=[property_filter_spec], options=options)
+    result = None
+    """ Retrieving needed hardware properties from ESX hosts """
+    with vutil.WithRetrieval(vim, pc_result) as pc_objects:
+        for objContent in pc_objects:
+            LOG.debug("Retrieving cluster: %s", objContent)
+            result = objContent
+            break
+
+    return result
+
+
+def delete_vm_group(session, cluster, vm_group):
+    """ Add delete impl fro removing group if deleted vm is the last vm in a vm group"""
+    client_factory = session.vim.client.factory
+    group_spec = client_factory.create('ns0:ClusterGroupSpec')
+    groups = []
+
+    group_spec.info = vm_group
+    group_spec.operation = "remove"
+    group_spec.removeKey = vm_group.name
+    groups.append(group_spec)
+
+    config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+    config_spec.groupSpec = groups
+    reconfigure_cluster(session, cluster, config_spec)
 
 
 @utils.synchronized('vmware-vm-group-policy')

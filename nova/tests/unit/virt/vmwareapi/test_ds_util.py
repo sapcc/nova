@@ -22,6 +22,7 @@ from oslo_vmware.objects import datastore as ds_obj
 from nova import exception
 from nova import test
 from nova.tests.unit.virt.vmwareapi import fake
+from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 
 
@@ -474,3 +475,17 @@ class DsUtilTestCase(test.NoDBTestCase):
             _call_method.assert_called_once_with(
                     mock.ANY, 'get_object_property',
                     'fake_datastore', 'host')
+
+    def test_get_allowed_datastore_types(self):
+        set1 = set([constants.DATASTORE_TYPE_VMFS,
+                    constants.DATASTORE_TYPE_NFS,
+                    constants.DATASTORE_TYPE_NFS41])
+        set2 = set1 | set([constants.DATASTORE_TYPE_VSAN,
+                           constants.DATASTORE_TYPE_VVOL])
+
+        self.assertEqual(set1, ds_util.get_allowed_datastore_types(
+                                    constants.DISK_TYPE_PREALLOCATED))
+        self.assertEqual(set1, ds_util.get_allowed_datastore_types(
+                                    constants.DISK_TYPE_SPARSE))
+        self.assertEqual(set2, ds_util.get_allowed_datastore_types(
+                                    constants.DISK_TYPE_STREAM_OPTIMIZED))

@@ -155,7 +155,7 @@ class ServiceController(wsgi.Controller):
     def _perform_action(self, req, id, body, actions):
         """Calculate action dictionary dependent on provided fields"""
         context = req.environ['nova.context']
-        authorize(context)
+        authorize(context, action=id)
 
         try:
             action = actions[id]

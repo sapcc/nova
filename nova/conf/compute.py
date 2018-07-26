@@ -55,6 +55,13 @@ compute_opts = [
                     'that images will be automatically converted to volumes '
                     'and boot instances from volumes - it just means that all '
                     'requests that attempt to create a local disk will fail.'),
+    cfg.IntOpt('instance_running_pool_size',
+        default=1000,
+        help="""
+Number of greenthreads available for spawning virtual machines.
+Possible values:
+* Any positive integer representing greenthreads count.
+"""),
 ]
 
 

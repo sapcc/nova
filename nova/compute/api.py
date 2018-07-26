@@ -74,6 +74,7 @@ from nova.objects import quotas as quotas_obj
 from nova.objects import security_group as security_group_obj
 from nova.pci import request as pci_request
 import nova.policy
+from nova import profiler
 from nova import rpc
 from nova.scheduler import client as scheduler_client
 from nova.scheduler import utils as scheduler_utils
@@ -206,6 +207,7 @@ def _diff_dict(orig, new):
     return result
 
 
+@profiler.trace_cls("compute_api", trace_private=True)
 class API(base.Base):
     """API for interacting with the compute manager."""
 
@@ -314,30 +316,36 @@ class API(base.Base):
 
         # Determine requested cores and ram
         req_cores = max_count * instance_type['vcpus']
-        vram_mb = int(instance_type.get('extra_specs', {}).get(VIDEO_RAM, 0))
+        # That should depend on the underlying hypervisor, and apparently the quota is leaking
+        # vram_mb = int(instance_type.get('extra_specs', {}).get(VIDEO_RAM, 0))
+        vram_mb = 0
         req_ram = max_count * (instance_type['memory_mb'] + vram_mb)
+
+        quota_key_instances = 'instances'
+        if instance_type['extra_specs'].get('quota:separate', 'false') == 'true':
+            quota_key_instances = 'instances_' + instance_type['name']
+        deltas = { quota_key_instances: max_count }
+        reserve_cpu_ram = instance_type['extra_specs'].get('quota:instance_only', 'false') != 'true'
+        if reserve_cpu_ram:
+            deltas.update(cores=req_cores, ram=req_ram)
 
         # Check the quota
         try:
             quotas = objects.Quotas(context=context)
-            quotas.reserve(instances=max_count,
-                           cores=req_cores, ram=req_ram,
-                           project_id=project_id, user_id=user_id)
+            quotas.reserve(project_id=project_id, user_id=user_id, **deltas)
         except exception.OverQuota as exc:
             # OK, we exceeded quota; let's figure out why...
             quotas = exc.kwargs['quotas']
             overs = exc.kwargs['overs']
             usages = exc.kwargs['usages']
-            deltas = {'instances': max_count,
-                      'cores': req_cores, 'ram': req_ram}
             headroom = self._get_headroom(quotas, usages, deltas)
 
-            allowed = headroom['instances']
+            allowed = headroom[quota_key_instances]
             # Reduce 'allowed' instances in line with the cores & ram headroom
-            if instance_type['vcpus']:
+            if instance_type['vcpus'] and 'cores' in headroom:
                 allowed = min(allowed,
                               headroom['cores'] // instance_type['vcpus'])
-            if instance_type['memory_mb']:
+            if instance_type['memory_mb'] and 'ram' in headroom:
                 allowed = min(allowed,
                               headroom['ram'] // (instance_type['memory_mb'] +
                                                   vram_mb))
@@ -355,8 +363,9 @@ class API(base.Base):
 
             num_instances = (str(min_count) if min_count == max_count else
                 "%s-%s" % (min_count, max_count))
-            requested = dict(instances=num_instances, cores=req_cores,
-                             ram=req_ram)
+            requested = { quota_key_instances: num_instances }
+            if reserve_cpu_ram:
+                requested.update(cores=req_cores, ram=req_ram)
             (overs, reqs, total_alloweds, useds) = self._get_over_quota_detail(
                 headroom, overs, quotas, requested)
             params = {'overs': overs, 'pid': context.project_id,
@@ -1758,6 +1767,8 @@ class API(base.Base):
 
     def _create_reservations(self, context, instance, original_task_state,
                              project_id, user_id):
+        quota_key_instances = 'instances'
+
         # NOTE(wangpan): if the instance is resizing, and the resources
         #                are updated to new instance type, we should use
         #                the old instance type to create reservation.
@@ -1768,16 +1779,22 @@ class API(base.Base):
             instance_vcpus = old_flavor.vcpus
             vram_mb = old_flavor.extra_specs.get('hw_video:ram_max_mb', 0)
             instance_memory_mb = old_flavor.memory_mb + vram_mb
+            if old_flavor.extra_specs.get('quota:separate', 'false') == 'true':
+                quota_key_instances = 'instances_' + old_flavor.name
+            reserve_cpu_ram = old_flavor.extra_specs.get('quota:instance_only', 'false') != 'true'
         else:
             instance_vcpus = instance.vcpus
             instance_memory_mb = instance.memory_mb
+            if instance.flavor.extra_specs.get('quota:separate', 'false') == 'true':
+                quota_key_instances = 'instances_' + instance.flavor.name
+            reserve_cpu_ram = instance.flavor.extra_specs.get('quota:instance_only', 'false') != 'true'
+
+        deltas = { quota_key_instances: -1 }
+        if reserve_cpu_ram:
+            deltas.update(cores=-instance_vcpus, ram=-instance_memory_mb)
 
         quotas = objects.Quotas(context=context)
-        quotas.reserve(project_id=project_id,
-                       user_id=user_id,
-                       instances=-1,
-                       cores=-instance_vcpus,
-                       ram=-instance_memory_mb)
+        quotas.reserve(project_id=project_id, user_id=user_id, **deltas)
         return quotas
 
     def _get_stashed_volume_connector(self, bdm, instance):
