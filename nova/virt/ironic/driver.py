@@ -81,7 +81,7 @@ _NODE_FIELDS = ('uuid', 'power_state', 'target_power_state', 'provision_state',
                 'properties', 'instance_uuid')
 
 # Console state checking interval in seconds
-_CONSOLE_STATE_CHECKING_INTERVAL = 3
+_CONSOLE_STATE_CHECKING_INTERVAL = 1
 
 
 def map_power_state(state):
@@ -1201,7 +1201,7 @@ class IronicDriver(virt_driver.ComputeDriver):
     def _get_node_console_with_reset(self, instance):
         """Acquire console information for an instance.
 
-        If the console is enabled, the console will be re-enabled
+        If the ironic console is not enabled, the console will be re-enabled
         before returning.
 
         :param instance: nova instance
@@ -1269,16 +1269,12 @@ class IronicDriver(virt_driver.ComputeDriver):
         # Acquire the console
         console = _get_console()
 
-        # NOTE: Resetting console is a workaround to force acquiring
-        # console when it has already been acquired by another user/operator.
         # IPMI serial console does not support multi session, so
         # resetting console will deactivate any active one without
         # warning the operator.
-        if console['console_enabled']:
+        if not console['console_enabled']:
             try:
-                # Disable console
-                _enable_console(False)
-                # Then re-enable it
+                # Then enable it
                 console = _enable_console(True)
             except exception.ConsoleNotAvailable:
                 # NOTE: We try to do recover on failure.
@@ -1291,7 +1287,7 @@ class IronicDriver(virt_driver.ComputeDriver):
             return {'node': node,
                     'console_info': console['console_info']}
         else:
-            LOG.debug('Console is disabled for instance %s',
+            LOG.debug('Failed to enable console for instance %s',
                       instance.uuid)
             raise exception.ConsoleNotAvailable()
 
