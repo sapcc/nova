@@ -343,7 +343,7 @@ def notify_about_host_update(context, event_suffix, host_payload):
 
 
 def get_nw_info_for_instance(instance):
-    if instance.info_cache is None:
+    if instance.info_cache is None or instance.info_cache.network_info is None:
         return network_model.NetworkInfo.hydrate([])
     return instance.info_cache.network_info
 

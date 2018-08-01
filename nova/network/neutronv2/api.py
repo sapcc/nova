@@ -939,7 +939,6 @@ class API(base_api.NetworkAPI):
     def _gather_port_ids_and_networks(self, context, instance, networks=None,
                                       port_ids=None):
         """Return an instance's complete list of port_ids and networks."""
-
         if ((networks is None and port_ids is not None) or
             (port_ids is None and networks is not None)):
             message = _("This method needs to be called with either "
@@ -948,6 +947,7 @@ class API(base_api.NetworkAPI):
             raise exception.NovaException(message=message)
 
         ifaces = compute_utils.get_nw_info_for_instance(instance)
+
         # This code path is only done when refreshing the network_cache
         if port_ids is None:
             port_ids = [iface['id'] for iface in ifaces]
@@ -1720,7 +1720,6 @@ class API(base_api.NetworkAPI):
                         be added to the cached list of preexisting port
                         IDs for this instance.
         """
-
         search_opts = {'tenant_id': instance.project_id,
                        'device_id': instance.uuid, }
         if admin_client is None:
@@ -1745,6 +1744,10 @@ class API(base_api.NetworkAPI):
         for current_neutron_port in current_neutron_ports:
             current_neutron_port_map[current_neutron_port['id']] = (
                 current_neutron_port)
+
+        if not port_ids:
+            LOG.debug("NOT PORT IDS=============================================================================")
+            port_ids = current_neutron_port_map.keys()
 
         for port_id in port_ids:
             current_neutron_port = current_neutron_port_map.get(port_id)
