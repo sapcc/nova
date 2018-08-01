@@ -1746,7 +1746,6 @@ class API(base_api.NetworkAPI):
                 current_neutron_port)
 
         if not port_ids:
-            LOG.debug("NOT PORT IDS=============================================================================")
             port_ids = current_neutron_port_map.keys()
 
         for port_id in port_ids:
