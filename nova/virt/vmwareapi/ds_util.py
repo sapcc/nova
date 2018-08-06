@@ -124,6 +124,7 @@ def get_datastore(session, cluster, datastore_regex=None,
     if not datastore_ret:
         raise exception.DatastoreNotFound()
 
+    LOG.debug("Fetching datastores for cluster")
     data_store_mors = datastore_ret.ManagedObjectReference
     data_stores = session._call_method(vim_util,
                             "get_properties_for_a_collection_of_objects",
@@ -143,6 +144,8 @@ def get_datastore(session, cluster, datastore_regex=None,
                                        allowed_ds_types)
         data_stores = session._call_method(vutil, 'continue_retrieval',
                                            data_stores)
+
+    LOG.debug("Finished fetching datastores")
     if best_match:
         return best_match
 
