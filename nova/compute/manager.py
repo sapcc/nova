@@ -1886,17 +1886,20 @@ class ComputeManager(manager.Manager):
         LOG.debug("Build and run instance .....")
 
         @utils.synchronized(instance.uuid)
-        def _locked_do_build_and_run_instance(*args, **kwargs):
+        def _locked_do_build_and_run_instance(context, *args, **kwargs):
             # NOTE(danms): We grab the semaphore with the instance uuid
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
             LOG.debug("locked_do_build_and_run_instance .....")
+            context.update_store()
             
             with self._per_project_build_semaphore.get(instance.project_id):
                 with self._build_semaphore:
                     try:
-                        self._do_build_and_run_instance(*args, **kwargs)
+                        self._do_build_and_run_instance(context,
+                                                        *args,
+                                                        **kwargs)
                     except Exception as e:
                         LOG.exception(e)
         # NOTE(danms): We spawn here to return the RPC worker thread back to
@@ -5413,9 +5416,10 @@ class ComputeManager(manager.Manager):
         """
         self._set_migration_status(migration, 'queued')
 
-        def dispatch_live_migration(*args, **kwargs):
+        def dispatch_live_migration(context, *args, **kwargs):
+            context.update_store()
             with self._live_migration_semaphore:
-                self._do_live_migration(*args, **kwargs)
+                self._do_live_migration(context, *args, **kwargs)
 
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
