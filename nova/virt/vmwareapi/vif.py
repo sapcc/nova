@@ -174,6 +174,7 @@ def get_vif_dict(session, cluster, vif_model, is_neutron, vif):
 
 
 def get_vif_info(session, cluster, is_neutron, vif_model, network_info):
+    LOG.debug("Fetching vif_infos")
     vif_infos = []
     if network_info is None:
         return vif_infos

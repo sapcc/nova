@@ -265,7 +265,6 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
             'ns0:ResourceAllocationInfo')
 
     devices = []
-    LOG.debug("Creating vif_spec")
     for vif_info in vif_infos:
         vif_spec = _create_vif_spec(client_factory, vif_info,
                                     extra_specs.vif_limits)
@@ -281,7 +280,6 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     config_spec.deviceChange = devices
 
-    LOG.debug("Creating extra_config")
     # add vm-uuid and iface-id.x values for Neutron
     extra_config = []
     opt = client_factory.create('ns0:OptionValue')
