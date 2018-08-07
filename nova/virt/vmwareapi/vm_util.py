@@ -217,6 +217,7 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
                        os_type=constants.DEFAULT_OS_TYPE,
                        profile_spec=None, metadata=None):
     """Builds the VM Create spec."""
+    LOG.debug("Creating spec")
     config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
     config_spec.name = instance.uuid
     config_spec.guestId = os_type
@@ -264,6 +265,7 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
             'ns0:ResourceAllocationInfo')
 
     devices = []
+    LOG.debug("Creating vif_spec")
     for vif_info in vif_infos:
         vif_spec = _create_vif_spec(client_factory, vif_info,
                                     extra_specs.vif_limits)
@@ -279,6 +281,7 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     config_spec.deviceChange = devices
 
+    LOG.debug("Creating extra_config")
     # add vm-uuid and iface-id.x values for Neutron
     extra_config = []
     opt = client_factory.create('ns0:OptionValue')
@@ -316,6 +319,7 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     config_spec.managedBy = managed_by
 
     return config_spec
+
 
 def create_video_card_spec(client_factory, extra_specs):
     if extra_specs.hw_video_ram:

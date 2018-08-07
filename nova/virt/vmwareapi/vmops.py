@@ -347,7 +347,10 @@ class VMwareVMOps(object):
                                                  profile_spec=profile_spec,
                                                  metadata=metadata)
 
-        folder = self._get_project_folder(dc_info, project_id=instance.project_id, type_='Instances')
+        LOG.debug("Getting project folder")
+        folder = self._get_project_folder(dc_info,
+                                          project_id=instance.project_id,
+                                          type_='Instances')
 
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
