@@ -23,6 +23,7 @@ import collections
 import os
 import time
 import re
+import copy
 
 import decorator
 import cluster_util
@@ -63,7 +64,9 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
-
+from oslo_service import periodic_task
+from eventlet import sleep, spawn as spawn_background_task
+from oslo_concurrency.lockutils import lock, synchronized
 
 CONF = nova.conf.CONF
 
@@ -153,6 +156,7 @@ class VMwareVMOps(object):
         self._virtapi = virtapi
         self._volumeops = volumeops
         self._cluster = cluster
+        self._property_collector = None
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
                                                             self._cluster)
         self._datastore_regex = datastore_regex
@@ -162,6 +166,7 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
+        spawn_background_task(self.update_cached_instances)
 
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
@@ -1501,7 +1506,8 @@ class VMwareVMOps(object):
     def _get_instance_props(self, vm_ref):
         lst_properties = ["summary.guest.toolsStatus",
                           "runtime.powerState",
-                          "summary.guest.toolsRunningStatus"]
+                          "summary.guest.toolsRunningStatus",
+                          "config.instanceUuid"]
         return self._session._call_method(vutil,
                                           "get_object_properties_dict",
                                           vm_ref, lst_properties)
@@ -2232,3 +2238,101 @@ class VMwareVMOps(object):
                     'thumbprint': thumbprint}
         internal_access_path = jsonutils.dumps(mks_auth)
         return ctype.ConsoleMKS(ticket.host, ticket.port, internal_access_path)
+
+    @synchronized('update_cache')
+    def update_cached_instances(self):
+        vim = self._session.vim
+        LOG.debug("RUNNIING CACHE COLLECTOR=============================================================")
+        options = None
+        if self._property_collector is None:
+            self._property_collector = vim.service_content.propertyCollector
+            vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
+        update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
+                                          options=options)
+        while update_set:
+            LOG.debug("NEW VM====================================> %s" % update_set.filterSet[0].objectSet)
+            self._property_collector_version = update_set.version
+            if update_set.filterSet and update_set.filterSet[0].objectSet:
+                for update in update_set.filterSet[0].objectSet:
+                    LOG.debug("UPDATE OBJ ======================================================> : %s" % update)
+                    if update.obj['_type'] == "VirtualMachine":
+                        if update.kind == "leave":
+                            vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
+                            inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
+                            cache_id_to_delete = inv_cache_map.get(update.obj.value)
+                            LOG.debug("CACHE VALUE BEFORE=============================> %s" % vm_util._VM_VALUE_CACHE)
+                            vm_util.vm_ref_cache_delete(cache_id_to_delete)
+                            vm_util.vm_value_cache_delete(cache_id_to_delete)
+                            LOG.debug("CACHE VALUE BEFORE=============================> %s" % vm_util._VM_VALUE_CACHE)
+
+                            LOG.info('Virtual machine reference removed from cache...')
+                        else:
+                            if update.kind == "enter":
+                                for key, change in enumerate(update.changeSet):
+                                    if key == 0 or key == 1:
+                                        continue
+                                    else:
+                                        if change['op'] == 'assign':
+                                            vm_util._VM_VALUE_CACHE[update.changeSet[0].val][change.name] = change.val
+                                if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
+                                    if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                        LOG.info("Adding vm to cache...")
+                                        vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
+                            elif update.kind == "modify":
+                                vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
+                                inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
+                                cache_id_to_update = inv_cache_map.get(update.obj.value)
+                                for change in update.changeSet:
+                                    if change['op'] == 'assign':
+                                        vm_util._VM_VALUE_CACHE[cache_id_to_update][change.name] = change.val
+                                LOG.debug("UPDATING================================================> %s" % vm_util._VM_VALUE_CACHE)
+                                """LOG.debug("POWER STATE UPDATING==========================================>")
+                                vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
+                                inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
+                                cache_id_to_update = inv_cache_map.get(update.obj.value)
+                                vm_util.vm_powerstate_cache_update(cache_id_to_update, update.changeSet[0].val)"""
+
+                            """elif len(update.changeSet) == 1 and update.changeSet[0].name == "runtime.powerState":
+                                LOG.debug("POWER STATE UPDATING==========================================>")
+                                vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
+                                inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
+                                cache_id_to_update = inv_cache_map.get(update.obj.value)
+                                vm_util.vm_powerstate_cache_update(cache_id_to_update, update.changeSet[0].val)"""
+
+
+            update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
+                                          options=options)
+
+
+    def _get_vm_monitor_spec(self, vim):
+        traversal_spec_vm = vutil.build_traversal_spec(
+            vim.client.factory,
+            "h_to_vm",
+            "HostSystem",
+            "vm",
+            False,
+            [])
+        traversal_spec = vutil.build_traversal_spec(
+            vim.client.factory,
+            "c_to_h",
+            "ComputeResource",
+            "host",
+            False,
+            [traversal_spec_vm])
+        object_spec = vutil.build_object_spec(
+            vim.client.factory,
+            self._cluster,
+            [traversal_spec])
+        property_spec = vutil.build_property_spec(
+            vim.client.factory,
+            "HostSystem",
+            ["vm"])
+        property_spec_vm = vutil.build_property_spec(
+            vim.client.factory,
+            "VirtualMachine",
+            ["config.instanceUuid", "config.managedBy", "runtime.powerState"])
+        property_filter_spec = vutil.build_property_filter_spec(
+            vim.client.factory,
+            [property_spec, property_spec_vm],
+            [object_spec])
+        return property_filter_spec
