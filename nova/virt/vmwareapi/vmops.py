@@ -1756,9 +1756,18 @@ class VMwareVMOps(object):
 
     def get_info(self, instance):
         """Return data about the VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         lst_properties = ["runtime.powerState"]
+
+        if instance.uuid in vm_util._VM_VALUE_CACHE:
+            if "runtime.powerState" in vm_util._VM_VALUE_CACHE[instance.uuid]:
+                return hardware.InstanceInfo(
+                    state=constants.POWER_STATES[vm_util._VM_VALUE_CACHE[instance.uuid]["runtime.powerState"]])
+
+        LOG.info("VM instance data was not found on the cache. "
+                 "Making request to vCenter for retrieving VM info.")
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+
         try:
             vm_props = self._session._call_method(vutil,
                                                   "get_object_properties_dict",
