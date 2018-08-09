@@ -291,6 +291,13 @@ export
                 help="""
 Create a snapshot of the VM before cloning it
 """),
+    cfg.BoolOpt('use_property_collector',
+                default=True,
+                help="""
+Should the driver use a property collector to fetch essential properties
+and keep a local copy of the values. This should reduce the load on the
+vcenter api and be quicker, then polling each value individually
+""")
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +
