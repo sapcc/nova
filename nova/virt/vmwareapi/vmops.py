@@ -1756,17 +1756,16 @@ class VMwareVMOps(object):
 
     def get_info(self, instance):
         """Return data about the VM instance."""
-
         lst_properties = ["runtime.powerState"]
 
-        if instance.uuid in vm_util._VM_VALUE_CACHE:
-            if "runtime.powerState" in vm_util._VM_VALUE_CACHE[instance.uuid]:
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        if vm_ref.value in vm_util._VM_VALUE_CACHE:
+            if "runtime.powerState" in vm_util._VM_VALUE_CACHE[vm_ref.value]:
                 return hardware.InstanceInfo(
-                    state=constants.POWER_STATES[vm_util._VM_VALUE_CACHE[instance.uuid]["runtime.powerState"]])
+                    state=constants.POWER_STATES[vm_util._VM_VALUE_CACHE[vm_ref.value]["runtime.powerState"]])
 
         LOG.info("VM instance data was not found on the cache. "
                  "Making request to vCenter for retrieving VM info.")
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         try:
             vm_props = self._session._call_method(vutil,
@@ -2258,27 +2257,22 @@ class VMwareVMOps(object):
         update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
                                           options=options)
         while update_set:
-
             self._property_collector_version = update_set.version
             if update_set.filterSet and update_set.filterSet[0].objectSet:
                 for update in update_set.filterSet[0].objectSet:
                     if update.obj['_type'] == "VirtualMachine":
                         if update.kind == "leave":
                             LOG.info("Removing instance from cache...")
-                            vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
-                            inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
-                            cache_id_to_delete = inv_cache_map.get(update.obj.value)
+                            cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(update.obj.value, {}).get(
+                                'config.instanceUuid')
                             vm_util.vm_ref_cache_delete(cache_id_to_delete)
-                            vm_util.vm_value_cache_delete(cache_id_to_delete)
+                            vm_util.vm_value_cache_delete(update.obj.value)
                         else:
                             if update.kind == "enter":
-                                for key, change in enumerate(update.changeSet):
-                                    if key == 0 or key == 1:
-                                        continue
-                                    else:
-                                        if change['op'] == 'assign':
-                                            if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
-                                                vm_util._VM_VALUE_CACHE[update.changeSet[0].val][change.name] = change.val
+                                for change in update.changeSet:
+                                    if change['op'] == 'assign':
+                                        if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
+                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
                                 if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
                                     if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
                                         LOG.info("Adding vm to cache...")
@@ -2286,15 +2280,15 @@ class VMwareVMOps(object):
 
                             elif update.kind == "modify":
                                 if update.changeSet[0].name == "config.instanceUuid":
+                                    for change in update.changeSet:
+                                        if change['op'] == 'assign':
+                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
                                     if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
                                         vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
                                 else:
-                                    vm_refs_cache = copy.copy(vm_util._VM_REFS_CACHE)
-                                    inv_cache_map = {v.value: k for k, v in vm_refs_cache.items()}
-                                    cache_id_to_update = inv_cache_map.get(update.obj.value)
                                     for change in update.changeSet:
                                         if change['op'] == 'assign':
-                                            vm_util._VM_VALUE_CACHE[cache_id_to_update][change.name] = change.val
+                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
 
             update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
                                           options=options)
