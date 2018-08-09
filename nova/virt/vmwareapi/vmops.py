@@ -23,6 +23,7 @@ import collections
 import os
 import time
 import re
+import copy
 
 import decorator
 import cluster_util
@@ -63,7 +64,9 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
-
+from oslo_service import periodic_task
+from eventlet import sleep, spawn as spawn_background_task
+from oslo_concurrency.lockutils import lock, synchronized
 
 CONF = nova.conf.CONF
 
@@ -153,6 +156,7 @@ class VMwareVMOps(object):
         self._virtapi = virtapi
         self._volumeops = volumeops
         self._cluster = cluster
+        self._property_collector = None
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
                                                             self._cluster)
         self._datastore_regex = datastore_regex
@@ -162,6 +166,7 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
+        spawn_background_task(self.update_cached_instances)
 
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
@@ -1502,7 +1507,8 @@ class VMwareVMOps(object):
     def _get_instance_props(self, vm_ref):
         lst_properties = ["summary.guest.toolsStatus",
                           "runtime.powerState",
-                          "summary.guest.toolsRunningStatus"]
+                          "summary.guest.toolsRunningStatus",
+                          "config.instanceUuid"]
         return self._session._call_method(vutil,
                                           "get_object_properties_dict",
                                           vm_ref, lst_properties)
@@ -1751,9 +1757,17 @@ class VMwareVMOps(object):
 
     def get_info(self, instance):
         """Return data about the VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
-
         lst_properties = ["runtime.powerState"]
+
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        if vm_ref.value in vm_util._VM_VALUE_CACHE:
+            if "runtime.powerState" in vm_util._VM_VALUE_CACHE[vm_ref.value]:
+                return hardware.InstanceInfo(
+                    state=constants.POWER_STATES[vm_util._VM_VALUE_CACHE[vm_ref.value]["runtime.powerState"]])
+
+        LOG.info("VM instance data was not found on the cache. "
+                 "Making request to vCenter for retrieving VM info.")
+
         try:
             vm_props = self._session._call_method(vutil,
                                                   "get_object_properties_dict",
@@ -2233,3 +2247,83 @@ class VMwareVMOps(object):
                     'thumbprint': thumbprint}
         internal_access_path = jsonutils.dumps(mks_auth)
         return ctype.ConsoleMKS(ticket.host, ticket.port, internal_access_path)
+
+    @synchronized('update_cache')
+    def update_cached_instances(self):
+        vim = self._session.vim
+        options = None
+        if self._property_collector is None:
+            self._property_collector = vim.service_content.propertyCollector
+            vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
+        update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
+                                          options=options)
+        while update_set:
+            self._property_collector_version = update_set.version
+            if update_set.filterSet and update_set.filterSet[0].objectSet:
+                for update in update_set.filterSet[0].objectSet:
+                    if update.obj['_type'] == "VirtualMachine":
+                        if update.kind == "leave":
+                            LOG.info("Removing instance from cache...")
+                            cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(update.obj.value, {}).get(
+                                'config.instanceUuid')
+                            vm_util.vm_ref_cache_delete(cache_id_to_delete)
+                            vm_util.vm_value_cache_delete(update.obj.value)
+                        else:
+                            if update.kind == "enter":
+                                for change in update.changeSet:
+                                    if change['op'] == 'assign':
+                                        if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
+                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
+                                if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
+                                    if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                        LOG.info("Adding vm to cache...")
+                                        vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
+
+                            elif update.kind == "modify":
+                                if update.changeSet[0].name == "config.instanceUuid":
+                                    for change in update.changeSet:
+                                        if change['op'] == 'assign':
+                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
+                                    if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                        vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
+                                else:
+                                    for change in update.changeSet:
+                                        if change['op'] == 'assign':
+                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
+
+            update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
+                                          options=options)
+
+
+    def _get_vm_monitor_spec(self, vim):
+        traversal_spec_vm = vutil.build_traversal_spec(
+            vim.client.factory,
+            "h_to_vm",
+            "HostSystem",
+            "vm",
+            False,
+            [])
+        traversal_spec = vutil.build_traversal_spec(
+            vim.client.factory,
+            "c_to_h",
+            "ComputeResource",
+            "host",
+            False,
+            [traversal_spec_vm])
+        object_spec = vutil.build_object_spec(
+            vim.client.factory,
+            self._cluster,
+            [traversal_spec])
+        property_spec = vutil.build_property_spec(
+            vim.client.factory,
+            "HostSystem",
+            ["vm"])
+        property_spec_vm = vutil.build_property_spec(
+            vim.client.factory,
+            "VirtualMachine",
+            ["config.instanceUuid", "config.managedBy", "runtime.powerState"])
+        property_filter_spec = vutil.build_property_filter_spec(
+            vim.client.factory,
+            [property_spec, property_spec_vm],
+            [object_spec])
+        return property_filter_spec
