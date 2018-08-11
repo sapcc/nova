@@ -129,6 +129,13 @@ Related options:
 """),
     cfg.StrOpt('cluster_name',
                help="Name of a VMware Cluster ComputeResource."),
+    cfg.BoolOpt('multi_compute_nodes_support',
+               default=False,
+               help="""Multi compute-node support flag.
+If the value is set to True this will mean that all, the ESX hosts
+on the cluster will be registered as hypervisors. 
+If False is set this will register only the configured cluster as 
+a hypervisor."""),
     cfg.StrOpt('datastore_regex',
                help="""
 Regular expression pattern to match the name of datastore.

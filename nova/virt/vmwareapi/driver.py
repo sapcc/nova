@@ -88,7 +88,6 @@ class VMwareVCDriver(driver.ComputeDriver):
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
         self._nodename = []
-        self._multi_compute_nodes_support = True
 
         if (CONF.vmware.host_ip is None or
             CONF.vmware.host_username is None or
@@ -130,7 +129,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                         self._volumeops,
                                         self._cluster_ref,
                                         datastore_regex=self._datastore_regex)
-        if not self._multi_compute_nodes_support:
+        if not CONF.vmware.multi_compute_nodes_support:
             self._nodename.append(self._create_nodename(self._cluster_ref.value))
         else:
             pc_result = self.get_available_esx_hosts()
