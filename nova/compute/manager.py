@@ -7252,7 +7252,7 @@ class ComputeManager(manager.Manager):
         on this host. This method should not be used with any operations
         on ironic instances since it does not handle multiple nodes.
         """
-        node = self.driver.get_available_nodes(refresh=refresh)[0]
+        node = self.driver.get_available_nodes(refresh=refresh)
         LOG.debug("No node specified, defaulting to %s", node,
                   instance=instance)
         return node
