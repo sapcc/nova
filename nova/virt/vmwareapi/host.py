@@ -123,7 +123,7 @@ class VCState(object):
         self._stats = stats_data
         if self._auto_service_disabled:
             self._set_host_enabled(True)
-        return stats_data
+        return self._stats
 
     def _set_host_enabled(self, enabled):
         """Sets the compute host's ability to accept new instances."""
@@ -133,38 +133,6 @@ class VCState(object):
         service.disabled_reason = 'set by vmwareapi host_state'
         service.save()
         self._auto_service_disabled = service.disabled
-
-    def get_available_esx_hosts(self):
-        max_objects = 100
-        vim = self._session.vim
-        property_collector = vim.service_content.propertyCollector
-
-        traversal_spec = vutil.build_traversal_spec(
-            vim.client.factory,
-            "c_to_h",
-            "ComputeResource",
-            "host",
-            False,
-            [])
-
-        object_spec = vutil.build_object_spec(
-            vim.client.factory,
-            self._cluster,
-            [traversal_spec])
-        property_spec = vutil.build_property_spec(
-            vim.client.factory,
-            "HostSystem",
-            ["runtime.powerState"])
-
-        property_filter_spec = vutil.build_property_filter_spec(
-            vim.client.factory,
-            [property_spec],
-            [object_spec])
-        options = vim.client.factory.create('ns0:RetrieveOptions')
-        options.maxObjects = max_objects
-
-        pc_result = vim.RetrievePropertiesEx(property_collector, specSet=[property_filter_spec], options=options)
-        return pc_result
 
     def to_cpu_model(self):
         max_objects = 100

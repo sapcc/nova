@@ -88,7 +88,7 @@ class VMwareVCDriver(driver.ComputeDriver):
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
         self._nodename = []
-        self._esx_hosts = []
+        self._multi_compute_nodes_support = True
 
         if (CONF.vmware.host_ip is None or
             CONF.vmware.host_username is None or
@@ -122,7 +122,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                        "found in vCenter")
                                      % self._cluster_name)
         self._vcenter_uuid = self._get_vcenter_uuid()
-        self._nodename.append(self._create_nodename(self._cluster_ref.value))
+
         self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                                     self._cluster_ref)
         self._vmops = vmops.VMwareVMOps(self._session,
@@ -130,11 +130,13 @@ class VMwareVCDriver(driver.ComputeDriver):
                                         self._volumeops,
                                         self._cluster_ref,
                                         datastore_regex=self._datastore_regex)
-
-        pc_result = self.get_available_esx_hosts()
-        with vim_util.WithRetrieval(vim, pc_result) as pc_objects:
-            for objContent in pc_objects:
-                self._nodename.append(self._create_nodename(objContent.obj.value))
+        if not self._multi_compute_nodes_support:
+            self._nodename.append(self._create_nodename(self._cluster_ref.value))
+        else:
+            pc_result = self.get_available_esx_hosts()
+            with vim_util.WithRetrieval(vim, pc_result) as pc_objects:
+                for objContent in pc_objects:
+                    self._nodename.append(self._create_nodename(objContent.obj.value))
 
         self._vc_state = host.VCState(self._session,
                                       self._nodename,

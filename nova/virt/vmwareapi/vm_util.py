@@ -1224,7 +1224,6 @@ def get_stats_from_cluster(session, cluster):
                 stats_summary = host_props['summary.quickStats']
                 if (runtime_summary.inMaintenanceMode is False and
                     runtime_summary.connectionState == "connected"):
-                    LOG.debug("OBJECT HOST: ===============================> %s" % obj)
                     # Total vcpus is the sum of all pCPUs of individual hosts
                     # The overcommitment ratio is factored in by the scheduler
                     threads = hardware_summary.numCpuThreads
