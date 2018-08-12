@@ -1822,7 +1822,6 @@ class ComputeManager(manager.Manager):
             request_spec, filter_properties, admin_password, injected_files,
             requested_networks, security_groups, block_device_mapping,
             node=None, limits=None, host_list=None):
-
         try:
             LOG.debug('Starting instance...', instance=instance)
             instance.vm_state = vm_states.BUILDING
@@ -7252,10 +7251,7 @@ class ComputeManager(manager.Manager):
         on this host. This method should not be used with any operations
         on ironic instances since it does not handle multiple nodes.
         """
-        if not isinstance(self.driver, nova.virt.vmwareapi.driver.VMwareVCDriver):
-            node = self.driver.get_available_nodes(refresh=refresh)[0]
-        else:
-            node = self.driver.get_available_nodes(refresh=refresh)
+        node = self.driver.get_available_nodes(refresh=refresh)[0]
         LOG.debug("No node specified, defaulting to %s", node,
                   instance=instance)
         return node
