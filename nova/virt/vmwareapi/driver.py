@@ -135,9 +135,10 @@ class VMwareVCDriver(driver.ComputeDriver):
             pc_result = self.get_available_esx_hosts()
             with vim_util.WithRetrieval(vim, pc_result) as pc_objects:
                 for objContent in pc_objects:
-                    node_key = self._create_nodename(objContent.obj.value)
-                    self._vmops.add_esx_to_cache(node_key, objContent.obj)
-                    self._nodename.append(self._create_nodename(objContent.obj.value))
+                    props_in = {prop.name: prop.val for prop in objContent.propSet}
+                    nodename = props_in.get("name", [])
+                    self._vmops.add_esx_to_cache(nodename, objContent.obj)
+                    self._nodename.append(nodename)
 
         self._vc_state = host.VCState(self._session,
                                       self._nodename,
@@ -171,7 +172,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         property_spec = vim_util.build_property_spec(
             vim.client.factory,
             "HostSystem",
-            ["runtime.powerState"])
+            ["name", "runtime.powerState"])
 
         property_filter_spec = vim_util.build_property_filter_spec(
             vim.client.factory,
