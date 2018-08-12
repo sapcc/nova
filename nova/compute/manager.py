@@ -1807,6 +1807,7 @@ class ComputeManager(manager.Manager):
             request_spec, filter_properties, admin_password, injected_files,
             requested_networks, security_groups, block_device_mapping,
             node=None, limits=None, host_list=None):
+
         try:
             LOG.debug('Starting instance...', instance=instance)
             instance.vm_state = vm_states.BUILDING
