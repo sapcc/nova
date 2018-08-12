@@ -135,6 +135,8 @@ class VMwareVCDriver(driver.ComputeDriver):
             pc_result = self.get_available_esx_hosts()
             with vim_util.WithRetrieval(vim, pc_result) as pc_objects:
                 for objContent in pc_objects:
+                    node_key = self._create_nodename(objContent.obj.value)
+                    self._vmops.add_esx_to_cache(node_key, objContent.obj)
                     self._nodename.append(self._create_nodename(objContent.obj.value))
 
         self._vc_state = host.VCState(self._session,

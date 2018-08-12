@@ -155,6 +155,7 @@ class VMwareVMOps(object):
         self._session = session
         self._virtapi = virtapi
         self._volumeops = volumeops
+        self._nodes_cache = {}
         self._cluster = cluster
         self._property_collector = None
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
@@ -335,10 +336,13 @@ class VMwareVMOps(object):
 
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
-                                   config_spec, self._root_resource_pool)
+                                   config_spec, self._root_resource_pool, nodes=self._nodes_cache)
 
         vm_util.update_cluster_placement(self._session, context, instance, self._cluster, vm_ref)
         return vm_ref
+
+    def add_esx_to_cache(self, nodename, node_ref):
+        self._nodes_cache[nodename] = node_ref
 
     def _get_extra_specs(self, flavor, image_meta=None):
         image_meta = image_meta or objects.ImageMeta.from_dict({})
