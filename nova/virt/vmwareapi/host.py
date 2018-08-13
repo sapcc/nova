@@ -87,7 +87,7 @@ class VCState(object):
 
                 # Get cpu, memory stats from the cluster
                 stats = vm_util.get_stats_from_cluster(self._session,
-                                                       self._cluster)
+                                                       self._cluster, single_compute_node=host_name)
                 about_info = self._session._call_method(vim_util, "get_about_info")
             except (vexc.VimConnectionException, vexc.VimAttributeException) as ex:
                 # VimAttributeException is thrown when vpxd service is down
@@ -97,12 +97,12 @@ class VCState(object):
                 self._set_host_enabled(False)
                 return data
 
-            data["vcpus"] = stats['cpu']['vcpus']
+            data["vcpus"] = stats[host_name]['cpu']['vcpus']
             data["disk_total"] = capacity / units.Gi
             data["disk_available"] = freespace / units.Gi
             data["disk_used"] = data["disk_total"] - data["disk_available"]
-            data["host_memory_total"] = stats['mem']['total']
-            data["host_memory_free"] = stats['mem']['free']
+            data["host_memory_total"] = stats[host_name]['mem']['total']
+            data["host_memory_free"] = stats[host_name]['mem']['free']
             data["hypervisor_type"] = about_info.name
             data["hypervisor_version"] = versionutils.convert_version_to_int(
                     str(about_info.version))
