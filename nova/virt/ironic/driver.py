@@ -1352,3 +1352,56 @@ class IronicDriver(virt_driver.ComputeDriver):
                          'node': node.uuid},
                         instance=instance)
             raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])
+
+    def get_vnc_console(self, context, instance):
+        """Acquire VNC console information.
+
+        :param context: request context
+        :param instance: nova instance
+        :return: ConsoleVNC object
+        :raise ConsoleTypeUnavailable: if vnc console is unavailable
+            for the instance
+        """
+        LOG.debug('Getting VNC console', instance=instance)
+        node = self._validate_instance_and_node(instance)
+        node_uuid = node.uuid
+        try:
+            console = self.ironicclient.call('node.get_console', node_uuid)
+        except (exception.NovaException,  # Retry failed
+                ironic.exc.InternalServerError,  # Validations
+                ironic.exc.BadRequest) as e:  # Maintenance
+            LOG.error(_LE('Failed to acquire console information for '
+                            'instance %(inst)s: %(reason)s'),
+                        {'inst': instance.uuid,
+                        'reason': e})
+            raise exception.ConsoleTypeUnavailable(console_type='vnc')
+
+        if not console['console_enabled']:
+            raise exception.ConsoleTypeUnavailable(console_type='vnc')
+
+        console_info = console['console_info']
+
+        if console_info["type"] != "vnc":
+            LOG.warning(_LW('Console type "%(type)s" (of ironic node '
+                            '%(node)s) does not support Nova vnc console'),
+                        {'type': console_info["type"],
+                         'node': node.uuid},
+                        instance=instance)
+            raise exception.ConsoleTypeUnavailable(console_type='vnc')
+
+        # Parse and check the console url
+        url = urlparse.urlparse(console_info["url"])
+        try:
+            hostname = url.hostname
+            port = url.port
+            if not (hostname and port):
+                raise AssertionError()
+        except (ValueError, AssertionError):
+            LOG.error(_LE('Invalid VNC console URL "%(url)s" '
+                          '(ironic node %(node)s)'),
+                      {'url': console_info["url"],
+                       'node': node.uuid},
+                      instance=instance)
+            raise exception.ConsoleTypeUnavailable(console_type='vnc')
+
+        return console_type.ConsoleVNC(host=hostname, port=port)
