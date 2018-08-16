@@ -19,9 +19,14 @@ import six
 
 from oslo_log import log as logging
 
+import nova.conf
 from nova import context
+from nova import exception
+from nova.i18n import _
 
 LOG = logging.getLogger(__name__)
+
+CONF = nova.conf.CONF
 
 
 class RecordSortContext(object):
@@ -255,6 +260,10 @@ class CrossCellLister(object):
         for cell_uuid in list(results):
             if results[cell_uuid] in (context.did_not_respond_sentinel,
                                       context.raised_exception_sentinel):
+                if not CONF.api.list_records_by_skipping_down_cells:
+                    raise exception.NovaException(
+                        _('Cell %s is not responding but configuration '
+                          'indicates that we should fail.') % cell_uuid)
                 LOG.warning("Cell %s is not responding and hence skipped "
                             "from the results.", cell_uuid)
                 results.pop(cell_uuid)
