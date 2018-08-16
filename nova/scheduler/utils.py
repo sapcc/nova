@@ -56,6 +56,9 @@ class ResourceRequest(object):
     def __init__(self):
         # { ident: RequestGroup }
         self._rg_by_id = {}
+        # Default to the configured limit but _limit can be
+        # set to None to indicate "no limit".
+        self._limit = CONF.scheduler.max_placement_results
 
     def get_request_group(self, ident):
         if ident not in self._rg_by_id:
@@ -333,6 +336,12 @@ def resources_from_request_spec(spec_obj):
     for rclass, amount in spec_resources.items():
         res_req.get_request_group(None).resources[rclass] = amount
 
+    # Don't limit allocation candidates when using force_hosts or force_nodes.
+    if 'force_hosts' in spec_obj and spec_obj.force_hosts:
+        res_req._limit = None
+    if 'force_nodes' in spec_obj and spec_obj.force_nodes:
+        res_req._limit = None
+
     return res_req
 
 
@@ -366,7 +375,7 @@ def claim_resources_on_destination(
     if not source_node_allocations:
         source_node_allocations = (
             reportclient.get_allocations_for_consumer_by_provider(
-                source_node.uuid, instance.uuid))
+                context, source_node.uuid, instance.uuid))
     if source_node_allocations:
         # Generate an allocation request for the destination node.
         alloc_request = {
@@ -797,10 +806,11 @@ def claim_resources(ctx, client, spec_obj, instance_uuid, alloc_req,
             user_id, allocation_request_version=allocation_request_version)
 
 
-def remove_allocation_from_compute(instance, compute_node_uuid, reportclient,
-                                   flavor=None):
+def remove_allocation_from_compute(context, instance, compute_node_uuid,
+                                   reportclient, flavor=None):
     """Removes the instance allocation from the compute host.
 
+    :param context: The request context
     :param instance: the instance object owning the allocation
     :param compute_node_uuid: the UUID of the compute node where the allocation
                               needs to be removed
@@ -817,5 +827,5 @@ def remove_allocation_from_compute(instance, compute_node_uuid, reportclient,
 
     my_resources = resources_from_flavor(instance, flavor)
     return reportclient.remove_provider_from_instance_allocation(
-        instance.uuid, compute_node_uuid, instance.user_id,
+        context, instance.uuid, compute_node_uuid, instance.user_id,
         instance.project_id, my_resources)

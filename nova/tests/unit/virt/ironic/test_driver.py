@@ -566,10 +566,10 @@ class IronicDriverTestCase(test.NoDBTestCase):
     @mock.patch.object(objects.Instance, 'get_by_uuid')
     def test_list_instances_fail(self, mock_inst_by_uuid, mock_call):
         mock_call.side_effect = exception.NovaException
-        response = self.driver.list_instances()
+        self.assertRaises(exception.VirtDriverNotReady,
+                          self.driver.list_instances)
         mock_call.assert_called_with("node.list", associated=True, limit=0)
         self.assertFalse(mock_inst_by_uuid.called)
-        self.assertThat(response, matchers.HasLength(0))
 
     @mock.patch.object(cw.IronicClientWrapper, 'call')
     def test_list_instance_uuids(self, mock_call):
@@ -735,10 +735,13 @@ class IronicDriverTestCase(test.NoDBTestCase):
         self.assertEqual(sorted(expected_uuids), sorted(available_nodes))
 
     @mock.patch.object(ironic_driver.IronicDriver,
+                       '_node_resources_used', return_value=False)
+    @mock.patch.object(ironic_driver.IronicDriver,
                        '_node_resources_unavailable', return_value=False)
     @mock.patch.object(ironic_driver.IronicDriver, '_node_resource')
     @mock.patch.object(ironic_driver.IronicDriver, '_node_from_cache')
-    def test_get_inventory_no_rc(self, mock_nfc, mock_nr, mock_res_unavail):
+    def test_get_inventory_no_rc(self, mock_nfc, mock_nr, mock_res_unavail,
+                                 mock_res_used):
         """Ensure that when node.resource_class is missing, that we return the
         legacy VCPU, MEMORY_MB and DISK_GB resources for inventory.
         """
@@ -782,14 +785,18 @@ class IronicDriverTestCase(test.NoDBTestCase):
         }
         mock_nfc.assert_called_once_with(mock.sentinel.nodename)
         mock_nr.assert_called_once_with(mock_nfc.return_value)
+        mock_res_used.assert_called_once_with(mock_nfc.return_value)
         mock_res_unavail.assert_called_once_with(mock_nfc.return_value)
         self.assertEqual(expected, result)
 
     @mock.patch.object(ironic_driver.IronicDriver,
+                       '_node_resources_used', return_value=False)
+    @mock.patch.object(ironic_driver.IronicDriver,
                        '_node_resources_unavailable', return_value=False)
     @mock.patch.object(ironic_driver.IronicDriver, '_node_resource')
     @mock.patch.object(ironic_driver.IronicDriver, '_node_from_cache')
-    def test_get_inventory_with_rc(self, mock_nfc, mock_nr, mock_res_unavail):
+    def test_get_inventory_with_rc(self, mock_nfc, mock_nr, mock_res_unavail,
+                                   mock_res_used):
         """Ensure that when node.resource_class is present, that we return the
         legacy VCPU, MEMORY_MB and DISK_GB resources for inventory in addition
         to the custom resource class inventory record.
@@ -842,14 +849,18 @@ class IronicDriverTestCase(test.NoDBTestCase):
         }
         mock_nfc.assert_called_once_with(mock.sentinel.nodename)
         mock_nr.assert_called_once_with(mock_nfc.return_value)
+        mock_res_used.assert_called_once_with(mock_nfc.return_value)
         mock_res_unavail.assert_called_once_with(mock_nfc.return_value)
         self.assertEqual(expected, result)
 
     @mock.patch.object(ironic_driver.IronicDriver,
+                       '_node_resources_used', return_value=False)
+    @mock.patch.object(ironic_driver.IronicDriver,
                        '_node_resources_unavailable', return_value=False)
     @mock.patch.object(ironic_driver.IronicDriver, '_node_resource')
     @mock.patch.object(ironic_driver.IronicDriver, '_node_from_cache')
-    def test_get_inventory_only_rc(self, mock_nfc, mock_nr, mock_res_unavail):
+    def test_get_inventory_only_rc(self, mock_nfc, mock_nr, mock_res_unavail,
+                                   mock_res_used):
         """Ensure that when node.resource_class is present, that we return the
         legacy VCPU, MEMORY_MB and DISK_GB resources for inventory in addition
         to the custom resource class inventory record.
@@ -878,15 +889,18 @@ class IronicDriverTestCase(test.NoDBTestCase):
         }
         mock_nfc.assert_called_once_with(mock.sentinel.nodename)
         mock_nr.assert_called_once_with(mock_nfc.return_value)
+        mock_res_used.assert_called_once_with(mock_nfc.return_value)
         mock_res_unavail.assert_called_once_with(mock_nfc.return_value)
         self.assertEqual(expected, result)
 
+    @mock.patch.object(ironic_driver.IronicDriver,
+                       '_node_resources_used', return_value=True)
     @mock.patch.object(ironic_driver.IronicDriver,
                        '_node_resources_unavailable', return_value=False)
     @mock.patch.object(ironic_driver.IronicDriver, '_node_resource')
     @mock.patch.object(ironic_driver.IronicDriver, '_node_from_cache')
     def test_get_inventory_with_rc_occupied(self, mock_nfc, mock_nr,
-                                            mock_res_unavail):
+                                            mock_res_unavail, mock_res_used):
         """Ensure that when a node is used, we report the inventory matching
         the consumed resources.
         """
@@ -938,18 +952,23 @@ class IronicDriverTestCase(test.NoDBTestCase):
         }
         mock_nfc.assert_called_once_with(mock.sentinel.nodename)
         mock_nr.assert_called_once_with(mock_nfc.return_value)
-        mock_res_unavail.assert_called_once_with(mock_nfc.return_value)
+        mock_res_used.assert_called_once_with(mock_nfc.return_value)
+        self.assertFalse(mock_res_unavail.called)
         self.assertEqual(expected, result)
 
     @mock.patch.object(ironic_driver.IronicDriver,
+                       '_node_resources_used', return_value=False)
+    @mock.patch.object(ironic_driver.IronicDriver,
                        '_node_resources_unavailable', return_value=True)
     @mock.patch.object(ironic_driver.IronicDriver, '_node_from_cache')
-    def test_get_inventory_disabled_node(self, mock_nfc, mock_res_unavail):
+    def test_get_inventory_disabled_node(self, mock_nfc, mock_res_unavail,
+                                         mock_res_used):
         """Ensure that when a node is disabled, that get_inventory() returns
         an empty dict.
         """
         result = self.driver.get_inventory(mock.sentinel.nodename)
         mock_nfc.assert_called_once_with(mock.sentinel.nodename)
+        mock_res_used.assert_called_once_with(mock_nfc.return_value)
         mock_res_unavail.assert_called_once_with(mock_nfc.return_value)
         self.assertEqual({}, result)
 
@@ -1883,6 +1902,31 @@ class IronicDriverTestCase(test.NoDBTestCase):
                           self.driver._plug_vifs, node, instance,
                           network_info)
 
+    @mock.patch('time.sleep')
+    @mock.patch.object(FAKE_CLIENT, 'node')
+    def test_plug_vifs_failure_no_conductor(self, mock_node, mock_sleep):
+        node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        node = ironic_utils.get_test_node(fields=ironic_driver._NODE_FIELDS,
+                                          uuid=node_uuid)
+        instance = fake_instance.fake_instance_obj(self.ctx,
+                                                   node=node_uuid)
+        first_vif_id = 'aaaaaaaa-vv11-cccc-dddd-eeeeeeeeeeee'
+        second_vif_id = 'aaaaaaaa-vv22-cccc-dddd-eeeeeeeeeeee'
+        first_vif = ironic_utils.get_test_vif(address='22:FF:FF:FF:FF:FF',
+                                              id=first_vif_id)
+        second_vif = ironic_utils.get_test_vif(address='11:FF:FF:FF:FF:FF',
+                                               id=second_vif_id)
+        msg = 'No conductor service registered which supports driver ipmi.'
+        mock_node.vif_attach.side_effect = [None,
+                                            ironic_exception.BadRequest(msg),
+                                            None]
+        network_info = [first_vif, second_vif]
+        self.driver._plug_vifs(node, instance, network_info)
+        calls = [mock.call(node.uuid, first_vif_id),
+                 mock.call(node.uuid, second_vif_id),
+                 mock.call(node.uuid, second_vif_id)]
+        mock_node.vif_attach.assert_has_calls(calls, any_order=True)
+
     @mock.patch.object(FAKE_CLIENT, 'node')
     def test_plug_vifs_already_attached(self, mock_node):
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -2320,9 +2364,9 @@ class IronicDriverTestCase(test.NoDBTestCase):
         result = self.driver._get_node_list()
         mock_error.assert_not_called()
         self.assertEqual(["node1", "node2"], result)
-        result = self.driver._get_node_list()
+        self.assertRaises(exception.VirtDriverNotReady,
+                          self.driver._get_node_list)
         mock_error.assert_called_once()
-        self.assertEqual([], result)
 
 
 class IronicDriverSyncTestCase(IronicDriverTestCase):

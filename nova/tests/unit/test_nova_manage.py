@@ -388,7 +388,9 @@ class DBCommandsTestCase(test.NoDBTestCase):
 
     @mock.patch.object(db, 'archive_deleted_rows',
                        return_value=(dict(instances=10, consoles=5), list()))
-    def _test_archive_deleted_rows(self, mock_db_archive, verbose=False):
+    @mock.patch.object(objects.CellMappingList, 'get_all')
+    def _test_archive_deleted_rows(self, mock_get_all, mock_db_archive,
+                                   verbose=False):
         result = self.commands.archive_deleted_rows(20, verbose=verbose)
         mock_db_archive.assert_called_once_with(20)
         output = self.output.getvalue()
@@ -415,7 +417,9 @@ class DBCommandsTestCase(test.NoDBTestCase):
         self._test_archive_deleted_rows(verbose=True)
 
     @mock.patch.object(db, 'archive_deleted_rows')
-    def test_archive_deleted_rows_until_complete(self, mock_db_archive,
+    @mock.patch.object(objects.CellMappingList, 'get_all')
+    def test_archive_deleted_rows_until_complete(self, mock_get_all,
+                                                 mock_db_archive,
                                                  verbose=False):
         mock_db_archive.side_effect = [
             ({'instances': 10, 'instance_extra': 5}, list()),
@@ -447,7 +451,9 @@ Archiving.....complete
         self.test_archive_deleted_rows_until_complete(verbose=False)
 
     @mock.patch.object(db, 'archive_deleted_rows')
-    def test_archive_deleted_rows_until_stopped(self, mock_db_archive,
+    @mock.patch.object(objects.CellMappingList, 'get_all')
+    def test_archive_deleted_rows_until_stopped(self, mock_get_all,
+                                                mock_db_archive,
                                                 verbose=True):
         mock_db_archive.side_effect = [
             ({'instances': 10, 'instance_extra': 5}, list()),
@@ -479,7 +485,9 @@ Archiving.....stopped
         self.test_archive_deleted_rows_until_stopped(verbose=False)
 
     @mock.patch.object(db, 'archive_deleted_rows', return_value=({}, []))
-    def test_archive_deleted_rows_verbose_no_results(self, mock_db_archive):
+    @mock.patch.object(objects.CellMappingList, 'get_all')
+    def test_archive_deleted_rows_verbose_no_results(self, mock_get_all,
+                                                     mock_db_archive):
         result = self.commands.archive_deleted_rows(20, verbose=True)
         mock_db_archive.assert_called_once_with(20)
         output = self.output.getvalue()
@@ -533,6 +541,21 @@ Archiving.....stopped
             self.assertEqual(expected, output)
         else:
             self.assertEqual(0, len(output))
+
+    @mock.patch.object(objects.CellMappingList, 'get_all',
+                       side_effect=db_exc.CantStartEngineError)
+    def test_archive_deleted_rows_without_api_connection_configured(self,
+                                                           mock_get_all):
+        result = self.commands.archive_deleted_rows(20, verbose=True)
+        mock_get_all.assert_called_once()
+        output = self.output.getvalue()
+        expected = '''\
+Failed to connect to API DB so aborting this archival attempt. \
+Please check your config file to make sure that CONF.api_database.connection \
+is set and run this command again.
+'''
+        self.assertEqual(expected, output)
+        self.assertEqual(3, result)
 
     @mock.patch.object(migration, 'db_null_instance_uuid_scan',
                        return_value={'foo': 0})
@@ -1534,6 +1557,15 @@ class CellV2CommandsTestCase(test.NoDBTestCase):
         # Check the return when strict=False
         self.assertIsNone(self.commands.discover_hosts())
 
+    @mock.patch('nova.objects.host_mapping.discover_hosts')
+    def test_discover_hosts_by_service(self, mock_discover_hosts):
+        mock_discover_hosts.return_value = ['fake']
+        ret = self.commands.discover_hosts(by_service=True, strict=True)
+        self.assertEqual(0, ret)
+        mock_discover_hosts.assert_called_once_with(mock.ANY, None,
+                                                    mock.ANY,
+                                                    True)
+
     def test_validate_transport_url_in_conf(self):
         from_conf = 'fake://user:pass@host:port/'
         self.flags(transport_url=from_conf)
@@ -1706,7 +1738,8 @@ class CellV2CommandsTestCase(test.NoDBTestCase):
         self.assertEqual('Cell with uuid %s was not found.' % cell_uuid,
                          output)
 
-    def test_delete_cell_host_mappings_exist(self):
+    @mock.patch.object(objects.ComputeNodeList, 'get_all')
+    def test_delete_cell_host_mappings_exist(self, mock_get_cn):
         """Tests trying to delete a cell which has host mappings."""
         cell_uuid = uuidutils.generate_uuid()
         ctxt = context.get_admin_context()
@@ -1719,6 +1752,7 @@ class CellV2CommandsTestCase(test.NoDBTestCase):
         hm = objects.HostMapping(
             context=ctxt, host='fake-host', cell_mapping=cm)
         hm.create()
+        mock_get_cn.return_value = []
         self.assertEqual(2, self.commands.delete_cell(cell_uuid))
         output = self.output.getvalue().strip()
         self.assertIn('There are existing hosts mapped to cell', output)
@@ -1783,10 +1817,11 @@ class CellV2CommandsTestCase(test.NoDBTestCase):
         output = self.output.getvalue().strip()
         self.assertEqual('', output)
 
+    @mock.patch.object(objects.ComputeNodeList, 'get_all')
     @mock.patch.object(objects.HostMapping, 'destroy')
     @mock.patch.object(objects.CellMapping, 'destroy')
     def test_delete_cell_success_with_host_mappings(self, mock_cell_destroy,
-                                                    mock_hm_destroy):
+                                            mock_hm_destroy, mock_get_cn):
         """Tests trying to delete a cell with host."""
         ctxt = context.get_admin_context()
         # create the cell mapping
@@ -1798,6 +1833,7 @@ class CellV2CommandsTestCase(test.NoDBTestCase):
         hm = objects.HostMapping(
             context=ctxt, host='fake-host', cell_mapping=cm)
         hm.create()
+        mock_get_cn.return_value = []
         self.assertEqual(0, self.commands.delete_cell(uuidsentinel.cell1,
                                                       force=True))
         output = self.output.getvalue().strip()

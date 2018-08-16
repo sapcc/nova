@@ -292,7 +292,8 @@ class ServersController(wsgi.Controller):
 
         expected_attrs = []
         if is_detail:
-            expected_attrs.append('services')
+            if api_version_request.is_supported(req, '2.16'):
+                expected_attrs.append('services')
             if api_version_request.is_supported(req, '2.26'):
                 expected_attrs.append("tags")
 
@@ -564,7 +565,8 @@ class ServersController(wsgi.Controller):
         except exception.ConfigDriveInvalidValue:
             msg = _("Invalid config_drive provided.")
             raise exc.HTTPBadRequest(explanation=msg)
-        except exception.ExternalNetworkAttachForbidden as error:
+        except (exception.BootFromVolumeRequiredForZeroDiskFlavor,
+                exception.ExternalNetworkAttachForbidden) as error:
             raise exc.HTTPForbidden(explanation=error.format_message())
         except messaging.RemoteError as err:
             msg = "%(err_type)s: %(err_msg)s" % {'err_type': err.exc_type,

@@ -303,7 +303,8 @@ class ComputeTaskManager(base.Base):
             request_spec = objects.RequestSpec.from_components(
                 context, instance.uuid, image,
                 flavor, instance.numa_topology, instance.pci_requests,
-                filter_properties, None, instance.availability_zone)
+                filter_properties, None, instance.availability_zone,
+                project_id=instance.project_id)
         else:
             # NOTE(sbauza): Resizes means new flavor, so we need to update the
             # original RequestSpec object for make sure the scheduler verifies
@@ -741,7 +742,7 @@ class ComputeTaskManager(base.Base):
                     context, 'get_image_info', instance.uuid):
                     try:
                         image = safe_image_show(context, image_id)
-                    except exception.ImageNotFound:
+                    except exception.ImageNotFound as error:
                         instance.vm_state = vm_states.ERROR
                         instance.save()
 
@@ -749,6 +750,9 @@ class ComputeTaskManager(base.Base):
                                    'cannot be found.') % image_id
 
                         LOG.error(reason, instance=instance)
+                        compute_utils.add_instance_fault_from_exc(
+                            context, instance, error, sys.exc_info(),
+                            fault_message=reason)
                         raise exception.UnshelveException(
                             instance_id=instance.uuid, reason=reason)
 

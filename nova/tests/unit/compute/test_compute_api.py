@@ -1283,6 +1283,11 @@ class _ComputeAPIUnitTestMixIn(object):
                         delete_type='delete')
                 mock_local_delete.assert_not_called()
 
+    def test_delete_forced_when_task_state_is_not_none(self):
+        for vm_state in self._get_vm_states():
+            self._test_delete('force_delete', vm_state=vm_state,
+                              task_state=task_states.RESIZE_MIGRATING)
+
     def test_delete_fast_if_host_not_set(self):
         self.useFixture(fixtures.AllServicesCurrent())
         inst = self._create_instance_obj()
@@ -2466,21 +2471,25 @@ class _ComputeAPIUnitTestMixIn(object):
                           self.compute_api.get_instance_diagnostics,
                           self.context, instance)
 
-    def test_live_migrate_active_vm_state(self):
+    @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host')
+    def test_live_migrate_active_vm_state(self, mock_nodelist):
         instance = self._create_instance_obj()
         self._live_migrate_instance(instance)
 
-    def test_live_migrate_paused_vm_state(self):
+    @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host')
+    def test_live_migrate_paused_vm_state(self, mock_nodelist):
         paused_state = dict(vm_state=vm_states.PAUSED)
         instance = self._create_instance_obj(params=paused_state)
         self._live_migrate_instance(instance)
 
+    @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host')
     @mock.patch.object(compute_utils, 'add_instance_fault_from_exc')
     @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.InstanceAction, 'action_start')
     @mock.patch.object(objects.Instance, 'save')
     def test_live_migrate_messaging_timeout(self, _save, _action, get_spec,
-                                            add_instance_fault_from_exc):
+                                            add_instance_fault_from_exc,
+                                            mock_nodelist):
         instance = self._create_instance_obj()
         if self.cell_type == 'api':
             api = self.compute_api.cells_rpcapi
@@ -2498,6 +2507,23 @@ class _ComputeAPIUnitTestMixIn(object):
                 self.context,
                 instance,
                 mock.ANY)
+
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
+    @mock.patch.object(objects.InstanceAction, 'action_start')
+    @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host',
+                       side_effect=exception.ComputeHostNotFound(
+                           host='fake_host'))
+    def test_live_migrate_computehost_notfound(self, mock_nodelist,
+                                               mock_action,
+                                               mock_get_spec):
+        instance = self._create_instance_obj()
+        self.assertRaises(exception.ComputeHostNotFound,
+                          self.compute_api.live_migrate,
+                          self.context, instance,
+                          host_name='fake_host',
+                          block_migration='auto',
+                          disk_over_commit=False)
+        self.assertIsNone(instance.task_state)
 
     @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.Instance, 'save')
@@ -3042,8 +3068,11 @@ class _ComputeAPIUnitTestMixIn(object):
             mock_is_volume_backed.assert_called_once_with(self.context,
                                                           instance)
 
-    def _test_snapshot_volume_backed(self, quiesce_required, quiesce_fails,
-                                     vm_state=vm_states.ACTIVE):
+    def _test_snapshot_volume_backed(self, quiesce_required=False,
+                                     quiesce_fails=False,
+                                     quiesce_unsupported=False,
+                                     vm_state=vm_states.ACTIVE,
+                                     snapshot_fails=False, limits=None):
         fake_sys_meta = {'image_min_ram': '11',
                          'image_min_disk': '22',
                          'image_container_format': 'ami',
@@ -3075,7 +3104,8 @@ class _ComputeAPIUnitTestMixIn(object):
             expect_meta['properties']['os_require_quiesce'] = 'yes'
 
         quiesced = [False, False]
-        quiesce_expected = not quiesce_fails and vm_state == vm_states.ACTIVE
+        quiesce_expected = not (quiesce_unsupported or quiesce_fails) \
+                           and vm_state == vm_states.ACTIVE
 
         @classmethod
         def fake_bdm_list_get_by_instance_uuid(cls, context, instance_uuid):
@@ -3089,16 +3119,25 @@ class _ComputeAPIUnitTestMixIn(object):
             return {'id': volume_id, 'display_description': ''}
 
         def fake_volume_create_snapshot(context, volume_id, name, description):
+            if snapshot_fails:
+                raise exception.OverQuota(overs="snapshots")
             return {'id': '%s-snapshot' % volume_id}
 
         def fake_quiesce_instance(context, instance):
-            if quiesce_fails:
+            if quiesce_unsupported:
                 raise exception.InstanceQuiesceNotSupported(
-                    instance_id=instance['uuid'], reason='test')
+                    instance_id=instance['uuid'], reason='unsupported')
+            if quiesce_fails:
+                raise oslo_exceptions.MessagingTimeout('quiece timeout')
             quiesced[0] = True
 
         def fake_unquiesce_instance(context, instance, mapping=None):
             quiesced[1] = True
+
+        def fake_get_absolute_limits(context):
+            if limits is not None:
+                return limits
+            return {"totalSnapshotsUsed": 0, "maxTotalSnapshots": 10}
 
         self.stub_out('nova.objects.BlockDeviceMappingList'
                       '.get_by_instance_uuid',
@@ -3148,13 +3187,24 @@ class _ComputeAPIUnitTestMixIn(object):
              'destination_type': 'volume', 'delete_on_termination': False,
              'tag': None})
 
+        limits_patcher = mock.patch.object(
+            self.compute_api.volume_api, 'get_absolute_limits',
+            side_effect=fake_get_absolute_limits)
+        limits_patcher.start()
+        self.addCleanup(limits_patcher.stop)
+
         with test.nested(
                 mock.patch.object(compute_api.API, '_record_action_start'),
                 mock.patch.object(compute_utils, 'EventReporter')) as (
                 mock_record, mock_event):
             # All the db_only fields and the volume ones are removed
-            self.compute_api.snapshot_volume_backed(
-                self.context, instance, 'test-snapshot')
+            if snapshot_fails:
+                self.assertRaises(exception.OverQuota,
+                                  self.compute_api.snapshot_volume_backed,
+                                  self.context, instance, "test-snapshot")
+            else:
+                self.compute_api.snapshot_volume_backed(
+                    self.context, instance, 'test-snapshot')
 
         self.assertEqual(quiesce_expected, quiesced[0])
         self.assertEqual(quiesce_expected, quiesced[1])
@@ -3187,7 +3237,9 @@ class _ComputeAPIUnitTestMixIn(object):
                  'guest_format': 'swap', 'delete_on_termination': True,
                  'tag': None})
         instance_bdms.append(bdm)
-        expect_meta['properties']['block_device_mapping'].append(
+        # The non-volume image mapping will go at the front of the list
+        # because the volume BDMs are processed separately.
+        expect_meta['properties']['block_device_mapping'].insert(0,
             {'guest_format': 'swap', 'boot_index': -1, 'no_device': False,
              'image_id': None, 'volume_id': None, 'disk_bus': None,
              'volume_size': None, 'source_type': 'blank',
@@ -3204,8 +3256,13 @@ class _ComputeAPIUnitTestMixIn(object):
                 mock_record, mock_event):
             # Check that the mappings from the image properties are not
             # included
-            self.compute_api.snapshot_volume_backed(
-                self.context, instance, 'test-snapshot')
+            if snapshot_fails:
+                self.assertRaises(exception.OverQuota,
+                                  self.compute_api.snapshot_volume_backed,
+                                  self.context, instance, "test-snapshot")
+            else:
+                self.compute_api.snapshot_volume_backed(
+                    self.context, instance, 'test-snapshot')
 
         self.assertEqual(quiesce_expected, quiesced[0])
         self.assertEqual(quiesce_expected, quiesced[1])
@@ -3218,28 +3275,62 @@ class _ComputeAPIUnitTestMixIn(object):
                                            instance.uuid)
 
     def test_snapshot_volume_backed(self):
-        self._test_snapshot_volume_backed(False, False)
+        self._test_snapshot_volume_backed(quiesce_required=False,
+                                          quiesce_unsupported=False)
 
-    def test_snapshot_volume_backed_with_quiesce(self):
-        self._test_snapshot_volume_backed(True, False)
+    def test_snapshot_volume_backed_with_quiesce_unsupported(self):
+        self._test_snapshot_volume_backed(quiesce_required=True,
+                                          quiesce_unsupported=False)
+
+    def test_snaphost_volume_backed_with_quiesce_failure(self):
+        self.assertRaises(oslo_exceptions.MessagingTimeout,
+                          self._test_snapshot_volume_backed,
+                          quiesce_required=True,
+                          quiesce_fails=True)
+
+    def test_snapshot_volume_backed_with_quiesce_create_snap_fails(self):
+        self._test_snapshot_volume_backed(quiesce_required=True,
+                                          snapshot_fails=True)
+
+    def test_snapshot_volume_backed_unlimited_quota(self):
+        """Tests that there is unlimited quota on volume snapshots so we
+        don't perform a quota check.
+        """
+        limits = {'maxTotalSnapshots': -1, 'totalSnapshotsUsed': 0}
+        self._test_snapshot_volume_backed(limits=limits)
+
+    def test_snapshot_volume_backed_over_quota_before_snapshot(self):
+        """Tests that the up-front check on quota fails before actually
+        attempting to snapshot any volumes.
+        """
+        limits = {'maxTotalSnapshots': 1, 'totalSnapshotsUsed': 1}
+        self.assertRaises(exception.OverQuota,
+                          self._test_snapshot_volume_backed,
+                          limits=limits)
 
     def test_snapshot_volume_backed_with_quiesce_skipped(self):
-        self._test_snapshot_volume_backed(False, True)
+        self._test_snapshot_volume_backed(quiesce_required=False,
+                                          quiesce_unsupported=True)
 
     def test_snapshot_volume_backed_with_quiesce_exception(self):
         self.assertRaises(exception.NovaException,
-                          self._test_snapshot_volume_backed, True, True)
+                          self._test_snapshot_volume_backed,
+                          quiesce_required=True,
+                          quiesce_unsupported=True)
 
     def test_snapshot_volume_backed_with_quiesce_stopped(self):
-        self._test_snapshot_volume_backed(True, True,
+        self._test_snapshot_volume_backed(quiesce_required=True,
+                                          quiesce_unsupported=True,
                                           vm_state=vm_states.STOPPED)
 
     def test_snapshot_volume_backed_with_quiesce_suspended(self):
-        self._test_snapshot_volume_backed(True, True,
+        self._test_snapshot_volume_backed(quiesce_required=True,
+                                          quiesce_unsupported=True,
                                           vm_state=vm_states.SUSPENDED)
 
     def test_snapshot_volume_backed_with_suspended(self):
-        self._test_snapshot_volume_backed(False, True,
+        self._test_snapshot_volume_backed(quiesce_required=False,
+                                          quiesce_unsupported=True,
                                           vm_state=vm_states.SUSPENDED)
 
     @mock.patch.object(context, 'set_target_cell')
@@ -4163,6 +4254,18 @@ class _ComputeAPIUnitTestMixIn(object):
         mock_get.assert_called_once_with(self.context, volume_id)
         mock_attach_create.assert_called_once_with(
             self.context, volume_id, instance.uuid)
+
+    def test_validate_bdm_missing_boot_index(self):
+        """Tests that _validate_bdm will fail if there is no boot_index=0 entry
+        """
+        bdms = objects.BlockDeviceMappingList(objects=[
+            objects.BlockDeviceMapping(
+                boot_index=None, image_id=uuids.image_id,
+                source_type='image', destination_type='volume')])
+        self.assertRaises(exception.InvalidBDMBootSequence,
+                          self.compute_api._validate_bdm,
+                          self.context, objects.Instance(), objects.Flavor(),
+                          bdms)
 
     def _test_provision_instances_with_cinder_error(self,
                                                     expected_exception):
@@ -5789,7 +5892,8 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
 
     @mock.patch.object(neutron_api.API, 'has_substr_port_filtering_extension')
     @mock.patch.object(neutron_api.API, 'list_ports')
-    @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
+    @mock.patch.object(objects.BuildRequestList, 'get_by_filters',
+                       new_callable=mock.NonCallableMock)
     def test_get_all_ip_filter_use_neutron(self, mock_buildreq_get,
                                            mock_list_port, mock_check_ext):
         mock_check_ext.return_value = True
@@ -5803,16 +5907,12 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
 
             self.compute_api.get_all(
                 self.context, search_opts={'ip': 'fake'},
-                limit=None, marker='fake-marker', sort_keys=['baz'],
+                limit=None, marker=None, sort_keys=['baz'],
                 sort_dirs=['desc'])
 
             mock_list_port.assert_called_once_with(
                 self.context, fixed_ips='ip_address_substr=fake',
                 fields=['device_id'])
-            mock_buildreq_get.assert_called_once_with(
-                self.context, {'ip': 'fake', 'uuid': ['fake_device_id']},
-                limit=None, marker='fake-marker',
-                sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
                 self.context, {'ip': 'fake', 'uuid': ['fake_device_id']},
@@ -5820,7 +5920,8 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
 
     @mock.patch.object(neutron_api.API, 'has_substr_port_filtering_extension')
     @mock.patch.object(neutron_api.API, 'list_ports')
-    @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
+    @mock.patch.object(objects.BuildRequestList, 'get_by_filters',
+                       new_callable=mock.NonCallableMock)
     def test_get_all_ip6_filter_use_neutron(self, mock_buildreq_get,
                                             mock_list_port, mock_check_ext):
         mock_check_ext.return_value = True
@@ -5834,16 +5935,12 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
 
             self.compute_api.get_all(
                 self.context, search_opts={'ip6': 'fake'},
-                limit=None, marker='fake-marker', sort_keys=['baz'],
+                limit=None, marker=None, sort_keys=['baz'],
                 sort_dirs=['desc'])
 
             mock_list_port.assert_called_once_with(
                 self.context, fixed_ips='ip_address_substr=fake',
                 fields=['device_id'])
-            mock_buildreq_get.assert_called_once_with(
-                self.context, {'ip6': 'fake', 'uuid': ['fake_device_id']},
-                limit=None, marker='fake-marker',
-                sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
                 self.context, {'ip6': 'fake', 'uuid': ['fake_device_id']},
@@ -5851,7 +5948,8 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
 
     @mock.patch.object(neutron_api.API, 'has_substr_port_filtering_extension')
     @mock.patch.object(neutron_api.API, 'list_ports')
-    @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
+    @mock.patch.object(objects.BuildRequestList, 'get_by_filters',
+                       new_callable=mock.NonCallableMock)
     def test_get_all_ip_and_ip6_filter_use_neutron(self, mock_buildreq_get,
                                                    mock_list_port,
                                                    mock_check_ext):
@@ -5866,7 +5964,7 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
 
             self.compute_api.get_all(
                 self.context, search_opts={'ip': 'fake1', 'ip6': 'fake2'},
-                limit=None, marker='fake-marker', sort_keys=['baz'],
+                limit=None, marker=None, sort_keys=['baz'],
                 sort_dirs=['desc'])
 
             mock_list_port.assert_has_calls([
@@ -5877,11 +5975,6 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
                     self.context, fixed_ips='ip_address_substr=fake2',
                     fields=['device_id'])
             ])
-            mock_buildreq_get.assert_called_once_with(
-                self.context, {'ip': 'fake1', 'ip6': 'fake2',
-                               'uuid': ['fake_device_id', 'fake_device_id']},
-                limit=None, marker='fake-marker',
-                sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
                 self.context, {'ip': 'fake1', 'ip6': 'fake2',

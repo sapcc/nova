@@ -501,6 +501,7 @@ class RequestSpec(base.NovaObject):
         it was originally scheduled with.
         """
         updates = self.obj_get_changes()
+        db_updates = None
         # NOTE(alaski): The db schema is the full serialized object in a
         # 'spec' column.  If anything has changed we rewrite the full thing.
         if updates:
@@ -510,6 +511,9 @@ class RequestSpec(base.NovaObject):
             if 'instance_group' in spec and spec.instance_group:
                 spec.instance_group.members = None
                 spec.instance_group.hosts = None
+            # NOTE(mriedem): Don't persist retries since those are per-request
+            if 'retry' in spec and spec.retry:
+                spec.retry = None
 
             db_updates = {'spec': jsonutils.dumps(spec.obj_to_primitive())}
             if 'instance_uuid' in updates:
@@ -523,7 +527,9 @@ class RequestSpec(base.NovaObject):
                                               reason='already created')
 
         updates = self._get_update_primitives()
-
+        if not updates:
+            raise exception.ObjectActionError(action='create',
+                                              reason='no fields are set')
         db_spec = self._create_in_db(self._context, updates)
         self._from_db_object(self._context, self, db_spec)
 
@@ -541,9 +547,11 @@ class RequestSpec(base.NovaObject):
     @base.remotable
     def save(self):
         updates = self._get_update_primitives()
-        db_spec = self._save_in_db(self._context, self.instance_uuid, updates)
-        self._from_db_object(self._context, self, db_spec)
-        self.obj_reset_changes()
+        if updates:
+            db_spec = self._save_in_db(self._context, self.instance_uuid,
+                                       updates)
+            self._from_db_object(self._context, self, db_spec)
+            self.obj_reset_changes()
 
     @staticmethod
     @db.api_context_manager.writer

@@ -264,6 +264,41 @@ class TestUtils(test.NoDBTestCase):
         fake_spec = objects.RequestSpec(flavor=flavor)
         utils.resources_from_request_spec(fake_spec)
 
+    def test_process_no_force_hosts_or_force_nodes(self):
+        flavor = objects.Flavor(vcpus=1,
+                                memory_mb=1024,
+                                root_gb=15,
+                                ephemeral_gb=0,
+                                swap=0)
+        fake_spec = objects.RequestSpec(flavor=flavor)
+        expected = utils.ResourceRequest()
+        resources = utils.resources_from_request_spec(fake_spec)
+        self.assertEqual(expected._limit, resources._limit)
+
+    def test_process_use_force_nodes(self):
+        flavor = objects.Flavor(vcpus=1,
+                                memory_mb=1024,
+                                root_gb=15,
+                                ephemeral_gb=0,
+                                swap=0)
+        fake_spec = objects.RequestSpec(flavor=flavor, force_nodes=['test'])
+        expected = utils.ResourceRequest()
+        expected._limit = None
+        resources = utils.resources_from_request_spec(fake_spec)
+        self.assertEqual(expected._limit, resources._limit)
+
+    def test_process_use_force_hosts(self):
+        flavor = objects.Flavor(vcpus=1,
+                                memory_mb=1024,
+                                root_gb=15,
+                                ephemeral_gb=0,
+                                swap=0)
+        fake_spec = objects.RequestSpec(flavor=flavor, force_hosts=['test'])
+        expected = utils.ResourceRequest()
+        expected._limit = None
+        resources = utils.resources_from_request_spec(fake_spec)
+        self.assertEqual(expected._limit, resources._limit)
+
     @mock.patch('nova.compute.utils.is_volume_backed_instance',
                 return_value=False)
     def test_resources_from_flavor_no_bfv(self, mock_is_bfv):
@@ -465,7 +500,7 @@ class TestUtils(test.NoDBTestCase):
             utils.claim_resources_on_destination(
                 self.context, reportclient, instance, source_node, dest_node)
             mock_get_allocs.assert_called_once_with(
-                uuids.source_node, instance.uuid)
+                self.context, uuids.source_node, instance.uuid)
 
         test()
 
@@ -505,7 +540,7 @@ class TestUtils(test.NoDBTestCase):
                               self.context, reportclient, instance,
                               source_node, dest_node)
             mock_get_allocs.assert_called_once_with(
-                uuids.source_node, instance.uuid)
+                self.context, uuids.source_node, instance.uuid)
             mock_claim.assert_called_once_with(
                 self.context, instance.uuid, dest_alloc_request,
                 instance.project_id, instance.user_id,

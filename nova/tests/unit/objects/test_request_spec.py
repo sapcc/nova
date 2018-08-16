@@ -535,13 +535,14 @@ class _TestRequestSpecObject(object):
 
         # object fields
         for field in ['image', 'numa_topology', 'pci_requests', 'flavor',
-                'retry', 'limits']:
+                      'limits']:
             self.assertEqual(
                     getattr(req_obj, field).obj_to_primitive(),
                     getattr(serialized_obj, field).obj_to_primitive())
 
         self.assertIsNone(serialized_obj.instance_group.members)
         self.assertIsNone(serialized_obj.instance_group.hosts)
+        self.assertIsNone(serialized_obj.retry)
 
     def test_create(self):
         req_obj = fake_request_spec.fake_spec_obj(remove_id=True)
@@ -633,6 +634,16 @@ class _TestRequestSpecObject(object):
         self.assertIsInstance(req_obj.security_groups,
                               objects.SecurityGroupList)
         self.assertIn('security_groups', req_obj)
+
+    def test_create_raises_on_unchanged_object(self):
+        ctxt = context.RequestContext(uuids.user_id, uuids.project_id)
+        req_obj = request_spec.RequestSpec(context=ctxt)
+        self.assertRaises(exception.ObjectActionError, req_obj.create)
+
+    def test_save_can_be_called_on_unchanged_object(self):
+        req_obj = fake_request_spec.fake_spec_obj(remove_id=True)
+        req_obj.create()
+        req_obj.save()
 
 
 class TestRequestSpecObject(test_objects._LocalTest,

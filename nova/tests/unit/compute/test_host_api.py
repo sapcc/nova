@@ -186,6 +186,19 @@ class ComputeHostAPITestCase(test.TestCase):
         self.assertEqual(sorted(['host-%s' % cell.uuid for cell in cells]),
                          sorted([svc.host for svc in services]))
 
+    @mock.patch('nova.context.scatter_gather_cells')
+    def test_service_get_all_cells_with_failures(self, mock_sg):
+        service = objects.Service(binary='nova-compute',
+                                  host='host-%s' % uuids.cell1)
+        mock_sg.return_value = {
+            uuids.cell1: [service],
+            uuids.cell2: context.raised_exception_sentinel
+        }
+        services = self.host_api.service_get_all(self.ctxt, all_cells=True)
+        # returns the results from cell1 and ignores cell2.
+        self.assertEqual(['host-%s' % uuids.cell1],
+                         [svc.host for svc in services])
+
     def test_service_get_all_no_zones(self):
         services = [dict(test_service.fake_service,
                          id=1, topic='compute', host='host1'),
@@ -405,12 +418,18 @@ class ComputeHostAPITestCase(test.TestCase):
         self.assertFalse(service2.destroy.called)
         self.assertFalse(set_target.called)
 
-    def test_service_delete_compute_in_aggregate(self):
+    @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host')
+    @mock.patch.object(objects.HostMapping, 'get_by_host')
+    def test_service_delete_compute_in_aggregate(self, mock_hm, mock_get_cn):
         compute = self.host_api.db.service_create(self.ctxt,
             {'host': 'fake-compute-host',
              'binary': 'nova-compute',
              'topic': 'compute',
              'report_count': 0})
+        # This is needed because of lazy-loading service.compute_node
+        cn = objects.ComputeNode(uuid=uuids.cn, host="fake-compute-host",
+                                 hypervisor_hostname="fake-compute-host")
+        mock_get_cn.return_value = [cn]
         aggregate = self.aggregate_api.create_aggregate(self.ctxt,
                                                    'aggregate',
                                                    None)
@@ -421,6 +440,7 @@ class ComputeHostAPITestCase(test.TestCase):
         result = self.aggregate_api.get_aggregate(self.ctxt,
                                                   aggregate.id).hosts
         self.assertEqual([], result)
+        mock_hm.return_value.destroy.assert_called_once_with()
 
     @mock.patch('nova.db.compute_node_statistics')
     def test_compute_node_statistics(self, mock_cns):
@@ -506,6 +526,10 @@ class ComputeHostAPICellsTestCase(ComputeHostAPITestCase):
 
     @testtools.skip('cellsv1 does not use this')
     def test_service_get_all_cells(self):
+        pass
+
+    @testtools.skip('cellsv1 does not use this')
+    def test_service_get_all_cells_with_failures(self):
         pass
 
     @testtools.skip('cellsv1 does not use this')

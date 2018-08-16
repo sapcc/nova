@@ -62,9 +62,12 @@ Nova Database
 
 ``nova-manage db archive_deleted_rows [--max_rows <number>] [--verbose] [--until-complete]``
 
-    Move deleted rows from production tables to shadow tables. Specifying
-    --verbose will print the results of the archive operation for any tables
-    that were changed. Specifying --until-complete will make the command run
+    Move deleted rows from production tables to shadow tables. Note that the
+    corresponding rows in the instance_mappings and request_specs tables of the
+    API database are purged when instance records are archived and thus,
+    CONF.api_database.connection is required in the config file. Specifying
+    --verbose will print the results of the archive operation for any tables that
+    were changed. Specifying --until-complete will make the command run
     continuously until all deleted rows are archived. Use the --max_rows option,
     which defaults to 1000, as a batch size for each iteration.
 
@@ -194,7 +197,7 @@ Nova Cells v2
     database connection was missing, and 2 if a cell is already using that
     transport url and database connection combination.
 
-``nova-manage cell_v2 discover_hosts [--cell_uuid <cell_uuid>] [--verbose] [--strict]``
+``nova-manage cell_v2 discover_hosts [--cell_uuid <cell_uuid>] [--verbose] [--strict] [--by-service]``
 
     Searches cells, or a single cell, and maps found hosts. This command will
     check the database for each cell (or a single one if passed in) and map any
@@ -204,7 +207,11 @@ Nova Cells v2
     there and the API will not list the new hosts). If the strict option is
     provided the command will only be considered successful if an unmapped host
     is discovered (exit code 0). Any other case is considered a failure (exit
-    code 1).
+    code 1). If --by-service is specified, this command will look in the
+    appropriate cell(s) for any nova-compute services and ensure there are host
+    mappings for them. This is less efficient and is only necessary when using
+    compute drivers that may manage zero or more actual compute nodes at any
+    given time (currently only ironic).
 
 ``nova-manage cell_v2 list_cells [--verbose]``
 

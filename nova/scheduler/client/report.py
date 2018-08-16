@@ -15,6 +15,7 @@
 
 import copy
 import functools
+import random
 import re
 import time
 
@@ -44,9 +45,6 @@ _RE_INV_IN_USE = re.compile("Inventory for (.+) on resource provider "
                             "(.+) in use")
 WARN_EVERY = 10
 PLACEMENT_CLIENT_SEMAPHORE = 'placement_client'
-# Number of seconds between attempts to update a provider's aggregates and
-# traits
-ASSOCIATION_REFRESH = 300
 NESTED_PROVIDER_API_VERSION = '1.14'
 POST_ALLOCATIONS_API_VERSION = '1.13'
 
@@ -110,8 +108,10 @@ def retries(f):
     """
     @functools.wraps(f)
     def wrapper(self, *a, **k):
-        for retry in range(0, 3):
+        for retry in range(0, 4):
             try:
+                sleep_time = random.uniform(0, retry * 2)
+                time.sleep(sleep_time)
                 return f(self, *a, **k)
             except Retry as e:
                 LOG.debug(
@@ -274,8 +274,11 @@ class SchedulerReportClient(object):
         client.additional_headers = {'accept': 'application/json'}
         return client
 
-    def get(self, url, version=None):
-        return self._client.get(url, raise_exc=False, microversion=version)
+    def get(self, url, version=None, global_request_id=None):
+        headers = ({request_id.INBOUND_HEADER: global_request_id}
+                   if global_request_id else {})
+        return self._client.get(url, raise_exc=False, microversion=version,
+                                headers=headers)
 
     def post(self, url, data, version=None, global_request_id=None):
         headers = ({request_id.INBOUND_HEADER: global_request_id}
@@ -306,7 +309,7 @@ class SchedulerReportClient(object):
                                    headers=headers)
 
     @safe_connect
-    def get_allocation_candidates(self, resources):
+    def get_allocation_candidates(self, context, resources):
         """Returns a tuple of (allocation_requests, provider_summaries,
         allocation_request_version).
 
@@ -324,6 +327,7 @@ class SchedulerReportClient(object):
                   this data from placement, or (None, None, None) if the
                   request failed
 
+        :param context: The security context
         :param nova.scheduler.utils.ResourceRequest resources:
             A ResourceRequest object representing the requested resources and
             traits from the request spec.
@@ -340,14 +344,16 @@ class SchedulerReportClient(object):
             for (rc, amount) in res.items()))
         qs_params = {
             'resources': resource_query,
-            'limit': CONF.scheduler.max_placement_results,
         }
+        if resources._limit is not None:
+            qs_params['limit'] = resources._limit
         if required_traits:
             qs_params['required'] = ",".join(required_traits)
 
         version = '1.17'
         url = "/allocation_candidates?%s" % parse.urlencode(qs_params)
-        resp = self.get(url, version=version)
+        resp = self.get(url, version=version,
+                        global_request_id=context.global_id)
         if resp.status_code == 200:
             data = resp.json()
             return (data['allocation_requests'], data['provider_summaries'],
@@ -371,7 +377,7 @@ class SchedulerReportClient(object):
         return None, None, None
 
     @safe_connect
-    def _get_provider_aggregates(self, rp_uuid):
+    def _get_provider_aggregates(self, context, rp_uuid):
         """Queries the placement API for a resource provider's aggregates.
 
         :param rp_uuid: UUID of the resource provider to grab aggregates for.
@@ -383,7 +389,7 @@ class SchedulerReportClient(object):
                 does not exist.
         """
         resp = self.get("/resource_providers/%s/aggregates" % rp_uuid,
-                        version='1.1')
+                        version='1.1', global_request_id=context.global_id)
         if resp.status_code == 200:
             data = resp.json()
             return set(data['aggregates'])
@@ -402,9 +408,10 @@ class SchedulerReportClient(object):
         raise exception.ResourceProviderAggregateRetrievalFailed(uuid=rp_uuid)
 
     @safe_connect
-    def _get_provider_traits(self, rp_uuid):
+    def _get_provider_traits(self, context, rp_uuid):
         """Queries the placement API for a resource provider's traits.
 
+        :param context: The security context
         :param rp_uuid: UUID of the resource provider to grab traits for.
         :return: A set() of string trait names, which may be empty if the
                  specified provider has no traits.
@@ -413,7 +420,7 @@ class SchedulerReportClient(object):
                 empty set()) if the specified resource provider does not exist.
         """
         resp = self.get("/resource_providers/%s/traits" % rp_uuid,
-                        version='1.6')
+                        version='1.6', global_request_id=context.global_id)
 
         if resp.status_code == 200:
             return set(resp.json()['traits'])
@@ -428,17 +435,19 @@ class SchedulerReportClient(object):
         raise exception.ResourceProviderTraitRetrievalFailed(uuid=rp_uuid)
 
     @safe_connect
-    def _get_resource_provider(self, uuid):
+    def _get_resource_provider(self, context, uuid):
         """Queries the placement API for a resource provider record with the
         supplied UUID.
 
+        :param context: The security context
         :param uuid: UUID identifier for the resource provider to look up
         :return: A dict of resource provider information if found or None if no
                  such resource provider could be found.
         :raise: ResourceProviderRetrievalFailed on error.
         """
         resp = self.get("/resource_providers/%s" % uuid,
-                        version=NESTED_PROVIDER_API_VERSION)
+                        version=NESTED_PROVIDER_API_VERSION,
+                        global_request_id=context.global_id)
         if resp.status_code == 200:
             data = resp.json()
             return data
@@ -459,11 +468,12 @@ class SchedulerReportClient(object):
             raise exception.ResourceProviderRetrievalFailed(uuid=uuid)
 
     @safe_connect
-    def _get_sharing_providers(self, agg_uuids):
+    def _get_sharing_providers(self, context, agg_uuids):
         """Queries the placement API for a list of the resource providers
         associated with any of the specified aggregates and possessing the
         MISC_SHARES_VIA_AGGREGATE trait.
 
+        :param context: The security context
         :param agg_uuids: Iterable of string UUIDs of aggregates to filter on.
         :return: A list of dicts of resource provider information, which may be
                  empty if no provider exists with the specified UUID.
@@ -475,11 +485,11 @@ class SchedulerReportClient(object):
         qpval = ','.join(agg_uuids)
         # TODO(efried): Need a ?having_traits=[...] on this API!
         resp = self.get("/resource_providers?member_of=in:" + qpval,
-                        version='1.3')
+                        version='1.3', global_request_id=context.global_id)
         if resp.status_code == 200:
             rps = []
             for rp in resp.json()['resource_providers']:
-                traits = self._get_provider_traits(rp['uuid'])
+                traits = self._get_provider_traits(context, rp['uuid'])
                 if os_traits.MISC_SHARES_VIA_AGGREGATE in traits:
                     rps.append(rp)
             return rps
@@ -499,17 +509,19 @@ class SchedulerReportClient(object):
         raise exception.ResourceProviderRetrievalFailed(message=msg % args)
 
     @safe_connect
-    def _get_providers_in_tree(self, uuid):
+    def _get_providers_in_tree(self, context, uuid):
         """Queries the placement API for a list of the resource providers in
         the tree associated with the specified UUID.
 
+        :param context: The security context
         :param uuid: UUID identifier for the resource provider to look up
         :return: A list of dicts of resource provider information, which may be
                  empty if no provider exists with the specified UUID.
         :raise: ResourceProviderRetrievalFailed on error.
         """
         resp = self.get("/resource_providers?in_tree=%s" % uuid,
-                        version=NESTED_PROVIDER_API_VERSION)
+                        version=NESTED_PROVIDER_API_VERSION,
+                        global_request_id=context.global_id)
 
         if resp.status_code == 200:
             return resp.json()['resource_providers']
@@ -584,7 +596,7 @@ class SchedulerReportClient(object):
                 'placement_req_id': placement_req_id,
             }
             LOG.info(msg, args)
-            return self._get_resource_provider(uuid)
+            return self._get_resource_provider(context, uuid)
 
         # A provider with the same *name* already exists, or some other error.
         msg = ("[%(placement_req_id)s] Failed to create resource provider "
@@ -641,16 +653,24 @@ class SchedulerReportClient(object):
             # If we had the requested provider locally, refresh it and its
             # descendants, but only if stale.
             for u in self._provider_tree.get_provider_uuids(uuid):
-                self._refresh_associations(u, force=False)
+                self._refresh_associations(context, u, force=False)
             return uuid
 
         # We don't have it locally; check placement or create it.
         created_rp = None
-        rps_to_refresh = self._get_providers_in_tree(uuid)
+        rps_to_refresh = self._get_providers_in_tree(context, uuid)
         if not rps_to_refresh:
             created_rp = self._create_resource_provider(
                 context, uuid, name or uuid,
                 parent_provider_uuid=parent_provider_uuid)
+            # If @safe_connect can't establish a connection to the placement
+            # service, like if placement isn't running or nova-compute is
+            # mis-configured for authentication, we'll get None back and need
+            # to treat it like we couldn't create the provider (because we
+            # couldn't).
+            if created_rp is None:
+                raise exception.ResourceProviderCreationFailed(
+                    name=name or uuid)
             # Don't add the created_rp to rps_to_refresh.  Since we just
             # created it, it has no aggregates or traits.
 
@@ -661,7 +681,7 @@ class SchedulerReportClient(object):
 
         for rp_to_refresh in rps_to_refresh:
             self._refresh_associations(
-                rp_to_refresh['uuid'],
+                context, rp_to_refresh['uuid'],
                 generation=rp_to_refresh.get('generation'), force=True)
 
         return uuid
@@ -700,14 +720,14 @@ class SchedulerReportClient(object):
             raise exception.ResourceProviderInUse()
         raise exception.ResourceProviderDeletionFailed(uuid=rp_uuid)
 
-    def _get_inventory(self, rp_uuid):
+    def _get_inventory(self, context, rp_uuid):
         url = '/resource_providers/%s/inventories' % rp_uuid
-        result = self.get(url)
+        result = self.get(url, global_request_id=context.global_id)
         if not result:
             return None
         return result.json()
 
-    def _refresh_and_get_inventory(self, rp_uuid):
+    def _refresh_and_get_inventory(self, context, rp_uuid):
         """Helper method that retrieves the current inventory for the supplied
         resource provider according to the placement API.
 
@@ -716,7 +736,7 @@ class SchedulerReportClient(object):
         generation and attempt to update inventory if any exists, otherwise
         return empty inventories.
         """
-        curr = self._get_inventory(rp_uuid)
+        curr = self._get_inventory(context, rp_uuid)
         if curr is None:
             return None
 
@@ -726,19 +746,20 @@ class SchedulerReportClient(object):
             self._provider_tree.update_inventory(rp_uuid, curr_inv, cur_gen)
         return curr
 
-    def _refresh_associations(self, rp_uuid, generation=None, force=False,
-                              refresh_sharing=True):
+    def _refresh_associations(self, context, rp_uuid, generation=None,
+                              force=False, refresh_sharing=True):
         """Refresh aggregates, traits, and (optionally) aggregate-associated
         sharing providers for the specified resource provider uuid.
 
         Only refresh if there has been no refresh during the lifetime of
-        this process, ASSOCIATION_REFRESH seconds have passed, or the force arg
-        has been set to True.
+        this process, CONF.compute.resource_provider_association_refresh
+        seconds have passed, or the force arg has been set to True.
 
         Note that we do *not* refresh inventories.  The reason is largely
         historical: all code paths that get us here are doing inventory refresh
         themselves.
 
+        :param context: The security context
         :param rp_uuid: UUID of the resource provider to check for fresh
                         aggregates and traits
         :param generation: The resource provider generation to set.  If None,
@@ -755,7 +776,7 @@ class SchedulerReportClient(object):
         """
         if force or self._associations_stale(rp_uuid):
             # Refresh aggregates
-            aggs = self._get_provider_aggregates(rp_uuid)
+            aggs = self._get_provider_aggregates(context, rp_uuid)
             msg = ("Refreshing aggregate associations for resource provider "
                    "%s, aggregates: %s")
             LOG.debug(msg, rp_uuid, ','.join(aggs or ['None']))
@@ -766,7 +787,7 @@ class SchedulerReportClient(object):
                 rp_uuid, aggs, generation=generation)
 
             # Refresh traits
-            traits = self._get_provider_traits(rp_uuid)
+            traits = self._get_provider_traits(context, rp_uuid)
             msg = ("Refreshing trait associations for resource provider %s, "
                    "traits: %s")
             LOG.debug(msg, rp_uuid, ','.join(traits or ['None']))
@@ -777,7 +798,7 @@ class SchedulerReportClient(object):
 
             if refresh_sharing:
                 # Refresh providers associated by aggregate
-                for rp in self._get_sharing_providers(aggs):
+                for rp in self._get_sharing_providers(context, aggs):
                     if not self._provider_tree.exists(rp['uuid']):
                         # NOTE(efried): Right now sharing providers are always
                         # treated as roots. This is deliberate. From the
@@ -790,7 +811,8 @@ class SchedulerReportClient(object):
                     # providers).  No need to override force=True for newly-
                     # added providers - the missing timestamp will always
                     # trigger them to refresh.
-                    self._refresh_associations(rp['uuid'], force=force,
+                    self._refresh_associations(context, rp['uuid'],
+                                               force=force,
                                                refresh_sharing=False)
             self.association_refresh_time[rp_uuid] = time.time()
 
@@ -799,10 +821,12 @@ class SchedulerReportClient(object):
         "recently".
 
         It is old if association_refresh_time for this uuid is not set
-        or more than ASSOCIATION_REFRESH seconds ago.
+        or more than CONF.compute.resource_provider_association_refresh
+        seconds ago.
         """
         refresh_time = self.association_refresh_time.get(uuid, 0)
-        return (time.time() - refresh_time) > ASSOCIATION_REFRESH
+        return ((time.time() - refresh_time) >
+                CONF.compute.resource_provider_association_refresh)
 
     def _update_inventory_attempt(self, context, rp_uuid, inv_data):
         """Update the inventory for this resource provider if needed.
@@ -816,7 +840,7 @@ class SchedulerReportClient(object):
         # TODO(jaypipes): Should we really be calling the placement API to get
         # the current inventory for every resource provider each and every time
         # update_resource_stats() is called? :(
-        curr = self._refresh_and_get_inventory(rp_uuid)
+        curr = self._refresh_and_get_inventory(context, rp_uuid)
         if curr is None:
             return False
 
@@ -945,7 +969,7 @@ class SchedulerReportClient(object):
         if not self._provider_tree.has_inventory(rp_uuid):
             return None
 
-        curr = self._refresh_and_get_inventory(rp_uuid)
+        curr = self._refresh_and_get_inventory(context, rp_uuid)
 
         # Check to see if we need to update placement's view
         if not curr.get('inventories', {}):
@@ -1052,7 +1076,7 @@ class SchedulerReportClient(object):
             parent_provider_uuid=parent_provider_uuid)
         # Ensure inventories are up to date (for *all* cached RPs)
         for uuid in self._provider_tree.get_provider_uuids():
-            self._refresh_and_get_inventory(uuid)
+            self._refresh_and_get_inventory(context, uuid)
         # Return a *copy* of the tree.
         return copy.deepcopy(self._provider_tree)
 
@@ -1090,9 +1114,10 @@ class SchedulerReportClient(object):
             self._delete_inventory(context, rp_uuid)
 
     @safe_connect
-    def _ensure_traits(self, traits):
+    def _ensure_traits(self, context, traits):
         """Make sure all specified traits exist in the placement service.
 
+        :param context: The security context
         :param traits: Iterable of trait strings to ensure exist.
         :raises: TraitCreationFailed if traits contains a trait that did not
                  exist in placement, and couldn't be created.  When this
@@ -1112,13 +1137,15 @@ class SchedulerReportClient(object):
         # service knows.  If the caller tries to ensure a nonexistent
         # "standard" trait, they deserve the TraitCreationFailed exception
         # they'll get.
-        resp = self.get('/traits?name=in:' + ','.join(traits), version='1.6')
+        resp = self.get('/traits?name=in:' + ','.join(traits), version='1.6',
+                        global_request_id=context.global_id)
         if resp.status_code == 200:
             traits_to_create = set(traits) - set(resp.json()['traits'])
             # Might be neat to have a batch create.  But creating multiple
             # traits will generally happen once, at initial startup, if at all.
             for trait in traits_to_create:
-                resp = self.put('/traits/' + trait, None, version='1.6')
+                resp = self.put('/traits/' + trait, None, version='1.6',
+                                global_request_id=context.global_id)
                 if not resp:
                     raise exception.TraitCreationFailed(name=trait,
                                                         error=resp.text)
@@ -1136,11 +1163,12 @@ class SchedulerReportClient(object):
         raise exception.TraitRetrievalFailed(error=resp.text)
 
     @safe_connect
-    def set_traits_for_provider(self, rp_uuid, traits):
+    def set_traits_for_provider(self, context, rp_uuid, traits):
         """Replace a provider's traits with those specified.
 
         The provider must exist - this method does not attempt to create it.
 
+        :param context: The security context
         :param rp_uuid: The UUID of the provider whose traits are to be updated
         :param traits: Iterable of traits to set on the provider
         :raises: ResourceProviderUpdateConflict if the provider's generation
@@ -1158,7 +1186,7 @@ class SchedulerReportClient(object):
         if not self._provider_tree.have_traits_changed(rp_uuid, traits):
             return
 
-        self._ensure_traits(traits)
+        self._ensure_traits(context, traits)
 
         url = '/resource_providers/%s/traits' % rp_uuid
         # NOTE(efried): Don't use the DELETE API when traits is empty, because
@@ -1170,7 +1198,8 @@ class SchedulerReportClient(object):
             'resource_provider_generation': generation,
             'traits': traits,
         }
-        resp = self.put(url, payload, version='1.6')
+        resp = self.put(url, payload, version='1.6',
+                        global_request_id=context.global_id)
 
         if resp.status_code == 200:
             json = resp.json()
@@ -1201,11 +1230,12 @@ class SchedulerReportClient(object):
         raise exception.ResourceProviderUpdateFailed(url=url, error=resp.text)
 
     @safe_connect
-    def set_aggregates_for_provider(self, rp_uuid, aggregates):
+    def set_aggregates_for_provider(self, context, rp_uuid, aggregates):
         """Replace a provider's aggregates with those specified.
 
         The provider must exist - this method does not attempt to create it.
 
+        :param context: The security context
         :param rp_uuid: The UUID of the provider whose aggregates are to be
                         updated.
         :param aggregates: Iterable of aggregates to set on the provider.
@@ -1214,7 +1244,8 @@ class SchedulerReportClient(object):
         # TODO(efried): Handle generation conflicts when supported by placement
         url = '/resource_providers/%s/aggregates' % rp_uuid
         aggregates = list(aggregates) if aggregates else []
-        resp = self.put(url, aggregates, version='1.1')
+        resp = self.put(url, aggregates, version='1.1',
+                        global_request_id=context.global_id)
 
         if resp.status_code == 200:
             placement_aggs = resp.json()['aggregates']
@@ -1357,29 +1388,30 @@ class SchedulerReportClient(object):
             self._delete_inventory(context, compute_node.uuid)
 
     @safe_connect
-    def get_allocations_for_consumer(self, consumer):
+    def get_allocations_for_consumer(self, context, consumer):
         url = '/allocations/%s' % consumer
-        resp = self.get(url)
+        resp = self.get(url, global_request_id=context.global_id)
         if not resp:
             return {}
         else:
             return resp.json()['allocations']
 
-    def get_allocations_for_consumer_by_provider(self, rp_uuid, consumer):
+    def get_allocations_for_consumer_by_provider(self, context, rp_uuid,
+                                                 consumer):
         # NOTE(cdent): This trims to just the allocations being
         # used on this resource provider. In the future when there
         # are shared resources there might be other providers.
-        allocations = self.get_allocations_for_consumer(consumer)
+        allocations = self.get_allocations_for_consumer(context, consumer)
         if allocations is None:
             # safe_connect can return None on 404
             allocations = {}
         return allocations.get(
             rp_uuid, {}).get('resources', {})
 
-    def _allocate_for_instance(self, rp_uuid, instance):
+    def _allocate_for_instance(self, context, rp_uuid, instance):
         my_allocations = _instance_to_allocations_dict(instance)
         current_allocations = self.get_allocations_for_consumer_by_provider(
-            rp_uuid, instance.uuid)
+            context, rp_uuid, instance.uuid)
         if current_allocations == my_allocations:
             allocstr = ','.join(['%s=%s' % (k, v)
                                  for k, v in my_allocations.items()])
@@ -1390,8 +1422,9 @@ class SchedulerReportClient(object):
         LOG.debug('Sending allocation for instance %s',
                   my_allocations,
                   instance=instance)
-        res = self.put_allocations(rp_uuid, instance.uuid, my_allocations,
-                                   instance.project_id, instance.user_id)
+        res = self.put_allocations(context, rp_uuid, instance.uuid,
+                                   my_allocations, instance.project_id,
+                                   instance.user_id)
         if res:
             LOG.info('Submitted allocation for instance', instance=instance)
 
@@ -1463,7 +1496,7 @@ class SchedulerReportClient(object):
         # We first need to determine if this is a move operation and if so
         # create the "doubled-up" allocation that exists for the duration of
         # the move operation against both the source and destination hosts
-        r = self.get(url)
+        r = self.get(url, global_request_id=context.global_id)
         if r.status_code == 200:
             current_allocs = r.json()['allocations']
             if current_allocs:
@@ -1491,8 +1524,8 @@ class SchedulerReportClient(object):
         return r.status_code == 204
 
     @safe_connect
-    def remove_provider_from_instance_allocation(self, consumer_uuid, rp_uuid,
-                                                 user_id, project_id,
+    def remove_provider_from_instance_allocation(self, context, consumer_uuid,
+                                                 rp_uuid, user_id, project_id,
                                                  resources):
         """Grabs an allocation for a particular consumer UUID, strips parts of
         the allocation that refer to a supplied resource provider UUID, and
@@ -1508,6 +1541,7 @@ class SchedulerReportClient(object):
         subtract resources from the single allocation to ensure we do not
         exceed the reserved or max_unit amounts for the resource on the host.
 
+        :param context: The security context
         :param consumer_uuid: The instance/consumer UUID
         :param rp_uuid: The UUID of the provider whose resources we wish to
                         remove from the consumer's allocation
@@ -1518,7 +1552,7 @@ class SchedulerReportClient(object):
         url = '/allocations/%s' % consumer_uuid
 
         # Grab the "doubled-up" allocation that we will manipulate
-        r = self.get(url)
+        r = self.get(url, global_request_id=context.global_id)
         if r.status_code != 200:
             LOG.warning("Failed to retrieve allocations for %s. Got HTTP %s",
                         consumer_uuid, r.status_code)
@@ -1580,7 +1614,8 @@ class SchedulerReportClient(object):
         LOG.debug("Sending updated allocation %s for instance %s after "
                   "removing resources for %s.",
                   new_allocs, consumer_uuid, rp_uuid)
-        r = self.put(url, payload, version='1.10')
+        r = self.put(url, payload, version='1.10',
+                     global_request_id=context.global_id)
         if r.status_code != 204:
             LOG.warning("Failed to save allocation for %s. Got HTTP %s: %s",
                         consumer_uuid, r.status_code, r.text)
@@ -1656,8 +1691,8 @@ class SchedulerReportClient(object):
 
     @safe_connect
     @retries
-    def put_allocations(self, rp_uuid, consumer_uuid, alloc_data, project_id,
-                        user_id):
+    def put_allocations(self, context, rp_uuid, consumer_uuid, alloc_data,
+                        project_id, user_id):
         """Creates allocation records for the supplied instance UUID against
         the supplied resource provider.
 
@@ -1665,6 +1700,7 @@ class SchedulerReportClient(object):
               Once shared storage and things like NUMA allocations are a
               reality, this will change to allocate against multiple providers.
 
+        :param context: The security context
         :param rp_uuid: The UUID of the resource provider to allocate against.
         :param consumer_uuid: The instance's UUID.
         :param alloc_data: Dict, keyed by resource class, of amounts to
@@ -1688,7 +1724,8 @@ class SchedulerReportClient(object):
             'user_id': user_id,
         }
         url = '/allocations/%s' % consumer_uuid
-        r = self.put(url, payload, version='1.8')
+        r = self.put(url, payload, version='1.8',
+                     global_request_id=context.global_id)
         if r.status_code == 406:
             # microversion 1.8 not available so try the earlier way
             # TODO(melwitt): Remove this when we can be sure all placement
@@ -1734,14 +1771,14 @@ class SchedulerReportClient(object):
     def update_instance_allocation(self, context, compute_node, instance,
                                    sign):
         if sign > 0:
-            self._allocate_for_instance(compute_node.uuid, instance)
+            self._allocate_for_instance(context, compute_node.uuid, instance)
         else:
             self.delete_allocation_for_instance(context, instance.uuid)
 
     @safe_connect
-    def get_allocations_for_resource_provider(self, rp_uuid):
+    def get_allocations_for_resource_provider(self, context, rp_uuid):
         url = '/resource_providers/%s/allocations' % rp_uuid
-        resp = self.get(url)
+        resp = self.get(url, global_request_id=context.global_id)
         if not resp:
             return {}
         else:

@@ -257,6 +257,9 @@ class HostState(object):
         self.ram_allocation_ratio = compute.ram_allocation_ratio
         self.disk_allocation_ratio = compute.disk_allocation_ratio
 
+        # update failed_builds counter reported by the compute
+        self.failed_builds = int(self.stats.get('failed_builds', 0))
+
     def consume_from_request(self, spec_obj):
         """Incrementally update host state from a RequestSpec object."""
 
@@ -373,7 +376,7 @@ class HostManager(object):
         for agg in aggs:
             self.aggs_by_id[agg.id] = agg
             for host in agg.hosts:
-                self.host_aggregates_map[host].add(agg.id)
+                self.host_aggregates_map[host.lower()].add(agg.id)
 
     def update_aggregates(self, aggregates):
         """Updates internal HostManager information about aggregates."""
@@ -392,7 +395,7 @@ class HostManager(object):
         for host in self.host_aggregates_map:
             if (aggregate.id in self.host_aggregates_map[host]
                     and host not in aggregate.hosts):
-                self.host_aggregates_map[host].remove(aggregate.id)
+                self.host_aggregates_map[host.lower()].remove(aggregate.id)
 
     def delete_aggregate(self, aggregate):
         """Deletes internal HostManager information about a specific aggregate.
@@ -711,7 +714,7 @@ class HostManager(object):
 
     def _get_aggregates_info(self, host):
         return [self.aggs_by_id[agg_id] for agg_id in
-                self.host_aggregates_map[host]]
+                self.host_aggregates_map[host.lower()]]
 
     def _get_instances_by_host(self, context, host_name):
         try:
@@ -724,7 +727,13 @@ class HostManager(object):
                      'instance info for this host.', host_name)
             return {}
         with context_module.target_cell(context, hm.cell_mapping) as cctxt:
-            inst_list = objects.InstanceList.get_by_host(cctxt, host_name)
+            # NOTE(mriedem): We pass expected_attrs=[] to avoid a default
+            # join on info_cache and security_groups, which at present none
+            # of the in-tree filters/weighers rely on that information. Any
+            # out of tree filters which rely on it will end up lazy-loading
+            # the field but we don't have a contract on out of tree filters.
+            inst_list = objects.InstanceList.get_by_host(
+                cctxt, host_name, expected_attrs=[])
             return {inst.uuid: inst for inst in inst_list}
 
     def _get_instance_info(self, context, compute):

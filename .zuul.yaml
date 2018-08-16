@@ -27,6 +27,34 @@
       - ^tox.ini$
 
 - job:
+    name: nova-dsvm-multinode-base
+    parent: legacy-dsvm-base-multinode
+    description: |
+      Base job for multinode nova devstack/tempest jobs.
+      Will setup firewall rules on all the nodes allowing them to talk to
+      each other.
+    timeout: 10800
+    required-projects:
+      - openstack-infra/devstack-gate
+      - openstack/nova
+      - openstack/tempest
+    irrelevant-files:
+      - ^(placement-)?api-.*$
+      - ^(test-|)requirements.txt$
+      - ^.*\.rst$
+      - ^.git.*$
+      - ^doc/.*$
+      - ^nova/hacking/.*$
+      - ^nova/locale/.*$
+      - ^nova/tests/.*$
+      - ^releasenotes/.*$
+      - ^setup.cfg$
+      - ^tests-py3.txt$
+      - ^tools/.*$
+      - ^tox.ini$
+    nodeset: legacy-ubuntu-xenial-2-node
+
+- job:
     name: nova-tox-functional
     parent: openstack-tox
     description: |
@@ -63,6 +91,18 @@
     timeout: 3600
 
 - job:
+    name: nova-cells-v1
+    parent: nova-dsvm-base
+    run: playbooks/legacy/nova-cells-v1/run.yaml
+    post-run: playbooks/legacy/nova-cells-v1/post.yaml
+
+- job:
+    name: nova-live-migration
+    parent: nova-dsvm-multinode-base
+    run: playbooks/legacy/nova-live-migration/run.yaml
+    post-run: playbooks/legacy/nova-live-migration/post.yaml
+
+- job:
     name: nova-lvm
     parent: nova-dsvm-base
     description: |
@@ -82,7 +122,6 @@
       Pike Ubuntu Cloud Archive because volume multiattach support with
       the libvirt driver only works with qemu<2.10 or libvirt>=3.10 which
       won't work with the Pike UCA.
-    branches: ^(?!stable/(newton|ocata|pike)).*$
     run: playbooks/legacy/nova-multiattach/run.yaml
     post-run: playbooks/legacy/nova-multiattach/post.yaml
 
@@ -90,11 +129,35 @@
     # Please try to keep the list of job names sorted alphabetically.
     check:
       jobs:
+        # We define our own irrelevant-files so we don't run the job
+        # on things like nova docs-only changes.
+        - ironic-tempest-dsvm-ipa-wholedisk-bios-agent_ipmitool-tinyipa:
+            voting: false
+            # This irrelevant-files list should match nova-dsvm-base.
+            # TODO(mriedem): Define a node anchor to deduplicate this.
+            irrelevant-files:
+              - ^(placement-)?api-.*$
+              - ^(test-|)requirements.txt$
+              - ^.*\.rst$
+              - ^.git.*$
+              - ^doc/.*$
+              - ^nova/hacking/.*$
+              - ^nova/locale/.*$
+              - ^nova/tests/.*$
+              - ^releasenotes/.*$
+              - ^setup.cfg$
+              - ^tests-py3.txt$
+              - ^tools/.*$
+              - ^tox.ini$
+        - nova-cells-v1
+        - nova-live-migration
         - nova-multiattach
         - nova-tox-functional
         - nova-tox-functional-py35
     gate:
       jobs:
+        - nova-cells-v1
+        - nova-live-migration
         - nova-multiattach
         - nova-tox-functional
         - nova-tox-functional-py35

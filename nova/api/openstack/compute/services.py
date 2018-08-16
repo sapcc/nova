@@ -24,7 +24,9 @@ from nova import availability_zones
 from nova import compute
 from nova import exception
 from nova.i18n import _
+from nova import objects
 from nova.policies import services as services_policies
+from nova.scheduler.client import report
 from nova import servicegroup
 from nova import utils
 
@@ -40,6 +42,7 @@ class ServiceController(wsgi.Controller):
         self.actions = {"enable": self._enable,
                         "disable": self._disable,
                         "disable-log-reason": self._disable_log_reason}
+        self.placementclient = report.SchedulerReportClient()
 
     def _get_services(self, req):
         # The API services are filtered out since they are not RPC services
@@ -189,7 +192,7 @@ class ServiceController(wsgi.Controller):
         return action(body, context)
 
     @wsgi.response(204)
-    @wsgi.expected_errors((400, 404))
+    @wsgi.expected_errors((400, 404, 409))
     def delete(self, req, id):
         """Deletes the specified service."""
         context = req.environ['nova.context']
@@ -211,12 +214,40 @@ class ServiceController(wsgi.Controller):
             service = self.host_api.service_get_by_id(context, id)
             # remove the service from all the aggregates in which it's included
             if service.binary == 'nova-compute':
+                # Check to see if there are any instances on this compute host
+                # because if there are, we need to block the service (and
+                # related compute_nodes record) delete since it will impact
+                # resource accounting in Placement and orphan the compute node
+                # resource provider.
+                # TODO(mriedem): Use a COUNT SQL query-based function instead
+                # of InstanceList.get_uuids_by_host for performance.
+                instance_uuids = objects.InstanceList.get_uuids_by_host(
+                    context, service['host'])
+                if instance_uuids:
+                    raise webob.exc.HTTPConflict(
+                        explanation=_('Unable to delete compute service that '
+                                      'is hosting instances. Migrate or '
+                                      'delete the instances first.'))
+
                 aggrs = self.aggregate_api.get_aggregates_by_host(context,
                                                                   service.host)
                 for ag in aggrs:
                     self.aggregate_api.remove_host_from_aggregate(context,
                                                                   ag.id,
                                                                   service.host)
+                # remove the corresponding resource provider record from
+                # placement for this compute node
+                self.placementclient.delete_resource_provider(
+                    context, service.compute_node, cascade=True)
+                # remove the host_mapping of this host.
+                try:
+                    hm = objects.HostMapping.get_by_host(context, service.host)
+                    hm.destroy()
+                except exception.HostMappingNotFound:
+                    # It's possible to startup a nova-compute service and then
+                    # delete it (maybe it was accidental?) before mapping it to
+                    # a cell using discover_hosts, so we just ignore this.
+                    pass
             self.host_api.service_delete(context, id)
 
         except exception.ServiceNotFound:

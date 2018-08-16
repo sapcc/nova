@@ -58,6 +58,7 @@ from nova.objects import aggregate as aggregate_obj
 from nova.objects import block_device as block_device_obj
 from nova.objects import build_request as build_request_obj
 from nova.objects import host_mapping as host_mapping_obj
+from nova.objects import instance as instance_obj
 from nova.objects import instance_group as instance_group_obj
 from nova.objects import keypair as keypair_obj
 from nova.objects import quotas as quotas_obj
@@ -407,6 +408,11 @@ class DbCommands(object):
         sa_db.migration_migrate_to_uuid,
         # Added in Queens
         block_device_obj.BlockDeviceMapping.populate_uuids,
+        # Added in Rocky
+        # NOTE(tssurya): This online migration is going to be backported to
+        # Queens and Pike since instance.avz of instances before Pike
+        # need to be populated if it was not specified during boot time.
+        instance_obj.populate_missing_availability_zones,
     )
 
     def __init__(self):
@@ -497,7 +503,8 @@ Error: %s""") % six.text_type(e))
         """Move deleted rows from production tables to shadow tables.
 
         Returns 0 if nothing was archived, 1 if some number of rows were
-        archived, 2 if max_rows is invalid. If automating, this should be
+        archived, 2 if max_rows is invalid, 3 if no connection could be
+        established to the API DB. If automating, this should be
         run continuously while the result is 1, stopping at 0.
         """
         max_rows = int(max_rows)
@@ -508,6 +515,19 @@ Error: %s""") % six.text_type(e))
             print(_('max rows must be <= %(max_value)d') %
                   {'max_value': db.MAX_INT})
             return 2
+
+        ctxt = context.get_admin_context()
+        try:
+            # NOTE(tssurya): This check has been added to validate if the API
+            # DB is reachable or not as this is essential for purging the
+            # instance_mappings and request_specs of the deleted instances.
+            objects.CellMappingList.get_all(ctxt)
+        except db_exc.CantStartEngineError:
+            print(_('Failed to connect to API DB so aborting this archival '
+                    'attempt. Please check your config file to make sure that '
+                    'CONF.api_database.connection is set and run this '
+                    'command again.'))
+            return 3
 
         table_to_rows_archived = {}
         deleted_instance_uuids = []
@@ -527,7 +547,6 @@ Error: %s""") % six.text_type(e))
             if deleted_instance_uuids:
                 table_to_rows_archived.setdefault('instance_mappings', 0)
                 table_to_rows_archived.setdefault('request_specs', 0)
-                ctxt = context.get_admin_context()
                 deleted_mappings = objects.InstanceMappingList.destroy_bulk(
                                             ctxt, deleted_instance_uuids)
                 table_to_rows_archived['instance_mappings'] += deleted_mappings
@@ -1279,7 +1298,11 @@ class CellV2Commands(object):
           help=_('Considered successful (exit code 0) only when an unmapped '
                  'host is discovered. Any other outcome will be considered a '
                  'failure (exit code 1).'))
-    def discover_hosts(self, cell_uuid=None, verbose=False, strict=False):
+    @args('--by-service', action='store_true', default=False,
+          dest='by_service',
+          help=_('Discover hosts by service instead of compute node'))
+    def discover_hosts(self, cell_uuid=None, verbose=False, strict=False,
+                       by_service=False):
         """Searches cells, or a single cell, and maps found hosts.
 
         When a new host is added to a deployment it will add a service entry
@@ -1292,7 +1315,8 @@ class CellV2Commands(object):
                 print(msg)
 
         ctxt = context.RequestContext()
-        hosts = host_mapping_obj.discover_hosts(ctxt, cell_uuid, status_fn)
+        hosts = host_mapping_obj.discover_hosts(ctxt, cell_uuid, status_fn,
+                                                by_service)
         # discover_hosts will return an empty list if no hosts are discovered
         if strict:
             return int(not hosts)
@@ -1396,10 +1420,16 @@ class CellV2Commands(object):
         # Check to see if there are any HostMappings for this cell.
         host_mappings = objects.HostMappingList.get_by_cell_id(
             ctxt, cell_mapping.id)
-        if host_mappings and not force:
-            print(_('There are existing hosts mapped to cell with uuid %s.') %
-                  cell_uuid)
-            return 2
+        nodes = []
+        if host_mappings:
+            if not force:
+                print(_('There are existing hosts mapped to cell with uuid '
+                        '%s.') % cell_uuid)
+                return 2
+            # We query for the compute nodes in the cell,
+            # so that they can be unmapped.
+            with context.target_cell(ctxt, cell_mapping) as cctxt:
+                nodes = objects.ComputeNodeList.get_all(cctxt)
 
         # Check to see if there are any InstanceMappings for this cell.
         instance_mappings = objects.InstanceMappingList.get_by_cell_id(
@@ -1420,6 +1450,12 @@ class CellV2Commands(object):
             print(_("So execute 'nova-manage db archive_deleted_rows' to "
                     "delete the instance mappings."))
             return 4
+
+        # Unmap the compute nodes so that they can be discovered
+        # again in future, if needed.
+        for node in nodes:
+            node.mapped = 0
+            node.save()
 
         # Delete hosts mapped to the cell.
         for host_mapping in host_mappings:

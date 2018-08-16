@@ -674,7 +674,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                           block_device_info=bdi)
         mock_power_off.assert_called_once_with(self.instance)
         mock_detach_volume.assert_called_once_with(
-            connection_info, self.instance, 'fake-name')
+            None, connection_info, self.instance, 'fake-name')
         mock_destroy.assert_called_once_with(self.instance, True)
 
     @mock.patch.object(vmops.VMwareVMOps, 'power_off',
@@ -712,7 +712,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                           self.conn.destroy, self.context, self.instance,
                           self.network_info, block_device_info=bdi)
         mock_detach_volume.assert_called_once_with(
-            connection_info, self.instance, 'fake-name')
+            None, connection_info, self.instance, 'fake-name')
         self.assertFalse(mock_destroy.called)
 
     @mock.patch.object(driver.VMwareVCDriver, 'detach_volume',
@@ -730,7 +730,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self.conn.destroy(self.context, self.instance, self.network_info,
                           block_device_info=bdi)
         mock_detach_volume.assert_called_once_with(
-            connection_info, self.instance, 'fake-name')
+            None, connection_info, self.instance, 'fake-name')
         self.assertTrue(mock_destroy.called)
         mock_destroy.assert_called_once_with(self.instance, True)
 
@@ -1496,10 +1496,11 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
             block_device_info_get_mapping.assert_called_once_with(
                 block_device_info)
             vmops.power_off.assert_called_once_with(self.instance)
-            exp_detach_calls = [mock.call(mock.sentinel.connection_info_1,
-                                          self.instance, 'dev1'),
-                                mock.call(mock.sentinel.connection_info_2,
-                                          self.instance, 'dev2')]
+            exp_detach_calls = [
+                mock.call(None, mock.sentinel.connection_info_1,
+                          self.instance, 'dev1'),
+                mock.call(None, mock.sentinel.connection_info_2,
+                          self.instance, 'dev2')]
             self.assertEqual(exp_detach_calls, detach_volume.call_args_list)
 
     def test_destroy(self):
@@ -1750,7 +1751,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self._create_vm()
         connection_info = self._test_vmdk_connection_info('vmdk')
         mount_point = '/dev/vdc'
-        self.conn.detach_volume(connection_info, self.instance, mount_point,
+        self.conn.detach_volume(mock.sentinel.context, connection_info,
+                                self.instance, mount_point,
                                 encryption=None)
         mock_detach_volume_vmdk.assert_called_once_with(connection_info,
             self.instance)
@@ -1797,7 +1799,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
 
         with mock.patch.object(volumeops.VMwareVolumeOps,
                                'detach_volume') as detach_volume:
-            self.conn.detach_volume(connection_info, self.instance,
+            self.conn.detach_volume(mock.sentinel.context, connection_info,
+                                    self.instance,
                                     '/dev/vdc', encryption=None)
             detach_volume.assert_called_once_with(connection_info,
                                                   self.instance)
@@ -1819,7 +1822,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self._create_vm()
         connection_info = self._test_vmdk_connection_info('iscsi')
         mount_point = '/dev/vdc'
-        self.conn.detach_volume(connection_info, self.instance, mount_point,
+        self.conn.detach_volume(mock.sentinel.context, connection_info,
+                                self.instance, mount_point,
                                 encryption=None)
         mock_detach_volume_iscsi.assert_called_once_with(connection_info,
             self.instance)
@@ -1903,7 +1907,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         device = 'fake_device'
         mock_get_rdm_disk.return_value = device
 
-        self.conn.detach_volume(connection_info, self.instance, mount_point,
+        self.conn.detach_volume(mock.sentinel.context, connection_info,
+                                self.instance, mount_point,
                                 encryption=None)
 
         mock_iscsi_get_target.assert_called_once_with(connection_info['data'])

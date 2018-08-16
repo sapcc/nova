@@ -424,7 +424,7 @@ class _BaseTaskTestCase(object):
         """Tests creating two instances and the scheduler returns a unique
         host/node combo for each instance.
         """
-        fake_spec = objects.RequestSpec
+        fake_spec = objects.RequestSpec()
         mock_fp.return_value = fake_spec
         instance_type = flavors.get_default_flavor()
         # NOTE(danms): Avoid datetime timezone issues with converted flavors
@@ -1056,7 +1056,9 @@ class _BaseTaskTestCase(object):
 
         do_test()
 
-    def test_unshelve_offloaded_instance_glance_image_not_found(self):
+    @mock.patch('nova.compute.utils.add_instance_fault_from_exc')
+    def test_unshelve_offloaded_instance_glance_image_not_found(self,
+            add_instance_fault_from_exc):
         shelved_image_id = "image_not_found"
 
         instance = self._create_fake_instance_obj()
@@ -1076,10 +1078,15 @@ class _BaseTaskTestCase(object):
         system_metadata['shelved_host'] = 'fake-mini'
         system_metadata['shelved_image_id'] = shelved_image_id
 
+        reason = ('Unshelve attempted but the image image_not_found '
+                  'cannot be found.')
+
         self.assertRaises(
             exc.UnshelveException,
             self.conductor_manager.unshelve_instance,
             self.context, instance)
+        add_instance_fault_from_exc.assert_called_once_with(
+            self.context, instance, e, mock.ANY, fault_message=reason)
         self.assertEqual(instance.vm_state, vm_states.ERROR)
 
     def test_unshelve_offloaded_instance_image_id_is_none(self):
@@ -2334,6 +2341,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             instance_type_id=flavor['id'],
             system_metadata={},
             uuid=uuids.instance,
+            project_id=fakes.FAKE_PROJECT_ID,
             user_id=fakes.FAKE_USER_ID,
             flavor=flavor,
             numa_topology=None,
@@ -2355,6 +2363,10 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         set_vm_mock.assert_called_once_with(self.context, inst_obj.uuid,
                                             'migrate_server', updates,
                                             exception, fake_spec)
+        spec_fc_mock.assert_called_once_with(
+            self.context, inst_obj.uuid, image, flavor, inst_obj.numa_topology,
+            inst_obj.pci_requests, {}, None, inst_obj.availability_zone,
+            project_id=inst_obj.project_id)
 
     @mock.patch.object(objects.InstanceMapping, 'get_by_instance_uuid')
     @mock.patch.object(scheduler_utils, 'setup_instance_group')

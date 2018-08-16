@@ -656,3 +656,263 @@ class TestUpgradeCheckResourceProviders(test.NoDBTestCase):
         result = self.cmd._check_resource_providers()
         self.assertEqual(status.UpgradeCheckCode.SUCCESS, result.code)
         self.assertIsNone(result.details)
+
+
+class TestUpgradeCheckIronicFlavorMigration(test.NoDBTestCase):
+    """Tests for the nova-status upgrade check on ironic flavor migration."""
+
+    # We'll setup the database ourselves because we need to use cells fixtures
+    # for multiple cell mappings.
+    USES_DB_SELF = True
+
+    # This will create three cell mappings: cell0, cell1 (default) and cell2
+    NUMBER_OF_CELLS = 2
+
+    def setUp(self):
+        super(TestUpgradeCheckIronicFlavorMigration, self).setUp()
+        self.output = StringIO()
+        self.useFixture(fixtures.MonkeyPatch('sys.stdout', self.output))
+        # We always need the API DB to be setup.
+        self.useFixture(nova_fixtures.Database(database='api'))
+        self.cmd = status.UpgradeCommands()
+
+    @staticmethod
+    def _create_node_in_cell(ctxt, cell, hypervisor_type, nodename):
+        with context.target_cell(ctxt, cell) as cctxt:
+            cn = objects.ComputeNode(
+                context=cctxt,
+                hypervisor_type=hypervisor_type,
+                hypervisor_hostname=nodename,
+                # The rest of these values are fakes.
+                host=uuids.host,
+                vcpus=4,
+                memory_mb=8 * 1024,
+                local_gb=40,
+                vcpus_used=2,
+                memory_mb_used=2 * 1024,
+                local_gb_used=10,
+                hypervisor_version=1,
+                cpu_info='{"arch": "x86_64"}')
+            cn.create()
+            return cn
+
+    @staticmethod
+    def _create_instance_in_cell(ctxt, cell, node, is_deleted=False,
+                                 flavor_migrated=False):
+        with context.target_cell(ctxt, cell) as cctxt:
+            inst = objects.Instance(
+                context=cctxt,
+                host=node.host,
+                node=node.hypervisor_hostname,
+                uuid=uuidutils.generate_uuid())
+            inst.create()
+
+            if is_deleted:
+                inst.destroy()
+            else:
+                # Create an embedded flavor for the instance. We don't create
+                # this because we're in a cell context and flavors are global,
+                # but we don't actually care about global flavors in this
+                # check.
+                extra_specs = {}
+                if flavor_migrated:
+                    extra_specs['resources:CUSTOM_BAREMETAL_GOLD'] = '1'
+                inst.flavor = objects.Flavor(cctxt, extra_specs=extra_specs)
+                inst.old_flavor = None
+                inst.new_flavor = None
+                inst.save()
+
+            return inst
+
+    def test_fresh_install_no_cell_mappings(self):
+        """Tests the scenario where we don't have any cell mappings (no cells
+        v2 setup yet) so we don't know what state we're in and we return a
+        warning.
+        """
+        result = self.cmd._check_ironic_flavor_migration()
+        self.assertEqual(status.UpgradeCheckCode.WARNING, result.code)
+        self.assertIn('Unable to determine ironic flavor migration without '
+                      'cell mappings', result.details)
+
+    def test_fresh_install_no_computes(self):
+        """Tests a fresh install scenario where we have two non-cell0 cells
+        but no compute nodes in either cell yet, so there is nothing to do
+        and we return success.
+        """
+        self._setup_cells()
+        result = self.cmd._check_ironic_flavor_migration()
+        self.assertEqual(status.UpgradeCheckCode.SUCCESS, result.code)
+
+    def test_mixed_computes_deleted_ironic_instance(self):
+        """Tests the scenario where we have a kvm compute node in one cell
+        and an ironic compute node in another cell. The kvm compute node does
+        not have any instances. The ironic compute node has an instance with
+        the same hypervisor_hostname match but the instance is (soft) deleted
+        so it's ignored.
+        """
+        self._setup_cells()
+        ctxt = context.get_admin_context()
+        # Create the ironic compute node in cell1
+        ironic_node = self._create_node_in_cell(
+            ctxt, self.cell_mappings['cell1'], 'ironic', uuids.node_uuid)
+        # Create the kvm compute node in cell2
+        self._create_node_in_cell(
+            ctxt, self.cell_mappings['cell2'], 'kvm', 'fake-kvm-host')
+
+        # Now create an instance in cell1 which is on the ironic node but is
+        # soft deleted (instance.deleted == instance.id).
+        self._create_instance_in_cell(
+            ctxt, self.cell_mappings['cell1'], ironic_node, is_deleted=True)
+
+        result = self.cmd._check_ironic_flavor_migration()
+        self.assertEqual(status.UpgradeCheckCode.SUCCESS, result.code)
+
+    def test_unmigrated_ironic_instances(self):
+        """Tests a scenario where we have two cells with only ironic compute
+        nodes. The first cell has one migrated and one unmigrated instance.
+        The second cell has two unmigrated instances. The result is the check
+        returns failure.
+        """
+        self._setup_cells()
+        ctxt = context.get_admin_context()
+
+        # Create the ironic compute nodes in cell1
+        for x in range(2):
+            cell = self.cell_mappings['cell1']
+            ironic_node = self._create_node_in_cell(
+                ctxt, cell, 'ironic', getattr(uuids, 'cell1-node-%d' % x))
+            # Create an instance for this node. In cell1, we have one
+            # migrated and one unmigrated instance.
+            flavor_migrated = True if x % 2 else False
+            self._create_instance_in_cell(
+                ctxt, cell, ironic_node, flavor_migrated=flavor_migrated)
+
+        # Create the ironic compute nodes in cell2
+        for x in range(2):
+            cell = self.cell_mappings['cell2']
+            ironic_node = self._create_node_in_cell(
+                ctxt, cell, 'ironic', getattr(uuids, 'cell2-node-%d' % x))
+            # Create an instance for this node. In cell2, all instances are
+            # unmigrated.
+            self._create_instance_in_cell(
+                ctxt, cell, ironic_node, flavor_migrated=False)
+
+        result = self.cmd._check_ironic_flavor_migration()
+        self.assertEqual(status.UpgradeCheckCode.FAILURE, result.code)
+        # Check the message - it should point out cell1 has one unmigrated
+        # instance and cell2 has two unmigrated instances.
+        unmigrated_instance_count_by_cell = {
+            self.cell_mappings['cell1'].uuid: 1,
+            self.cell_mappings['cell2'].uuid: 2
+        }
+        self.assertIn(
+            'There are (cell=x) number of unmigrated instances in each '
+            'cell: %s.' % ' '.join('(%s=%s)' % (
+                cell_id, unmigrated_instance_count_by_cell[cell_id])
+                    for cell_id in
+                    sorted(unmigrated_instance_count_by_cell.keys())),
+            result.details)
+
+
+class TestUpgradeCheckAPIServiceVersion(test.NoDBTestCase):
+    """Tests for the nova-status upgrade API service version specific check."""
+
+    # We'll setup the database ourselves because we need to use cells fixtures
+    # for multiple cell mappings.
+    USES_DB_SELF = True
+
+    # This will create three cell mappings: cell0, cell1 (default) and cell2
+    NUMBER_OF_CELLS = 2
+
+    def setUp(self):
+        super(TestUpgradeCheckAPIServiceVersion, self).setUp()
+        self.output = StringIO()
+        self.useFixture(fixtures.MonkeyPatch('sys.stdout', self.output))
+        self.useFixture(nova_fixtures.Database(database='api'))
+        self.cmd = status.UpgradeCommands()
+
+    def test_check_cells_v1_enabled(self):
+        """This is a 'success' case since the API service version check is
+        ignored when running cells v1.
+        """
+        self.flags(enable=True, group='cells')
+        result = self.cmd._check_api_service_version()
+        self.assertEqual(status.UpgradeCheckCode.SUCCESS, result.code)
+
+    def test_check_no_cell_mappings_warning(self):
+        """Warn when there are no cell mappings."""
+        result = self.cmd._check_api_service_version()
+        self.assertEqual(status.UpgradeCheckCode.WARNING, result.code)
+        self.assertEqual('Unable to determine API service versions without '
+                         'cell mappings.', result.details)
+
+    @staticmethod
+    def _create_service(ctxt, host, binary, version):
+        svc = objects.Service(ctxt, host=host, binary=binary)
+        svc.version = version
+        svc.create()
+        return svc
+
+    def test_check_warning(self):
+        """This is a failure scenario where we have the following setup:
+
+        Three cells where:
+
+        1. The first cell has two API services, one with version < 15 and one
+           with version >= 15.
+        2. The second cell has two services, one with version < 15 but it's
+           deleted so it gets filtered out, and one with version >= 15.
+        3. The third cell doesn't have any API services, just old compute
+           services which should be filtered out.
+
+        In this scenario, the first cell should be reported with a warning.
+        """
+        self._setup_cells()
+        ctxt = context.get_admin_context()
+        cell0 = self.cell_mappings['cell0']
+        with context.target_cell(ctxt, cell0) as cctxt:
+            self._create_service(cctxt, host='cell0host1',
+                                 binary='nova-osapi_compute', version=14)
+            self._create_service(cctxt, host='cell0host2',
+                                 binary='nova-osapi_compute', version=15)
+
+        cell1 = self.cell_mappings['cell1']
+        with context.target_cell(ctxt, cell1) as cctxt:
+            svc = self._create_service(
+                cctxt, host='cell1host1', binary='nova-osapi_compute',
+                version=14)
+            # This deleted record with the old version should get filtered out.
+            svc.destroy()
+            self._create_service(cctxt, host='cell1host2',
+                                 binary='nova-osapi_compute', version=16)
+
+        cell2 = self.cell_mappings['cell2']
+        with context.target_cell(ctxt, cell2) as cctxt:
+            self._create_service(cctxt, host='cell2host1',
+                                 binary='nova-compute', version=14)
+
+        result = self.cmd._check_api_service_version()
+        self.assertEqual(status.UpgradeCheckCode.WARNING, result.code)
+        # The only cell in the message should be cell0.
+        self.assertIn(cell0.uuid, result.details)
+        self.assertNotIn(cell1.uuid, result.details)
+        self.assertNotIn(cell2.uuid, result.details)
+
+    def test_check_success(self):
+        """Tests the success scenario where we have cell0 with a current API
+        service, cell1 with no API services, and an empty cell2.
+        """
+        self._setup_cells()
+        ctxt = context.get_admin_context()
+        cell0 = self.cell_mappings['cell0']
+        with context.target_cell(ctxt, cell0) as cctxt:
+            self._create_service(cctxt, host='cell0host1',
+                                 binary='nova-osapi_compute', version=15)
+
+        cell1 = self.cell_mappings['cell1']
+        with context.target_cell(ctxt, cell1) as cctxt:
+            self._create_service(cctxt, host='cell1host1',
+                                 binary='nova-compute', version=15)
+
+        result = self.cmd._check_api_service_version()
+        self.assertEqual(status.UpgradeCheckCode.SUCCESS, result.code)

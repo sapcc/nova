@@ -102,6 +102,11 @@ class NovaException(Exception):
         # which should be our full NovaException message, (see __init__)
         return self.args[0]
 
+    def __repr__(self):
+        dict_repr = self.__dict__
+        dict_repr['class'] = self.__class__.__name__
+        return str(dict_repr)
+
 
 class EncryptionFailure(NovaException):
     msg_fmt = _("Failed to encrypt text: %(reason)s")
@@ -1392,6 +1397,11 @@ class VolumeSmallerThanMinDisk(FlavorDiskTooSmall):
                 "size is %(image_min_disk)i bytes.")
 
 
+class BootFromVolumeRequiredForZeroDiskFlavor(Forbidden):
+    msg_fmt = _("Only volume-backed servers are allowed for flavors with "
+                "zero disk.")
+
+
 class InsufficientFreeMemory(NovaException):
     msg_fmt = _("Insufficient free memory on compute node to start %(uuid)s.")
 
@@ -2112,6 +2122,11 @@ class ConcurrentUpdateDetected(NovaException):
                 "Please retry your update")
 
 
+class ResourceProviderConcurrentUpdateDetected(ConcurrentUpdateDetected):
+    msg_fmt = _("Another thread concurrently updated the resource provider "
+                "data. Please retry your update")
+
+
 class ResourceClassNotFound(NotFound):
     msg_fmt = _("No such resource class %(resource_class)s.")
 
@@ -2299,3 +2314,7 @@ class CannotMigrateWithTargetHost(NovaException):
 
 class CannotMigrateToSameHost(NovaException):
     msg_fmt = _("Cannot migrate to the host where the server exists.")
+
+
+class VirtDriverNotReady(NovaException):
+    msg_fmt = _("Virt driver is not ready.")

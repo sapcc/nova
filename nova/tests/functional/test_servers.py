@@ -73,6 +73,7 @@ class ServersTestBase(integrated_helpers._IntegratedTestBase):
     _min_count_parameter = 'min_count'
 
     def setUp(self):
+        self.computes = {}
         super(ServersTestBase, self).setUp()
         # The network service is called as part of server creates but no
         # networks have been populated in the db, so stub the methods.
@@ -133,6 +134,30 @@ class ServersTest(ServersTestBase):
         for server in servers:
             LOG.debug("server: %s", server)
 
+    def _get_node_build_failures(self):
+        ctxt = context.get_admin_context()
+        computes = objects.ComputeNodeList.get_all(ctxt)
+        return {
+            node.hypervisor_hostname: int(node.stats.get('failed_builds', 0))
+            for node in computes}
+
+    def _run_periodics(self):
+        """Run the update_available_resource task on every compute manager
+
+        This runs periodics on the computes in an undefined order; some child
+        class redefined this function to force a specific order.
+        """
+
+        if self.compute.host not in self.computes:
+            self.computes[self.compute.host] = self.compute
+
+        ctx = context.get_admin_context()
+        for compute in self.computes.values():
+            LOG.info('Running periodic for compute (%s)',
+                compute.manager.host)
+            compute.manager.update_available_resource(ctx)
+        LOG.info('Finished with periodics')
+
     def test_create_server_with_error(self):
         # Create a server which will enter error state.
 
@@ -153,6 +178,59 @@ class ServersTest(ServersTestBase):
 
         self.assertEqual('ERROR', found_server['status'])
         self._delete_server(created_server_id)
+
+        # We should have no (persisted) build failures until we update
+        # resources, after which we should have one
+        self.assertEqual([0], list(self._get_node_build_failures().values()))
+        self._run_periodics()
+        self.assertEqual([1], list(self._get_node_build_failures().values()))
+
+    def _test_create_server_with_error_with_retries(self):
+        # Create a server which will enter error state.
+
+        fake.set_nodes(['host2'])
+        self.addCleanup(fake.restore_nodes)
+        self.flags(host='host2')
+        self.compute2 = self.start_service('compute', host='host2')
+        self.computes['compute2'] = self.compute2
+
+        fails = []
+
+        def throw_error(*args, **kwargs):
+            fails.append('one')
+            raise test.TestingException('Please retry me')
+
+        self.stub_out('nova.virt.fake.FakeDriver.spawn', throw_error)
+
+        server = self._build_minimal_create_server_request()
+        created_server = self.api.post_server({"server": server})
+        created_server_id = created_server['id']
+
+        found_server = self.api.get_server(created_server_id)
+        self.assertEqual(created_server_id, found_server['id'])
+
+        found_server = self._wait_for_state_change(found_server, 'BUILD')
+
+        self.assertEqual('ERROR', found_server['status'])
+        self._delete_server(created_server_id)
+
+        return len(fails)
+
+    def test_create_server_with_error_with_retries(self):
+        self.flags(max_attempts=2, group='scheduler')
+        fails = self._test_create_server_with_error_with_retries()
+        self.assertEqual(2, fails)
+        self._run_periodics()
+        self.assertEqual(
+            [1, 1], list(self._get_node_build_failures().values()))
+
+    def test_create_server_with_error_with_no_retries(self):
+        self.flags(max_attempts=1, group='scheduler')
+        fails = self._test_create_server_with_error_with_retries()
+        self.assertEqual(1, fails)
+        self._run_periodics()
+        self.assertEqual(
+            [0, 1], list(sorted(self._get_node_build_failures().values())))
 
     def test_create_and_delete_server(self):
         # Creates and deletes a server.
@@ -1230,7 +1308,10 @@ class ServerRebuildTestCase(integrated_helpers._IntegratedTestBase,
             '/servers/%s/action' % server['id'], rebuild_req_body)
         self.assertIn('NoValidHost', six.text_type(ex))
 
-    def test_rebuild_with_new_image(self):
+    # A rebuild to the same host should never attempt a rebuild claim.
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.rebuild_claim',
+                new_callable=mock.NonCallableMock)
+    def test_rebuild_with_new_image(self, mock_rebuild_claim):
         """Rebuilds a server with a different image which will run it through
         the scheduler to validate the image is still OK with the compute host
         that the instance is running on.
@@ -1253,6 +1334,15 @@ class ServerRebuildTestCase(integrated_helpers._IntegratedTestBase,
         def _get_allocations_by_server_uuid(server_uuid):
             return self.placement_api.get(
                 '/allocations/%s' % server_uuid).body['allocations']
+
+        def _set_provider_inventory(rp_uuid, resource_class, inventory):
+            # Get the resource provider generation for the inventory update.
+            rp = self.placement_api.get(
+                '/resource_providers/%s' % rp_uuid).body
+            inventory['resource_provider_generation'] = rp['generation']
+            return self.placement_api.put(
+                '/resource_providers/%s/inventories/%s' %
+                (rp_uuid, resource_class), inventory).body
 
         def assertFlavorMatchesAllocation(flavor, allocation):
             self.assertEqual(flavor['vcpus'], allocation['VCPU'])
@@ -1281,6 +1371,9 @@ class ServerRebuildTestCase(integrated_helpers._IntegratedTestBase,
         self._wait_for_state_change(self.api, server, 'ACTIVE')
 
         flavor = self.api.api_get('/flavors/1').body['flavor']
+
+        # make the compute node full and ensure rebuild still succeed
+        _set_provider_inventory(rp_uuid, "VCPU", {"total": 1})
 
         # There should be usage for the server on the compute node now.
         rp_usages = _get_provider_usages(rp_uuid)
@@ -1457,6 +1550,10 @@ class ProviderUsageBaseTestCase(test.TestCase,
         return self.placement_api.put(
             '/resource_providers/%s/traits' % rp_uuid,
             put_traits_req, version='1.6')
+
+    def _get_provider_inventory(self, rp_uuid):
+        return self.placement_api.get(
+            '/resource_providers/%s/inventories' % rp_uuid).body['inventories']
 
     def assertFlavorMatchesAllocation(self, flavor, allocation):
         self.assertEqual(flavor['vcpus'], allocation['VCPU'])

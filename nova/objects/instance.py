@@ -24,6 +24,7 @@ from sqlalchemy import or_
 from sqlalchemy.sql import func
 from sqlalchemy.sql import null
 
+from nova import availability_zones as avail_zone
 from nova.cells import opts as cells_opts
 from nova.cells import rpcapi as cells_rpcapi
 from nova.cells import utils as cells_utils
@@ -317,17 +318,32 @@ class Instance(base.NovaPersistentObject, base.NovaObject,
     def _flavor_from_db(self, db_flavor):
         """Load instance flavor information from instance_extra."""
 
+        # Before we stored flavors in instance_extra, certain fields, defined
+        # in nova.compute.flavors.system_metadata_flavor_props, were stored
+        # in the instance.system_metadata for the embedded instance.flavor.
+        # The "disabled" field wasn't one of those keys, however, so really
+        # old instances that had their embedded flavor converted to the
+        # serialized instance_extra form won't have the disabled attribute
+        # set and we need to default those here so callers don't explode trying
+        # to load instance.flavor.disabled.
+        def _default_disabled(flavor):
+            if 'disabled' not in flavor:
+                flavor.disabled = False
+
         flavor_info = jsonutils.loads(db_flavor)
 
         self.flavor = objects.Flavor.obj_from_primitive(flavor_info['cur'])
+        _default_disabled(self.flavor)
         if flavor_info['old']:
             self.old_flavor = objects.Flavor.obj_from_primitive(
                 flavor_info['old'])
+            _default_disabled(self.old_flavor)
         else:
             self.old_flavor = None
         if flavor_info['new']:
             self.new_flavor = objects.Flavor.obj_from_primitive(
                 flavor_info['new'])
+            _default_disabled(self.new_flavor)
         else:
             self.new_flavor = None
         self.obj_reset_changes(['flavor', 'old_flavor', 'new_flavor'])
@@ -847,11 +863,20 @@ class Instance(base.NovaPersistentObject, base.NovaObject,
         current._context = None
 
         for field in self.fields:
-            if self.obj_attr_is_set(field):
-                if field == 'info_cache':
-                    self.info_cache.refresh()
-                elif self[field] != current[field]:
-                    self[field] = current[field]
+            if field not in self:
+                continue
+            if field not in current:
+                # If the field isn't in current we should not
+                # touch it, triggering a likely-recursive lazy load.
+                # Log it so we can see it happening though, as it
+                # probably isn't expected in most cases.
+                LOG.debug('Field %s is set but not in refreshed '
+                          'instance, skipping', field)
+                continue
+            if field == 'info_cache':
+                self.info_cache.refresh()
+            elif self[field] != current[field]:
+                self[field] = current[field]
         self.obj_reset_changes()
 
     def _load_generic(self, attrname):
@@ -1207,6 +1232,20 @@ def _make_instance_list(context, inst_list, db_inst_list, expected_attrs):
     return inst_list
 
 
+@db_api.pick_context_manager_writer
+def populate_missing_availability_zones(context, count):
+    instances = (context.session.query(models.Instance).
+        filter_by(availability_zone=None).limit(count).all())
+    count_all = len(instances)
+    count_hit = 0
+    for instance in instances:
+        az = avail_zone.get_instance_availability_zone(context, instance)
+        instance.availability_zone = az
+        instance.save(context.session)
+        count_hit += 1
+    return count_all, count_hit
+
+
 @base.NovaObjectRegistry.register
 class InstanceList(base.ObjectListBase, base.NovaObject):
     # Version 2.0: Initial Version
@@ -1235,18 +1274,24 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             db_inst_list = db.instance_get_all_by_filters(
                 context, filters, sort_key, sort_dir, limit=limit,
                 marker=marker, columns_to_join=_expected_cols(expected_attrs))
-        return _make_instance_list(context, cls(), db_inst_list,
-                                   expected_attrs)
+        return db_inst_list
 
     @base.remotable_classmethod
     def get_by_filters(cls, context, filters,
                        sort_key='created_at', sort_dir='desc', limit=None,
                        marker=None, expected_attrs=None, use_slave=False,
                        sort_keys=None, sort_dirs=None):
-        return cls._get_by_filters_impl(
+        db_inst_list = cls._get_by_filters_impl(
             context, filters, sort_key=sort_key, sort_dir=sort_dir,
             limit=limit, marker=marker, expected_attrs=expected_attrs,
             use_slave=use_slave, sort_keys=sort_keys, sort_dirs=sort_dirs)
+        # NOTE(melwitt): _make_instance_list could result in joined objects'
+        # (from expected_attrs) _from_db_object methods being called during
+        # Instance._from_db_object, each of which might choose to perform
+        # database writes. So, we call this outside of _get_by_filters_impl to
+        # avoid being nested inside a 'reader' database transaction context.
+        return _make_instance_list(context, cls(), db_inst_list,
+                                   expected_attrs)
 
     @staticmethod
     @db.select_db_reader_mode

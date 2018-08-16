@@ -73,6 +73,7 @@ from nova.objects import fields as fields_obj
 from nova.objects import keypair as keypair_obj
 from nova.objects import quotas as quotas_obj
 from nova.pci import request as pci_request
+from nova.policies import servers as servers_policies
 import nova.policy
 from nova import profiler
 from nova import rpc
@@ -251,6 +252,13 @@ class API(base.Base):
         self.image_api = image_api or image.API()
         self.network_api = network_api or network.API()
         self.volume_api = volume_api or cinder.API()
+        # NOTE(mriedem): This looks a bit weird but we get the reportclient
+        # via SchedulerClient since it lazy-loads SchedulerReportClient on
+        # the first usage which helps to avoid a bunch of lockutils spam in
+        # the nova-api logs every time the service is restarted (remember
+        # that pretty much all of the REST API controllers construct this
+        # API class).
+        self.placementclient = scheduler_client.SchedulerClient().reportclient
         self.security_group_api = (security_group_api or
             openstack_driver.get_openstack_security_group_driver())
         self.consoleauth_rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
@@ -624,6 +632,15 @@ class API(base.Base):
                 if image_min_disk > dest_size:
                     raise exception.FlavorDiskSmallerThanMinDisk(
                         flavor_size=dest_size, image_min_disk=image_min_disk)
+            else:
+                # The user is attempting to create a server with a 0-disk
+                # image-backed flavor, which can lead to issues with a large
+                # image consuming an unexpectedly large amount of local disk
+                # on the compute host. Check to see if the deployment will
+                # allow that.
+                if not context.can(
+                        servers_policies.ZERO_DISK_FLAVOR, fatal=False):
+                    raise exception.BootFromVolumeRequiredForZeroDiskFlavor()
 
     def _get_image_defined_bdms(self, instance_type, image_meta,
                                 root_device_name):
@@ -1286,6 +1303,11 @@ class API(base.Base):
 
     def _validate_bdm(self, context, instance, instance_type,
                       block_device_mappings, supports_multiattach=False):
+        def _subsequent_list(l):
+            # Each device which is capable of being used as boot device should
+            # be given a unique boot index, starting from 0 in ascending order.
+            return all(el + 1 == l[i + 1] for i, el in enumerate(l[:-1]))
+
         # Make sure that the boot indexes make sense.
         # Setting a negative value or None indicates that the device should not
         # be used for booting.
@@ -1294,9 +1316,7 @@ class API(base.Base):
                                if bdm.boot_index is not None
                                and bdm.boot_index >= 0])
 
-        # Each device which is capable of being used as boot device should
-        # be given a unique boot index, starting from 0 in ascending order.
-        if any(i != v for i, v in enumerate(boot_indexes)):
+        if 0 not in boot_indexes or not _subsequent_list(boot_indexes):
             # Convert the BlockDeviceMappingList to a list for repr details.
             LOG.debug('Invalid block device mapping boot sequence for '
                       'instance: %s', list(block_device_mappings),
@@ -2102,6 +2122,10 @@ class API(base.Base):
 
             # cleanup volumes
             self._local_cleanup_bdm_volumes(bdms, instance, context)
+            # Cleanup allocations in Placement since we can't do it from the
+            # compute service.
+            self.placementclient.delete_allocation_for_instance(
+                context, instance.uuid)
             cb(context, instance, bdms, local=True)
             instance.destroy()
 
@@ -2189,7 +2213,8 @@ class API(base.Base):
             instance.save(expected_task_state=[None])
 
     @check_instance_lock
-    @check_instance_state(must_have_launched=False)
+    @check_instance_state(task_state=None,
+                          must_have_launched=False)
     def force_delete(self, context, instance):
         """Force delete an instance in any vm_state/task_state."""
         self._delete(context, instance, 'force_delete', self._do_force_delete,
@@ -2268,6 +2293,22 @@ class API(base.Base):
         # merged replica instead of the cell directly, so fall through
         # here in that case as well.
         if service_version < 15 or CONF.cells.enable:
+            # If not using cells v1, we need to log a warning about the API
+            # service version being less than 15 (that check was added in
+            # newton), which indicates there is some lingering data during the
+            # transition to cells v2 which could cause an InstanceNotFound
+            # here. The warning message is a sort of breadcrumb.
+            # This can all go away once we drop cells v1 and assert that all
+            # deployments have upgraded from a base cells v2 setup with
+            # mappings.
+            if not CONF.cells.enable:
+                LOG.warning('The nova-osapi_compute service version is from '
+                            'before Ocata and may cause problems looking up '
+                            'instances in a cells v2 setup. Check your '
+                            'nova-api service configuration and cell '
+                            'mappings. You may need to remove stale '
+                            'nova-osapi_compute service records from the cell '
+                            'database.')
             return objects.Instance.get_by_uuid(context, instance_uuid,
                                                 expected_attrs=expected_attrs)
         inst_map = self._get_instance_map_or_none(context, instance_uuid)
@@ -2392,8 +2433,12 @@ class API(base.Base):
         # IP address filtering cannot be applied at the DB layer, remove any DB
         # limit so that it can be applied after the IP filter.
         filter_ip = 'ip6' in filters or 'ip' in filters
+        skip_build_request = False
         orig_limit = limit
         if filter_ip:
+            # We cannot skip build requests if there is a marker since the
+            # the marker could be a build request.
+            skip_build_request = marker is None
             if self.network_api.has_substr_port_filtering_extension(context):
                 # We're going to filter by IP using Neutron so set filter_ip
                 # to False so we don't attempt post-DB query filtering in
@@ -2424,21 +2469,27 @@ class API(base.Base):
                 LOG.debug('Removing limit for DB query due to IP filter')
                 limit = None
 
-        # The ordering of instances will be
-        # [sorted instances with no host] + [sorted instances with host].
-        # This means BuildRequest and cell0 instances first, then cell
-        # instances
-        try:
-            build_requests = objects.BuildRequestList.get_by_filters(
-                context, filters, limit=limit, marker=marker,
-                sort_keys=sort_keys, sort_dirs=sort_dirs)
-            # If we found the marker in we need to set it to None
-            # so we don't expect to find it in the cells below.
-            marker = None
-        except exception.MarkerNotFound:
-            # If we didn't find the marker in the build requests then keep
-            # looking for it in the cells.
+        # Skip get BuildRequest if filtering by IP address, as building
+        # instances will not have IP addresses.
+        if skip_build_request:
             build_requests = objects.BuildRequestList()
+        else:
+            # The ordering of instances will be
+            # [sorted instances with no host] + [sorted instances with host].
+            # This means BuildRequest and cell0 instances first, then cell
+            # instances
+            try:
+                build_requests = objects.BuildRequestList.get_by_filters(
+                    context, filters, limit=limit, marker=marker,
+                    sort_keys=sort_keys, sort_dirs=sort_dirs)
+                # If we found the marker in we need to set it to None
+                # so we don't expect to find it in the cells below.
+                marker = None
+            except exception.MarkerNotFound:
+                # If we didn't find the marker in the build requests then keep
+                # looking for it in the cells.
+                build_requests = objects.BuildRequestList()
+
         build_req_instances = objects.InstanceList(
             objects=[build_req.instance for build_req in build_requests])
         # Only subtract from limit if it is not None
@@ -2855,9 +2906,45 @@ class API(base.Base):
         if instance.root_device_name:
             properties['root_device_name'] = instance.root_device_name
 
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+                context, instance.uuid)
+
+        mapping = []  # list of BDM dicts that can go into the image properties
+        # Do some up-front filtering of the list of BDMs from
+        # which we are going to create snapshots.
+        volume_bdms = []
+        for bdm in bdms:
+            if bdm.no_device:
+                continue
+            if bdm.is_volume:
+                # These will be handled below.
+                volume_bdms.append(bdm)
+            else:
+                mapping.append(bdm.get_image_mapping())
+
+        # Check limits in Cinder before creating snapshots to avoid going over
+        # quota in the middle of a list of volumes. This is a best-effort check
+        # but concurrently running snapshot requests from the same project
+        # could still fail to create volume snapshots if they go over limit.
+        if volume_bdms:
+            limits = self.volume_api.get_absolute_limits(context)
+            total_snapshots_used = limits['totalSnapshotsUsed']
+            max_snapshots = limits['maxTotalSnapshots']
+            # -1 means there is unlimited quota for snapshots
+            if (max_snapshots > -1 and
+                    len(volume_bdms) + total_snapshots_used > max_snapshots):
+                LOG.debug('Unable to create volume snapshots for instance. '
+                          'Currently has %s snapshots, requesting %s new '
+                          'snapshots, with a limit of %s.',
+                          total_snapshots_used, len(volume_bdms),
+                          max_snapshots, instance=instance)
+                raise exception.OverQuota(overs='snapshots')
+
         quiesced = False
         if instance.vm_state == vm_states.ACTIVE:
             try:
+                LOG.info("Attempting to quiesce instance before volume "
+                         "snapshot.", instance=instance)
                 self.compute_rpcapi.quiesce_instance(context, instance)
                 quiesced = True
             except (exception.InstanceQuiesceNotSupported,
@@ -2870,18 +2957,21 @@ class API(base.Base):
                     LOG.info('Skipping quiescing instance: %(reason)s.',
                              {'reason': err},
                              instance=instance)
-
-        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
-                context, instance.uuid)
+            # NOTE(tasker): discovered that an uncaught exception could occur
+            #               after the instance has been frozen. catch and thaw.
+            except Exception as ex:
+                with excutils.save_and_reraise_exception():
+                    LOG.error("An error occurred during quiesce of instance. "
+                              "Unquiescing to ensure instance is thawed. "
+                              "Error: %s", six.text_type(ex),
+                              instance=instance)
+                    self.compute_rpcapi.unquiesce_instance(context, instance,
+                                                           mapping=None)
 
         @wrap_instance_event(prefix='api')
         def snapshot_instance(self, context, instance, bdms):
-            mapping = []
-            for bdm in bdms:
-                if bdm.no_device:
-                    continue
-
-                if bdm.is_volume:
+            try:
+                for bdm in volume_bdms:
                     # create snapshot based on volume_id
                     volume = self.volume_api.get(context, bdm.volume_id)
                     # NOTE(yamahata): Should we wait for snapshot creation?
@@ -2889,20 +2979,28 @@ class API(base.Base):
                     #                 short time, it doesn't matter for now.
                     name = _('snapshot for %s') % image_meta['name']
                     LOG.debug('Creating snapshot from volume %s.',
-                              volume['id'],
-                              instance=instance)
+                              volume['id'], instance=instance)
                     snapshot = self.volume_api.create_snapshot_force(
-                        context, volume['id'], name,
-                        volume['display_description'])
+                        context, volume['id'],
+                        name, volume['display_description'])
                     mapping_dict = block_device.snapshot_from_bdm(
-                        snapshot['id'],
-                        bdm)
+                        snapshot['id'], bdm)
                     mapping_dict = mapping_dict.get_image_mapping()
-                else:
-                    mapping_dict = bdm.get_image_mapping()
-
-                mapping.append(mapping_dict)
-            return mapping
+                    mapping.append(mapping_dict)
+                return mapping
+            # NOTE(tasker): No error handling is done in the above for loop.
+            # This means that if the snapshot fails and throws an exception
+            # the traceback will skip right over the unquiesce needed below.
+            # Here, catch any exception, unquiesce the instance, and raise the
+            # error so that the calling function can do what it needs to in
+            # order to properly treat a failed snap.
+            except Exception:
+                with excutils.save_and_reraise_exception():
+                    if quiesced:
+                        LOG.info("Unquiescing instance after volume snapshot "
+                                 "failure.", instance=instance)
+                        self.compute_rpcapi.unquiesce_instance(
+                            context, instance, mapping)
 
         self._record_action_start(context, instance,
                                   instance_actions.CREATE_IMAGE)
@@ -4162,6 +4260,11 @@ class API(base.Base):
         LOG.debug("Going to try to live migrate instance to %s",
                   host_name or "another host", instance=instance)
 
+        if host_name:
+            # Validate the specified host before changing the instance task
+            # state.
+            nodes = objects.ComputeNodeList.get_all_by_host(context, host_name)
+
         instance.task_state = task_states.MIGRATING
         instance.save(expected_task_state=[None])
 
@@ -4181,7 +4284,6 @@ class API(base.Base):
 
         # NOTE(sbauza): Force is a boolean by the new related API version
         if force is False and host_name:
-            nodes = objects.ComputeNodeList.get_all_by_host(context, host_name)
             # Unset the host to make sure we call the scheduler
             # from the conductor LiveMigrationTask. Yes this is tightly-coupled
             # to behavior in conductor and not great.
@@ -4726,13 +4828,13 @@ class HostAPI(base.Base):
         # and we should always iterate over the cells. However, certain
         # callers need the legacy behavior for now.
         if all_cells:
-            load_cells()
             services = []
-            for cell in CELLS:
-                with nova_context.target_cell(context, cell) as cctxt:
-                    cell_services = objects.ServiceList.get_all(
-                        cctxt, disabled, set_zones=set_zones)
-                services.extend(cell_services)
+            service_dict = nova_context.scatter_gather_all_cells(context,
+                objects.ServiceList.get_all, disabled, set_zones=set_zones)
+            for service in service_dict.values():
+                if service not in (nova_context.did_not_respond_sentinel,
+                                   nova_context.raised_exception_sentinel):
+                    services.extend(service)
         else:
             services = objects.ServiceList.get_all(context, disabled,
                                                    set_zones=set_zones)

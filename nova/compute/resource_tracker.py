@@ -26,7 +26,7 @@ from oslo_serialization import jsonutils
 
 from nova.compute import claims
 from nova.compute import monitors
-from nova.compute import stats
+from nova.compute import stats as compute_stats
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_states
@@ -136,7 +136,8 @@ class ResourceTracker(object):
         self.pci_tracker = None
         # Dict of objects.ComputeNode objects, keyed by nodename
         self.compute_nodes = {}
-        self.stats = stats.Stats()
+        # Dict of Stats objects, keyed by nodename
+        self.stats = collections.defaultdict(compute_stats.Stats)
         self.tracked_instances = {}
         self.tracked_migrations = {}
         monitor_handler = monitors.MonitorHandler(self)
@@ -603,10 +604,18 @@ class ResourceTracker(object):
 
     def _copy_resources(self, compute_node, resources):
         """Copy resource values to supplied compute_node."""
+        nodename = resources['hypervisor_hostname']
+        stats = self.stats[nodename]
         # purge old stats and init with anything passed in by the driver
-        self.stats.clear()
-        self.stats.digest_stats(resources.get('stats'))
-        compute_node.stats = copy.deepcopy(self.stats)
+        # NOTE(danms): Preserve 'failed_builds' across the stats clearing,
+        # as that is not part of resources
+        # TODO(danms): Stop doing this when we get a column to store this
+        # directly
+        prev_failed_builds = stats.get('failed_builds', 0)
+        stats.clear()
+        stats['failed_builds'] = prev_failed_builds
+        stats.digest_stats(resources.get('stats'))
+        compute_node.stats = stats
 
         # update the allocation ratios for the related ComputeNode object
         compute_node.ram_allocation_ratio = self.ram_allocation_ratio
@@ -894,7 +903,7 @@ class ResourceTracker(object):
             # that the resource provider exists in the tree and has had its
             # cached traits refreshed.
             self.reportclient.set_traits_for_provider(
-                compute_node.uuid, traits)
+                context, compute_node.uuid, traits)
 
         if self.pci_tracker:
             self.pci_tracker.save(context)
@@ -919,7 +928,8 @@ class ResourceTracker(object):
         cn.free_ram_mb = cn.memory_mb - cn.memory_mb_used
         cn.free_disk_gb = cn.local_gb - cn.local_gb_used
 
-        cn.running_vms = self.stats.num_instances
+        stats = self.stats[nodename]
+        cn.running_vms = stats.num_instances
 
         # Calculate the numa usage
         free = sign == -1
@@ -1097,8 +1107,9 @@ class ResourceTracker(object):
             sign = -1
 
         cn = self.compute_nodes[nodename]
-        self.stats.update_stats_for_instance(instance, is_removed_instance)
-        cn.stats = copy.deepcopy(self.stats)
+        stats = self.stats[nodename]
+        stats.update_stats_for_instance(instance, is_removed_instance)
+        cn.stats = stats
 
         # if it's a new or deleted instance:
         if is_new_instance or is_removed_instance:
@@ -1114,7 +1125,7 @@ class ResourceTracker(object):
             self._update_usage(self._get_usage_dict(instance), nodename,
                                sign=sign)
 
-        cn.current_workload = self.stats.calculate_workload()
+        cn.current_workload = stats.calculate_workload()
         if self.pci_tracker:
             obj = self.pci_tracker.stats.to_device_pools_obj()
             cn.pci_device_pools = obj
@@ -1232,7 +1243,7 @@ class ResourceTracker(object):
         # always creates allocations for an instance
         known_instances = set(self.tracked_instances.keys())
         allocations = self.reportclient.get_allocations_for_resource_provider(
-                cn.uuid) or {}
+                context, cn.uuid) or {}
         read_deleted_context = context.elevated(read_deleted='yes')
         for consumer_uuid, alloc in allocations.items():
             if consumer_uuid in known_instances:
@@ -1309,34 +1320,38 @@ class ResourceTracker(object):
                 # that contains this source compute host information anyway and
                 # recreate an allocation that only refers to itself. So we
                 # don't need to do anything in that case. Just log the
-                # situation here for debugging information but don't attempt to
-                # delete or change the allocation.
-                LOG.debug("Instance %s has been moved to another host %s(%s). "
-                          "There are allocations remaining against the source "
-                          "host that might need to be removed: %s.",
-                          instance_uuid, instance.host, instance.node, alloc)
+                # situation here for information but don't attempt to delete or
+                # change the allocation.
+                LOG.warning("Instance %s has been moved to another host "
+                            "%s(%s). There are allocations remaining against "
+                            "the source host that might need to be removed: "
+                            "%s.",
+                            instance_uuid, instance.host, instance.node, alloc)
 
-    def delete_allocation_for_evacuated_instance(self, instance, node,
+    def delete_allocation_for_evacuated_instance(self, context, instance, node,
                                                  node_type='source'):
         self._delete_allocation_for_moved_instance(
-            instance, node, 'evacuated', node_type)
+            context, instance, node, 'evacuated', node_type)
 
-    def delete_allocation_for_migrated_instance(self, instance, node):
-        self._delete_allocation_for_moved_instance(instance, node, 'migrated')
+    def delete_allocation_for_migrated_instance(self, context, instance, node):
+        self._delete_allocation_for_moved_instance(context, instance, node,
+                                                   'migrated')
 
     def _delete_allocation_for_moved_instance(
-            self, instance, node, move_type, node_type='source'):
+            self, context, instance, node, move_type, node_type='source'):
         # Clean up the instance allocation from this node in placement
         cn_uuid = self.compute_nodes[node].uuid
         if not scheduler_utils.remove_allocation_from_compute(
-                instance, cn_uuid, self.reportclient):
+                context, instance, cn_uuid, self.reportclient):
             LOG.error("Failed to clean allocation of %s "
                       "instance on the %s node %s",
                       move_type, node_type, cn_uuid, instance=instance)
 
-    def delete_allocation_for_failed_resize(self, instance, node, flavor):
+    def delete_allocation_for_failed_resize(self, context, instance, node,
+                                            flavor):
         """Delete instance allocations for the node during a failed resize
 
+        :param context: The request context.
         :param instance: The instance being resized/migrated.
         :param node: The node provider on which the instance should have
             allocations to remove. If this is a resize to the same host, then
@@ -1345,7 +1360,7 @@ class ResourceTracker(object):
         """
         cn = self.compute_nodes[node]
         if not scheduler_utils.remove_allocation_from_compute(
-                instance, cn.uuid, self.reportclient, flavor):
+                context, instance, cn.uuid, self.reportclient, flavor):
             if instance.instance_type_id == flavor.id:
                 operation = 'migration'
             else:
@@ -1445,3 +1460,11 @@ class ResourceTracker(object):
             if key in updates:
                 usage[key] = updates[key]
         return usage
+
+    def build_failed(self, nodename):
+        """Increments the failed_builds stats for the given node."""
+        self.stats[nodename].build_failed()
+
+    def build_succeeded(self, nodename):
+        """Resets the failed_builds stats for the given node."""
+        self.stats[nodename].build_succeeded()

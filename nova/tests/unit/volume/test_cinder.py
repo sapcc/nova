@@ -15,6 +15,7 @@
 
 from cinderclient import api_versions as cinder_api_versions
 from cinderclient import exceptions as cinder_exception
+from cinderclient.v2 import limits as cinder_limits
 from keystoneauth1 import loading as ks_loading
 from keystoneclient import exceptions as keystone_exception
 import mock
@@ -753,6 +754,36 @@ class CinderApiTestCase(test.NoDBTestCase):
                           self.api.update, self.ctx, '', '')
 
     @mock.patch('nova.volume.cinder.cinderclient')
+    def test_get_absolute_limits_forbidden(self, cinderclient):
+        """Tests to make sure we gracefully handle a Forbidden error raised
+        from python-cinderclient when getting limits.
+        """
+        cinderclient.return_value.limits.get.side_effect = (
+            cinder_exception.Forbidden(403))
+        self.assertRaises(
+            exception.Forbidden, self.api.get_absolute_limits, self.ctx)
+
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_get_absolute_limits(self, cinderclient):
+        """Tests the happy path of getting the absolute limits."""
+        expected_limits = {
+            "totalSnapshotsUsed": 0,
+            "maxTotalBackups": 10,
+            "maxTotalVolumeGigabytes": 1000,
+            "maxTotalSnapshots": 10,
+            "maxTotalBackupGigabytes": 1000,
+            "totalBackupGigabytesUsed": 0,
+            "maxTotalVolumes": 10,
+            "totalVolumesUsed": 0,
+            "totalBackupsUsed": 0,
+            "totalGigabytesUsed": 0
+        }
+        limits_obj = cinder_limits.Limits(None, {'absolute': expected_limits})
+        cinderclient.return_value.limits.get.return_value = limits_obj
+        actual_limits = self.api.get_absolute_limits(self.ctx)
+        self.assertDictEqual(expected_limits, actual_limits)
+
+    @mock.patch('nova.volume.cinder.cinderclient')
     def test_get_snapshot(self, mock_cinderclient):
         snapshot_id = 'snapshot_id'
         mock_volume_snapshots = mock.MagicMock()
@@ -976,13 +1007,14 @@ class CinderClientTestCase(test.NoDBTestCase):
         get_volume_api.assert_called_once_with(
             self.mock_session.get_endpoint.return_value)
 
+    @mock.patch('nova.volume.cinder._get_highest_client_server_version',
+                # Fake the case that cinder is really old.
+                return_value=cinder_api_versions.APIVersion('2.0'))
     @mock.patch('cinderclient.client.get_volume_api_from_url',
                 return_value='3')
-    @mock.patch('cinderclient.client.get_highest_client_server_version',
-                return_value=2.0)   # Fake the case that cinder is really old.
     def test_create_v3_client_with_microversion_too_new(self,
-                                                        get_highest_version,
-                                                        get_volume_api):
+                                                        get_volume_api,
+                                                        get_highest_version):
         """Tests that creating a v3 client and requesting a microversion that
         is either too new for the server (or client) to support raises an
         exception.
@@ -992,10 +1024,11 @@ class CinderClientTestCase(test.NoDBTestCase):
         get_volume_api.assert_called_once_with(
             self.mock_session.get_endpoint.return_value)
         get_highest_version.assert_called_once_with(
-            self.mock_session.get_endpoint.return_value)
+            self.ctxt, self.mock_session.get_endpoint.return_value)
 
-    @mock.patch('cinderclient.client.get_highest_client_server_version',
-                return_value=cinder_api_versions.MAX_VERSION)
+    @mock.patch('nova.volume.cinder._get_highest_client_server_version',
+                return_value=cinder_api_versions.APIVersion(
+                    cinder_api_versions.MAX_VERSION))
     @mock.patch('cinderclient.client.get_volume_api_from_url',
                 return_value='3')
     def test_create_v3_client_with_microversion_available(self,
@@ -1011,9 +1044,9 @@ class CinderClientTestCase(test.NoDBTestCase):
         get_volume_api.assert_called_once_with(
             self.mock_session.get_endpoint.return_value)
         get_highest_version.assert_called_once_with(
-            self.mock_session.get_endpoint.return_value)
+            self.ctxt, self.mock_session.get_endpoint.return_value)
 
-    @mock.patch('cinderclient.client.get_highest_client_server_version',
+    @mock.patch('nova.volume.cinder._get_highest_client_server_version',
                 new_callable=mock.NonCallableMock)  # asserts not called
     @mock.patch('cinderclient.client.get_volume_api_from_url',
                 return_value='3')
