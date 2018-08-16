@@ -382,3 +382,42 @@ class PowerVMLiveMigrateData(LiveMigrateData):
         for field in self.fields:
             if field in legacy:
                 setattr(self, field, legacy[field])
+
+@obj_base.NovaObjectRegistry.register
+class VMwareLiveMigrateData(LiveMigrateData):
+    VERSION = '1.2'
+
+    fields = {
+        'cluster_name': fields.StringField(nullable=True),
+        'datastore_regex': fields.StringField(nullable=True),
+        'host_ip': fields.StringField(nullable=True),
+        'instance_uuid': fields.StringField(nullable=True),
+        'host_username': fields.StringField(nullable=True),
+        'host_password': fields.StringField(nullable=True),
+        'thumbprint': fields.StringField(nullable=True),
+        'target_bridge_name': fields.StringField(nullable=False)
+    }
+
+    def obj_make_compatible(self, primitive, target_version):
+        super(VMwareLiveMigrateData, self).obj_make_compatible(
+            primitive, target_version)
+        target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 2):
+            if 'old_vol_attachment_ids' in primitive:
+                del primitive['old_vol_attachment_ids']
+        if target_version < (1, 1):
+            if 'vea_vlan_mappings' in primitive:
+                del primitive['vea_vlan_mappings']
+
+    def to_legacy_dict(self, pre_migration_result=False):
+        legacy = super(VMwareLiveMigrateData, self).to_legacy_dict()
+        for field in self.fields:
+            if self.obj_attr_is_set(field):
+                legacy[field] = getattr(self, field)
+        return legacy
+
+    def from_legacy_dict(self, legacy):
+        super(PowerVMLiveMigrateData, self).from_legacy_dict(legacy)
+        for field in self.VMwareLiveMigrateData:
+            if field in legacy:
+                setattr(self, field, legacy[field])

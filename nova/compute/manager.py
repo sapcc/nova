@@ -65,6 +65,7 @@ from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute.utils import wrap_instance_event
 from nova.compute import vm_states
+from nova.virt.vmwareapi import vm_util
 from nova import conductor
 import nova.conf
 from nova.console import rpcapi as console_rpcapi
@@ -5874,6 +5875,17 @@ class ComputeManager(manager.Manager):
                                                             block_migration,
                                                             disk_over_commit)
 
+    def get_migrate_server_data(self, context, instance, migrate_data):
+        LOG.debug("SERVER DATA ====================================>")
+        data = self.driver.get_server_data(context, instance, migrate_data)
+        return data
+
+    @wrap_exception()
+    @wrap_instance_event
+    @wrap_instance_fault
+    def neutron_bind_port(self, context, instance, host):
+        self.driver.neutron_bind_port(context, instance, host)
+
     def _do_check_can_live_migrate_destination(self, ctxt, instance,
                                                block_migration,
                                                disk_over_commit):
@@ -5925,7 +5937,7 @@ class ComputeManager(manager.Manager):
     @wrap_instance_event(prefix='compute')
     @wrap_instance_fault
     def pre_live_migration(self, context, instance, block_migration, disk,
-                           migrate_data):
+                           migrate_data, vm_networks):
         """Preparations for live migration at dest host.
 
         :param context: security context
@@ -6001,6 +6013,8 @@ class ComputeManager(manager.Manager):
                                        network_info,
                                        disk,
                                        migrate_data)
+        LOG.debug("DATAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: %s" % vm_networks[0])
+        migrate_data.target_bridge_name = vm_networks[0]
         LOG.debug('driver pre_live_migration data is %s', migrate_data)
 
         # Volume connections are complete, tell cinder that all the
@@ -6087,6 +6101,8 @@ class ComputeManager(manager.Manager):
         # and use the status field to denote when the accounting has been
         # done on source/destination. For now, this is just here for status
         # reporting
+        server_data = self.compute_rpcapi.get_source_server_data(context, instance, dest, migrate_data)
+        LOG.debug("SERVER DATA: %s", server_data)
         self._set_migration_status(migration, 'preparing')
 
         events = self._get_neutron_events_for_live_migration(instance)
@@ -6108,9 +6124,10 @@ class ComputeManager(manager.Manager):
             with self.virtapi.wait_for_instance_event(
                     instance, events, deadline=deadline,
                     error_callback=error_cb):
+                vm_networks = self.driver.get_instance_network(instance)
                 migrate_data = self.compute_rpcapi.pre_live_migration(
                     context, instance,
-                    block_migration, disk, dest, migrate_data)
+                    block_migration, disk, dest, migrate_data, vm_networks)
         except exception.VirtualInterfacePlugException:
             with excutils.save_and_reraise_exception():
                 LOG.exception('Failed waiting for network virtual interfaces '
@@ -6141,7 +6158,9 @@ class ComputeManager(manager.Manager):
             self.driver.live_migration(context, instance, dest,
                                        self._post_live_migration,
                                        self._rollback_live_migration,
-                                       block_migration, migrate_data)
+                                       block_migration, migrate_data, server_data)
+
+            self.compute_rpcapi.neutron_bind_port(context, instance, dest)
         except Exception:
             LOG.exception('Live migration failed.', instance=instance)
             with excutils.save_and_reraise_exception():
