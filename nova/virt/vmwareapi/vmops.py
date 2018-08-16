@@ -1881,7 +1881,6 @@ class VMwareVMOps(object):
         ds = server_data['datastore']
         ds_ref = vutil.get_moref(ds, "Datastore")
 
-        LOG.debug("DS BEFORE RELOCATE: %s", ds)
         if ds is None:
             LOG.error("Cannot find datastore", instance=instance)
             raise exception.HostNotFound(host=dest)

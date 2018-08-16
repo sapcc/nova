@@ -395,7 +395,7 @@ class VMwareLiveMigrateData(LiveMigrateData):
         'host_username': fields.StringField(nullable=True),
         'host_password': fields.StringField(nullable=True),
         'thumbprint': fields.StringField(nullable=True),
-        'target_bridge_name': fields.StringField(nullable=False)
+        'target_bridge_name': fields.ListOfStringsField(nullable=False)
     }
 
     def obj_make_compatible(self, primitive, target_version):

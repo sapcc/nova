@@ -556,8 +556,12 @@ class ComputeAPI(object):
 
     def neutron_bind_port(self, ctxt, instance, host):
         version = '4.8'
-        cctxt = self.router.client(ctxt).prepare(server=_compute_host(host, instance), version=version)
-        cctxt.call(ctxt, 'neutron_bind_port', instance=instance, host=host)
+        cctxt = self.router.client(ctxt).prepare(server=_compute_host(None, instance), version=version)
+
+        LOG.debug("INSTANCE: =======================================> %s" % instance)
+        LOG.debug("INSTANCE: =======================================> %s" % dict(instance))
+        cctxt.call(ctxt, 'neutron_bind_port', instance=instance, host=instance.host)
+
 
     def check_instance_shared_storage(self, ctxt, instance, data, host=None):
         version = self._ver(ctxt, '4.0')
@@ -792,6 +796,7 @@ class ComputeAPI(object):
         version = self._ver(ctxt, '4.0')
         cctxt = self.router.client(ctxt).prepare(
                 server=host, version=version)
+        LOG.debug("POST LIVE MIGRATION 8 ==============================================>")
         return cctxt.call(ctxt, 'post_live_migration_at_destination',
             instance=instance, block_migration=block_migration)
 

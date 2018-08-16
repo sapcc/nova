@@ -342,6 +342,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         pass
 
     def neutron_bind_port(self, context, instance, host):
+        LOG.debug("POST LIVE 10 ===========================================================>")
+
         self.network_api.migrate_instance_finish(context, instance, host)
 
     def live_migration(self, context, instance, dest,

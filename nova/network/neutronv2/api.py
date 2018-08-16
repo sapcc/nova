@@ -2191,6 +2191,9 @@ class API(base_api.NetworkAPI):
 
     def migrate_instance_finish(self, context, instance, migration):
         """Finish migrating the network of an instance."""
+        LOG.debug("POST LIVE 7 ===========================================================>")
+        migration = {'source_compute': instance.host,
+                     'dest_compute': "some-hostname", }
         self._update_port_binding_for_instance(context, instance,
                                                migration['dest_compute'],
                                                migration=migration)
