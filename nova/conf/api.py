@@ -272,7 +272,15 @@ allow_instance_snapshots_opts = [
 Operators can turn off the ability for a user to take snapshots of their
 instances by setting this option to False. When disabled, any attempt to
 take a snapshot will result in a HTTP 400 response ("Bad Request").
-""")
+"""),
+    cfg.BoolOpt("list_records_by_skipping_down_cells",
+        default=True,
+        help="""
+When set to False, this will cause the API to return a 500 error if there is an
+infrastructure failure like non-responsive cells. If you want the API to skip
+the down cells and return the results from the up cells set this option to
+True.
+"""),
 ]
 
 # NOTE(edleafe): I would like to import the value directly from
