@@ -2255,6 +2255,7 @@ class VMwareVMOps(object):
     def update_cached_instances(self):
         vim = self._session.vim
         options = None
+        ctxt = nova_context.get_admin_context()
         if self._property_collector is None:
             self._property_collector = vim.service_content.propertyCollector
             vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
@@ -2266,6 +2267,8 @@ class VMwareVMOps(object):
                 for update in update_set.filterSet[0].objectSet:
                     if update.obj['_type'] == "VirtualMachine":
                         if update.kind == "leave":
+                            LOG.debug("UPDATE OBJ: =============================> %s" % update.obj)
+
                             LOG.info("Removing instance from cache...")
                             cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(update.obj.value, {}).get(
                                 'config.instanceUuid')
@@ -2274,6 +2277,8 @@ class VMwareVMOps(object):
                         else:
                             if update.kind == "enter":
                                 for change in update.changeSet:
+                                    LOG.debug("CHANGE1: =============================> %s" % change)
+
                                     if change['op'] == 'assign':
                                         if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
@@ -2284,9 +2289,28 @@ class VMwareVMOps(object):
 
                             elif update.kind == "modify":
                                 if update.changeSet[0].name == "config.instanceUuid":
+                                    instance = vm_util._get_vm_ref_from_vm_uuid(self._session, update.changeSet[0].val)
                                     for change in update.changeSet:
+                                        LOG.debug("CHANGE2: =============================> %s" % change)
                                         if change['op'] == 'assign':
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
+                                        if change['name'] == 'runtime.host':
+                                            update_dict = None
+                                            LOG.debug("AVAILABLE HOSTS ====================> %s" % self._nodes_cache)
+                                            for h in self._nodes_cache:
+                                                LOG.debug("HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH : %s " % h)
+                                                if h == change['val']:
+                                                    update_dict['host'] = h
+                                            try:
+                                                ctxt = nova_context.get_admin_context()
+                                                instance = self.compute_api.update_instance(ctxt, instance,
+                                                                                            update_dict)
+                                                LOG.debug("INSTANCE HOST UPDATED ================================================>")
+                                                """return self._view_builder.show(req, instance,
+                                                                               extend_address=False)"""
+                                            except exception.InstanceNotFound as exc:
+                                                msg = _("Instance could not be found")
+                                                raise exc.HTTPNotFound(explanation=msg)
                                     if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
                                         vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
                                 else:
@@ -2324,7 +2348,7 @@ class VMwareVMOps(object):
         property_spec_vm = vutil.build_property_spec(
             vim.client.factory,
             "VirtualMachine",
-            ["config.instanceUuid", "config.managedBy", "runtime.powerState"])
+            ["config.instanceUuid", "config.managedBy", "runtime.powerState", "runtime.host"])
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
             [property_spec, property_spec_vm],
