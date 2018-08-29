@@ -23,6 +23,7 @@ import copy
 import functools
 
 from oslo_log import log as logging
+from nova.virt import driver
 from oslo_utils import excutils
 from oslo_utils import units
 from oslo_vmware import exceptions as vexc
@@ -1195,7 +1196,7 @@ def get_vm_state(session, instance):
     return constants.POWER_STATES[vm_state]
 
 
-def get_stats_from_cluster(session, cluster):
+def get_stats_from_cluster(session, cluster, single_compute_node=None):
     """Get the aggregate resource stats of a cluster."""
     vcpus = 0
     max_vcpus_per_host = 0
@@ -1207,6 +1208,7 @@ def get_stats_from_cluster(session, cluster):
                                      "get_object_properties_dict",
                                      cluster,
                                      ["host", "resourcePool"])
+    stats = {}
     if prop_dict:
         host_ret = prop_dict.get('host')
         if host_ret:
@@ -1215,12 +1217,18 @@ def get_stats_from_cluster(session, cluster):
                          "get_properties_for_a_collection_of_objects",
                          "HostSystem", host_mors,
                          ["summary.hardware", "summary.runtime",
-                          "summary.quickStats"])
+                          "summary.quickStats", "name"])
+
             for obj in result.objects:
                 host_props = propset_dict(obj.propSet)
                 hardware_summary = host_props['summary.hardware']
                 runtime_summary = host_props['summary.runtime']
                 stats_summary = host_props['summary.quickStats']
+
+                if not CONF.vmware.multi_compute_nodes_support and single_compute_node != None:
+                    name = single_compute_node
+                else:
+                    name = host_props['name']
                 if (runtime_summary.inMaintenanceMode is False and
                     runtime_summary.connectionState == "connected"):
                     # Total vcpus is the sum of all pCPUs of individual hosts
@@ -1232,11 +1240,22 @@ def get_stats_from_cluster(session, cluster):
                     mem_mb = hardware_summary.memorySize // units.Mi
                     total_mem_mb += mem_mb
                     max_mem_mb_per_host = max(max_mem_mb_per_host, mem_mb)
-    stats = {'cpu': {'vcpus': vcpus,
-                     'max_vcpus_per_host': max_vcpus_per_host},
-             'mem': {'total': total_mem_mb,
-                     'free': total_mem_mb - used_mem_mb,
-                     'max_mem_mb_per_host': max_mem_mb_per_host}}
+
+                    stats[name] = {'cpu': {'vcpus': vcpus,
+                                     'max_vcpus_per_host': max_vcpus_per_host},
+                             'mem': {'total': total_mem_mb,
+                                     'free': total_mem_mb - used_mem_mb,
+                                     'max_mem_mb_per_host': max_mem_mb_per_host}}
+                else:
+                    vcpus = 0
+                    total_mem_mb = 0
+                    max_mem_mb_per_host = 0
+                    max_vcpus_per_host = 0
+                    stats[name] = {'cpu': {'vcpus': vcpus,
+                                     'max_vcpus_per_host': max_vcpus_per_host},
+                             'mem': {'total': total_mem_mb,
+                                     'free': total_mem_mb - used_mem_mb,
+                                     'max_mem_mb_per_host': max_mem_mb_per_host}}
     return stats
 
 def _get_server_group(context, instance):
@@ -1370,13 +1389,16 @@ def get_vmdk_adapter_type(adapter_type):
     return vmdk_adapter_type
 
 
-def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
+def create_vm(session, instance, vm_folder, config_spec, res_pool_ref, nodes=None):
     """Create VM on ESX host."""
-    LOG.debug("Creating VM on the ESX host", instance=instance)
+
+    if CONF.vmware.multi_compute_nodes_support:
+        nodes = nodes[instance.node]
+
     vm_create_task = session._call_method(
         session.vim,
         "CreateVM_Task", vm_folder,
-        config=config_spec, pool=res_pool_ref)
+        config=config_spec, pool=res_pool_ref, host=nodes)
     try:
         task_info = session._wait_for_task(vm_create_task)
     except vexc.VMwareDriverException:

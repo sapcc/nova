@@ -87,6 +87,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
+        self._nodename = []
 
         if (CONF.vmware.host_ip is None or
             CONF.vmware.host_username is None or
@@ -120,7 +121,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                        "found in vCenter")
                                      % self._cluster_name)
         self._vcenter_uuid = self._get_vcenter_uuid()
-        self._nodename = self._create_nodename(self._cluster_ref.value)
+
         self._volumeops = volumeops.VMwareVolumeOps(self._session,
                                                     self._cluster_ref)
         self._vmops = vmops.VMwareVMOps(self._session,
@@ -128,16 +129,60 @@ class VMwareVCDriver(driver.ComputeDriver):
                                         self._volumeops,
                                         self._cluster_ref,
                                         datastore_regex=self._datastore_regex)
+        if not CONF.vmware.multi_compute_nodes_support:
+            self._nodename.append(self._create_nodename(self._cluster_ref.value))
+        else:
+            pc_result = self.get_available_esx_hosts()
+            with vim_util.WithRetrieval(vim, pc_result) as pc_objects:
+                for objContent in pc_objects:
+                    props_in = {prop.name: prop.val for prop in objContent.propSet}
+                    nodename = props_in.get("name", [])
+                    self._vmops.add_esx_to_cache(nodename, objContent.obj)
+                    self._nodename.append(nodename)
+
         self._vc_state = host.VCState(self._session,
                                       self._nodename,
                                       self._cluster_ref,
                                       self._datastore_regex)
+
         host_stats = self._vc_state.get_host_stats()
         self.capabilities['resource_scheduling'] = host_stats.get(
             'resource_scheduling')
 
         # Register the OpenStack extension
         self._register_openstack_extension()
+
+    def get_available_esx_hosts(self):
+        max_objects = 100
+        vim = self._session.vim
+        property_collector = vim.service_content.propertyCollector
+
+        traversal_spec = vim_util.build_traversal_spec(
+            vim.client.factory,
+            "c_to_h",
+            "ComputeResource",
+            "host",
+            False,
+            [])
+
+        object_spec = vim_util.build_object_spec(
+            vim.client.factory,
+            self._cluster_ref,
+            [traversal_spec])
+        property_spec = vim_util.build_property_spec(
+            vim.client.factory,
+            "HostSystem",
+            ["name", "runtime.powerState"])
+
+        property_filter_spec = vim_util.build_property_filter_spec(
+            vim.client.factory,
+            [property_spec],
+            [object_spec])
+        options = vim.client.factory.create('ns0:RetrieveOptions')
+        options.maxObjects = max_objects
+
+        pc_result = vim.RetrievePropertiesEx(property_collector, specSet=[property_filter_spec], options=options)
+        return pc_result
 
     def _check_min_version(self):
         min_version = v_utils.convert_version_to_int(constants.MIN_VC_VERSION)
@@ -311,23 +356,23 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         return '%s.%s' % (mo_id, self._vcenter_uuid)
 
-    def _get_available_resources(self, host_stats):
-        return {'vcpus': host_stats['vcpus'],
-               'memory_mb': host_stats['host_memory_total'],
-               'local_gb': host_stats['disk_total'],
+    def _get_available_resources(self, host_stats, nodename):
+        return {'vcpus': host_stats[nodename]['vcpus'],
+               'memory_mb': host_stats[nodename]['host_memory_total'],
+               'local_gb': host_stats[nodename]['disk_total'],
                'vcpus_used': 0,
-               'memory_mb_used': host_stats['host_memory_total'] -
-                                 host_stats['host_memory_free'],
-               'local_gb_used': host_stats['disk_used'],
-               'hypervisor_type': host_stats['hypervisor_type'],
-               'hypervisor_version': host_stats['hypervisor_version'],
-               'hypervisor_hostname': host_stats['hypervisor_hostname'],
+               'memory_mb_used': host_stats[nodename]['host_memory_total'] -
+                                 host_stats[nodename]['host_memory_free'],
+               'local_gb_used': host_stats[nodename]['disk_used'],
+               'hypervisor_type': host_stats[nodename]['hypervisor_type'],
+               'hypervisor_version': host_stats[nodename]['hypervisor_version'],
+               'hypervisor_hostname': host_stats[nodename]['hypervisor_hostname'],
                 # The VMWare driver manages multiple hosts, so there are
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
                 # model of the "host"
-               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
-               'supported_instances': host_stats['supported_instances'],
+               'cpu_info': jsonutils.dumps(host_stats[nodename]["cpu_model"]),
+               'supported_instances': host_stats[nodename]['supported_instances'],
                'numa_topology': None,
                }
 
@@ -341,7 +386,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         """
         host_stats = self._vc_state.get_host_stats(refresh=True)
-        stats_dict = self._get_available_resources(host_stats)
+        stats_dict = self._get_available_resources(host_stats, nodename)
         return stats_dict
 
     def get_cluster_metrics(self):
@@ -403,14 +448,18 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         This driver supports only one compute node.
         """
-        return [self._nodename]
+        return self._nodename
 
     def get_inventory(self, nodename):
         """Return a dict, keyed by resource class, of inventory information for
         the supplied node.
         """
+        single_compute_node_name = None
+        if not CONF.vmware.multi_compute_nodes_support:
+            single_compute_node_name = self._nodename[0]
+
         stats = vm_util.get_stats_from_cluster(self._session,
-                                               self._cluster_ref)
+                                               self._cluster_ref, single_compute_node=single_compute_node_name)
         datastores = ds_util.get_available_datastores(self._session,
                                                       self._cluster_ref,
                                                       self._datastore_regex)
@@ -420,17 +469,17 @@ class VMwareVCDriver(driver.ComputeDriver):
             CONF.reserved_host_disk_mb)
         result = {
             obj_fields.ResourceClass.VCPU: {
-                'total': stats['cpu']['vcpus'],
+                'total': stats[nodename]['cpu']['vcpus'],
                 'reserved': CONF.reserved_host_cpus,
                 'min_unit': 1,
-                'max_unit': stats['cpu']['max_vcpus_per_host'],
+                'max_unit': stats[nodename]['cpu']['max_vcpus_per_host'],
                 'step_size': 1,
             },
             obj_fields.ResourceClass.MEMORY_MB: {
-                'total': stats['mem']['total'],
+                'total': stats[nodename]['mem']['total'],
                 'reserved': CONF.reserved_host_memory_mb,
                 'min_unit': 1,
-                'max_unit': stats['mem']['max_mem_mb_per_host'],
+                'max_unit': stats[nodename]['mem']['max_mem_mb_per_host'],
                 'step_size': 1,
             },
             obj_fields.ResourceClass.DISK_GB: {

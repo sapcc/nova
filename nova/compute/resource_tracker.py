@@ -551,7 +551,6 @@ class ResourceTracker(object):
         :param resources: initial values
         """
         nodename = resources['hypervisor_hostname']
-
         # if there is already a compute node just use resources
         # to initialize
         if nodename in self.compute_nodes:
@@ -698,7 +697,6 @@ class ResourceTracker(object):
 
     @utils.synchronized(COMPUTE_RESOURCE_SEMAPHORE)
     def _update_available_resource(self, context, resources):
-
         # initialize the compute node object, creating it
         # if it does not already exist.
         self._init_compute_node(context, resources)

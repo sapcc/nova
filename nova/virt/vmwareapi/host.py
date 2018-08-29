@@ -34,6 +34,8 @@ from oslo_log import log as logging
 from oslo_vmware import vim_util as vutil
 from nova.virt.vmwareapi import cluster_util
 
+import collections
+
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
@@ -75,47 +77,53 @@ class VCState(object):
 
     def update_status(self):
         """Update the current state of the cluster."""
-        data = {}
-        try:
-            capacity, freespace = _get_ds_capacity_and_freespace(self._session,
-                self._cluster, self._datastore_regex)
 
-            # Get cpu, memory stats from the cluster
-            stats = vm_util.get_stats_from_cluster(self._session,
-                                                   self._cluster)
-            about_info = self._session._call_method(vim_util, "get_about_info")
-        except (vexc.VimConnectionException, vexc.VimAttributeException) as ex:
-            # VimAttributeException is thrown when vpxd service is down
-            LOG.warning("Failed to connect with %(node)s. "
-                        "Error: %(error)s",
-                        {'node': self._host_name, 'error': ex})
-            self._set_host_enabled(False)
-            return data
+        stats_data = collections.defaultdict(dict)
+        for host_name in self._host_name:
+            data = {}
+            try:
+                capacity, freespace = _get_ds_capacity_and_freespace(self._session,
+                    self._cluster, self._datastore_regex)
 
-        data["vcpus"] = stats['cpu']['vcpus']
-        data["disk_total"] = capacity / units.Gi
-        data["disk_available"] = freespace / units.Gi
-        data["disk_used"] = data["disk_total"] - data["disk_available"]
-        data["host_memory_total"] = stats['mem']['total']
-        data["host_memory_free"] = stats['mem']['free']
-        data["hypervisor_type"] = about_info.name
-        data["hypervisor_version"] = versionutils.convert_version_to_int(
-                str(about_info.version))
-        data["hypervisor_hostname"] = self._host_name
-        data["supported_instances"] = [
-            (obj_fields.Architecture.I686,
-             obj_fields.HVType.VMWARE,
-             obj_fields.VMMode.HVM),
-            (obj_fields.Architecture.X86_64,
-             obj_fields.HVType.VMWARE,
-             obj_fields.VMMode.HVM)]
-        data["cpu_model"] = self.to_cpu_model()
-        data["resource_scheduling"] = cluster_util._is_drs_enabled(self._session, self._cluster)
+                # Get cpu, memory stats from the cluster
+                stats = vm_util.get_stats_from_cluster(self._session,
+                                                       self._cluster, single_compute_node=host_name)
+                about_info = self._session._call_method(vim_util, "get_about_info")
+            except (vexc.VimConnectionException, vexc.VimAttributeException) as ex:
+                # VimAttributeException is thrown when vpxd service is down
+                LOG.warning("Failed to connect with %(node)s. "
+                            "Error: %(error)s",
+                            {'node': self._host_name, 'error': ex})
+                self._set_host_enabled(False)
+                return data
 
-        self._stats = data
+            data["vcpus"] = stats[host_name]['cpu']['vcpus']
+            data["disk_total"] = capacity / units.Gi
+            data["disk_available"] = freespace / units.Gi
+            data["disk_used"] = data["disk_total"] - data["disk_available"]
+            data["host_memory_total"] = stats[host_name]['mem']['total']
+            data["host_memory_free"] = stats[host_name]['mem']['free']
+            data["hypervisor_type"] = about_info.name
+            data["hypervisor_version"] = versionutils.convert_version_to_int(
+                    str(about_info.version))
+
+            data["hypervisor_hostname"] = host_name
+            data["supported_instances"] = [
+                (obj_fields.Architecture.I686,
+                 obj_fields.HVType.VMWARE,
+                 obj_fields.VMMode.HVM),
+                (obj_fields.Architecture.X86_64,
+                 obj_fields.HVType.VMWARE,
+                 obj_fields.VMMode.HVM)]
+            data["cpu_model"] = self.to_cpu_model()
+            data["resource_scheduling"] = cluster_util._is_drs_enabled(self._session, self._cluster)
+
+            stats_data[host_name] = data
+
+        self._stats = stats_data
         if self._auto_service_disabled:
             self._set_host_enabled(True)
-        return data
+        return self._stats
 
     def _set_host_enabled(self, enabled):
         """Sets the compute host's ability to accept new instances."""
