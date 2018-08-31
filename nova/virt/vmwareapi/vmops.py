@@ -47,7 +47,7 @@ import nova.conf
 from nova.console import type as ctype
 from nova import context as nova_context
 from nova import exception
-from nova.i18n import _
+from nova.i18n import _, _LI
 from nova import network
 from nova import objects
 from nova.objects import fields
