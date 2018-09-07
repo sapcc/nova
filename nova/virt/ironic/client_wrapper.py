@@ -1,3 +1,5 @@
+# coding=utf-8
+#
 # Copyright 2014 Hewlett-Packard Development Company, L.P.
 # All Rights Reserved.
 #
@@ -29,7 +31,7 @@ CONF = cfg.CONF
 ironic = None
 
 # The API version required by the Ironic driver
-IRONIC_API_VERSION = (1, 34)
+IRONIC_API_VERSION = (1, 20)
 
 
 class IronicClientWrapper(object):
