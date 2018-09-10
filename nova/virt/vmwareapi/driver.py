@@ -508,6 +508,27 @@ class VMwareVCDriver(driver.ComputeDriver):
     def get_mks_console(self, context, instance):
         return self._vmops.get_mks_console(instance)
 
+    def get_console_output(self, context, instance):
+        """ Getting the console output from the instance
+        the logs are fetched through REST request
+        """
+        username = CONF.vmware.vspc_username
+        password = CONF.vmware.vspc_password
+        proxy_uri = urlparse.urlparse(CONF.vmware.serial_port_proxy_uri)
+        host = proxy_uri.netloc
+        port = proxy_uri.port
+        url = host + ":" + port + "/console_log/" + instance.uuid
+
+        LOG.info('Sending [GET] request to %s', url)
+
+        response = requests.get(url, auth=HTTPBasicAuth(username, password))
+        LOG.debug('Response from get console output: %s', response)
+        if not response.status_code == 200:
+            LOG.error('Error while processing console output. Status code: %s',
+                      response.status_code)
+
+        return response.content
+
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
 
@@ -808,27 +829,6 @@ class VMwareVCDriver(driver.ComputeDriver):
     def detach_interface(self, instance, vif):
         """Detach an interface from the instance."""
         self._vmops.detach_interface(instance, vif)
-
-    def get_console_output(self, context, instance):
-
-        """ Getting the console output from the instance
-        the logs are fetched through REST request
-        """
-        username = CONF.vmware.vspc_username
-        password = CONF.vmware.vspc_password
-        proxy_uri = urlparse.urlparse(CONF.vmware.serial_port_proxy_uri)
-        host = proxy_uri.netloc
-        port = proxy_uri.port
-        url = host + ":" + port + "/console_log/" + instance.uuid
-
-        LOG.info('Sending [GET] request to %s', url)
-
-        response = requests.get(url, auth=HTTPBasicAuth(username, password))
-        LOG.debug('Response from get console output: %s', response)
-        if not response.status_code == 200:
-            LOG.error('Error while processing console output. Status code: %s', response.status_code)
-
-        return response.content
 
     def get_instance_network(self, instance):
         networks = []
