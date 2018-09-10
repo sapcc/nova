@@ -347,9 +347,7 @@ class VMwareVMOps(object):
                                                  profile_spec=profile_spec,
                                                  metadata=metadata)
 
-        folder = self._get_project_folder(dc_info,
-                                          project_id=instance.project_id,
-                                          type_='Instances')
+        folder = self._get_project_folder(dc_info, project_id=instance.project_id, type_='Instances')
 
         # Create the VM
         vm_ref = vm_util.create_vm(self._session, instance, folder,
@@ -596,6 +594,7 @@ class VMwareVMOps(object):
         self._move_to_cache(vi.dc_info.ref,
                             tmp_image_ds_loc.parent,
                             vi.cache_image_folder)
+
 
     def _get_vm_config_info(self, instance, image_info,
                             extra_specs):

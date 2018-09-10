@@ -116,7 +116,6 @@ def _check_ovs_supported_version(session):
 
 
 def _get_neutron_network(session, cluster, vif):
-    LOG.debug("Started fetching neutron network")
     if vif['type'] == model.VIF_TYPE_OVS:
         _check_ovs_supported_version(session)
         # Check if this is the NSX-MH plugin is used
@@ -160,8 +159,6 @@ def _get_neutron_network(session, cluster, vif):
     else:
         reason = _('vif type %s not supported') % vif['type']
         raise exception.InvalidInput(reason=reason)
-
-    LOG.debug("Finished fetching neutron network")
     return network_ref
 
 
@@ -188,7 +185,6 @@ def get_vif_dict(session, cluster, vif_model, is_neutron, vif):
 
 
 def get_vif_info(session, cluster, is_neutron, vif_model, network_info):
-    LOG.debug("Fetching vif_infos")
     vif_infos = []
     if network_info is None:
         return vif_infos
