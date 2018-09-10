@@ -121,8 +121,8 @@ class ExtraSpecs(object):
         self.hw_version = hw_version
         self.storage_policy = storage_policy
         self.cores_per_socket = cores_per_socket
-        self.firmware = firmware
         self.hv_enabled = hv_enabled
+        self.firmware = firmware
         self.hw_video_ram = hw_video_ram
 
 
