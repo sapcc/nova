@@ -298,22 +298,13 @@ class IronicDriver(virt_driver.ComputeDriver):
         memory_mb_used = 0
         local_gb_used = 0
 
-        if self._node_resources_used(node):
-            # Node is in the process of deploying, is deployed, or is in
-            # the process of cleaning up from a deploy. Report all of its
-            # resources as in use.
+        if (self._node_resources_used(node)
+                or self._node_resources_unavailable(node)):
+            # Node is deployed, or is in a state when deployment can not start.
+            # Report all of its resources as in use.
             vcpus_used = vcpus
             memory_mb_used = memory_mb
             local_gb_used = local_gb
-        # Always checking allows us to catch the case where Nova thinks there
-        # are available resources on the Node, but Ironic does not (because it
-        # is not in a usable state): https://launchpad.net/bugs/1503453
-        elif self._node_resources_unavailable(node):
-            # The node's current state is such that it should not present any
-            # of its resources to Nova
-            vcpus = 0
-            memory_mb = 0
-            local_gb = 0
 
         dic = {
             'hypervisor_hostname': str(node.uuid),
@@ -782,24 +773,6 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         base_metadata['links'].extend(additional_links)
         return base_metadata
-
-    def macs_for_instance(self, instance):
-        """List the MAC addresses of an instance.
-
-        List of MAC addresses for the node which this instance is
-        associated with.
-
-        :param instance: the instance object.
-        :return: None, or a set of MAC ids (e.g. set(['12:34:56:78:90:ab'])).
-            None means 'no constraints', a set means 'these and only these
-            MAC addresses'.
-        """
-        try:
-            node = self._get_node(instance.node)
-        except ironic.exc.NotFound:
-            return None
-        ports = self.ironicclient.call("node.list_ports", node.uuid)
-        return set([p.address for p in ports])
 
     def _generate_configdrive(self, context, instance, node, network_info,
                               extra_md=None, files=None):
@@ -1283,9 +1256,6 @@ class IronicDriver(virt_driver.ComputeDriver):
         LOG.debug("plug: instance_uuid=%(uuid)s vif=%(network_info)s",
                   {'uuid': instance.uuid,
                    'network_info': network_info_str})
-        # start by ensuring the ports are clear
-        self._unplug_vifs(node, instance, network_info)
-
         for vif in network_info:
             port_id = six.text_type(vif['id'])
             self._plug_vif(node, port_id)
