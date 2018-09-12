@@ -1897,7 +1897,6 @@ class ComputeManager(manager.Manager):
                      injected_files=None, requested_networks=None,
                      security_groups=None, block_device_mapping=None,
                      node=None, limits=None):
-        LOG.debug("Build and run instance .....")
 
         @utils.synchronized(instance.uuid)
         def _locked_do_build_and_run_instance(context, *args, **kwargs):
@@ -1905,7 +1904,6 @@ class ComputeManager(manager.Manager):
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
-            LOG.debug("locked_do_build_and_run_instance .....")
             context.update_store()
             
             with self._per_project_build_semaphore.get(instance.project_id):
