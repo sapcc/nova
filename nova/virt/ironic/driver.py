@@ -444,10 +444,11 @@ class IronicDriver(virt_driver.ComputeDriver):
                              'reason': e},
                             instance=instance)
 
-    def _cleanup_deploy(self, node, instance, network_info):
+    def _cleanup_deploy(self, node, instance, network_info=None):
         self._cleanup_volume_target_info(instance)
         self._unplug_vifs(node, instance, network_info)
         self._stop_firewall(instance, network_info)
+        self._remove_instance_info_from_node(node, instance)
 
     def _wait_for_active(self, instance):
         """Wait for the node to be marked as ACTIVE in Ironic."""
@@ -550,7 +551,8 @@ class IronicDriver(virt_driver.ComputeDriver):
         """
         # NOTE(lucasagomes): limit == 0 is an indicator to continue
         # pagination until there're no more values to be returned.
-        node_list = self._get_node_list(associated=True, limit=0)
+        node_list = self._get_node_list(associated=True,
+                                        fields=['instance_uuid'], limit=0)
         context = nova_context.get_admin_context()
         return [objects.Instance.get_by_uuid(context,
                                              i.instance_uuid).name
@@ -560,12 +562,14 @@ class IronicDriver(virt_driver.ComputeDriver):
         """Return the UUIDs of all the instances provisioned.
 
         :returns: a list of instance UUIDs.
+        :raises: VirtDriverNotReady
 
         """
         # NOTE(lucasagomes): limit == 0 is an indicator to continue
         # pagination until there're no more values to be returned.
-        return list(n.instance_uuid
-                    for n in self._get_node_list(associated=True, limit=0))
+        node_list = self._get_node_list(associated=True,
+                                        fields=['instance_uuid'], limit=0)
+        return list(n.instance_uuid for n in node_list)
 
     def node_is_available(self, nodename):
         """Confirms a Nova hypervisor node exists in the Ironic inventory.
@@ -897,7 +901,6 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         # prepare for the deploy
         try:
-            self._plug_vifs(node, instance, network_info)
             self._start_firewall(instance, network_info)
         except Exception:
             with excutils.save_and_reraise_exception():
@@ -1037,15 +1040,17 @@ class IronicDriver(virt_driver.ComputeDriver):
             #             without raising any exceptions.
             return
 
-        if node.provision_state in _UNPROVISION_STATES:
-            self._unprovision(instance, node)
-        else:
-            # NOTE(hshiina): if spawn() fails before ironic starts
-            #                provisioning, instance information should be
-            #                removed from ironic node.
-            self._remove_instance_info_from_node(node, instance)
+        try:
+            if node.provision_state in _UNPROVISION_STATES:
+                self._unprovision(instance, node)
+            else:
+                # NOTE(hshiina): if spawn() fails before ironic starts
+                #                provisioning, instance information should be
+                #                removed from ironic node.
+                self._remove_instance_info_from_node(node, instance)
+        finally:
+            self._cleanup_deploy(node, instance, network_info)
 
-        self._cleanup_deploy(node, instance, network_info)
         LOG.info('Successfully unprovisioned Ironic node %s',
                  node.uuid, instance=instance)
 
@@ -1234,6 +1239,42 @@ class IronicDriver(virt_driver.ComputeDriver):
         """
         self.firewall_driver.unfilter_instance(instance, network_info)
 
+    def _plug_vif(self, node, port_id):
+        last_attempt = 5
+        for attempt in range(0, last_attempt + 1):
+            try:
+                self.ironicclient.call("node.vif_attach", node.uuid,
+                                       port_id, retry_on_conflict=False)
+            except ironic.exc.BadRequest as e:
+                # NOTE(danms): If we race with ironic startup, there
+                # will be no ironic-conductor running, which will
+                # give us a failure to do this plug operation. So,
+                # be graceful in that case and wait/retry.
+                # NOTE(mdbooth): This will be fixed in ironic by
+                # change I2c21baae. This will ensure ironic returns a 503 here,
+                # which will cause ironicclient to automatically retry for us.
+                # We can remove this workaround once we are confident that we
+                # are only running against ironic containing this fix.
+                if ('No conductor' in six.text_type(e) and
+                        attempt < last_attempt):
+                    LOG.warning('No ironic conductor is running; '
+                                'waiting...')
+                    time.sleep(10)
+                    continue
+
+                msg = (_("Cannot attach VIF %(vif)s to the node %(node)s "
+                         "due to error: %(err)s") % {
+                             'vif': port_id,
+                             'node': node.uuid, 'err': e})
+                LOG.error(msg)
+                raise exception.VirtualInterfacePlugException(msg)
+            except ironic.exc.Conflict:
+                # NOTE (vsaienko) Return since the VIF is already attached.
+                return
+
+            # Success, so don't retry
+            return
+
     def _plug_vifs(self, node, instance, network_info):
         # NOTE(PhilDay): Accessing network_info will block if the thread
         # it wraps hasn't finished, so do this ahead of time so that we
@@ -1245,29 +1286,9 @@ class IronicDriver(virt_driver.ComputeDriver):
         # start by ensuring the ports are clear
         self._unplug_vifs(node, instance, network_info)
 
-        ports = self.ironicclient.call("node.list_ports", node.uuid)
-
-        if len(network_info) > len(ports):
-            raise exception.VirtualInterfacePlugException(_(
-                "Ironic node: %(id)s virtual to physical interface count"
-                "  missmatch"
-                " (Vif count: %(vif_count)d, Pif count: %(pif_count)d)")
-                % {'id': node.uuid,
-                   'vif_count': len(network_info),
-                   'pif_count': len(ports)})
-
-        if len(network_info) > 0:
-            # not needed if no vif are defined
-            for vif in network_info:
-                for pif in ports:
-                    if vif['address'] == pif.address:
-                        # attach what neutron needs directly to the port
-                        port_id = six.text_type(vif['id'])
-                        patch = [{'op': 'add',
-                                  'path': '/extra/vif_port_id',
-                                  'value': port_id}]
-                        self.ironicclient.call("port.update", pif.uuid, patch)
-                        break
+        for vif in network_info:
+            port_id = six.text_type(vif['id'])
+            self._plug_vif(node, port_id)
 
     def _unplug_vifs(self, node, instance, network_info):
         # NOTE(PhilDay): Accessing network_info will block if the thread
@@ -1277,19 +1298,16 @@ class IronicDriver(virt_driver.ComputeDriver):
         LOG.debug("unplug: instance_uuid=%(uuid)s vif=%(network_info)s",
                   {'uuid': instance.uuid,
                    'network_info': network_info_str})
-        if network_info and len(network_info) > 0:
-            ports = self.ironicclient.call("node.list_ports", node.uuid,
-                                      detail=True)
-
-            # not needed if no vif are defined
-            for pif in ports:
-                if 'vif_port_id' in pif.extra:
-                    # we can not attach a dict directly
-                    patch = [{'op': 'remove', 'path': '/extra/vif_port_id'}]
-                    try:
-                        self.ironicclient.call("port.update", pif.uuid, patch)
-                    except ironic.exc.BadRequest:
-                        pass
+        if not network_info:
+            return
+        for vif in network_info:
+            port_id = six.text_type(vif['id'])
+            try:
+                self.ironicclient.call("node.vif_detach", node.uuid,
+                                       port_id)
+            except ironic.exc.BadRequest:
+                LOG.debug("VIF %(vif)s isn't attached to Ironic node %(node)s",
+                          {'vif': port_id, 'node': node.uuid})
 
     def plug_vifs(self, instance, network_info):
         """Plug VIFs into networks.
