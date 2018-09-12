@@ -874,6 +874,7 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         # prepare for the deploy
         try:
+            self._plug_vifs(node, instance, network_info)
             self._start_firewall(instance, network_info)
         except Exception:
             with excutils.save_and_reraise_exception():
