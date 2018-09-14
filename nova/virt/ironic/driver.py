@@ -1544,7 +1544,8 @@ class IronicDriver(virt_driver.ComputeDriver):
                         {'type': console_info["type"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
         # Parse and check the console url
         url = urlparse.urlparse(console_info["url"])
@@ -1560,7 +1561,8 @@ class IronicDriver(virt_driver.ComputeDriver):
                       {'url': console_info["url"],
                        'node': node.uuid},
                       instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
         if scheme == "tcp":
             return console_type.ConsoleSerial(host=hostname,
@@ -1580,7 +1582,8 @@ class IronicDriver(virt_driver.ComputeDriver):
                         {'url': console_info["url"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type=console_info["type"])
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
     @property
     def need_legacy_block_device_info(self):
@@ -1748,7 +1751,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         except (exception.NovaException,  # Retry failed
                 ironic.exc.InternalServerError,  # Validations
                 ironic.exc.BadRequest) as e:  # Maintenance
-            LOG.error(_LE('Failed to acquire console information for '
+            LOG.error(_('Failed to acquire console information for '
                             'instance %(inst)s: %(reason)s'),
                         {'inst': instance.uuid,
                         'reason': e})
@@ -1760,8 +1763,8 @@ class IronicDriver(virt_driver.ComputeDriver):
         console_info = console['console_info']
 
         if console_info["type"] != "vnc":
-            LOG.warning(_LW('Console type "%(type)s" (of ironic node '
-                            '%(node)s) does not support Nova vnc console'),
+            LOG.warning(_('Console type "%(type)s" (of ironic node '
+                          '%(node)s) does not support Nova vnc console'),
                         {'type': console_info["type"],
                          'node': node.uuid},
                         instance=instance)
@@ -1775,7 +1778,7 @@ class IronicDriver(virt_driver.ComputeDriver):
             if not (hostname and port):
                 raise AssertionError()
         except (ValueError, AssertionError):
-            LOG.error(_LE('Invalid VNC console URL "%(url)s" '
+            LOG.error(_('Invalid VNC console URL "%(url)s" '
                           '(ironic node %(node)s)'),
                       {'url': console_info["url"],
                        'node': node.uuid},
