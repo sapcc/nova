@@ -12,41 +12,34 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import sys
+
 from os import path
 from subprocess import check_output
-from argparse import ArgumentParser
 
 import nova.conf
 from nova.console import shellinaboxproxy
-from nova.conf import serial_console as serial
+from nova.conf import shellinabox
+from nova import config
 
 CONF = nova.conf.CONF
-serial.register_cli_opts(CONF)
+shellinabox.register_cli_opts(CONF)
 
 
 def main():
     """
     Parses cli arguments and starts mitmproxy with token validation.
     """
-    parser = ArgumentParser(description=('Nova Shellinabox Console Proxy '
-                                         'for Ironic Servers.'))
 
-    parser.add_argument('proxytarget', type=str,
-                        help=('Hostname or IP of the proxy target. '
-                              'Without protocol.'))
+    if shellinaboxproxy.__file__.endswith('c'):
+        script = shellinaboxproxy.__file__[:-1]
+    else:
+        script = shellinaboxproxy.__file__
 
-    parser.add_argument('--listenip', type=str,
-                        default=CONF.serial_console.shellinaboxproxy_host,
-                        help='IP of the interface to listen on.')
-
-    parser.add_argument('--listenport', type=str,
-                        default=CONF.serial_console.shellinaboxproxy_port,
-                        help='Port to listen on.')
-    cli_args = parser.parse_args()
-
+    config.parse_args(sys.argv)
     # Run mitmproxy with shellinaboxproxy.py as an inline script
     check_output("mitmdump -R %s --port %s --bind-address %s --script %s" % (
-                 cli_args.proxytarget,
-                 cli_args.listenport,
-                 cli_args.listenip,
-                 path.abspath(shellinaboxproxy.__file__)), shell=True)
+                 CONF.shellinabox.proxyclient_url,
+                 CONF.shellinabox.port,
+                 CONF.shellinabox.host,
+                 path.abspath(script)), shell=True)
