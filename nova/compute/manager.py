@@ -278,6 +278,7 @@ CONF.import_opt('mksproxy_base_url', 'nova.mks', group='mks')
 CONF.import_opt('destroy_after_evacuate', 'nova.utils', group='workarounds')
 CONF.import_opt('scheduler_tracks_instance_changes',
                 'nova.scheduler.host_manager')
+CONF.import_opt('base_url', 'nova.conf.shellinabox', group='shellinabox')
 
 LOG = logging.getLogger(__name__)
 
