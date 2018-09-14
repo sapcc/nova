@@ -4729,7 +4729,7 @@ class ComputeManager(manager.Manager):
             elif console_type == 'shellinabox':
                 # token and internal url for shellinabox
                 access_url = '%s%s?token=%s' % (
-                    CONF.serial_console.shellinabox_base_url,
+                    CONF.shellinabox.base_url,
                     console.internal_access_path,
                     token)
             else:
