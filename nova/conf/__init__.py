@@ -63,6 +63,7 @@ from nova.conf import pci
 from nova.conf import scheduler
 # from nova.conf import security
 from nova.conf import serial_console
+from nova.conf import shellinabox
 # from nova.conf import spice
 # from nova.conf import ssl
 # from nova.conf import trusted_computing
@@ -123,6 +124,7 @@ pci.register_opts(CONF)
 scheduler.register_opts(CONF)
 # security.register_opts(CONF)
 serial_console.register_opts(CONF)
+shellinabox.register_opts(CONF)
 # spice.register_opts(CONF)
 # ssl.register_opts(CONF)
 # trusted_computing.register_opts(CONF)
