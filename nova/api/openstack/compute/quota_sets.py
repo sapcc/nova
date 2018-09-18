@@ -53,7 +53,8 @@ class QuotaSetsController(wsgi.Controller):
             result = dict(id=str(project_id))
         else:
             result = {}
-
+.
+        QUOTAS.initialize()
         for resource in QUOTAS.resources:
             if (resource not in filtered_quotas and
                     resource in quota_set):
@@ -77,6 +78,7 @@ class QuotaSetsController(wsgi.Controller):
             raise webob.exc.HTTPBadRequest(explanation=msg)
 
     def _get_quotas(self, context, id, user_id=None, usages=False):
+        QUOTAS.initialize()
         if user_id:
             values = QUOTAS.get_user_quotas(context, id, user_id,
                                             usages=usages)
@@ -181,6 +183,7 @@ class QuotaSetsController(wsgi.Controller):
 
     @validation.query_schema(quota_sets.query_schema)
     def _update(self, req, id, body, filtered_quotas):
+        QUOTAS.initialize()
         context = req.environ['nova.context']
         context.can(qs_policies.POLICY_ROOT % 'update', {'project_id': id})
         identity.verify_project_id(context, id)
@@ -209,6 +212,8 @@ class QuotaSetsController(wsgi.Controller):
         valid_quotas = {}
         for key, value in body['quota_set'].items():
             if key == 'force' or (not value and value != 0):
+                continue
+            if key not in settable_quotas:
                 continue
             # validate whether already used and reserved exceeds the new
             # quota, this check will be ignored if admin want to force
@@ -259,6 +264,7 @@ class QuotaSetsController(wsgi.Controller):
         context.can(qs_policies.POLICY_ROOT % 'defaults', {'project_id': id})
         identity.verify_project_id(context, id)
 
+        QUOTAS.initialize()
         values = QUOTAS.get_defaults(context)
         return self._format_quota_set(id, values,
             filtered_quotas=filtered_quotas)
@@ -270,6 +276,7 @@ class QuotaSetsController(wsgi.Controller):
     @validation.query_schema(quota_sets.query_schema)
     @wsgi.response(202)
     def delete(self, req, id):
+        QUOTAS.initialize()
         context = req.environ['nova.context']
         context.can(qs_policies.POLICY_ROOT % 'delete', {'project_id': id})
         params = urlparse.parse_qs(req.environ.get('QUERY_STRING', ''))

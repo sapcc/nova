@@ -275,6 +275,7 @@ class Quotas(base.NovaObject):
     @base.remotable_classmethod
     def limit_check(cls, context, project_id=None, user_id=None, **values):
         """Check quota limits."""
+        quota.QUOTAS.initialize()
         return quota.QUOTAS.limit_check(
             context, project_id=project_id, user_id=user_id, **values)
 
@@ -283,6 +284,7 @@ class Quotas(base.NovaObject):
                                      user_values=None, project_id=None,
                                      user_id=None):
         """Check values against quota limits."""
+        quota.QUOTAS.initialize()
         return quota.QUOTAS.limit_check_project_and_user(context,
             project_values=project_values, user_values=user_values,
             project_id=project_id, user_id=user_id)
@@ -291,6 +293,7 @@ class Quotas(base.NovaObject):
     @base.remotable_classmethod
     def count(cls, context, resource, *args, **kwargs):
         """Count a resource."""
+        quota.QUOTAS.initialize()
         count = quota.QUOTAS.count_as_dict(context, resource, *args, **kwargs)
         key = 'user' if 'user' in count else 'project'
         return count[key][resource]
@@ -298,6 +301,7 @@ class Quotas(base.NovaObject):
     @base.remotable_classmethod
     def count_as_dict(cls, context, resource, *args, **kwargs):
         """Count a resource and return a dict."""
+        quota.QUOTAS.initialize()
         return quota.QUOTAS.count_as_dict(
             context, resource, *args, **kwargs)
 
