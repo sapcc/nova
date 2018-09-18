@@ -3254,6 +3254,7 @@ class API(base.Base):
             try:
                 res_deltas = {'cores': deltas.get('cores', 0),
                               'ram': deltas.get('ram', 0)}
+                res_deltas.update(deltas) # may have instances deltas if switching between quota:separate and not
                 objects.Quotas.check_deltas(context, res_deltas,
                                             project_id, user_id=user_id,
                                             check_project_id=project_id,
