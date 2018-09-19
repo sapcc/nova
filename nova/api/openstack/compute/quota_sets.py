@@ -53,7 +53,7 @@ class QuotaSetsController(wsgi.Controller):
             result = dict(id=str(project_id))
         else:
             result = {}
-.
+
         QUOTAS.initialize()
         for resource in QUOTAS.resources:
             if (resource not in filtered_quotas and
