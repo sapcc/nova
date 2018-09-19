@@ -1034,7 +1034,7 @@ class QuotaEngine(object):
 
             # construct resources for each flavor that has a separate quota
             # (also for deleted flavors that still have running instances)
-            ctxt = context.get_admin_context()
+            ctxt = nova_context.get_admin_context()
             for flavor_name in db.get_flavornames_with_separate_quota(ctxt):
                 resources.append(CountableResource(
                     'instances_' + flavor_name,
