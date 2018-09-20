@@ -1745,6 +1745,7 @@ class VMwareVMOps(object):
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""
+        LOG.debug("REBOOTING INSTANCE ===============================================")
         ctxt = nova_context.get_admin_context()
 
         instances_info = dict(instance_count=len(instances),
@@ -2255,20 +2256,19 @@ class VMwareVMOps(object):
     def update_cached_instances(self):
         vim = self._session.vim
         options = None
-        ctxt = nova_context.get_admin_context()
         if self._property_collector is None:
             self._property_collector = vim.service_content.propertyCollector
             vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
         update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
                                           options=options)
+        ctxt = nova_context.get_admin_context()
         while update_set:
             self._property_collector_version = update_set.version
             if update_set.filterSet and update_set.filterSet[0].objectSet:
                 for update in update_set.filterSet[0].objectSet:
                     if update.obj['_type'] == "VirtualMachine":
-                        if update.kind == "leave":
-                            LOG.debug("UPDATE OBJ: =============================> %s" % update.obj)
 
+                        if update.kind == "leave":
                             LOG.info("Removing instance from cache...")
                             cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(update.obj.value, {}).get(
                                 'config.instanceUuid')
@@ -2276,38 +2276,76 @@ class VMwareVMOps(object):
                             vm_util.vm_value_cache_delete(update.obj.value)
                         else:
                             if update.kind == "enter":
+
+                                if update.changeSet[2].name == "parent":
+                                    folder_name = self._session._call_method(vutil, 'get_object_property',
+                                                                             update.changeSet[2].val,
+                                                                             'name')
+                                    if folder_name != "Instances":
+                                        continue
+
                                 for change in update.changeSet:
-                                    LOG.debug("CHANGE1: =============================> %s" % change)
 
                                     if change['op'] == 'assign':
                                         if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
+                                            if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                                LOG.info("Adding vm to cache...")
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
+
+                                    if change['name'] == 'summary.runtime.host':
+                                        update_dict = {}
+                                        vm_props = self._session._call_method(vutil, 'get_object_property', update.obj,
+                                                                              'runtime.host')
+                                        LOG.debug("PROPS: %s" % vm_props)
+                                        for h in self._nodes_cache:
+                                            if hasattr(change, 'val'):
+                                                LOG.debug("VALUE TO COMPARE ===========================> %s" % change['val'].value)
+                                                if self._nodes_cache[h].value == change['val'].value:
+                                                    instance_obj = objects.Instance.get_by_uuid(ctxt,
+                                                                                                update.changeSet[0].val)
+                                                    update_dict['node'] = h
+                                                    break
+                                            try:
+                                                instance_obj.update(update_dict)
+                                                instance_obj.save()
+                                                LOG.debug("UPDATE DICT ============================: %s" % update_dict)
+                                                LOG.debug(
+                                                    "INSTANCE HOST UPDATED ================================================>")
+
+                                            except exception.InstanceNotFound as exc:
+                                                msg = _("Instance could not be found")
+                                                raise exc.HTTPNotFound(explanation=msg)
+
                                 if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
                                     if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
                                         LOG.info("Adding vm to cache...")
                                         vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
 
                             elif update.kind == "modify":
+
+                                LOG.debug("MODIFY UPDATES =================================> %s" % update)
                                 if update.changeSet[0].name == "config.instanceUuid":
-                                    instance = vm_util._get_vm_ref_from_vm_uuid(self._session, update.changeSet[0].val)
                                     for change in update.changeSet:
-                                        LOG.debug("CHANGE2: =============================> %s" % change)
+
                                         if change['op'] == 'assign':
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
-                                        if change['name'] == 'runtime.host':
-                                            update_dict = None
-                                            LOG.debug("AVAILABLE HOSTS ====================> %s" % self._nodes_cache)
+                                        if change['name'] == 'summary.runtime.host':
+                                            update_dict = {}
+
+                                            vm_props = self._session._call_method(vutil, 'get_object_property', update.obj,
+                                                  'runtime.host')
+                                            LOG.debug("PROPS: %s" % vm_props)
                                             for h in self._nodes_cache:
-                                                LOG.debug("HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH : %s " % h)
-                                                if h == change['val']:
-                                                    update_dict['host'] = h
+                                                if self._nodes_cache[h].value == change['val'].value:
+                                                    instance_obj = objects.Instance.get_by_uuid(ctxt, update.changeSet[0].val)
+                                                    update_dict['node'] = h
+                                                    break
                                             try:
-                                                ctxt = nova_context.get_admin_context()
-                                                instance = self.compute_api.update_instance(ctxt, instance,
-                                                                                            update_dict)
+                                                instance_obj.update(update_dict)
+                                                instance_obj.save()
+                                                LOG.debug("UPDATE DICT ============================: %s" % update_dict)
                                                 LOG.debug("INSTANCE HOST UPDATED ================================================>")
-                                                """return self._view_builder.show(req, instance,
-                                                                               extend_address=False)"""
+                                                
                                             except exception.InstanceNotFound as exc:
                                                 msg = _("Instance could not be found")
                                                 raise exc.HTTPNotFound(explanation=msg)
@@ -2318,9 +2356,86 @@ class VMwareVMOps(object):
                                         if change['op'] == 'assign':
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
 
+                                    for change in update.changeSet:
+                                        if change['op'] == 'assign':
+
+                                            if change['name'] == 'runtime.powerState' and change['val'] == 'poweredOn':
+                                                vm_props = self._session._call_method(vutil, 'get_object_property',
+                                                                                      update.obj,
+                                                                                      'summary.runtime.host')
+                                                LOG.debug("FETCHED VM PROPS =========================> %s" % vm_props)
+
+                                            if change['name'] == 'summary.runtime.host':
+                                                LOG.debug("VM CACHE VALUES2 =================================> %s" % vm_util._VM_VALUE_CACHE[update.obj.value])
+                                                LOG.debug("CHANGE VALUE:%s" % change.val)
+                                                LOG.debug("CHANGE VALUE:%s" % update.obj.value)
+                                                update_dict = {}
+                                                LOG.debug("HOST2: =============================> %s" % change)
+                                                LOG.debug(
+                                                    "AVAILABLE HOSTS2 ====================> %s" % update)
+
+                                                for h in self._nodes_cache:
+                                                    if self._nodes_cache[h].value == change['val'].value:
+
+                                                        instance_obj = objects.Instance.get_by_uuid(ctxt,
+                                                                                                    vm_util._VM_VALUE_CACHE[update.obj.value]['config.instanceUuid'])
+                                                        update_dict['node'] = h
+                                                        break
+                                                try:
+                                                    instance_obj.update(update_dict)
+                                                    instance_obj.save()
+                                                except exception.InstanceNotFound as exc:
+                                                    msg = _("Instance could not be found")
+                                                    raise exc.HTTPNotFound(explanation=msg)
+
+                    """elif update.obj['_type'] == "HostSystem":
+                        if update.kind == "modify":
+                            for change in update.changeSet:
+                                LOG.debug("HHHHHHHHHHHHHHHHHHHHH CHANGE : ========================> %s" % update)
+
+                                for vm in change.val[0]:
+                                    LOG.debug(vm)
+                                    vm_uuid = self._session._call_method(vutil, 'get_object_property', vm,
+                                                                          'config.instanceUuid')
+
+                                    LOG.debug("NODES CACHE")
+                                    for h in self._nodes_cache:
+                                        if self._nodes_cache[h].value == update.obj.value:
+                                            LOG.debug("CHANGE NEW: =========================> %s" % change)
+                                            instance_obj = objects.Instance.get_by_uuid(ctxt,
+                                                                                        vm_util._VM_VALUE_CACHE[
+                                                                                            update.obj.value][
+                                                                                            'config.instanceUuid'])
+                                            update_dict['node'] = h
+                                            break
+
+                                    LOG.debug("UUID =======================================> %s" % vm_uuid)
+                                    instance_obj = objects.Instance.get_by_uuid(ctxt,
+                                                                                vm_util._VM_VALUE_CACHE[vm.value]['config.instanceUuid'])"""
+
             update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
                                           options=options)
 
+    def __get_vm_host_from_pc(self, ctxt, update, change):
+        update_dict = {}
+
+        vm_props = self._session._call_method(vutil, 'get_object_property', update.obj,
+                                              'runtime.host')
+        LOG.debug("PROPS: %s" % vm_props)
+        for h in self._nodes_cache:
+            if self._nodes_cache[h].value == change['val'].value:
+                instance_obj = objects.Instance.get_by_uuid(ctxt, update.changeSet[0].val)
+                update_dict['node'] = h
+                break
+        try:
+            instance_obj.update(update_dict)
+            instance_obj.save()
+            LOG.debug("UPDATE DICT ============================: %s" % update_dict)
+            LOG.debug("INSTANCE HOST UPDATED ================================================>")
+
+        except exception.InstanceNotFound as exc:
+            msg = _("Instance could not be found")
+            raise exc.HTTPNotFound(explanation=msg)
 
     def _get_vm_monitor_spec(self, vim):
         traversal_spec_vm = vutil.build_traversal_spec(
@@ -2348,7 +2463,7 @@ class VMwareVMOps(object):
         property_spec_vm = vutil.build_property_spec(
             vim.client.factory,
             "VirtualMachine",
-            ["config.instanceUuid", "config.managedBy", "runtime.powerState", "runtime.host"])
+            ["config.instanceUuid", "config.managedBy", "runtime.powerState", "summary.runtime.host", "parent"])
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
             [property_spec, property_spec_vm],
