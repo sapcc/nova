@@ -37,7 +37,6 @@ class ViewBuilder(object):
 
     def build(self, absolute_limits, filtered_limits=None,
               max_image_meta=True):
-        per_flavor_limits = self._build_per_flavor_limits(absolute_limits)
         absolute_limits = self._build_absolute_limits(
             absolute_limits, filtered_limits,
             max_image_meta=max_image_meta)
@@ -46,7 +45,6 @@ class ViewBuilder(object):
             "limits": {
                 "rate": [],
                 "absolute": absolute_limits,
-                "absolutePerFlavor": per_flavor_limits,
             },
         }
 
@@ -71,13 +69,4 @@ class ViewBuilder(object):
                     if not max_image_meta and limit_name == "maxImageMeta":
                         continue
                     limits[limit_name] = value
-        return limits
-
-    def _build_per_flavor_limits(self, absolute_limits):
-        limits = {}
-        for name, value in absolute_limits.items():
-            if name.startswith('instances_'):
-                flavorname = name[10:]
-                limits[flavorname] = { 'maxTotalInstances': value }
-
         return limits
