@@ -1495,54 +1495,6 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             counts['user'] = user_counts
         return counts
 
-    @staticmethod
-    @db_api.pick_context_manager_reader
-    def _get_counts_in_db_baremetalaware(context, project_id, user_id=None):
-        if user_id is None:
-            # NOTE: The only difference between the then-branch and the
-            # else-branch is the "AND i.user_id = :uid" condition.
-            query = '''
-              SELECT t.name, COUNT(i.id), SUM(i.vcpus), SUM(i.memory_mb),
-                EXISTS(SELECT 1 FROM instance_type_extra_specs
-                       WHERE instance_type_id = t.id
-                       AND key = 'quota:separate' AND value = 'true'),
-                EXISTS(SELECT 1 FROM instance_type_extra_specs
-                       WHERE instance_type_id = t.id
-                       AND key = 'quota:instance_only' AND value = 'true')
-              FROM instances i JOIN instance_types t ON t.id = i.instance_type_id
-              WHERE i.project_id = :pid AND i.deleted = 0
-                AND (i.vm_state != :softdel OR i.vm_state IS NULL)
-              GROUP BY t.name, t.id
-            '''
-            stats = context.session.execute(query, { 'pid': project_id, 'softdel': vm_states.SOFT_DELETED })
-        else:
-            query = '''
-              SELECT t.name, COUNT(i.id), SUM(i.vcpus), SUM(i.memory_mb),
-                EXISTS(SELECT 1 FROM instance_type_extra_specs
-                       WHERE instance_type_id = t.id
-                       AND key = 'quota:separate' AND value = 'true'),
-                EXISTS(SELECT 1 FROM instance_type_extra_specs
-                       WHERE instance_type_id = t.id
-                       AND key = 'quota:instance_only' AND value = 'true')
-              FROM instances i JOIN instance_types t ON t.id = i.instance_type_id
-              WHERE i.project_id = :pid AND i.user_id = :uid AND i.deleted = 0
-                AND (i.vm_state != :softdel OR i.vm_state IS NULL)
-              GROUP BY t.name, t.id
-            '''
-            stats = context.session.execute(query, { 'pid': project_id, 'uid': user_id, 'softdel': vm_states.SOFT_DELETED })
-
-        output = { "instances": 0, "cores": 0, "ram": 0 }
-        for flavor_name, count, vcpus, memory_mb, separate, instance_only in stats:
-            if not instance_only:
-                output["cores"] += vcpus
-                output["ram"]   += memory_mb
-            if separate:
-                key = "instances_" + flavor_name
-                output[key] = output.get(key, 0) + count
-            else:
-                output["instances"] += count
-        return output
-
     @base.remotable_classmethod
     def get_counts(cls, context, project_id, user_id=None):
         """Get the counts of Instance objects in the database.
@@ -1560,9 +1512,4 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                               'cores': <count across user>,
                               'ram': <count across user>}}
         """
-        # return cls._get_counts_in_db(context, project_id, user_id=user_id)
-
-        result = { 'project': cls._get_counts_in_db_baremetalaware(context, project_id, user_id=None) }
-        if user_id is not None:
-            result['user'] = cls._get_counts_in_db_baremetalaware(context, project_id, user_id=user_id)
-        return result
+        return cls._get_counts_in_db(context, project_id, user_id=user_id)

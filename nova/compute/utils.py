@@ -767,32 +767,13 @@ def resize_quota_delta(context, new_flavor, old_flavor, sense, compare):
                     -1 indicates negative deltas
     """
     def _quota_delta(resource):
-        old_reserve = old_flavor.get('extra_specs', {}).get('quota:instance_only', 'false') != 'true'
-        new_reserve = new_flavor.get('extra_specs', {}).get('quota:instance_only', 'false') != 'true'
-        old_factor = 1 if old_reserve else 0
-        new_factor = 1 if new_reserve else 0
-        return sense * (new_flavor[resource] * new_factor - old_flavor[resource] * old_factor)
-
+        return sense * (new_flavor[resource] - old_flavor[resource])
 
     deltas = {}
-    def add_delta(resource, delta):
-        if compare * delta > 0:
-            deltas[resource] = delta
-
-    add_delta('cores', _quota_delta('vcpus'))
-    add_delta('ram', _quota_delta('memory_mb'))
-
-    old_separate = old_flavor.get('extra_specs', {}).get('quota:separate', 'false') == 'true'
-    new_separate = new_flavor.get('extra_specs', {}).get('quota:separate', 'false') == 'true'
-    if old_separate and not new_separate:
-        add_delta('instances_' + old_flavor['name'], -1 * sense)
-        add_delta('instances', +1 * sense)
-    if not old_separate and new_separate:
-        add_delta('instances', -1 * sense)
-        add_delta('instances_' + new_flavor['name'], +1 * sense)
-    if old_separate and new_separate:
-        add_delta('instances_' + old_flavor['name'], -1 * sense)
-        add_delta('instances_' + new_flavor['name'], +1 * sense)
+    if compare * _quota_delta('vcpus') > 0:
+        deltas['cores'] = _quota_delta('vcpus')
+    if compare * _quota_delta('memory_mb') > 0:
+        deltas['ram'] = _quota_delta('memory_mb')
 
     return deltas
 
@@ -853,14 +834,7 @@ def check_num_instances_quota(context, instance_type, min_count,
     # Determine requested cores and ram
     req_cores = max_count * instance_type.vcpus
     req_ram = max_count * instance_type.memory_mb
-
-    quota_key_instances = 'instances'
-    if instance_type.extra_specs.get('quota:separate', 'false') == 'true':
-        quota_key_instances = 'instances_' + instance_type.name
-    deltas = { quota_key_instances: max_count }
-    reserve_cpu_ram = instance_type.extra_specs.get('quota:instance_only', 'false') != 'true'
-    if reserve_cpu_ram:
-        deltas.update(cores=req_cores, ram=req_ram)
+    deltas = {'instances': max_count, 'cores': req_cores, 'ram': req_ram}
 
     try:
         objects.Quotas.check_deltas(context, deltas,
@@ -875,10 +849,10 @@ def check_num_instances_quota(context, instance_type, min_count,
         if min_count == max_count == 0:
             # orig_num_req is the original number of instances requested in the
             # case of a recheck quota, for use in the over quota exception.
-            requested = { quota_key_instances: orig_num_req }
-            if reserve_cpu_ram:
-                requested['cores'] = orig_num_req * instance_type.vcpus
-                requested['ram'] = orig_num_req * instance_type.memory_mb
+            req_cores = orig_num_req * instance_type.vcpus
+            req_ram = orig_num_req * instance_type.memory_mb
+            requested = {'instances': orig_num_req, 'cores': req_cores,
+                         'ram': req_ram}
             (overs, reqs, total_alloweds, useds) = get_over_quota_detail(
                 deltas, overs, quotas, requested)
             msg = "Cannot run any more instances of this type."
@@ -892,12 +866,12 @@ def check_num_instances_quota(context, instance_type, min_count,
         # OK, we exceeded quota; let's figure out why...
         headroom = get_headroom(quotas, usages, deltas)
 
-        allowed = headroom.get(quota_key_instances, 1)
+        allowed = headroom.get('instances', 1)
         # Reduce 'allowed' instances in line with the cores & ram headroom
-        if instance_type.vcpus and 'cores' in headroom:
+        if instance_type.vcpus:
             allowed = min(allowed,
                           headroom['cores'] // instance_type.vcpus)
-        if instance_type.memory_mb and 'ram' in headroom:
+        if instance_type.memory_mb:
             allowed = min(allowed,
                           headroom['ram'] // instance_type.memory_mb)
 
@@ -914,9 +888,8 @@ def check_num_instances_quota(context, instance_type, min_count,
 
         num_instances = (str(min_count) if min_count == max_count else
             "%s-%s" % (min_count, max_count))
-        requested = { quota_key_instances: num_instances }
-        if reserve_cpu_ram:
-            requested.update(cores=req_cores, ram=req_ram)
+        requested = dict(instances=num_instances, cores=req_cores,
+                         ram=req_ram)
         (overs, reqs, total_alloweds, useds) = get_over_quota_detail(
             headroom, overs, quotas, requested)
         params = {'overs': overs, 'pid': project_id,
