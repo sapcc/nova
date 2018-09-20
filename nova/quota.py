@@ -858,7 +858,7 @@ class NoopQuotaDriver(object):
 class BaseResource(object):
     """Describe a single resource for quota checking."""
 
-    def __init__(self, name, flag=None, default=None):
+    def __init__(self, name, flag=None):
         """Initializes a Resource.
 
         :param name: The name of the resource, i.e., "instances".
@@ -869,7 +869,6 @@ class BaseResource(object):
 
         self.name = name
         self.flag = flag
-        self.default_value = default
 
     def quota(self, driver, context, **kwargs):
         """Given a driver and context, obtain the quota for this
@@ -926,8 +925,7 @@ class BaseResource(object):
         if self.flag == 'quota_networks':
             return CONF[self.flag]
 
-        return CONF.quota[self.flag] if self.flag else \
-            (self.default_value if self.default_value is not None else -1)
+        return CONF.quota[self.flag] if self.flag else -1
 
 
 class AbsoluteResource(BaseResource):
@@ -940,7 +938,7 @@ class CountableResource(AbsoluteResource):
     project ID.
     """
 
-    def __init__(self, name, count_as_dict, flag=None, default=None):
+    def __init__(self, name, count_as_dict, flag=None):
         """Initializes a CountableResource.
 
         Countable resources are those resources which directly
@@ -990,7 +988,7 @@ class CountableResource(AbsoluteResource):
                      for this resource.
         """
 
-        super(CountableResource, self).__init__(name, flag=flag, default=default)
+        super(CountableResource, self).__init__(name, flag=flag)
         self.count_as_dict = count_as_dict
 
 
@@ -1002,57 +1000,6 @@ class QuotaEngine(object):
         self._resources = {}
         self._driver_cls = quota_driver_class
         self.__driver = None
-        self._initialized = False
-
-    def initialize(self):
-        if not self._initialized:
-            # these resources are always there
-            resources = [
-                CountableResource('instances', _instances_cores_ram_count, 'instances'),
-                CountableResource('cores', _instances_cores_ram_count, 'cores'),
-                CountableResource('ram', _instances_cores_ram_count, 'ram'),
-                CountableResource('security_groups', _security_group_count,
-                                  'security_groups'),
-                CountableResource('fixed_ips', _fixed_ip_count, 'fixed_ips'),
-                CountableResource('floating_ips', _floating_ip_count,
-                                  'floating_ips'),
-                AbsoluteResource('metadata_items', 'metadata_items'),
-                AbsoluteResource('injected_files', 'injected_files'),
-                AbsoluteResource('injected_file_content_bytes',
-                                 'injected_file_content_bytes'),
-                AbsoluteResource('injected_file_path_bytes',
-                                 'injected_file_path_length'),
-                CountableResource('security_group_rules',
-                                  _security_group_rule_count_by_group,
-                                  'security_group_rules'),
-                CountableResource('key_pairs', _keypair_get_count_by_user, 'key_pairs'),
-                CountableResource('server_groups', _server_group_count, 'server_groups'),
-                CountableResource('server_group_members',
-                                  _server_group_count_members_by_user,
-                                  'server_group_members'),
-                ]
-
-            # construct resources for each flavor that has a separate quota
-            # (also for deleted flavors that still have running instances)
-            ctxt = nova_context.get_admin_context()
-            for flavor_name in db.get_flavornames_with_separate_quota(ctxt):
-                resources.append(CountableResource(
-                    'instances_' + flavor_name,
-                    _instances_cores_ram_count,
-                    flag=None, default=0,
-                ))
-
-            # NOTE: An earlier version of this code included the capability to
-            # reload the resources list when flavors were changed by a user. I
-            # removed this since it would only trigger on the nova-api pod
-            # where the request comes in, so the other pods would not be
-            # updated and the API pods would become inconsistent with each
-            # other. Without the automatic reloading logic, all API pods need
-            # to be restarted when a flavor's "quota:separate" extra-spec is
-            # changed, but at least that behavior is deterministic and
-            # consistent.
-            self.register_resources(resources)
-            self._initialized = True
 
     @property
     def _driver(self):
@@ -1430,6 +1377,35 @@ def _security_group_rule_count_by_group(context, security_group_id):
 
 
 QUOTAS = QuotaEngine()
+
+
+resources = [
+    CountableResource('instances', _instances_cores_ram_count, 'instances'),
+    CountableResource('cores', _instances_cores_ram_count, 'cores'),
+    CountableResource('ram', _instances_cores_ram_count, 'ram'),
+    CountableResource('security_groups', _security_group_count,
+                      'security_groups'),
+    CountableResource('fixed_ips', _fixed_ip_count, 'fixed_ips'),
+    CountableResource('floating_ips', _floating_ip_count,
+                      'floating_ips'),
+    AbsoluteResource('metadata_items', 'metadata_items'),
+    AbsoluteResource('injected_files', 'injected_files'),
+    AbsoluteResource('injected_file_content_bytes',
+                     'injected_file_content_bytes'),
+    AbsoluteResource('injected_file_path_bytes',
+                     'injected_file_path_length'),
+    CountableResource('security_group_rules',
+                      _security_group_rule_count_by_group,
+                      'security_group_rules'),
+    CountableResource('key_pairs', _keypair_get_count_by_user, 'key_pairs'),
+    CountableResource('server_groups', _server_group_count, 'server_groups'),
+    CountableResource('server_group_members',
+                      _server_group_count_members_by_user,
+                      'server_group_members'),
+    ]
+
+
+QUOTAS.register_resources(resources)
 
 
 def _valid_method_call_check_resource(name, method, resources):

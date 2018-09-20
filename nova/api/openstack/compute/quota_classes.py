@@ -45,8 +45,10 @@ FILTERED_QUOTAS_2_57.extend(['injected_files', 'injected_file_content_bytes',
 
 class QuotaClassSetsController(wsgi.Controller):
 
+    supported_quotas = []
+
     def __init__(self, **kwargs):
-        pass
+        self.supported_quotas = QUOTAS.resources
 
     def _format_quota_set(self, quota_class, quota_set, filtered_quotas=None,
                           exclude_server_groups=False):
@@ -56,7 +58,7 @@ class QuotaClassSetsController(wsgi.Controller):
             result = dict(id=str(quota_class))
         else:
             result = {}
-        original_quotas = copy.deepcopy(QUOTAS.resources)
+        original_quotas = copy.deepcopy(self.supported_quotas)
         if filtered_quotas:
             original_quotas = [resource for resource in original_quotas
                                if resource not in filtered_quotas]
@@ -89,7 +91,6 @@ class QuotaClassSetsController(wsgi.Controller):
 
     def _show(self, req, id, filtered_quotas=None,
               exclude_server_groups=False):
-        QUOTAS.initialize()
         context = req.environ['nova.context']
         context.can(qcs_policies.POLICY_ROOT % 'show', {'quota_class': id})
         values = QUOTAS.get_class_quotas(context, id)
@@ -116,7 +117,6 @@ class QuotaClassSetsController(wsgi.Controller):
 
     def _update(self, req, id, body, filtered_quotas=None,
                 exclude_server_groups=False):
-        QUOTAS.initialize()
         context = req.environ['nova.context']
         context.can(qcs_policies.POLICY_ROOT % 'update', {'quota_class': id})
         try:

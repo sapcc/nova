@@ -6708,17 +6708,3 @@ def console_auth_token_destroy_expired_by_host(context, host):
         filter_by(host=host).\
         filter(models.ConsoleAuthToken.expires <= timeutils.utcnow_ts()).\
         delete()
-
-@pick_context_manager_reader
-def get_flavornames_with_separate_quota(context):
-    query = '''
-        SELECT DISTINCT t.name FROM instance_types t
-        JOIN instance_type_extra_specs s ON t.id = s.instance_type_id
-        WHERE s.key = 'quota:separate' AND s.value = 'true'
-          AND (s.deleted = 0 OR EXISTS(
-            SELECT 1 FROM instances i
-            WHERE i.deleted = 0 AND i.instance_type_id = t.id
-          ))
-    '''
-    result = context.session.execute(query)
-    return [x[0] for x in result]

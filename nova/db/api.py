@@ -2099,6 +2099,3 @@ def console_auth_token_destroy_expired_by_host(context, host):
     tokens associated with the given host.
     """
     return IMPL.console_auth_token_destroy_expired_by_host(context, host)
-
-def get_flavornames_with_separate_quota(context):
-    return IMPL.get_flavornames_with_separate_quota(context)
