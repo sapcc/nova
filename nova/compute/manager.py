@@ -298,7 +298,7 @@ class InstanceEvents(object):
     def _lock_name(instance):
         return '%s-%s' % (instance.uuid, 'events')
 
-    def prepare_for_instance_event(self, instance, event_name):
+    def prepare_for_instance_event(self, instance, name, tag):
         """Prepare to receive an event for an instance.
 
         This will register an event for the given instance that we will
@@ -307,7 +307,8 @@ class InstanceEvents(object):
         object should be wait()'d on to ensure completion.
 
         :param instance: the instance for which the event will be generated
-        :param event_name: the name of the event we're expecting
+        :param name: the name of the event we're expecting
+        :param tag: the tag associated with the event we're expecting
         :returns: an event object that should be wait()'d on
         """
         if self._events is None:
@@ -319,10 +320,10 @@ class InstanceEvents(object):
         @utils.synchronized(self._lock_name(instance))
         def _create_or_get_event():
             instance_events = self._events.setdefault(instance.uuid, {})
-            return instance_events.setdefault(event_name,
+            return instance_events.setdefault((name, tag),
                                               eventlet.event.Event())
-        LOG.debug('Preparing to wait for external event %(event)s',
-                  {'event': event_name}, instance=instance)
+        LOG.debug('Preparing to wait for external event %(name)s-%(tag)s',
+                  {'name': name, 'tag': tag}, instance=instance)
         return _create_or_get_event()
 
     def pop_instance_event(self, instance, event):
@@ -349,7 +350,7 @@ class InstanceEvents(object):
             events = self._events.get(instance.uuid)
             if not events:
                 return no_events_sentinel
-            _event = events.pop(event.key, None)
+            _event = events.pop((event.name, event.tag), None)
             if not events:
                 del self._events[instance.uuid]
             if _event is None:
@@ -386,7 +387,11 @@ class InstanceEvents(object):
                 LOG.debug('Unexpected attempt to clear events during shutdown',
                           instance=instance)
                 return dict()
-            return self._events.pop(instance.uuid, {})
+            # NOTE(danms): We have historically returned the raw internal
+            # format here, which is {event.key: [events, ...])} so just
+            # trivially convert it here.
+            return {'%s-%s' % k: e
+                    for k, e in self._events.pop(instance.uuid, {}).items()}
         return _clear_events()
 
     def cancel_all_events(self):
@@ -398,12 +403,12 @@ class InstanceEvents(object):
         self._events = None
 
         for instance_uuid, events in our_events.items():
-            for event_name, eventlet_event in events.items():
-                LOG.debug('Canceling in-flight event %(event)s for '
+            for (name, tag), eventlet_event in events.items():
+                LOG.debug('Canceling in-flight event %(name)s-%(tag)s for '
                           'instance %(instance_uuid)s',
-                          {'event': event_name,
+                          {'name': name,
+                           'tag': tag,
                            'instance_uuid': instance_uuid})
-                name, tag = event_name.rsplit('-', 1)
                 event = objects.InstanceExternalEvent(
                     instance_uuid=instance_uuid,
                     name=name, status='failed',
@@ -444,9 +449,9 @@ class ComputeVirtAPI(virtapi.VirtAPI):
         or raise an exception which will bubble up to the waiter.
 
         :param instance: The instance for which an event is expected
-        :param event_names: A list of event names. Each element can be a
-                            string event name or tuple of strings to
-                            indicate (name, tag).
+        :param event_names: A list of event names. Each element is a
+                            tuple of strings to indicate (name, tag),
+                            where name is required, but tag may be None.
         :param deadline: Maximum number of seconds we should wait for all
                          of the specified events to arrive.
         :param error_callback: A function to be called if an event arrives
@@ -457,14 +462,12 @@ class ComputeVirtAPI(virtapi.VirtAPI):
             error_callback = self._default_error_callback
         events = {}
         for event_name in event_names:
-            if isinstance(event_name, tuple):
-                name, tag = event_name
-                event_name = objects.InstanceExternalEvent.make_key(
-                    name, tag)
+            name, tag = event_name
+            event_name = objects.InstanceExternalEvent.make_key(name, tag)
             try:
                 events[event_name] = (
                     self._compute.instance_events.prepare_for_instance_event(
-                        instance, event_name))
+                        instance, name, tag))
             except exception.NovaException:
                 error_callback(event_name, instance)
                 # NOTE(danms): Don't wait for any of the events. They
@@ -6031,6 +6034,53 @@ class ComputeManager(manager.Manager):
         LOG.debug('pre_live_migration result data is %s', migrate_data)
         return migrate_data
 
+    @staticmethod
+    def _neutron_failed_live_migration_callback(event_name, instance):
+        msg = ('Neutron reported failure during live migration '
+               'with %(event)s for instance %(uuid)s')
+        msg_args = {'event': event_name, 'uuid': instance.uuid}
+        if CONF.vif_plugging_is_fatal:
+            raise exception.VirtualInterfacePlugException(msg % msg_args)
+        LOG.error(msg, msg_args)
+
+    @staticmethod
+    def _get_neutron_events_for_live_migration(instance):
+        # We don't generate events if CONF.vif_plugging_timeout=0
+        # or if waiting during live migration is disabled,
+        # meaning that the operator disabled using them.
+        if (CONF.vif_plugging_timeout and utils.is_neutron() and
+                CONF.compute.live_migration_wait_for_vif_plug):
+            return [('network-vif-plugged', vif['id'])
+                    for vif in instance.get_network_info()]
+        else:
+            return []
+
+    def _cleanup_pre_live_migration(self, context, dest, instance,
+                                    migration, migrate_data):
+        """Helper method for when pre_live_migration fails
+
+        Sets the migration status to "error" and rolls back the live migration
+        setup on the destination host.
+
+        :param context: The user request context.
+        :type context: nova.context.RequestContext
+        :param dest: The live migration destination hostname.
+        :type dest: str
+        :param instance: The instance being live migrated.
+        :type instance: nova.objects.Instance
+        :param migration: The migration record tracking this live migration.
+        :type migration: nova.objects.Migration
+        :param migrate_data: Data about the live migration, populated from
+                             the destination host.
+        :type migrate_data: Subclass of nova.objects.LiveMigrateData
+        """
+        self._set_migration_status(migration, 'error')
+        # Make sure we set this for _rollback_live_migration()
+        # so it can find it, as expected if it was called later
+        migrate_data.migration = migration
+        self._rollback_live_migration(context, instance, dest,
+                                      migrate_data)
+
     def _do_live_migration(self, context, dest, instance, block_migration,
                            migration, migrate_data):
         # NOTE(danms): We should enhance the RT to account for migrations
@@ -6039,6 +6089,7 @@ class ComputeManager(manager.Manager):
         # reporting
         self._set_migration_status(migration, 'preparing')
 
+        events = self._get_neutron_events_for_live_migration(instance)
         try:
             if ('block_migration' in migrate_data and
                     migrate_data.block_migration):
@@ -6049,19 +6100,37 @@ class ComputeManager(manager.Manager):
             else:
                 disk = None
 
-            migrate_data = self.compute_rpcapi.pre_live_migration(
-                context, instance,
-                block_migration, disk, dest, migrate_data)
+            deadline = CONF.vif_plugging_timeout
+            error_cb = self._neutron_failed_live_migration_callback
+            # In order to avoid a race with the vif plugging that the virt
+            # driver does on the destination host, we register our events
+            # to wait for before calling pre_live_migration.
+            with self.virtapi.wait_for_instance_event(
+                    instance, events, deadline=deadline,
+                    error_callback=error_cb):
+                migrate_data = self.compute_rpcapi.pre_live_migration(
+                    context, instance,
+                    block_migration, disk, dest, migrate_data)
+        except exception.VirtualInterfacePlugException:
+            with excutils.save_and_reraise_exception():
+                LOG.exception('Failed waiting for network virtual interfaces '
+                              'to be plugged on the destination host %s.',
+                              dest, instance=instance)
+                self._cleanup_pre_live_migration(
+                    context, dest, instance, migration, migrate_data)
+        except eventlet.timeout.Timeout:
+            msg = 'Timed out waiting for events: %s'
+            LOG.warning(msg, events, instance=instance)
+            if CONF.vif_plugging_is_fatal:
+                self._cleanup_pre_live_migration(
+                    context, dest, instance, migration, migrate_data)
+                raise exception.MigrationError(reason=msg % events)
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception('Pre live migration failed at %s',
                               dest, instance=instance)
-                self._set_migration_status(migration, 'error')
-                # Make sure we set this for _rollback_live_migration()
-                # so it can find it, as expected if it was called later
-                migrate_data.migration = migration
-                self._rollback_live_migration(context, instance, dest,
-                                              migrate_data)
+                self._cleanup_pre_live_migration(
+                    context, dest, instance, migration, migrate_data)
 
         self._set_migration_status(migration, 'running')
 

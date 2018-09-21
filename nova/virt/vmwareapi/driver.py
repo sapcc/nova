@@ -144,6 +144,9 @@ class VMwareVCDriver(driver.ComputeDriver):
                                       self._nodename,
                                       self._cluster_ref,
                                       self._datastore_regex)
+        host_stats = self._vc_state.get_host_stats()
+        self.capabilities['resource_scheduling'] = host_stats.get(
+            'resource_scheduling')
 
         host_stats = self._vc_state.get_host_stats()
         self.capabilities['resource_scheduling'] = host_stats.get(

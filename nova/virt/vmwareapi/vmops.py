@@ -47,7 +47,7 @@ import nova.conf
 from nova.console import type as ctype
 from nova import context as nova_context
 from nova import exception
-from nova.i18n import _
+from nova.i18n import _, _LI
 from nova import network
 from nova import objects
 from nova.objects import fields
@@ -2251,6 +2251,7 @@ class VMwareVMOps(object):
         internal_access_path = jsonutils.dumps(mks_auth)
         return ctype.ConsoleMKS(ticket.host, ticket.port, internal_access_path)
 
+
     @synchronized('update_cache')
     def update_cached_instances(self):
         vim = self._session.vim
@@ -2265,7 +2266,7 @@ class VMwareVMOps(object):
         def __update_vm_host(update, change):
             update_dict = {}
             LOG.info("Updating instance host...")
-            
+
             for h in self._nodes_cache:
                 if hasattr(change, 'val'):
                     if self._nodes_cache[h].value == change['val'].value:
@@ -2306,12 +2307,13 @@ class VMwareVMOps(object):
                                 for change in update.changeSet:
 
                                     if change['op'] == 'assign':
-                                        if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
+                                        if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
                                             if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
                                                 LOG.info("Adding vm to cache...")
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
 
-                                    if change['name'] == 'summary.runtime.host' and CONF.vmware.multi_compute_nodes_support == True:
+                                    if change[
+                                        'name'] == 'summary.runtime.host' and CONF.vmware.multi_compute_nodes_support == True:
                                         __update_vm_host(update, change)
 
                                 if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
@@ -2324,7 +2326,8 @@ class VMwareVMOps(object):
                                     for change in update.changeSet:
                                         if change['op'] == 'assign':
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
-                                        if change['name'] == 'summary.runtime.host' and CONF.vmware.multi_compute_nodes_support == True:
+                                        if change[
+                                            'name'] == 'summary.runtime.host' and CONF.vmware.multi_compute_nodes_support == True:
                                             __update_vm_host(update, change)
 
                                     if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
@@ -2336,7 +2339,8 @@ class VMwareVMOps(object):
 
                                     for change in update.changeSet:
                                         if change['op'] == 'assign':
-                                            if change['name'] == 'summary.runtime.host' and CONF.vmware.multi_compute_nodes_support == True:
+                                            if change[
+                                                'name'] == 'summary.runtime.host' and CONF.vmware.multi_compute_nodes_support == True:
                                                 update_dict = {}
 
                                                 for h in self._nodes_cache:
@@ -2355,7 +2359,7 @@ class VMwareVMOps(object):
                                                         break
 
             update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
-                                          options=options)
+                                              options=options)
 
     def _get_vm_monitor_spec(self, vim):
         traversal_spec_vm = vutil.build_traversal_spec(
@@ -2388,4 +2392,6 @@ class VMwareVMOps(object):
             vim.client.factory,
             [property_spec, property_spec_vm],
             [object_spec])
+
         return property_filter_spec
+
