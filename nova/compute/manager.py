@@ -5883,7 +5883,6 @@ class ComputeManager(manager.Manager):
     @wrap_instance_event
     @wrap_instance_fault
     def neutron_bind_port(self, context, instance, host):
-        LOG.debug("INSIDE MANAGER NEUTRON BIND PORT =====================================>")
         self.driver.neutron_bind_port(context, instance, host)
 
     def _do_check_can_live_migrate_destination(self, ctxt, instance,

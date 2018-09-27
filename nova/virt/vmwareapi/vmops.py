@@ -1938,6 +1938,7 @@ class VMwareVMOps(object):
         except Exception:
             with excutils.save_and_reraise_exception():
                 recover_method(context, instance, dest, block_migration)
+
         post_method(context, instance, dest, block_migration)
 
     def get_migrate_service_info(self, migrate_data):

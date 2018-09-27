@@ -52,6 +52,7 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+from nova import network
 from oslo_serialization import jsonutils
 
 LOG = logging.getLogger(__name__)
@@ -154,6 +155,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         host_stats = self._vc_state.get_host_stats()
         self.capabilities['resource_scheduling'] = host_stats.get(
             'resource_scheduling')
+        self._network_api = network.API()
 
         # Register the OpenStack extension
         self._register_openstack_extension()
@@ -342,9 +344,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         pass
 
     def neutron_bind_port(self, context, instance, host):
-        LOG.debug("POST LIVE 10 ===========================================================>")
-
-        self.network_api.migrate_instance_finish(context, instance, host)
+        self._network_api.migrate_instance_finish(context, instance, host)
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
