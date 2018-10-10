@@ -396,7 +396,7 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
              {'image_ref': instance.image_ref}, instance=instance)
     vmdk = vm_util.get_vmdk_info(session, imported_vm_ref, vm_name)
     session._call_method(session.vim, "UnregisterVM", imported_vm_ref)
-    LOG.info(_LI("The imported VM '%s' was unregistered"), vm_name, instance=instance)
+    LOG.info("The imported VM '%s' was unregistered", vm_name, instance=instance)
     return vmdk.capacity_in_bytes, vmdk.path
 
 
