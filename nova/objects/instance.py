@@ -1493,6 +1493,55 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             counts['user'] = user_counts
         return counts
 
+    @staticmethod
+    @db_api.pick_context_manager_reader
+    def _get_counts_in_db_baremetalaware(context, project_id, user_id=None):
+        def _get_counts(instances):
+            counts = {'instances': 0, 'cores': 0, 'ram': 0}
+
+            # TODO: cache flavor_ids
+            instance_types = objects.FlavorList.get_by_id(
+                context, [x.instance_type_id for x in project_query.all()])
+
+            for i in instances:
+                itype = instance_types.get(i[0])
+                if not itype['baremetal']:
+                    counts['instances'] = counts['instances'] + 1
+                    counts['cores'] = counts['cores'] + i[1]
+                    counts['ram'] = counts['ram'] + i[2]
+                else:
+                    old_val = project_counts.get(itype['name'], 0)
+                    project_counts.update({itype['name']: old_val+1})
+
+            return counts
+
+        not_soft_deleted = or_(
+            models.Instance.vm_state != vm_states.SOFT_DELETED,
+            models.Instance.vm_state == null()
+            )
+        project_query = context.session.query(
+            models.Instance.instance_type_id,
+            func.sum(models.Instance.vcpus),
+            func.sum(models.Instance.memory_mb)).\
+            filter_by(deleted=0).\
+            filter(not_soft_deleted).\
+            filter_by(project_id=project_id).\
+            group_by(models.Instance.instance_type_id)
+
+        project_result = project_query.all()
+        print(project_result)
+
+        project_counts = _get_counts(project_result)
+        counts = {'project': project_counts}
+        print(counts)
+        if user_id:
+            user_result = project_query.filter_by(user_id=user_id).all()
+            print(user_result)
+            user_counts = _get_counts(user_result)
+            counts['user'] = user_counts
+            print(user_counts)
+        return counts
+
     @base.remotable_classmethod
     def get_counts(cls, context, project_id, user_id=None):
         """Get the counts of Instance objects in the database.
@@ -1510,4 +1559,4 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                               'cores': <count across user>,
                               'ram': <count across user>}}
         """
-        return cls._get_counts_in_db(context, project_id, user_id=user_id)
+        return cls._get_counts_in_db_baremetalaware(context, project_id, user_id=user_id)
