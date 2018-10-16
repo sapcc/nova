@@ -16,6 +16,7 @@ import copy
 
 from nova.api.validation import parameter_types
 from nova import db
+from nova.quota import QUOTAS
 
 common_quota = {
     'type': ['integer', 'string'],
@@ -59,7 +60,7 @@ update = {
         'type': 'object',
         'quota_set': {
             'properties': update_quota_set,
-            'additionalProperties': False,
+            'additionalProperties': True,
         },
     },
     'required': ['quota_set'],
