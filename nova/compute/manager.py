@@ -4795,7 +4795,7 @@ class ComputeManager(manager.Manager):
                     instance, bdms, new_bdm)
 
             # NOTE(vish): create bdm here to avoid race condition
-            new_bdm.create()
+            new_bdm.update_or_create()
             return new_bdm
 
         return do_reserve()
