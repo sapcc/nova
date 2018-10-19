@@ -13,6 +13,7 @@
 #    under the License.
 
 import contextlib
+import json
 
 from oslo_config import cfg
 from oslo_db import exception as db_exc
@@ -1505,7 +1506,9 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
 
             for i in instances:
                 itype = instance_types.get(i[0])
-                if not itype['baremetal']:
+                if not itype:
+                    LOG.error('flavor with ref id {} not found', i[0])
+                if not itype or not itype['baremetal']:
                     counts['instances'] = counts['instances'] + 1
                     counts['cores'] = counts['cores'] + i[1]
                     counts['ram'] = counts['ram'] + i[2]
@@ -1529,17 +1532,16 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             group_by(models.Instance.instance_type_id)
 
         project_result = project_query.all()
-        print(project_result)
-
         project_counts = _get_counts(project_result)
+
         counts = {'project': project_counts}
-        print(counts)
         if user_id:
             user_result = project_query.filter_by(user_id=user_id).all()
-            print(user_result)
             user_counts = _get_counts(user_result)
             counts['user'] = user_counts
-            print(user_counts)
+
+        LOG.info('Quota counts: {}'.format(
+            json.dumps(counts, indent=2, sort_keys=True)))
         return counts
 
     @base.remotable_classmethod
