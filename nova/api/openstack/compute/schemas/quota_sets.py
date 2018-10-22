@@ -16,6 +16,7 @@ import copy
 
 from nova.api.validation import parameter_types
 from nova import db
+from nova.quota import QUOTAS
 
 common_quota = {
     'type': ['integer', 'string'],
@@ -42,6 +43,11 @@ quota_resources = {
     'server_group_members': common_quota,
     'networks': common_quota
 }
+
+QUOTAS.initialize()
+for resource in QUOTAS.resources:
+    if resource not in quota_resources:
+        quota_resources[resource] = common_quota
 
 update_quota_set = copy.deepcopy(quota_resources)
 update_quota_set.update({'force': parameter_types.boolean})
