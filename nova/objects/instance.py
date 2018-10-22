@@ -1500,21 +1500,27 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
         def _get_counts(instances):
             counts = {'instances': 0, 'cores': 0, 'ram': 0}
 
-            # TODO: cache flavor_ids
-            instance_types = objects.FlavorList.get_by_id(
-                context, [x.instance_type_id for x in project_query.all()])
+            if instances:
+                # TODO: cache flavor_ids
+                instance_types = objects.FlavorList.get_by_id(
+                    context, [x[0] for x in instances])
 
-            for i in instances:
-                itype = instance_types.get(i[0])
-                if not itype:
-                    LOG.error('flavor with ref id {} not found', i[0])
-                if not itype or not itype['baremetal']:
-                    counts['instances'] = counts['instances'] + 1
-                    counts['cores'] = counts['cores'] + i[1]
-                    counts['ram'] = counts['ram'] + i[2]
-                else:
-                    old_val = project_counts.get(itype['name'], 0)
-                    project_counts.update({itype['name']: old_val+1})
+                for i in instances:
+                    itype = instance_types.get(i[0])
+                    if not itype:
+                        # Not found in flavor db of upstream api, searching locally
+                        LOG.error('flavor with ref id %s not found in flavor db', i[0])
+                        flavor_query = context.session.query(
+                            models.InstanceTypes).\
+                            filter_by(id=i[0])
+                        itype = flavor_query.first()
+                    if not itype['baremetal']:
+                        counts['instances'] = counts['instances'] + 1
+                        counts['cores'] = counts['cores'] + i[1]
+                        counts['ram'] = counts['ram'] + i[2]
+                    else:
+                        old_val = project_counts.get(itype['name'], 0)
+                        project_counts.update({itype['name']: old_val+1})
 
             return counts
 
@@ -1540,8 +1546,6 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             user_counts = _get_counts(user_result)
             counts['user'] = user_counts
 
-        LOG.info('Quota counts: {}'.format(
-            json.dumps(counts, indent=2, sort_keys=True)))
         return counts
 
     @base.remotable_classmethod

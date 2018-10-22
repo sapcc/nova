@@ -669,5 +669,4 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
         for x in query:
             res.update({x.id: {'name': 'instances_' + x.name,
                                'baremetal': is_baremetal(x.extra_specs)}})
-
         return res
