@@ -341,12 +341,15 @@ class Quotas(base.NovaObject):
                 continue
             count = cls.count_as_dict(context, resource, *count_args,
                                       **count_kwargs)
+            for custom_key in deltas:
+                if 'project' in count and custom_key not in count['project']:
+                    count['project'][custom_key] = 0
+                if 'user' in count and custom_key not in count['user']:
+                    count['user'][custom_key] = 0
             for res in count.get('project', {}):
-                if res in deltas:
                     total = count['project'][res] + deltas[res]
                     check_kwargs['project_values'][res] = total
             for res in count.get('user', {}):
-                if res in deltas:
                     total = count['user'][res] + deltas[res]
                     check_kwargs['user_values'][res] = total
         if check_project_id is not None:

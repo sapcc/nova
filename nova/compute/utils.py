@@ -853,11 +853,15 @@ def check_num_instances_quota(context, instance_type, min_count,
     # Determine requested cores and ram
     req_cores = max_count * instance_type.vcpus
     req_ram = max_count * instance_type.memory_mb
+    deltas = {'instances': max_count, 'cores': req_cores, 'ram': req_ram}
 
     quota_key_instances = 'instances'
     if instance_type.extra_specs.get('quota:separate', 'false') == 'true':
         quota_key_instances = 'instances_' + instance_type.name
-    deltas = { quota_key_instances: max_count }
+        deltas[quota_key_instances] = max_count
+        deltas['instances'] = 0
+        deltas['cores'] = 0
+        deltas['ram'] = 0
     reserve_cpu_ram = instance_type.extra_specs.get('quota:instance_only', 'false') != 'true'
     if reserve_cpu_ram:
         deltas.update(cores=req_cores, ram=req_ram)

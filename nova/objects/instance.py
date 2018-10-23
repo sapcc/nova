@@ -1498,7 +1498,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
     @staticmethod
     @db_api.pick_context_manager_reader
     def _get_counts_in_db_baremetalaware(context, project_id, user_id=None):
-        def _get_counts(instances):
+        def _get_counts( instances):
             counts = {'instances': 0, 'cores': 0, 'ram': 0}
 
             if instances:
@@ -1512,20 +1512,20 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                         # Not found in flavor db of upstream api, searching locally
                         LOG.warning('flavor with ref id %s not found in flavor db', i[0])
                         flavor_query = context.session.query(
-                            models.InstanceTypes).\
+                            models.InstanceTypes). \
                             filter_by(id=i[0]). \
                             options(joinedload('extra_specs'))
                         old_flavor = flavor_query.first()
                         # Bad hack, but works
-                        itype = {'name': 'instances_'+old_flavor.name,
+                        itype = {'name': 'instances_' + old_flavor.name,
                                  'baremetal': len(old_flavor.extra_specs) > 0}
                     if itype.get('baremetal', False):
+                        old_val = counts.get(itype['name'], 0)
+                        counts.update({itype['name']: old_val + 1})
+                    else:
                         counts['instances'] = counts['instances'] + 1
                         counts['cores'] = counts['cores'] + i[1]
                         counts['ram'] = counts['ram'] + i[2]
-                    else:
-                        old_val = counts.get(itype['name'], 0)
-                        counts.update({itype['name']: old_val+1})
 
             return counts
 
