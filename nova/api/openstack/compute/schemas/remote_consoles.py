@@ -77,7 +77,7 @@ get_serial_console = {
             'properties': {
                 'type': {
                     'type': 'string',
-                    'enum': ['serial'],
+                    'enum': ['serial', 'shellinabox'],
                 },
             },
             'required': ['type'],
