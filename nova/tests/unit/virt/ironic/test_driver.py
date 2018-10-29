@@ -3722,7 +3722,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
     @mock.patch.object(ironic_driver, 'LOG', autospec=True)
     def test_get_serial_console_socat_invalid_url(self, mock_log):
         def _fake_log_error(msg, *args, **kwargs):
-            regex = r'Invalid Socat console URL .*'
+            regex = r'Invalid Socat or Shellinabox console URL .*'
             self.assertThat(msg, matchers.MatchesRegex(regex))
         mock_log.error.side_effect = _fake_log_error
 
@@ -3743,7 +3743,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
     def test_get_serial_console_socat_invalid_url_2(self, mock_log):
 
         def _fake_log_error(msg, *args, **kwargs):
-            regex = r'Invalid Socat console URL .*'
+            regex = r'Invalid Socat or Shellinabox console URL .*'
             self.assertThat(msg, matchers.MatchesRegex(regex))
 
         mock_log.error.side_effect = _fake_log_error
@@ -3795,11 +3795,11 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
         self.assertEqual('::1', result.host)
         self.assertEqual(10000, result.port)
 
-    def test_get_serial_console_shellinabox(self):
+    def test_get_serial_console_serial(self):
 
         def _fake_get_console(node_uuid):
             return self._create_console_data(enabled=True,
-                                             console_type='shellinabox')
+                                             console_type='serial')
 
         self.mock_conn.get_node_console.side_effect = _fake_get_console
 
