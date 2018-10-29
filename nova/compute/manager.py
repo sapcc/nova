@@ -5211,12 +5211,24 @@ class ComputeManager(manager.Manager):
         context = context.elevated()
 
         token = uuidutils.generate_uuid()
-        access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
 
         try:
             # Retrieve connect info from driver, and then decorate with our
             # access info token
             console = self.driver.get_serial_console(context, instance)
+
+            if console_type == 'serial':
+                # add only token
+                access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+            elif console_type == 'shellinabox':
+                # token and internal url for shellinabox
+                access_url = '%s%s?token=%s' % (
+                    CONF.shellinabox.base_url,
+                    console.internal_access_path,
+                    token)
+            else:
+                raise exception.ConsoleTypeInvalid(console_type=console_type)
+
             connect_info = console.get_connection_info(token, access_url)
         except exception.InstanceNotFound:
             if instance.vm_state != vm_states.BUILDING:
@@ -5235,7 +5247,7 @@ class ComputeManager(manager.Manager):
             console_info = self.driver.get_spice_console(ctxt, instance)
         elif console_type == "rdp-html5":
             console_info = self.driver.get_rdp_console(ctxt, instance)
-        elif console_type == "serial":
+        elif console_type in ("serial", "shellinabox"):
             console_info = self.driver.get_serial_console(ctxt, instance)
         elif console_type == "webmks":
             console_info = self.driver.get_mks_console(ctxt, instance)
