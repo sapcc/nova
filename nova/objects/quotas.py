@@ -347,10 +347,10 @@ class Quotas(base.NovaObject):
                 if 'user' in count and custom_key not in count['user']:
                     count['user'][custom_key] = 0
             for res in count.get('project', {}):
-                    total = count['project'][res] + deltas[res]
+                    total = count['project'][res] + deltas.get('res', 0)
                     check_kwargs['project_values'][res] = total
             for res in count.get('user', {}):
-                    total = count['user'][res] + deltas[res]
+                    total = count['user'][res] + deltas.get('res', 0)
                     check_kwargs['user_values'][res] = total
         if check_project_id is not None:
             check_kwargs['project_id'] = check_project_id
