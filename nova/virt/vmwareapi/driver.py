@@ -292,7 +292,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Send a message to VSPC to request specific log."""
 
         cctxt = self.client.prepare()
-        return cctxt.call(context, 'get_console_output', instance)
+        return cctxt.call(context, 'get_console_output', instance=instance)
 
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
