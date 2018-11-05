@@ -292,7 +292,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Send a message to VSPC to request specific log."""
 
         cctxt = self.client.prepare()
-        return cctxt.call(context, 'get_console_output', instance=instance)
+        return cctxt.call(context, 'vspc_get_console_output', instance=instance)
 
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
@@ -688,7 +688,7 @@ class VSPCManager(manager.Manager):
         super(VSPCManager, self).__init__(service_name='vspc',
                                                  *args, **kwargs)
 
-    def get_console_output(self, context, instance):
+    def vspc_get_console_output(self, context, instance):
         """Send a message to VSPC to request specific log."""
 
         if not CONF.vmware.serial_log_dir:
