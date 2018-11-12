@@ -32,7 +32,7 @@ ironic = None
 IRONIC_GROUP = nova.conf.ironic.ironic_group
 
 # The API version required by the Ironic driver
-IRONIC_API_VERSION = (1, 38)
+IRONIC_API_VERSION = (1, 46)
 # NOTE(TheJulia): This version should ALWAYS be the _last_ release
 # supported version of the API version used by nova. If a feature
 # needs 1.38 to be negotiated to operate properly, then the version
@@ -117,7 +117,7 @@ class IronicClientWrapper(object):
                 ksa_adap = utils.get_ksa_adapter(
                     nova.conf.ironic.DEFAULT_SERVICE_TYPE,
                     ksa_auth=auth_plugin, ksa_session=sess,
-                    min_version=(IRONIC_API_VERSION[0], 0),
+                    min_version=(IRONIC_API_VERSION[0], IRONIC_API_VERSION[1]),
                     max_version=(IRONIC_API_VERSION[0], ks_disc.LATEST))
                 ironic_url = ksa_adap.get_endpoint()
                 ironic_url_none_reason = 'returned None'
