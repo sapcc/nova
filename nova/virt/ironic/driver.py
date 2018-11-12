@@ -605,6 +605,9 @@ class IronicDriver(virt_driver.ComputeDriver):
         :raises: VirtDriverNotReady
 
         """
+        if CONF.ironic.conductor_group:
+            kwargs['conductor_group'] = CONF.ironic.conductor_group
+
         node_list = []
         try:
             node_list = self.ironicclient.call("node.list", **kwargs)
@@ -681,10 +684,12 @@ class IronicDriver(virt_driver.ComputeDriver):
         service_list = objects.ServiceList.get_all_computes_by_hv_type(
             ctxt, self._get_hypervisor_type())
         services = set()
-        for svc in service_list:
-            is_up = self.servicegroup_api.service_is_up(svc)
-            if is_up:
-                services.add(svc.host)
+
+        if not CONF.ironic.conductor_group:
+            for svc in service_list:
+                is_up = self.servicegroup_api.service_is_up(svc)
+                if is_up:
+                    services.add(svc.host)
         # NOTE(jroll): always make sure this service is in the list, because
         # only services that have something registered in the compute_nodes
         # table will be here so far, and we might be brand new.
