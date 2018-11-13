@@ -131,13 +131,24 @@ def _get_neutron_network(session, cluster, vif):
     elif vif['type'] == model.VIF_TYPE_DVS:
         # Port binding for DVS VIF types may pass the name
         # of the port group, so use it if present
-        network_id = vif.get('details', {}).get('dvs_port_group_name')
-        if network_id is None:
-            # Make use of the original one, in the event that the
-            # port binding does not provide this key in VIF details
-            network_id = vif['network']['bridge']
-        network_ref = network_util.get_network_with_the_name(
-                session, network_id, cluster)
+        vif_details = vif.get('details', {})
+
+        dvs_uuid = vif_details.get('dvs_uuid')
+        dvs_port_group_key = vif_details.get('dvs_port_group_key')
+        if dvs_uuid and dvs_port_group_key:
+            network_ref = {
+                'type': 'DistributedVirtualPortgroup',
+                'dvpg': dvs_port_group_key,
+                'dvsw': dvs_uuid
+            }
+        else:
+            network_id = vif_details.get('dvs_port_group_name')
+            if network_id is None:
+                # Make use of the original one, in the event that the
+                # port binding does not provide this key in VIF details
+                network_id = vif['network']['bridge']
+            network_ref = network_util.get_network_with_the_name(
+                    session, network_id, cluster)
         if not network_ref:
             # We may have a provider network for a portgroup. The portgroup
             # will have the same name as the network 'label'. This is enforced
@@ -147,8 +158,8 @@ def _get_neutron_network(session, cluster, vif):
                     session, network_id, cluster)
         if not network_ref:
             raise exception.NetworkNotFoundForBridge(bridge=network_id)
-        if vif.get('details') and vif['details'].get('dvs_port_key'):
-            network_ref['dvs_port_key'] = vif['details']['dvs_port_key']
+        if vif_details.get('dvs_port_key'):
+            network_ref['dvs_port_key'] = vif.details['dvs_port_key']
     else:
         reason = _('vif type %s not supported') % vif['type']
         raise exception.InvalidInput(reason=reason)
