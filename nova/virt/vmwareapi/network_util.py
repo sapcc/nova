@@ -122,7 +122,7 @@ def get_vswitch_for_vlan_interface(session, vlan_interface, cluster=None):
     """Gets the vswitch associated with the physical network adapter
     with the name supplied.
     """
-    # Get the list of vSwicthes on the Host System
+    # Get the list of vSwitches on the Host System
     host_mor = vm_util.get_host_ref(session, cluster)
     vswitches_ret = session._call_method(vutil,
                                          "get_object_property",
