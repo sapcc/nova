@@ -133,8 +133,8 @@ def _get_neutron_network(session, cluster, vif):
         # of the port group, so use it if present
         vif_details = vif.get('details', {})
 
-        dvs_uuid = vif_details.get('dvs_uuid')
-        dvs_port_group_key = vif_details.get('dvs_port_group_key')
+        dvs_uuid = vif_details.get('dvs_id')
+        dvs_port_group_key = vif_details.get('pg_id')
         if dvs_uuid and dvs_port_group_key:
             network_ref = {
                 'type': 'DistributedVirtualPortgroup',
