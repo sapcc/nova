@@ -12086,6 +12086,29 @@ class ComputeAPIAggrTestCase(BaseTestCase):
                          'compute.fake-mini')
         mock_add_host.assert_not_called()
 
+    @mock.patch('nova.objects.Service.get_by_compute_host')
+    @mock.patch('nova.scheduler.client.report.SchedulerReportClient.'
+                'aggregate_add_host')
+    def test_add_host_to_aggregate_raise_not_found_case(self, mock_add_host,
+                                                        mock_get_service):
+        # Ensure ComputeHostNotFound is raised when adding a host with a
+        # hostname that doesn't exactly map what we have stored.
+
+        def return_anyway(context, host_name):
+            return objects.Service(host=host_name.upper())
+
+        mock_get_service.side_effect = return_anyway
+
+        aggr = self.api.create_aggregate(self.context, 'fake_aggregate',
+                                         'fake_zone')
+        fake_notifier.NOTIFICATIONS = []
+        values = _create_service_entries(self.context)
+        fake_host = values[0][1][0]
+        self.assertRaises(exception.ComputeHostNotFound,
+                          self.api.add_host_to_aggregate,
+                          self.context, aggr.id, fake_host)
+        mock_add_host.assert_not_called()
+
     @mock.patch('nova.scheduler.client.report.SchedulerReportClient.'
                 'aggregate_add_host')
     @mock.patch('nova.objects.HostMapping.get_by_host')
@@ -12285,7 +12308,9 @@ class ComputeAPIAggrCallsSchedulerTestCase(test.NoDBTestCase):
         agg = objects.Aggregate(name='fake', metadata={}, uuid=uuids.agg)
         agg.add_host = mock.Mock()
         with test.nested(
-                mock.patch.object(objects.Service, 'get_by_compute_host'),
+                mock.patch.object(objects.Service, 'get_by_compute_host',
+                                  return_value=objects.Service(
+                                      host='fakehost')),
                 mock.patch.object(objects.Aggregate, 'get_by_id',
                                   return_value=agg)):
             self.api.add_host_to_aggregate(self.context, 1, 'fakehost')
@@ -12661,6 +12686,7 @@ class EvacuateHostTestCase(BaseTestCase):
         super(EvacuateHostTestCase, self).setUp()
         self.inst = self._create_fake_instance_obj(
             {'host': 'fake_host_2', 'node': 'fakenode2'})
+        self.inst.system_metadata = {}
         self.inst.task_state = task_states.REBUILDING
         self.inst.save()
 
@@ -12941,10 +12967,8 @@ class EvacuateHostTestCase(BaseTestCase):
             block_device_info=mock.ANY)
 
     @mock.patch.object(fake.FakeDriver, 'spawn')
-    @mock.patch('nova.objects.Instance.image_meta',
-                new_callable=mock.PropertyMock)
     def test_on_shared_storage_not_provided_host_with_shared_storage(self,
-            mock_image_meta, mock_spawn):
+            mock_spawn):
         self.stub_out('nova.virt.fake.FakeDriver.instance_on_disk',
                       lambda *a, **ka: True)
 
@@ -12953,7 +12977,7 @@ class EvacuateHostTestCase(BaseTestCase):
         mock_spawn.assert_called_once_with(
             test.MatchType(context.RequestContext),
             test.MatchType(objects.Instance),
-            mock_image_meta.return_value,
+            test.MatchType(objects.ImageMeta),
             mock.ANY, 'newpass', mock.ANY,
             network_info=mock.ANY,
             block_device_info=mock.ANY)

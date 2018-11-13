@@ -1742,6 +1742,20 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                                         use_slave=True)
             mock_spawn.assert_called_once_with(mock.ANY, instance)
 
+    @mock.patch('nova.objects.InstanceList.get_by_host', new=mock.Mock())
+    @mock.patch('nova.compute.manager.ComputeManager.'
+                '_query_driver_power_state_and_sync',
+                new_callable=mock.NonCallableMock)
+    def test_sync_power_states_virt_driver_not_ready(self, _mock_sync):
+        """"Tests that the periodic task exits early if the driver raises
+        VirtDriverNotReady.
+        """
+        with mock.patch.object(
+                self.compute.driver, 'get_num_instances',
+                side_effect=exception.VirtDriverNotReady) as gni:
+            self.compute._sync_power_states(mock.sentinel.context)
+        gni.assert_called_once_with()
+
     def _get_sync_instance(self, power_state, vm_state, task_state=None,
                            shutdown_terminate=False):
         instance = objects.Instance()
@@ -3687,14 +3701,9 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                               instance=instance,
                               new_pass=None)
 
-            if (expected_exception == exception.SetAdminPasswdNotSupported or
-                    expected_exception == exception.InstanceAgentNotEnabled or
-                    expected_exception == NotImplementedError):
+            if expected_exception != exception.InstancePasswordSetFailed:
                 instance_save_mock.assert_called_once_with(
                     expected_task_state=task_states.UPDATING_PASSWORD)
-            else:
-                # setting the instance to error state
-                instance_save_mock.assert_called_once_with()
 
             self.assertEqual(expected_vm_state, instance.vm_state)
             # check revert_task_state decorator
@@ -3712,7 +3721,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         exc = exception.Forbidden('Internal error')
         expected_exception = exception.InstancePasswordSetFailed
         self._do_test_set_admin_password_driver_error(
-            exc, vm_states.ERROR, None, expected_exception)
+            exc, vm_states.ACTIVE, None, expected_exception)
 
     def test_set_admin_password_driver_not_implemented(self):
         # Ensure expected exception is raised if set_admin_password not
@@ -4150,6 +4159,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                                            mock_elevated):
         mock_elevated.return_value = self.context
         instance = fake_instance.fake_instance_obj(self.context)
+        instance.system_metadata = {}
         ex = test.TestingException('foo')
         with mock.patch.object(self.compute, '_get_resource_tracker') as mrt:
             self.assertRaises(test.TestingException,
@@ -4223,6 +4233,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
             mock_instance_fault):
         instance = fake_instance.fake_instance_obj(self.context)
         instance.info_cache = None
+        instance.system_metadata = {}
         elevated_context = mock.Mock()
         mock_context_elevated.return_value = elevated_context
         request_spec = objects.RequestSpec()
@@ -4266,8 +4277,10 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
 
     def test_rebuild_node_updated_if_recreate(self):
         dead_node = uuidutils.generate_uuid()
+        img_sys_meta = {'image_hw_numa_nodes': 1}
         instance = fake_instance.fake_instance_obj(self.context,
                                                    node=dead_node)
+        instance.system_metadata = img_sys_meta
         instance.migration_context = None
         with test.nested(
             mock.patch.object(self.compute, '_get_resource_tracker'),
@@ -4284,6 +4297,15 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
             self.assertEqual('new-node', instance.node)
             mock_set.assert_called_once_with(None, 'done')
             mock_rt.assert_called_once_with()
+            # Make sure the rebuild_claim was called with the proper image_meta
+            # from the instance.
+            mock_rebuild_claim = mock_rt.return_value.rebuild_claim
+            mock_rebuild_claim.assert_called_once()
+            self.assertIn('image_meta', mock_rebuild_claim.call_args[1])
+            actual_image_meta = mock_rebuild_claim.call_args[1][
+                'image_meta'].properties
+            self.assertIn('hw_numa_nodes', actual_image_meta)
+            self.assertEqual(1, actual_image_meta.hw_numa_nodes)
 
     @mock.patch.object(compute_utils, 'notify_about_instance_rebuild')
     @mock.patch.object(compute_utils, 'notify_usage_exists')
@@ -8337,6 +8359,13 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase):
     def test_live_migration_cleanup_flags_shared_hyperv(self):
         migrate_data = objects.HyperVLiveMigrateData(
             is_shared_instance_path=True)
+        do_cleanup, destroy_disks = self.compute._live_migration_cleanup_flags(
+            migrate_data)
+        self.assertTrue(do_cleanup)
+        self.assertFalse(destroy_disks)
+
+    def test_live_migration_cleanup_flags_other(self):
+        migrate_data = mock.Mock()
         do_cleanup, destroy_disks = self.compute._live_migration_cleanup_flags(
             migrate_data)
         self.assertFalse(do_cleanup)

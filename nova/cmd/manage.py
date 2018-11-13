@@ -44,7 +44,6 @@ import six
 import six.moves.urllib.parse as urlparse
 from sqlalchemy.engine import url as sqla_url
 
-from nova.api.openstack.placement import db_api as placement_db
 from nova.api.openstack.placement.objects import consumer as consumer_obj
 from nova.cmd import common as cmd_common
 from nova.compute import api as compute_api
@@ -552,12 +551,18 @@ Error: %s""") % six.text_type(e))
             if deleted_instance_uuids:
                 table_to_rows_archived.setdefault('instance_mappings', 0)
                 table_to_rows_archived.setdefault('request_specs', 0)
+                table_to_rows_archived.setdefault('instance_group_member', 0)
                 deleted_mappings = objects.InstanceMappingList.destroy_bulk(
                                             ctxt, deleted_instance_uuids)
                 table_to_rows_archived['instance_mappings'] += deleted_mappings
                 deleted_specs = objects.RequestSpec.destroy_bulk(
                                             ctxt, deleted_instance_uuids)
                 table_to_rows_archived['request_specs'] += deleted_specs
+                deleted_group_members = (
+                    objects.InstanceGroup.destroy_members_bulk(
+                        ctxt, deleted_instance_uuids))
+                table_to_rows_archived['instance_group_member'] += (
+                    deleted_group_members)
             if not until_complete:
                 break
             elif not run:
@@ -680,9 +685,7 @@ Error: %s""") % six.text_type(e))
                         'migrated') % {'total': found,
                                        'meth': name,
                                        'done': done})
-            migrations.setdefault(name, (0, 0))
-            migrations[name] = (migrations[name][0] + found,
-                                migrations[name][1] + done)
+            migrations[name] = found, done
             if max_count is not None:
                 ran += done
                 if ran >= max_count:
@@ -711,8 +714,14 @@ Error: %s""") % six.text_type(e))
         migration_info = {}
         while ran is None or ran != 0:
             migrations = self._run_migration(ctxt, max_count)
-            migration_info.update(migrations)
-            ran = sum([done for found, done in migrations.values()])
+            ran = 0
+            for name in migrations:
+                migration_info.setdefault(name, (0, 0))
+                migration_info[name] = (
+                    migration_info[name][0] + migrations[name][0],
+                    migration_info[name][1] + migrations[name][1],
+                )
+                ran += migrations[name][1]
             if not unlimited:
                 break
 
@@ -853,8 +862,6 @@ class ApiDbCommands(object):
         # the placement sync to and with the api sync.
         result = True
         if CONF.placement_database.connection is not None:
-            # Establish the independent context manager for the placement db.
-            placement_db.configure(CONF)
             result = migration.db_sync(version2, database='placement')
         return migration.db_sync(version2, database='api') and result
 

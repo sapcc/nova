@@ -650,10 +650,37 @@ class TestUpgradeCheckResourceProviders(test.NoDBTestCase):
             cpu_info='{"arch": "x86_64"}')
         cn.create()
 
+        # create a deleted compute node record (shouldn't count)
+        cn2 = objects.ComputeNode(
+            context=ctxt,
+            deleted=1,
+            host='fakehost',
+            vcpus=4,
+            memory_mb=8 * 1024,
+            local_gb=40,
+            vcpus_used=2,
+            memory_mb_used=2 * 1024,
+            local_gb_used=10,
+            hypervisor_type='fake',
+            hypervisor_version=1,
+            cpu_info='{"arch": "x86_64"}')
+        cn2.create()
+
         # create a single resource provider with some VCPU inventory
         self._create_resource_provider(FAKE_VCPU_INVENTORY)
         # create an externally shared IP allocation pool resource provider
         self._create_resource_provider(FAKE_IP_POOL_INVENTORY)
+
+        # Stub out _count_compute_nodes to make sure we never call it without
+        # a cell-targeted context.
+        original_count_compute_nodes = (
+            status.UpgradeCommands._count_compute_nodes)
+
+        def stub_count_compute_nodes(_self, context=None):
+            self.assertIsNotNone(context.db_connection)
+            return original_count_compute_nodes(_self, context=context)
+        self.stub_out('nova.cmd.status.UpgradeCommands._count_compute_nodes',
+                      stub_count_compute_nodes)
 
         result = self.cmd._check_resource_providers()
         self.assertEqual(status.UpgradeCheckCode.SUCCESS, result.code)

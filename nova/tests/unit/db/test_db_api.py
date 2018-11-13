@@ -681,15 +681,15 @@ class SqlAlchemyDbApiNoDbTestCase(test.NoDBTestCase):
         self.assertEqual('|', filter('|'))
         self.assertEqual('LIKE', op)
 
-    @mock.patch.object(sqlalchemy_api.main_context_manager._factory,
-                       'get_legacy_facade')
-    def test_get_engine(self, mock_create_facade):
-        mock_facade = mock.MagicMock()
-        mock_create_facade.return_value = mock_facade
-
+    @mock.patch.object(sqlalchemy_api, 'main_context_manager')
+    def test_get_engine(self, mock_ctxt_mgr):
         sqlalchemy_api.get_engine()
-        mock_create_facade.assert_called_once_with()
-        mock_facade.get_engine.assert_called_once_with(use_slave=False)
+        mock_ctxt_mgr.writer.get_engine.assert_called_once_with()
+
+    @mock.patch.object(sqlalchemy_api, 'main_context_manager')
+    def test_get_engine_use_slave(self, mock_ctxt_mgr):
+        sqlalchemy_api.get_engine(use_slave=True)
+        mock_ctxt_mgr.reader.get_engine.assert_called_once_with()
 
     def test_get_db_conf_with_connection(self):
         mock_conf_group = mock.MagicMock()
@@ -698,15 +698,10 @@ class SqlAlchemyDbApiNoDbTestCase(test.NoDBTestCase):
                                               connection='fake://')
         self.assertEqual('fake://', db_conf['connection'])
 
-    @mock.patch.object(sqlalchemy_api.api_context_manager._factory,
-                       'get_legacy_facade')
-    def test_get_api_engine(self, mock_create_facade):
-        mock_facade = mock.MagicMock()
-        mock_create_facade.return_value = mock_facade
-
+    @mock.patch.object(sqlalchemy_api, 'api_context_manager')
+    def test_get_api_engine(self, mock_ctxt_mgr):
         sqlalchemy_api.get_api_engine()
-        mock_create_facade.assert_called_once_with()
-        mock_facade.get_engine.assert_called_once_with()
+        mock_ctxt_mgr.writer.get_engine.assert_called_once_with()
 
     @mock.patch.object(sqlalchemy_api, '_instance_get_by_uuid')
     @mock.patch.object(sqlalchemy_api, '_instances_fill_metadata')
@@ -2864,6 +2859,20 @@ class InstanceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual({}, db.instance_metadata_get(ctxt, inst_uuid))
         self.assertEqual([], db.instance_tag_get_by_instance_uuid(
             ctxt, inst_uuid))
+
+        @sqlalchemy_api.pick_context_manager_reader
+        def _assert_instance_id_mapping(_ctxt):
+            # NOTE(mriedem): We can't use ec2_instance_get_by_uuid to assert
+            # the instance_id_mappings record is gone because it hard-codes
+            # read_deleted='yes' and will read the soft-deleted record. So we
+            # do the model_query directly here. See bug 1061166.
+            inst_id_mapping = sqlalchemy_api.model_query(
+                _ctxt, models.InstanceIdMapping).filter_by(
+                uuid=inst_uuid).first()
+            self.assertFalse(inst_id_mapping,
+                             'instance_id_mapping not deleted for '
+                             'instance: %s' % inst_uuid)
+        _assert_instance_id_mapping(ctxt)
         ctxt.read_deleted = 'yes'
         self.assertEqual(values['system_metadata'],
                          db.instance_system_metadata_get(ctxt, inst_uuid))
