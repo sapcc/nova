@@ -134,11 +134,13 @@ def get_engine(use_slave=False, context=None):
     :param context: The request context that can contain a context manager
     """
     ctxt_mgr = get_context_manager(context)
-    return ctxt_mgr.get_legacy_facade().get_engine(use_slave=use_slave)
+    if use_slave:
+        return ctxt_mgr.reader.get_engine()
+    return ctxt_mgr.writer.get_engine()
 
 
 def get_api_engine():
-    return api_context_manager.get_legacy_facade().get_engine()
+    return api_context_manager.writer.get_engine()
 
 
 _SHADOW_TABLE_PREFIX = 'shadow_'
@@ -1819,6 +1821,8 @@ def instance_destroy(context, instance_uuid, constraint=None):
     model_query(context, models.Migration).\
             filter_by(instance_uuid=instance_uuid).\
             soft_delete()
+    model_query(context, models.InstanceIdMapping).filter_by(
+        uuid=instance_uuid).soft_delete()
     # NOTE(snikitin): We can't use model_query here, because there is no
     # column 'deleted' in 'tags' or 'console_auth_tokens' tables.
     context.session.query(models.Tag).filter_by(

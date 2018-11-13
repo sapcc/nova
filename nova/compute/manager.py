@@ -587,6 +587,9 @@ class ComputeManager(manager.Manager):
         # to the database layer.
         instance.host = None
         instance.node = None
+        # If the instance is not on a host, it's not in an aggregate and
+        # therefore is not in an availability zone.
+        instance.availability_zone = None
 
     def _set_instance_obj_error_state(self, context, instance,
                                       clean_task_state=False):
@@ -968,8 +971,15 @@ class ComputeManager(manager.Manager):
         except NotImplementedError as e:
             LOG.debug(e, instance=instance)
         except exception.VirtualInterfacePlugException:
-            # we don't want an exception to block the init_host
-            LOG.exception("Vifs plug failed", instance=instance)
+            # NOTE(mriedem): If we get here, it could be because the vif_type
+            # in the cache is "binding_failed". The only way to fix that is to
+            # try and bind the ports again, which would be expensive here on
+            # host startup. We could add a check to _heal_instance_info_cache
+            # to handle this, but probably only if the instance task_state is
+            # None.
+            LOG.exception('Virtual interface plugging failed for instance. '
+                          'The port binding:host_id may need to be manually '
+                          'updated.', instance=instance)
             self._set_instance_obj_error_state(context, instance)
             return
 
@@ -2999,6 +3009,12 @@ class ComputeManager(manager.Manager):
         image_meta = {}
         if image_ref:
             image_meta = self.image_api.get(context, image_ref)
+        elif evacuate:
+            # For evacuate the API does not send down the image_ref since the
+            # image does not change so just get it from what was stashed in
+            # the instance system_metadata when the instance was created (or
+            # last rebuilt). This also works for volume-backed instances.
+            image_meta = instance.image_meta
 
         # NOTE(mriedem): On an evacuate, we need to update
         # the instance's host and node properties to reflect it's
@@ -3665,7 +3681,6 @@ class ComputeManager(manager.Manager):
         except Exception:
             # Catch all here because this could be anything.
             LOG.exception('set_admin_password failed', instance=instance)
-            self._set_instance_obj_error_state(context, instance)
             # We create a new exception here so that we won't
             # potentially reveal password information to the
             # API caller.  The real exception is logged above
@@ -6529,23 +6544,22 @@ class ComputeManager(manager.Manager):
         # migrate_data objects for drivers that expose block live migration
         # information (i.e. Libvirt, Xenapi and HyperV). For other drivers
         # cleanup is not needed.
-        is_shared_block_storage = True
-        is_shared_instance_path = True
+        do_cleanup = False
+        destroy_disks = False
         if isinstance(migrate_data, migrate_data_obj.LibvirtLiveMigrateData):
-            is_shared_block_storage = migrate_data.is_shared_block_storage
-            is_shared_instance_path = migrate_data.is_shared_instance_path
+            # No instance booting at source host, but instance dir
+            # must be deleted for preparing next block migration
+            # must be deleted for preparing next live migration w/o shared
+            # storage
+            do_cleanup = not migrate_data.is_shared_instance_path
+            destroy_disks = not migrate_data.is_shared_block_storage
         elif isinstance(migrate_data, migrate_data_obj.XenapiLiveMigrateData):
-            is_shared_block_storage = not migrate_data.block_migration
-            is_shared_instance_path = not migrate_data.block_migration
+            do_cleanup = migrate_data.block_migration
+            destroy_disks = migrate_data.block_migration
         elif isinstance(migrate_data, migrate_data_obj.HyperVLiveMigrateData):
-            is_shared_instance_path = migrate_data.is_shared_instance_path
-            is_shared_block_storage = migrate_data.is_shared_instance_path
-
-        # No instance booting at source host, but instance dir
-        # must be deleted for preparing next block migration
-        # must be deleted for preparing next live migration w/o shared storage
-        do_cleanup = not is_shared_instance_path
-        destroy_disks = not is_shared_block_storage
+            # NOTE(claudiub): We need to cleanup any zombie Planned VM.
+            do_cleanup = True
+            destroy_disks = not migrate_data.is_shared_instance_path
 
         return (do_cleanup, destroy_disks)
 
@@ -7472,7 +7486,14 @@ class ComputeManager(manager.Manager):
                                                         expected_attrs=[],
                                                         use_slave=True)
 
-        num_vm_instances = self.driver.get_num_instances()
+        try:
+            num_vm_instances = self.driver.get_num_instances()
+        except exception.VirtDriverNotReady as e:
+            # If the virt driver is not ready, like ironic-api not being up
+            # yet in the case of ironic, just log it and exit.
+            LOG.info('Skipping _sync_power_states periodic task due to: %s', e)
+            return
+
         num_db_instances = len(db_instances)
 
         if num_vm_instances != num_db_instances:

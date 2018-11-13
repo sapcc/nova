@@ -3346,6 +3346,21 @@ class API(base.Base):
         self._record_action_start(context, instance,
                                   instance_actions.REVERT_RESIZE)
 
+        # Conductor updated the RequestSpec.flavor during the initial resize
+        # operation to point at the new flavor, so we need to update the
+        # RequestSpec to point back at the original flavor, otherwise
+        # subsequent move operations through the scheduler will be using the
+        # wrong flavor.
+        try:
+            reqspec = objects.RequestSpec.get_by_instance_uuid(
+                context, instance.uuid)
+            reqspec.flavor = instance.old_flavor
+            reqspec.save()
+        except exception.RequestSpecNotFound:
+            # TODO(mriedem): Make this a failure in Stein when we drop
+            # compatibility for missing request specs.
+            pass
+
         # TODO(melwitt): We're not rechecking for strict quota here to guard
         # against going over quota during a race at this time because the
         # resource consumption for this operation is written to the database
@@ -5312,13 +5327,22 @@ class AggregateAPI(base.Base):
         try:
             mapping = objects.HostMapping.get_by_host(context, host_name)
             nova_context.set_target_cell(context, mapping.cell_mapping)
-            objects.Service.get_by_compute_host(context, host_name)
+            service = objects.Service.get_by_compute_host(context, host_name)
         except exception.HostMappingNotFound:
             try:
                 # NOTE(danms): This targets our cell
-                _find_service_in_cell(context, service_host=host_name)
+                service = _find_service_in_cell(context,
+                                                service_host=host_name)
             except exception.NotFound:
                 raise exception.ComputeHostNotFound(host=host_name)
+
+        if service.host != host_name:
+            # NOTE(danms): If we found a service but it is not an
+            # exact match, we may have a case-insensitive backend
+            # database (like mysql) which will end up with us
+            # adding the host-aggregate mapping with a
+            # non-matching hostname.
+            raise exception.ComputeHostNotFound(host=host_name)
 
         aggregate = objects.Aggregate.get_by_id(context, aggregate_id)
 
