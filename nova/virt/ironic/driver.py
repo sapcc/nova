@@ -605,6 +605,9 @@ class IronicDriver(virt_driver.ComputeDriver):
         :raises: VirtDriverNotReady
 
         """
+        if CONF.ironic.conductor_group:
+            kwargs['conductor_group'] = CONF.ironic.conductor_group
+
         node_list = []
         try:
             node_list = self.ironicclient.call("node.list", **kwargs)
@@ -681,10 +684,12 @@ class IronicDriver(virt_driver.ComputeDriver):
         service_list = objects.ServiceList.get_all_computes_by_hv_type(
             ctxt, self._get_hypervisor_type())
         services = set()
-        for svc in service_list:
-            is_up = self.servicegroup_api.service_is_up(svc)
-            if is_up:
-                services.add(svc.host)
+
+        if not CONF.ironic.conductor_group:
+            for svc in service_list:
+                is_up = self.servicegroup_api.service_is_up(svc)
+                if is_up:
+                    services.add(svc.host)
         # NOTE(jroll): always make sure this service is in the list, because
         # only services that have something registered in the compute_nodes
         # table will be here so far, and we might be brand new.
@@ -1778,13 +1783,14 @@ class IronicDriver(virt_driver.ComputeDriver):
         node = result['node']
         console_info = result['console_info']
 
-        if console_info["type"] != "socat":
+        if console_info["type"] not in ("socat", "shellinabox"):
             LOG.warning('Console type "%(type)s" (of ironic node '
                         '%(node)s) does not support Nova serial console',
                         {'type': console_info["type"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
         # Parse and check the console url
         url = urlparse.urlparse(console_info["url"])
@@ -1792,26 +1798,37 @@ class IronicDriver(virt_driver.ComputeDriver):
             scheme = url.scheme
             hostname = url.hostname
             port = url.port
-            if not (scheme and hostname and port):
+            if not (scheme and hostname):
                 raise AssertionError()
         except (ValueError, AssertionError):
-            LOG.error('Invalid Socat console URL "%(url)s" '
+            LOG.error('Invalid Socat or Shellinabox console URL "%(url)s" '
                       '(ironic node %(node)s)',
                       {'url': console_info["url"],
                        'node': node.uuid},
                       instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
         if scheme == "tcp":
             return console_type.ConsoleSerial(host=hostname,
                                               port=port)
+        elif scheme == "http":
+            return console_type.ConsoleSerial(host=hostname,
+                                              port=80,
+                                              internal_access_path=url.path)
+        elif scheme == "https":
+            return console_type.ConsoleSerial(host=hostname,
+                                              port=443,
+                                              internal_access_path=url.path)
         else:
             LOG.warning('Socat serial console only supports "tcp". '
+                        'Shellinabox only http and https. '
                         'This URL is "%(url)s" (ironic node %(node)s).',
                         {'url': console_info["url"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
     @property
     def need_legacy_block_device_info(self):

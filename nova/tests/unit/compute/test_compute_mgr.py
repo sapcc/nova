@@ -20,6 +20,7 @@ import time
 from cinderclient import exceptions as cinder_exception
 from cursive import exception as cursive_exception
 from eventlet import event as eventlet_event
+from eventlet import timeout as eventlet_timeout
 import mock
 import netaddr
 from oslo_log import log as logging
@@ -2559,13 +2560,14 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
     def test_prepare_for_instance_event(self, lock_name_mock):
         inst_obj = objects.Instance(uuid=uuids.instance)
         result = self.compute.instance_events.prepare_for_instance_event(
-            inst_obj, 'test-event')
+            inst_obj, 'test-event', None)
         self.assertIn(uuids.instance, self.compute.instance_events._events)
-        self.assertIn('test-event',
+        self.assertIn(('test-event', None),
                       self.compute.instance_events._events[uuids.instance])
         self.assertEqual(
             result,
-            self.compute.instance_events._events[uuids.instance]['test-event'])
+            self.compute.instance_events._events[uuids.instance]
+                                                [('test-event', None)])
         self.assertTrue(hasattr(result, 'send'))
         lock_name_mock.assert_called_once_with(inst_obj)
 
@@ -2574,7 +2576,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         event = eventlet_event.Event()
         self.compute.instance_events._events = {
             uuids.instance: {
-                'network-vif-plugged': event,
+                ('network-vif-plugged', None): event,
                 }
             }
         inst_obj = objects.Instance(uuid=uuids.instance)
@@ -2590,13 +2592,13 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         event = eventlet_event.Event()
         self.compute.instance_events._events = {
             uuids.instance: {
-                'test-event': event,
+                ('test-event', None): event,
                 }
             }
         inst_obj = objects.Instance(uuid=uuids.instance)
         result = self.compute.instance_events.clear_events_for_instance(
             inst_obj)
-        self.assertEqual(result, {'test-event': event})
+        self.assertEqual(result, {'test-event-None': event})
         lock_name_mock.assert_called_once_with(inst_obj)
 
     def test_instance_events_lock_name(self):
@@ -2607,24 +2609,25 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
     def test_prepare_for_instance_event_again(self):
         inst_obj = objects.Instance(uuid=uuids.instance)
         self.compute.instance_events.prepare_for_instance_event(
-            inst_obj, 'test-event')
+            inst_obj, 'test-event', None)
         # A second attempt will avoid creating a new list; make sure we
         # get the current list
         result = self.compute.instance_events.prepare_for_instance_event(
-            inst_obj, 'test-event')
+            inst_obj, 'test-event', None)
         self.assertIn(uuids.instance, self.compute.instance_events._events)
-        self.assertIn('test-event',
+        self.assertIn(('test-event', None),
                       self.compute.instance_events._events[uuids.instance])
         self.assertEqual(
             result,
-            self.compute.instance_events._events[uuids.instance]['test-event'])
+            self.compute.instance_events._events[uuids.instance]
+                                                [('test-event', None)])
         self.assertTrue(hasattr(result, 'send'))
 
     def test_process_instance_event(self):
         event = eventlet_event.Event()
         self.compute.instance_events._events = {
             uuids.instance: {
-                'network-vif-plugged': event,
+                ('network-vif-plugged', None): event,
                 }
             }
         inst_obj = objects.Instance(uuid=uuids.instance)
@@ -2926,7 +2929,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         fake_eventlet_event = mock.MagicMock()
         self.compute.instance_events._events = {
             inst.uuid: {
-                'network-vif-plugged-bar': fake_eventlet_event,
+                ('network-vif-plugged', uuids.portid): fake_eventlet_event,
             }
         }
         self.compute.instance_events.cancel_all_events()
@@ -2935,7 +2938,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         self.assertTrue(fake_eventlet_event.send.called)
         event = fake_eventlet_event.send.call_args_list[0][0][0]
         self.assertEqual('network-vif-plugged', event.name)
-        self.assertEqual('bar', event.tag)
+        self.assertEqual(uuids.portid, event.tag)
         self.assertEqual('failed', event.status)
 
     def test_cleanup_cancels_all_events(self):
@@ -2949,7 +2952,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         callback = mock.MagicMock()
         body = mock.MagicMock()
         with self.compute.virtapi.wait_for_instance_event(
-                instance, ['network-vif-plugged-bar'],
+                instance, [('network-vif-plugged', 'bar')],
                 error_callback=callback):
             body()
         self.assertTrue(body.called)
@@ -7006,6 +7009,132 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase):
             mock_attach_delete.assert_called_once_with(self.context,
                                                        new_attachment_id)
         _test()
+
+    def test_get_neutron_events_for_live_migration_empty(self):
+        """Tests the various ways that _get_neutron_events_for_live_migration
+        will return an empty list.
+        """
+        nw = network_model.NetworkInfo([network_model.VIF(uuids.port1)])
+        # 1. no timeout
+        self.flags(vif_plugging_timeout=0)
+        self.assertEqual(
+            [], self.compute._get_neutron_events_for_live_migration(nw))
+        # 2. not neutron
+        self.flags(vif_plugging_timeout=300, use_neutron=False)
+        self.assertEqual(
+            [], self.compute._get_neutron_events_for_live_migration(nw))
+        # 3. no VIFs
+        self.flags(vif_plugging_timeout=300, use_neutron=True)
+        self.assertEqual(
+            [], self.compute._get_neutron_events_for_live_migration([]))
+
+    @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
+    @mock.patch('nova.compute.manager.ComputeManager._post_live_migration')
+    def test_live_migration_wait_vif_plugged(
+            self, mock_post_live_mig, mock_pre_live_mig):
+        """Tests the happy path of waiting for network-vif-plugged events from
+        neutron when so configured.
+        """
+        self.flags(live_migration_wait_for_vif_plug=True, group='compute')
+        migrate_data = objects.LibvirtLiveMigrateData()
+        mock_pre_live_mig.return_value = migrate_data
+        self.instance.info_cache = objects.InstanceInfoCache(
+            network_info=network_model.NetworkInfo([
+                network_model.VIF(uuids.port1), network_model.VIF(uuids.port2)
+            ]))
+        with mock.patch.object(self.compute.virtapi,
+                               'wait_for_instance_event') as wait_for_event:
+            self.compute._do_live_migration(
+                self.context, 'dest-host', self.instance, None, self.migration,
+                migrate_data)
+        self.assertEqual(2, len(wait_for_event.call_args[0][1]))
+        self.assertEqual(CONF.vif_plugging_timeout,
+                         wait_for_event.call_args[1]['deadline'])
+        mock_pre_live_mig.assert_called_once_with(
+            self.context, self.instance, None, None, 'dest-host',
+            migrate_data)
+
+    @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
+    @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
+    def test_live_migration_wait_vif_plugged_vif_plug_error(
+            self, mock_rollback_live_mig, mock_pre_live_mig):
+        """Tests the scenario where wait_for_instance_event fails with
+        VirtualInterfacePlugException.
+        """
+        self.flags(live_migration_wait_for_vif_plug=True, group='compute')
+        migrate_data = objects.LibvirtLiveMigrateData()
+        mock_pre_live_mig.return_value = migrate_data
+        self.instance.info_cache = objects.InstanceInfoCache(
+            network_info=network_model.NetworkInfo([
+                network_model.VIF(uuids.port1)]))
+        with mock.patch.object(
+                self.compute.virtapi,
+                'wait_for_instance_event') as wait_for_event:
+            wait_for_event.return_value.__enter__.side_effect = (
+                exception.VirtualInterfacePlugException())
+            self.assertRaises(
+                exception.VirtualInterfacePlugException,
+                self.compute._do_live_migration, self.context, 'dest-host',
+                self.instance, None, self.migration, migrate_data)
+        self.assertEqual('error', self.migration.status)
+        mock_rollback_live_mig.assert_called_once_with(
+            self.context, self.instance, 'dest-host', migrate_data)
+
+    @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
+    @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
+    def test_live_migration_wait_vif_plugged_timeout_error(
+            self, mock_rollback_live_mig, mock_pre_live_mig):
+        """Tests the scenario where wait_for_instance_event raises an
+        eventlet Timeout exception and we're configured such that vif plugging
+        failures are fatal (which is the default).
+        """
+        self.flags(live_migration_wait_for_vif_plug=True, group='compute')
+        migrate_data = objects.LibvirtLiveMigrateData()
+        mock_pre_live_mig.return_value = migrate_data
+        self.instance.info_cache = objects.InstanceInfoCache(
+            network_info=network_model.NetworkInfo([
+                network_model.VIF(uuids.port1)]))
+        with mock.patch.object(
+                self.compute.virtapi,
+                'wait_for_instance_event') as wait_for_event:
+            wait_for_event.return_value.__enter__.side_effect = (
+                eventlet_timeout.Timeout())
+            ex = self.assertRaises(
+                exception.MigrationError, self.compute._do_live_migration,
+                self.context, 'dest-host', self.instance, None,
+                self.migration, migrate_data)
+            self.assertIn('Timed out waiting for events', six.text_type(ex))
+        self.assertEqual('error', self.migration.status)
+        mock_rollback_live_mig.assert_called_once_with(
+            self.context, self.instance, 'dest-host', migrate_data)
+
+    @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
+    @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
+    @mock.patch('nova.compute.manager.ComputeManager._post_live_migration')
+    def test_live_migration_wait_vif_plugged_timeout_non_fatal(
+            self, mock_post_live_mig, mock_rollback_live_mig,
+            mock_pre_live_mig):
+        """Tests the scenario where wait_for_instance_event raises an
+        eventlet Timeout exception and we're configured such that vif plugging
+        failures are NOT fatal.
+        """
+        self.flags(live_migration_wait_for_vif_plug=True, group='compute')
+        self.flags(vif_plugging_is_fatal=False)
+        migrate_data = objects.LibvirtLiveMigrateData()
+        mock_pre_live_mig.return_value = migrate_data
+        self.instance.info_cache = objects.InstanceInfoCache(
+            network_info=network_model.NetworkInfo([
+                network_model.VIF(uuids.port1)]))
+        with mock.patch.object(
+                self.compute.virtapi,
+                'wait_for_instance_event') as wait_for_event:
+            wait_for_event.return_value.__enter__.side_effect = (
+                eventlet_timeout.Timeout())
+            self.compute._do_live_migration(
+                self.context, 'dest-host', self.instance, None,
+                self.migration, migrate_data)
+        self.assertEqual('running', self.migration.status)
+        mock_rollback_live_mig.assert_not_called()
 
     def test_live_migration_force_complete_succeeded(self):
         migration = objects.Migration()

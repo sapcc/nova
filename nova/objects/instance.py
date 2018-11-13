@@ -13,6 +13,7 @@
 #    under the License.
 
 import contextlib
+import json
 
 from oslo_config import cfg
 from oslo_db import exception as db_exc
@@ -21,6 +22,7 @@ from oslo_serialization import jsonutils
 from oslo_utils import timeutils
 from oslo_utils import versionutils
 from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.sql import null
 
@@ -1234,7 +1236,10 @@ def _make_instance_list(context, inst_list, db_inst_list, expected_attrs):
 
 @db_api.pick_context_manager_writer
 def populate_missing_availability_zones(context, count):
+    # instances without host have no reasonable AZ to set
+    not_empty_host = models.Instance.host != None  # noqa E711
     instances = (context.session.query(models.Instance).
+        filter(not_empty_host).
         filter_by(availability_zone=None).limit(count).all())
     count_all = len(instances)
     count_hit = 0
@@ -1490,6 +1495,64 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             counts['user'] = user_counts
         return counts
 
+    @staticmethod
+    @db_api.pick_context_manager_reader
+    def _get_counts_in_db_baremetalaware(context, project_id, user_id=None):
+        def _get_counts( instances):
+            counts = {'instances': 0, 'cores': 0, 'ram': 0}
+
+            if instances:
+                # TODO: cache flavor_ids
+                instance_types = objects.FlavorList.get_by_id(
+                    context, [x[0] for x in instances])
+
+                for i in instances:
+                    itype = instance_types.get(i[0])
+                    if not itype:
+                        # Not found in flavor db of upstream api, searching locally
+                        LOG.warning('flavor with ref id %s not found in flavor db', i[0])
+                        flavor_query = context.session.query(
+                            models.InstanceTypes). \
+                            filter_by(id=i[0]). \
+                            options(joinedload('extra_specs'))
+                        old_flavor = flavor_query.first()
+                        # Bad hack, but works
+                        itype = {'name': 'instances_' + old_flavor.name,
+                                 'baremetal': len(old_flavor.extra_specs) > 0}
+                    if itype.get('baremetal', False):
+                        old_val = counts.get(itype['name'], 0)
+                        counts.update({itype['name']: old_val + 1})
+                    else:
+                        counts['instances'] = counts['instances'] + 1
+                        counts['cores'] = counts['cores'] + i[1]
+                        counts['ram'] = counts['ram'] + i[2]
+
+            return counts
+
+        not_soft_deleted = or_(
+            models.Instance.vm_state != vm_states.SOFT_DELETED,
+            models.Instance.vm_state == null()
+            )
+        project_query = context.session.query(
+            models.Instance.instance_type_id,
+            func.sum(models.Instance.vcpus),
+            func.sum(models.Instance.memory_mb)).\
+            filter_by(deleted=0).\
+            filter(not_soft_deleted).\
+            filter_by(project_id=project_id).\
+            group_by(models.Instance.instance_type_id)
+
+        project_result = project_query.all()
+        project_counts = _get_counts(project_result)
+
+        counts = {'project': project_counts}
+        if user_id:
+            user_result = project_query.filter_by(user_id=user_id).all()
+            user_counts = _get_counts(user_result)
+            counts['user'] = user_counts
+
+        return counts
+
     @base.remotable_classmethod
     def get_counts(cls, context, project_id, user_id=None):
         """Get the counts of Instance objects in the database.
@@ -1507,4 +1570,4 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                               'cores': <count across user>,
                               'ram': <count across user>}}
         """
-        return cls._get_counts_in_db(context, project_id, user_id=user_id)
+        return cls._get_counts_in_db_baremetalaware(context, project_id, user_id=user_id)
