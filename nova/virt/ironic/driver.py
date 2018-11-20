@@ -527,10 +527,14 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         # take conductor_group into account if set
         if CONF.ironic.conductor_group:
+            LOG.info("Ironic conductor_group is: %(conductor)s",
+                     dict(conductor=CONF.ironic.conductor_group))
             kwargs['conductor_group'] = CONF.ironic.conductor_group
 
         try:
             node_list = self.ironicclient.call("node.list", **kwargs)
+            LOG.info("Ironic returned the following list of nodes: %(nodes)s",
+                     dict(nodes=node_list))
         except exception.NovaException as e:
             LOG.error("Failed to get the list of nodes from the Ironic "
                       "inventory. Error: %s", e)
