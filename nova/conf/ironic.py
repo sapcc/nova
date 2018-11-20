@@ -88,6 +88,12 @@ serial_console_state_timeout = cfg.IntOpt(
     default=10,
     help='How long to wait in seconds for console state change')
 
+conductor_group = cfg.StrOpt(
+    'conductor_group',
+    default=None,
+    help='Name of the conductor group (incompatible with balancing)'
+)
+
 ALL_OPTS = [api_version,
             api_endpoint,
             admin_username,
@@ -100,7 +106,8 @@ ALL_OPTS = [api_version,
             admin_user_domain_name,
             api_max_retries,
             api_retry_interval,
-            serial_console_state_timeout]
+            serial_console_state_timeout,
+            conductor_group]
 
 
 def register_opts(conf):

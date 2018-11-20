@@ -524,6 +524,11 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         """
         node_list = []
+
+        # take conductor_group into account if set
+        if CONF.ironic.conductor_group:
+            kwargs['conductor_group'] = CONF.ironic.conductor_group
+
         try:
             node_list = self.ironicclient.call("node.list", **kwargs)
         except exception.NovaException as e:
