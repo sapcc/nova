@@ -83,7 +83,13 @@ Related options:
         'conductor_group',
         default=None,
         help='Name of the conductor group (incompatible with balancing)'
-    )
+    ),
+    cfg.StrOpt(
+        'conductor_group',
+        default=None,
+        help='Name of the conductor group (incompatible with balancing)'
+)
+
 ]
 
 deprecated_opts = {
