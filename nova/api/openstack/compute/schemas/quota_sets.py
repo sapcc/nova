@@ -44,11 +44,6 @@ quota_resources = {
     'networks': common_quota
 }
 
-QUOTAS.initialize()
-for resource in QUOTAS.resources:
-    if resource not in quota_resources:
-        quota_resources[resource] = common_quota
-
 update_quota_set = copy.deepcopy(quota_resources)
 update_quota_set.update({'force': parameter_types.boolean})
 
@@ -65,7 +60,7 @@ update = {
         'type': 'object',
         'quota_set': {
             'properties': update_quota_set,
-            'additionalProperties': False,
+            'additionalProperties': True,
         },
     },
     'required': ['quota_set'],
