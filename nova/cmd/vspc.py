@@ -32,7 +32,7 @@ CONF = nova.conf.CONF
 
 
 def main():
-    config.parse_args(sys.argv)
+    config.parse_args(sys.argv, configure_db=False)
     logging.setup(CONF, "nova")
     utils.monkey_patch()
     objects.register_all()

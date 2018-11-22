@@ -292,7 +292,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Send a message to VSPC to request specific log."""
 
         cctxt = self.client.prepare()
-        return cctxt.call(context, 'vspc_get_console_output', instance=instance)
+        return cctxt.call(context, 'vspc_get_console_output', instance_uuid=instance['uuid'])
 
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
@@ -688,17 +688,17 @@ class VSPCManager(manager.Manager):
         super(VSPCManager, self).__init__(service_name='vspc',
                                                  *args, **kwargs)
 
-    def vspc_get_console_output(self, context, instance):
+    def vspc_get_console_output(self, context, instance_uuid):
         """Send a message to VSPC to request specific log."""
 
         if not CONF.vmware.serial_log_dir:
             LOG.error("The 'serial_log_dir' config option is not set!")
             return
-        fname = instance.uuid.replace('-', '')
+        fname = instance_uuid.replace('-', '')
         path = os.path.join(CONF.vmware.serial_log_dir, fname)
         if not os.path.exists(path):
             LOG.warning('The console log is missing. Check your VSPC '
-                        'configuration', instance=instance)
+                        'configuration', instance_uuid=instance_uuid)
             return b""
         with open(path, 'r') as f:
             try:
