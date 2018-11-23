@@ -2439,28 +2439,29 @@ class VMwareVMOps(object):
                             if update.kind == "enter":
                                 for change in update.changeSet:
                                     if change['op'] == 'assign':
-                                        if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],'val'):
+                                        if hasattr(change, 'val'):
                                             vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
-                                if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
-                                    if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
-                                        LOG.info("Adding vm to cache...")
-                                        vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
+                                if len(update.changeSet) > 1:
+                                    if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
+                                        if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                            LOG.info("Adding vm to cache...")
+                                            vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
 
                             elif update.kind == "modify":
                                 if update.changeSet[0].name == "config.instanceUuid":
                                     for change in update.changeSet:
                                         if change['op'] == 'assign':
-                                            if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],
-                                                                                               'val'):
+                                            if hasattr(change, 'val'):
                                                 vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
-                                    if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
-                                        if hasattr(update.changeSet[0], 'val'):
-                                            vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
+                                    if len(update.changeSet) > 1:
+                                        if hasattr(update.changeSet[1], 'val'):
+                                            if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                                                if hasattr(update.changeSet[0], 'val'):
+                                                    vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
                                 else:
                                     for change in update.changeSet:
                                         if change['op'] == 'assign':
-                                            if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1],
-                                                                                               'val'):
+                                            if hasattr(change, 'val'):
                                                 vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
 
             update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
