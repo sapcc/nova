@@ -18,9 +18,9 @@
 """
 A connection to the VMware vCenter platform.
 """
-import errno
 import os
 import re
+from six.moves import urllib
 
 from oslo_log import log as logging
 from oslo_utils import excutils
@@ -37,10 +37,6 @@ from nova.compute import task_states
 from nova.compute import utils as compute_utils
 import nova.conf
 from nova import exception
-from nova import rpc
-from nova import manager
-from nova import profiler
-
 from nova.i18n import _
 from nova.objects import fields as obj_fields
 import nova.privsep.path
@@ -54,7 +50,6 @@ from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
 from oslo_serialization import jsonutils
-import oslo_messaging as messaging
 
 LOG = logging.getLogger(__name__)
 
@@ -141,9 +136,6 @@ class VMwareVCDriver(driver.ComputeDriver):
         host_stats = self._vc_state.get_host_stats()
         self.capabilities['resource_scheduling'] = host_stats.get(
             'resource_scheduling')
-
-        target = messaging.Target(topic=RPC_TOPIC, version='1.0')
-        self.client = rpc.get_client(target)
 
         # Register the OpenStack extension
         self._register_openstack_extension()
@@ -289,10 +281,35 @@ class VMwareVCDriver(driver.ComputeDriver):
         return self._vmops.get_mks_console(instance)
 
     def get_console_output(self, context, instance):
-        """Send a message to VSPC to request specific log."""
+        """request specific log from VSPC."""
 
-        cctxt = self.client.prepare()
-        return cctxt.call(context, 'vspc_get_console_output', instance_uuid=instance['uuid'])
+        if CONF.vmware.serial_log_uri:
+            try:
+                print("%s/console_log/%s" % (
+                    CONF.vmware.serial_log_uri,
+                    instance.uuid))
+                read_log_data = urllib.request.urlopen("%s/console_log/%s" % (
+                    CONF.vmware.serial_log_uri,
+                    instance.uuid))
+                return read_log_data.read()
+            except IOError:
+                LOG.exception(_('Unable to obtain serial console log for VM %(vm_uuid)s with '
+                                'server details: %(server)s.'),
+                              {'vm_uuid': instance.uuid, 'server': CONF.vmware.serial_log_uri})
+
+        if not CONF.vmware.serial_log_dir:
+            LOG.error("Neither the 'serial_log_dir' nor 'serial_log_uri' "
+                      "config option is set!")
+            return
+        fname = instance.uuid.replace('-', '')
+        path = os.path.join(CONF.vmware.serial_log_dir, fname)
+        if not os.path.exists(path):
+            LOG.warning('The console log is missing. Check your VSPC '
+                        'configuration', instance=instance)
+            return b""
+        read_log_data, remaining = nova.privsep.path.last_bytes(
+            path, MAX_CONSOLE_BYTES)
+        return read_log_data
 
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
@@ -676,42 +693,3 @@ class VMwareAPISession(api.VMwareAPISession):
         The task is polled until it completes.
         """
         return self.wait_for_task(task_ref)
-
-
-@profiler.trace_cls("rpc")
-class VSPCManager(manager.Manager):
-    """Manages Log requests."""
-
-    target = messaging.Target(version='1.0')
-
-    def __init__(self, *args, **kwargs):
-        super(VSPCManager, self).__init__(service_name='vspc',
-                                                 *args, **kwargs)
-
-    def vspc_get_console_output(self, context, instance_uuid):
-        """Send a message to VSPC to request specific log."""
-
-        if not CONF.vmware.serial_log_dir:
-            LOG.error("The 'serial_log_dir' config option is not set!")
-            return
-        fname = instance_uuid.replace('-', '')
-        path = os.path.join(CONF.vmware.serial_log_dir, fname)
-        if not os.path.exists(path):
-            LOG.warning('The console log is missing. Check your VSPC '
-                        'configuration', instance_uuid=instance_uuid)
-            return b""
-        with open(path, 'r') as f:
-            try:
-                f.seek(-MAX_CONSOLE_BYTES, os.SEEK_END)
-            except IOError as e:
-                # seek() fails with EINVAL when trying to go before the start of
-                # the file. It means that num is larger than the file size, so
-                # just go to the start.
-                if e.errno == errno.EINVAL:
-                    f.seek(0, os.SEEK_SET)
-                else:
-                    raise
-
-            read_log_data = f.read()
-
-        return read_log_data
