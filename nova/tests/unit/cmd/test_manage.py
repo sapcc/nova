@@ -649,6 +649,24 @@ Cell %s: 456
         self.assertEqual(4, ret)
         self.assertIn('Unable to get cell list', self.output.getvalue())
 
+    @mock.patch.object(db, 'instances_purge_deleted', return_value=0)
+    def test_purge_deleted_instances(self, mock_db):
+        self.useFixture(fixtures.MonkeyPatch('sys.stdout',
+                                             StringIO()))
+        self.commands.purge_deleted_instances(dry_run=False)
+        output = sys.stdout.getvalue()
+        self.assertIn('Purged 0 instances from the DB', output)
+
+    @mock.patch.object(db, 'instances_purge_deleted', return_value=1)
+    def test_purge_deleted_instances_dry_run(self, mock_db):
+        self.useFixture(fixtures.MonkeyPatch('sys.stdout',
+                                             StringIO()))
+        self.commands.purge_deleted_instances(dry_run=True)
+        output = sys.stdout.getvalue()
+        self.assertIn("There are at least 1 records in the DB for deleted "
+                     "instances.  Run this command again without the dry-run "
+                     "option to purge these records.", output)
+
     @mock.patch.object(migration, 'db_version', return_value=2)
     def test_version(self, mock_db_version):
         self.commands.version()
