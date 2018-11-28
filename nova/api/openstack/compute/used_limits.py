@@ -31,7 +31,6 @@ class UsedLimitsController(wsgi.Controller):
     def index(self, req, resp_obj):
         context = req.environ['nova.context']
         project_id = self._project_id(context, req)
-        QUOTAS.initialize()
         quotas = QUOTAS.get_project_quotas(context, project_id, usages=True)
         if api_version_request.is_supported(
                 req, min_version=MIN_WITHOUT_PROXY_API_SUPPORT_VERSION):
@@ -59,11 +58,12 @@ class UsedLimitsController(wsgi.Controller):
         resp_obj.obj['limits']['absolute'].update(used_limits)
 
         # extension to report per-flavor instance quota usage
-        per_flavor = resp_obj.obj['limits']['absolutePerFlavor']
-        for key, stat in quotas.items():
-            if key.startswith('instances_'):
-                flavorname = key[10:]
-                per_flavor[flavorname]['totalInstancesUsed'] = stat['in_use']
+        per_flavor = {}
+        flavor_quotas = QUOTAS.get_project_quotas(context, project_id, usages=True,
+                                                  quota_class='flavors')
+        for key, stat in flavor_quotas.items():
+            flavorname = key[10:]
+            resp_obj.obj['limits']['absolutePerFlavor'][flavorname].update({'totalInstancesUsed': stat['in_use']})
 
     def _project_id(self, context, req):
         if 'tenant_id' in req.GET:
