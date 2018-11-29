@@ -54,7 +54,7 @@ class QuotaSetsController(wsgi.Controller):
         else:
             result = {}
 
-        for resource in QUOTAS.combined_resources(context, 'flavors'):
+        for resource in QUOTAS.combined_resources(context):
             if (resource not in filtered_quotas and
                     resource in quota_set):
                 result[resource] = quota_set[resource]
