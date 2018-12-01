@@ -94,6 +94,13 @@ conductor_group = cfg.StrOpt(
     help='Name of the conductor group (incompatible with balancing)'
 )
 
+update_host = cfg.BoolOpt(
+    'update_host',
+    default=True,
+    help='Should the compute host be updated, if a mismatch is detected'
+)
+
+
 ALL_OPTS = [api_version,
             api_endpoint,
             admin_username,
@@ -107,7 +114,8 @@ ALL_OPTS = [api_version,
             api_max_retries,
             api_retry_interval,
             serial_console_state_timeout,
-            conductor_group]
+            conductor_group,
+            update_host]
 
 
 def register_opts(conf):

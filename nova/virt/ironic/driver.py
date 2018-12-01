@@ -146,6 +146,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.node_cache_time = 0
 
         self.ironicclient = client_wrapper.IronicClientWrapper()
+        self.host = None
 
     def _get_node(self, node_uuid):
         """Get a node by its UUID.
@@ -489,7 +490,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         :param host: the hostname of the compute host.
 
         """
-        return
+        self.host = host
 
     def _get_hypervisor_type(self):
         """Get hypervisor type."""
@@ -527,14 +528,12 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         # take conductor_group into account if set
         if CONF.ironic.conductor_group:
-            LOG.info("Ironic conductor_group is: %(conductor)s",
-                     dict(conductor=CONF.ironic.conductor_group))
             kwargs['conductor_group'] = CONF.ironic.conductor_group
 
         try:
             node_list = self.ironicclient.call("node.list", **kwargs)
-            LOG.info("Ironic returned the following list of nodes: %(nodes)s",
-                     dict(nodes=node_list))
+            #LOG.info("Ironic returned the following list of nodes: %(nodes)s",
+            #         dict(nodes=node_list))
         except exception.NovaException as e:
             LOG.error("Failed to get the list of nodes from the Ironic "
                       "inventory. Error: %s", e)
@@ -549,15 +548,23 @@ class IronicDriver(virt_driver.ComputeDriver):
         :returns: a list of instance names.
 
         """
-        # NOTE(lucasagomes): limit == 0 is an indicator to continue
-        # pagination until there're no more values to be returned.
-        node_list = self._get_node_list(associated=True,
-                                        fields=['instance_uuid'], limit=0)
+        filters = {'uuid': self.list_instance_uuids()}
         context = nova_context.get_admin_context()
-        return [objects.Instance.get_by_uuid(context,
-                                             i.instance_uuid).name
-                for i in node_list]
+        instances = objects.InstanceList.get_by_filters(context,
+                                                        filters,
+                                                        expected_attrs=[
+                                                            'name',
+                                                            'host'],
+                                                        use_slave=True)
 
+        if CONF.ironic.update_host:
+            for instance in instances:
+                if instance.host != self.host:
+                    instance.host = self.host
+                    instance.save()
+
+        return [obj.name for obj in instances]
+    
     def list_instance_uuids(self):
         """Return the UUIDs of all the instances provisioned.
 
