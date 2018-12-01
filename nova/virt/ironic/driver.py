@@ -607,7 +607,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         :raises: VirtDriverNotReady
 
         """
-        if CONF.ironic.conductor_group:
+        if CONF.ironic.conductor_group is not None:
             kwargs['conductor_group'] = CONF.ironic.conductor_group
 
         node_list = []

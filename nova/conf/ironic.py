@@ -84,11 +84,6 @@ Related options:
         default=None,
         help='Name of the conductor group (incompatible with balancing)'
     ),
-    cfg.StrOpt(
-        'conductor_group',
-        default=None,
-        help='Name of the conductor group (incompatible with balancing)'
-    ),
     cfg.BoolOpt(
         'update_host',
         default=True,
