@@ -527,7 +527,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         node_list = []
 
         # take conductor_group into account if set
-        if CONF.ironic.conductor_group:
+        if CONF.ironic.conductor_group is not None:
             kwargs['conductor_group'] = CONF.ironic.conductor_group
 
         try:
