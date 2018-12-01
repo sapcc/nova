@@ -122,6 +122,10 @@ vmwareapi_opts = [
     cfg.BoolOpt('connection_pool_block',
                 default=False,
                 help='Whether to block if connection pool is full'),
+    cfg.IntOpt('min_disk_size_kb',
+               default=1,
+               help='The minimum size a disk is expected to have. '
+                    'Some VASA providers need disks in the multiple MB range.'),
 ]
 
 spbm_opts = [
