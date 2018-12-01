@@ -194,6 +194,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.servicegroup_api = servicegroup.API()
 
         self._ironic_connection = None
+        self.host = None
 
     @property
     def ironic_connection(self):
@@ -561,6 +562,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         :param host: the hostname of the compute host.
 
         """
+        self.host = host
         self._refresh_hash_ring(nova_context.get_admin_context())
 
     def _get_hypervisor_type(self):
@@ -649,9 +651,26 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         context = nova_context.get_admin_context()
 
-        return [objects.Instance.get_by_uuid(context, node.instance_id).name
-                for node in self.node_cache.values()
-                if node.instance_id is not None]
+        uuids = [node.instance_id for node in self.node_cache.values()
+                 if node.instance_id is not None]
+        filters = {'uuid': uuids}
+        instances = objects.InstanceList.get_by_filters(context,
+                                                        filters,
+                                                        expected_attrs=[
+                                                            'name',
+                                                            'host'],
+                                                        use_slave=True)
+
+        # NOTE(fwiesel): Update the compute host in case of a mismatch, so we
+        # can 'migrate' a server from one compute host to the other and keep
+        # them manageable (e.g. on a switch of conductor groups).
+        if CONF.ironic.update_host:
+            for instance in instances:
+                if instance.host != self.host:
+                    instance.host = self.host
+                    instance.save()
+
+        return [obj.name for obj in instances]
 
     def list_instance_uuids(self):
         """Return the IDs of all the instances provisioned.
