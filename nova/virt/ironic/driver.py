@@ -164,6 +164,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.servicegroup_api = servicegroup.API()
 
         self.ironicclient = client_wrapper.IronicClientWrapper()
+        self.host = None
 
         # This is needed for the instance flavor migration in Pike, and should
         # be removed in Queens. Since this will run several times in the life
@@ -521,6 +522,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         :param host: the hostname of the compute host.
 
         """
+        self.host = host
         self._refresh_hash_ring(nova_context.get_admin_context())
 
     @staticmethod
@@ -633,13 +635,22 @@ class IronicDriver(virt_driver.ComputeDriver):
         :raises: VirtDriverNotReady
 
         """
-        # NOTE(lucasagomes): limit == 0 is an indicator to continue
-        # pagination until there're no more values to be returned.
-        node_list = self._get_node_list(associated=True, limit=0)
+        filters = {'uuid': self.list_instance_uuids()}
         context = nova_context.get_admin_context()
-        return [objects.Instance.get_by_uuid(context,
-                                             i.instance_uuid).name
-                for i in node_list]
+        instances = objects.InstanceList.get_by_filters(context,
+                                                        filters,
+                                                        expected_attrs=[
+                                                            'name',
+                                                            'host'],
+                                                        use_slave=True)
+
+        if CONF.ironic.update_host:
+            for instance in instances:
+                if instance.host != self.host:
+                    instance.host = self.host
+                    instance.save()
+
+        return [obj.name for obj in instances]
 
     def list_instance_uuids(self):
         """Return the UUIDs of all the instances provisioned.

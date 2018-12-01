@@ -88,8 +88,12 @@ Related options:
         'conductor_group',
         default=None,
         help='Name of the conductor group (incompatible with balancing)'
-)
-
+    ),
+    cfg.BoolOpt(
+        'update_host',
+        default=True,
+        help='Should the compute host be updated, if a mismatch is detected'
+    )
 ]
 
 deprecated_opts = {
