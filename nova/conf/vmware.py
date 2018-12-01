@@ -285,6 +285,12 @@ Possible values:
 
 * Any string representing the cache prefix to the folder
 """),
+    cfg.IntOpt('min_disk_size_kb',
+               default=1,
+               help="""
+The minimum size a disk is expected to have.
+Some VASA providers need disks in the multiple MB range.
+"""),
     cfg.BoolOpt('full_clone_snapshots',
                 default=False,
                 help="""
