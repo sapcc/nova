@@ -1,4 +1,6 @@
-
+# Copyright (c) 2014 OpenStack Foundation
+# All Rights Reserved.
+#
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
 #    a copy of the License at
@@ -11,13 +13,18 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-# This is a placeholder for backports.
-# Do not use this number for new work.  New work starts after
-# all the placeholders.
-#
-# See this for more information:
-# http://lists.openstack.org/pipermail/openstack-dev/2013-March/006827.html
+from oslo_log import log as logging
+from .exact_ram_filter import ExactRamFilter
+
+LOG = logging.getLogger(__name__)
 
 
-def upgrade(migrate_engine):
-    pass
+class BaremetalExactRamFilter(ExactRamFilter):
+    """Exact RAM Filter."""
+
+    def host_passes(self, host_state, spec_obj):
+        extra_specs = spec_obj.flavor.extra_specs
+        if not 'capabilities:cpu_arch' in extra_specs:
+            return True
+
+        return super(BaremetalExactRamFilter, self).host_passes(host_state, spec_obj)

@@ -518,15 +518,24 @@ class ComputeManager(manager.Manager):
         self.instance_events = InstanceEvents()
         self._sync_power_pool = eventlet.GreenPool(
             size=CONF.sync_power_state_pool_size)
+        self.instance_running_pool = eventlet.GreenPool(
+            size=CONF.instance_running_pool_size)
         self._syncs_in_progress = {}
         self.send_instance_updates = (
             CONF.filter_scheduler.track_instance_changes)
-        if CONF.max_concurrent_builds != 0:
+        if CONF.max_concurrent_builds > 0:
             self._build_semaphore = eventlet.semaphore.Semaphore(
                 CONF.max_concurrent_builds)
         else:
             self._build_semaphore = compute_utils.UnlimitedSemaphore()
-        if max(CONF.max_concurrent_live_migrations, 0) != 0:
+
+        if CONF.max_concurrent_builds_per_project > 0:
+            self._per_project_build_semaphore = nova.utils.Semaphores(
+                semaphore_default=lambda: eventlet.semaphore.Semaphore(CONF.max_concurrent_builds_per_project))
+        else:
+            self._per_project_build_semaphore = nova.utils.Semaphores(compute_utils.UnlimitedSemaphore)
+
+        if CONF.max_concurrent_live_migrations > 0:
             self._live_migration_semaphore = eventlet.semaphore.Semaphore(
                 CONF.max_concurrent_live_migrations)
         else:
@@ -1166,6 +1175,9 @@ class ComputeManager(manager.Manager):
                 self._update_scheduler_instance_info(context, instances)
 
     def cleanup_host(self):
+        if self.instance_running_pool.running() > 0:
+            self.instance_running_pool.waitall()
+
         self.driver.register_event_listener(None)
         self.instance_events.cancel_all_events()
         self.driver.cleanup_host(host=self.host)
@@ -1294,7 +1306,8 @@ class ComputeManager(manager.Manager):
             group = objects.InstanceGroup.get_by_hint(context, group_hint)
             if 'anti-affinity' in group.policies:
                 group_hosts = group.get_hosts(exclude=[instance.uuid])
-                if self.host in group_hosts:
+                resource_scheduling = self.driver.capabilities.get("resource_scheduling", False)
+                if self.host in group_hosts and not resource_scheduling:
                     msg = _("Anti-affinity instance group policy "
                             "was violated.")
                     raise exception.RescheduledException(
@@ -1719,51 +1732,52 @@ class ComputeManager(manager.Manager):
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
             # to do anything with this instance while we wait.
-            with self._build_semaphore:
-                try:
-                    result = self._do_build_and_run_instance(*args, **kwargs)
-                except Exception:
-                    # NOTE(mriedem): This should really only happen if
-                    # _decode_files in _do_build_and_run_instance fails, and
-                    # that's before a guest is spawned so it's OK to remove
-                    # allocations for the instance for this node from Placement
-                    # below as there is no guest consuming resources anyway.
-                    # The _decode_files case could be handled more specifically
-                    # but that's left for another day.
-                    result = build_results.FAILED
-                    raise
-                finally:
-                    if result == build_results.FAILED:
-                        # Remove the allocation records from Placement for the
-                        # instance if the build failed. The instance.host is
-                        # likely set to None in _do_build_and_run_instance
-                        # which means if the user deletes the instance, it
-                        # will be deleted in the API, not the compute service.
-                        # Setting the instance.host to None in
-                        # _do_build_and_run_instance means that the
-                        # ResourceTracker will no longer consider this instance
-                        # to be claiming resources against it, so we want to
-                        # reflect that same thing in Placement.  No need to
-                        # call this for a reschedule, as the allocations will
-                        # have already been removed in
-                        # self._do_build_and_run_instance().
-                        self._delete_allocation_for_instance(context,
-                                                             instance.uuid)
+            with self._per_project_build_semaphore.get(instance.project_id):
+                with self._build_semaphore:
+                    try:
+                        result = self._do_build_and_run_instance(*args, **kwargs)
+                    except Exception:
+                        # NOTE(mriedem): This should really only happen if
+                        # _decode_files in _do_build_and_run_instance fails, and
+                        # that's before a guest is spawned so it's OK to remove
+                        # allocations for the instance for this node from Placement
+                        # below as there is no guest consuming resources anyway.
+                        # The _decode_files case could be handled more specifically
+                        # but that's left for another day.
+                        result = build_results.FAILED
+                        raise
+                    finally:
+                        if result == build_results.FAILED:
+                            # Remove the allocation records from Placement for the
+                            # instance if the build failed. The instance.host is
+                            # likely set to None in _do_build_and_run_instance
+                            # which means if the user deletes the instance, it
+                            # will be deleted in the API, not the compute service.
+                            # Setting the instance.host to None in
+                            # _do_build_and_run_instance means that the
+                            # ResourceTracker will no longer consider this instance
+                            # to be claiming resources against it, so we want to
+                            # reflect that same thing in Placement.  No need to
+                            # call this for a reschedule, as the allocations will
+                            # have already been removed in
+                            # self._do_build_and_run_instance().
+                            self._delete_allocation_for_instance(context,
+                                                                 instance.uuid)
 
-                    if result in (build_results.FAILED,
-                                  build_results.RESCHEDULED):
-                        self._build_failed(node)
-                    else:
-                        self._build_succeeded(node)
+                        if result in (build_results.FAILED,
+                                      build_results.RESCHEDULED):
+                            self._build_failed(node)
+                        else:
+                            self._build_succeeded(node)
 
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
-        utils.spawn_n(_locked_do_build_and_run_instance,
-                      context, instance, image, request_spec,
-                      filter_properties, admin_password, injected_files,
-                      requested_networks, security_groups,
-                      block_device_mapping, node, limits, host_list)
+        self.instance_running_pool.spawn_n(_locked_do_build_and_run_instance,
+              context, instance, image, request_spec,
+              filter_properties, admin_password, injected_files,
+              requested_networks, security_groups,
+              block_device_mapping, node, limits, host_list)
 
     def _delete_allocation_for_instance(self, context, instance_uuid):
         rt = self._get_resource_tracker()
@@ -1982,7 +1996,7 @@ class ComputeManager(manager.Manager):
         # NOTE(mikal): cache the keystone roles associated with the instance
         # at boot time for later reference
         instance.system_metadata.update(
-            {'boot_roles': ','.join(context.roles)})
+            {'boot_roles': ','.join(context.roles)[:255]})
 
         self._check_device_tagging(requested_networks, block_device_mapping)
 
@@ -5198,12 +5212,24 @@ class ComputeManager(manager.Manager):
         context = context.elevated()
 
         token = uuidutils.generate_uuid()
-        access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
 
         try:
             # Retrieve connect info from driver, and then decorate with our
             # access info token
             console = self.driver.get_serial_console(context, instance)
+
+            if console_type == 'serial':
+                # add only token
+                access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+            elif console_type == 'shellinabox':
+                # token and internal url for shellinabox
+                access_url = '%s%s?token=%s' % (
+                    CONF.shellinabox.base_url,
+                    console.internal_access_path,
+                    token)
+            else:
+                raise exception.ConsoleTypeInvalid(console_type=console_type)
+
             connect_info = console.get_connection_info(token, access_url)
         except exception.InstanceNotFound:
             if instance.vm_state != vm_states.BUILDING:
@@ -5222,7 +5248,7 @@ class ComputeManager(manager.Manager):
             console_info = self.driver.get_spice_console(ctxt, instance)
         elif console_type == "rdp-html5":
             console_info = self.driver.get_rdp_console(ctxt, instance)
-        elif console_type == "serial":
+        elif console_type in ("serial", "shellinabox"):
             console_info = self.driver.get_serial_console(ctxt, instance)
         elif console_type == "webmks":
             console_info = self.driver.get_mks_console(ctxt, instance)
@@ -6166,7 +6192,7 @@ class ComputeManager(manager.Manager):
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
-        utils.spawn_n(dispatch_live_migration,
+        self.instance_running_pool.spawn_n(dispatch_live_migration,
                       context, dest, instance,
                       block_migration, migration,
                       migrate_data)

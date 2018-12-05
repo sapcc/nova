@@ -164,6 +164,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.servicegroup_api = servicegroup.API()
 
         self.ironicclient = client_wrapper.IronicClientWrapper()
+        self.host = None
 
         # This is needed for the instance flavor migration in Pike, and should
         # be removed in Queens. Since this will run several times in the life
@@ -473,6 +474,32 @@ class IronicDriver(virt_driver.ComputeDriver):
         self._unplug_vifs(node, instance, network_info)
         self._stop_firewall(instance, network_info)
 
+    def _wait_for_available(self, instance, node):
+        """Wait for the node to be marked as ACTIVE in Ironic."""
+        abort_ironic_states = (ironic_states.DEPLOYWAIT,
+                               ironic_states.DEPLOYING,
+                               ironic_states.ACTIVE,
+                               ironic_states.ERROR,
+                               ironic_states.CLEANFAIL)
+        instance.refresh()
+        if (instance.task_state == task_states.DELETING or
+            instance.vm_state in (vm_states.ERROR, vm_states.DELETED)):
+            raise exception.InstanceDeployFailure(
+                _("Instance %s provisioning was aborted") % instance.uuid)
+
+        if node.provision_state == ironic_states.AVAILABLE:
+            # job is done
+            LOG.debug("Ironic node %(node)s is now AVAILABLE",
+                      dict(node=node.uuid), instance=instance)
+            raise loopingcall.LoopingCallDone()
+
+        if (node.target_provision_state in abort_ironic_states or
+            node.provision_state in abort_ironic_states):
+            # ironic is already doing something unexpected with the instance
+            raise exception.InstanceNotFound(instance_id=instance.uuid)
+
+        _log_ironic_polling('become AVAILABLE', node, instance)
+
     def _wait_for_active(self, instance):
         """Wait for the node to be marked as ACTIVE in Ironic."""
         instance.refresh()
@@ -521,6 +548,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         :param host: the hostname of the compute host.
 
         """
+        self.host = host
         self._refresh_hash_ring(nova_context.get_admin_context())
 
     @staticmethod
@@ -605,7 +633,15 @@ class IronicDriver(virt_driver.ComputeDriver):
         :raises: VirtDriverNotReady
 
         """
+        if CONF.ironic.conductor_group is not None:
+            kwargs['conductor_group'] = CONF.ironic.conductor_group
+
         node_list = []
+
+        # take conductor_group into account if set
+        if CONF.ironic.conductor_group:
+            kwargs['conductor_group'] = CONF.ironic.conductor_group
+
         try:
             node_list = self.ironicclient.call("node.list", **kwargs)
         except exception.NovaException as e:
@@ -625,13 +661,22 @@ class IronicDriver(virt_driver.ComputeDriver):
         :raises: VirtDriverNotReady
 
         """
-        # NOTE(lucasagomes): limit == 0 is an indicator to continue
-        # pagination until there're no more values to be returned.
-        node_list = self._get_node_list(associated=True, limit=0)
+        filters = {'uuid': self.list_instance_uuids()}
         context = nova_context.get_admin_context()
-        return [objects.Instance.get_by_uuid(context,
-                                             i.instance_uuid).name
-                for i in node_list]
+        instances = objects.InstanceList.get_by_filters(context,
+                                                        filters,
+                                                        expected_attrs=[
+                                                            'name',
+                                                            'host'],
+                                                        use_slave=True)
+
+        if CONF.ironic.update_host:
+            for instance in instances:
+                if instance.host != self.host:
+                    instance.host = self.host
+                    instance.save()
+
+        return [obj.name for obj in instances]
 
     def list_instance_uuids(self):
         """Return the UUIDs of all the instances provisioned.
@@ -681,10 +726,12 @@ class IronicDriver(virt_driver.ComputeDriver):
         service_list = objects.ServiceList.get_all_computes_by_hv_type(
             ctxt, self._get_hypervisor_type())
         services = set()
-        for svc in service_list:
-            is_up = self.servicegroup_api.service_is_up(svc)
-            if is_up:
-                services.add(svc.host)
+
+        if not CONF.ironic.conductor_group:
+            for svc in service_list:
+                is_up = self.servicegroup_api.service_is_up(svc)
+                if is_up:
+                    services.add(svc.host)
         # NOTE(jroll): always make sure this service is in the list, because
         # only services that have something registered in the compute_nodes
         # table will be here so far, and we might be brand new.
@@ -1039,6 +1086,17 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         node = self._get_node(node_uuid)
         flavor = instance.flavor
+
+        timer = loopingcall.FixedIntervalLoopingCall(self._wait_for_available,
+                                                     instance, node)
+        try:
+            timer.start(interval=CONF.ironic.api_retry_interval).wait()
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.error("Error deploying instance %(instance)s on "
+                          "baremetal node %(node)s.",
+                          {'instance': instance.uuid,
+                           'node': node_uuid})
 
         self._add_instance_info_to_node(node, instance, image_meta, flavor,
                                         block_device_info=block_device_info)
@@ -1778,13 +1836,14 @@ class IronicDriver(virt_driver.ComputeDriver):
         node = result['node']
         console_info = result['console_info']
 
-        if console_info["type"] != "socat":
+        if console_info["type"] not in ("socat", "shellinabox"):
             LOG.warning('Console type "%(type)s" (of ironic node '
                         '%(node)s) does not support Nova serial console',
                         {'type': console_info["type"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
         # Parse and check the console url
         url = urlparse.urlparse(console_info["url"])
@@ -1792,26 +1851,37 @@ class IronicDriver(virt_driver.ComputeDriver):
             scheme = url.scheme
             hostname = url.hostname
             port = url.port
-            if not (scheme and hostname and port):
+            if not (scheme and hostname):
                 raise AssertionError()
         except (ValueError, AssertionError):
-            LOG.error('Invalid Socat console URL "%(url)s" '
+            LOG.error('Invalid Socat or Shellinabox console URL "%(url)s" '
                       '(ironic node %(node)s)',
                       {'url': console_info["url"],
                        'node': node.uuid},
                       instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
         if scheme == "tcp":
             return console_type.ConsoleSerial(host=hostname,
                                               port=port)
+        elif scheme == "http":
+            return console_type.ConsoleSerial(host=hostname,
+                                              port=80,
+                                              internal_access_path=url.path)
+        elif scheme == "https":
+            return console_type.ConsoleSerial(host=hostname,
+                                              port=443,
+                                              internal_access_path=url.path)
         else:
             LOG.warning('Socat serial console only supports "tcp". '
+                        'Shellinabox only http and https. '
                         'This URL is "%(url)s" (ironic node %(node)s).',
                         {'url': console_info["url"],
                          'node': node.uuid},
                         instance=instance)
-            raise exception.ConsoleTypeUnavailable(console_type='serial')
+            raise exception.ConsoleTypeUnavailable(
+                console_type=console_info["type"])
 
     @property
     def need_legacy_block_device_info(self):

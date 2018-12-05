@@ -1770,8 +1770,7 @@ class API(base_api.NetworkAPI):
                 return num_instances
 
             # We only need the port count so only ask for ids back.
-            params = dict(tenant_id=context.project_id, fields=['id'])
-            ports = neutron.list_ports(**params)['ports']
+            ports = []
             free_ports = quotas.get('port') - len(ports)
             if free_ports < 0:
                 msg = (_("The number of defined ports: %(ports)d "
@@ -2254,7 +2253,8 @@ class API(base_api.NetworkAPI):
         elif vif_type == network_model.VIF_TYPE_DVS:
             # The name of the DVS port group will contain the neutron
             # network id
-            bridge = port['network_id']
+            bridge = port_details.get(network_model.VIF_DETAILS_BRIDGE_NAME,
+                                      port['network_id'])
         elif (vif_type == network_model.VIF_TYPE_VHOSTUSER and
          port_details.get(network_model.VIF_DETAILS_VHOSTUSER_OVS_PLUG,
                           False)):

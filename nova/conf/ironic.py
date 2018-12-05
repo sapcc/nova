@@ -79,6 +79,16 @@ Related options:
         min=0,
         help='Timeout (seconds) to wait for node serial console state '
              'changed. Set to 0 to disable timeout.'),
+    cfg.StrOpt(
+        'conductor_group',
+        default=None,
+        help='Name of the conductor group (incompatible with balancing)'
+    ),
+    cfg.BoolOpt(
+        'update_host',
+        default=True,
+        help='Should the compute host be updated, if a mismatch is detected'
+    )
 ]
 
 deprecated_opts = {

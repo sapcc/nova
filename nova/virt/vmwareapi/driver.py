@@ -18,9 +18,9 @@
 """
 A connection to the VMware vCenter platform.
 """
-
 import os
 import re
+from six.moves import urllib
 
 from oslo_log import log as logging
 from oslo_utils import excutils
@@ -49,10 +49,12 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+from oslo_serialization import jsonutils
 
 LOG = logging.getLogger(__name__)
 
 CONF = nova.conf.CONF
+RPC_TOPIC = 'vmware-vspc'
 
 TIME_BETWEEN_API_CALL_RETRIES = 1.0
 MAX_CONSOLE_BYTES = 100 * units.Ki
@@ -65,6 +67,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         "has_imagecache": True,
         "supports_recreate": False,
         "supports_migrate_to_same_host": True,
+        "resource_scheduling": True,
         "supports_attach_interface": True,
         "supports_multiattach": False
     }
@@ -130,6 +133,9 @@ class VMwareVCDriver(driver.ComputeDriver):
                                       self._nodename,
                                       self._cluster_ref,
                                       self._datastore_regex)
+        host_stats = self._vc_state.get_host_stats()
+        self.capabilities['resource_scheduling'] = host_stats.get(
+            'resource_scheduling')
 
         # Register the OpenStack extension
         self._register_openstack_extension()
@@ -275,8 +281,25 @@ class VMwareVCDriver(driver.ComputeDriver):
         return self._vmops.get_mks_console(instance)
 
     def get_console_output(self, context, instance):
+        """request specific log from VSPC."""
+
+        if CONF.vmware.serial_log_uri:
+            try:
+                print("%s/console_log/%s" % (
+                    CONF.vmware.serial_log_uri,
+                    instance.uuid))
+                read_log_data = urllib.request.urlopen("%s/console_log/%s" % (
+                    CONF.vmware.serial_log_uri,
+                    instance.uuid))
+                return read_log_data.read()
+            except IOError:
+                LOG.exception(_('Unable to obtain serial console log for VM %(vm_uuid)s with '
+                                'server details: %(server)s.'),
+                              {'vm_uuid': instance.uuid, 'server': CONF.vmware.serial_log_uri})
+
         if not CONF.vmware.serial_log_dir:
-            LOG.error("The 'serial_log_dir' config option is not set!")
+            LOG.error("Neither the 'serial_log_dir' nor 'serial_log_uri' "
+                      "config option is set!")
             return
         fname = instance.uuid.replace('-', '')
         path = os.path.join(CONF.vmware.serial_log_dir, fname)
@@ -320,12 +343,12 @@ class VMwareVCDriver(driver.ComputeDriver):
                 # likely many different CPU models in use. As such it is
                 # impossible to provide any meaningful info on the CPU
                 # model of the "host"
-               'cpu_info': None,
+               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
                'supported_instances': host_stats['supported_instances'],
                'numa_topology': None,
                }
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and
@@ -337,6 +360,60 @@ class VMwareVCDriver(driver.ComputeDriver):
         host_stats = self._vc_state.get_host_stats(refresh=True)
         stats_dict = self._get_available_resources(host_stats)
         return stats_dict
+
+    def get_cluster_metrics(self):
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session, CONF.vmware.cluster_name)
+
+        lst_properties = ["summary.quickStats"]
+        self.cluster_metrics = {}
+        self.cpu_usage = 0
+        self.memory_usage = 0
+        self.datastore_free_space = 0
+        self.datastore_total = 0
+
+        cluster_data = self._session._call_method(vim_util, 'get_object_properties_dict', cluster_ref,
+                                                  ['host', 'datastore', 'summary'])
+
+        for datastore in cluster_data['datastore'][0]:
+            datastore_capacity = self._session._call_method(
+                vim_util,
+                "get_object_properties_dict",
+                datastore,
+                ['summary.freeSpace', 'summary.capacity'])
+            self.datastore_free_space += datastore_capacity['summary.freeSpace']
+            self.datastore_total += datastore_capacity['summary.capacity']
+
+        for host in cluster_data['host'][0]:
+            props = self._session._call_method(vim_util,
+                                               "get_object_properties_dict",
+                                               host,
+                                               lst_properties)
+
+            self.cpu_usage += props['summary.quickStats'].overallCpuUsage
+            self.memory_usage += props['summary.quickStats'].overallMemoryUsage
+
+        self.cluster_metrics['cpu_total'] = cluster_data['summary'].totalCpu
+        self.cluster_metrics['cpu_used'] = self.cpu_usage
+        self.cluster_metrics['cpu_free'] = cluster_data['summary'].totalCpu - self.cpu_usage
+        self.cluster_metrics['memory_total'] = float(cluster_data['summary'].totalMemory / units.Mi)
+        self.cluster_metrics['memory_used'] = self.memory_usage
+        self.cluster_metrics['memory_free'] = self.cluster_metrics['memory_total'] - self.cluster_metrics['memory_used']
+        self.cluster_metrics['datastore_total'] = float(self.datastore_total / units.Gi)
+        self.cluster_metrics['datastore_used'] = float((self.datastore_total - self.datastore_free_space) / units.Gi)
+        self.cluster_metrics['datastore_free'] = self.cluster_metrics['datastore_total'] - self.cluster_metrics[
+            'datastore_used']
+
+        perc = float(self.cluster_metrics['cpu_used']) / float(self.cluster_metrics['cpu_total'])
+        self.cluster_metrics['cpu_percent'] = int(perc * 100)
+
+        perc = float(self.cluster_metrics['memory_used'] / self.cluster_metrics['memory_total'])
+        self.cluster_metrics['memory_percent'] = int(perc * 100)
+
+        perc = float(self.cluster_metrics['datastore_used'] / units.G) / float(
+            self.cluster_metrics['datastore_total'] / units.G)
+        self.cluster_metrics['datastore_percent'] = int(perc * 100)
+
+        return self.cluster_metrics
 
     def get_available_nodes(self, refresh=False):
         """Returns nodenames of all nodes managed by the compute service.
@@ -470,7 +547,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 LOG.warning('Instance does not exists. Proceeding to '
                             'delete instance properties on datastore',
                             instance=instance)
-        self._vmops.destroy(instance, destroy_disks)
+        self._vmops.destroy(context, instance, destroy_disks)
 
     def pause(self, instance):
         """Pause VM instance."""

@@ -37,6 +37,8 @@ from nova.i18n import _
 from nova.network import model as network_model
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
+from nova import objects
+from nova.virt.vmwareapi import cluster_util
 
 LOG = logging.getLogger(__name__)
 
@@ -56,6 +58,7 @@ _FOLDER_PATH_REF_MAPPING = {}
 # that this is a rescue VM. This is in order to prevent
 # unnecessary communication with the backend.
 _VM_REFS_CACHE = {}
+_VM_VALUE_CACHE = collections.defaultdict(dict)
 
 
 class Limits(object):
@@ -92,7 +95,7 @@ class ExtraSpecs(object):
     def __init__(self, cpu_limits=None, hw_version=None,
                  storage_policy=None, cores_per_socket=None,
                  memory_limits=None, disk_io_limits=None,
-                 vif_limits=None, firmware=None):
+                 vif_limits=None, hv_enabled=None, firmware=None, hw_video_ram=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -101,7 +104,25 @@ class ExtraSpecs(object):
         self.hw_version = hw_version
         self.storage_policy = storage_policy
         self.cores_per_socket = cores_per_socket
+        self.hv_enabled = hv_enabled
         self.firmware = firmware
+        self.hw_video_ram = hw_video_ram
+
+def vm_value_cache_reset():
+    global _VM_VALUE_CACHE
+    _VM_VALUE_CACHE = {}
+
+
+def vm_value_cache_delete(id):
+    _VM_VALUE_CACHE.pop(id, None)
+
+
+def vm_value_cache_update(id, change_name, val):
+    _VM_VALUE_CACHE[id][change_name] = val
+
+
+def vm_value_cache_get(id):
+    return _VM_VALUE_CACHE.get(id)
 
 
 def vm_refs_cache_reset():
@@ -152,6 +173,8 @@ VmdkInfo = collections.namedtuple('VmdkInfo', ['path', 'adapter_type',
                                                'capacity_in_bytes',
                                                'device'])
 
+GroupInfo = collections.namedtuple('GroupInfo', ['uuid', 'policies'])
+
 
 def _iface_id_option_value(client_factory, iface_id, port_index):
     opt = client_factory.create('ns0:OptionValue')
@@ -190,14 +213,30 @@ def _get_allocation_info(client_factory, limits, allocation_type):
         allocation.shares = shares
     return allocation
 
+def append_vif_infos_to_config_spec(client_factory, config_spec, vif_infos, vif_limits, index=0):
+    if not config_spec.deviceChange:
+        config_spec.deviceChange = []
+    for vif_info in vif_infos:
+        vif_spec = _create_vif_spec(client_factory, vif_info, vif_limits)
+        config_spec.deviceChange.append(vif_spec)
+
+    if not config_spec.extraConfig:
+        config_spec.extraConfig = []
+    port_index = index
+    for vif_info in vif_infos:
+        if vif_info['iface_id']:
+            config_spec.extraConfig.append(_iface_id_option_value(client_factory,
+                                                                  vif_info['iface_id'],
+                                                                  port_index))
+            port_index += 1
 
 def get_vm_create_spec(client_factory, instance, data_store_name,
                        vif_infos, extra_specs,
                        os_type=constants.DEFAULT_OS_TYPE,
-                       profile_spec=None, metadata=None):
+                       profile_spec=None, metadata=None, vm_name=None):
     """Builds the VM Create spec."""
     config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
-    config_spec.name = instance.uuid
+    config_spec.name = vm_name or instance.uuid
     config_spec.guestId = os_type
     # The name is the unique identifier for the VM.
     config_spec.instanceUuid = instance.uuid
@@ -207,8 +246,7 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     config_spec.version = extra_specs.hw_version
 
     # Allow nested hypervisor instances to host 64 bit VMs.
-    if os_type in ("vmkernel5Guest", "vmkernel6Guest", "vmkernel65Guest",
-                   "windowsHyperVGuest"):
+    if (os_type in ("vmkernel5Guest", "vmkernel6Guest", "windowsHyperVGuest")) or (extra_specs.hv_enabled == "True"):
         config_spec.nestedHVEnabled = "True"
 
     # Append the profile spec
@@ -248,14 +286,13 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
         config_spec.firmware = extra_specs.firmware
 
     devices = []
-    for vif_info in vif_infos:
-        vif_spec = _create_vif_spec(client_factory, vif_info,
-                                    extra_specs.vif_limits)
-        devices.append(vif_spec)
-
     serial_port_spec = create_serial_port_spec(client_factory)
     if serial_port_spec:
         devices.append(serial_port_spec)
+
+    virtual_device_config_spec = create_video_card_spec(client_factory, extra_specs)
+    if virtual_device_config_spec:
+        devices.append(virtual_device_config_spec)
 
     config_spec.deviceChange = devices
 
@@ -272,14 +309,6 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     opt.value = True
     extra_config.append(opt)
 
-    port_index = 0
-    for vif_info in vif_infos:
-        if vif_info['iface_id']:
-            extra_config.append(_iface_id_option_value(client_factory,
-                                                       vif_info['iface_id'],
-                                                       port_index))
-            port_index += 1
-
     if (CONF.vmware.console_delay_seconds and
         CONF.vmware.console_delay_seconds > 0):
         opt = client_factory.create('ns0:OptionValue')
@@ -289,6 +318,8 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     config_spec.extraConfig = extra_config
 
+    append_vif_infos_to_config_spec(client_factory, config_spec, vif_infos, extra_specs.vif_limits)
+
     # Set the VM to be 'managed' by 'OpenStack'
     managed_by = client_factory.create('ns0:ManagedByInfo')
     managed_by.extensionKey = constants.EXTENSION_KEY
@@ -297,6 +328,15 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     return config_spec
 
+def create_video_card_spec(client_factory, extra_specs):
+    if extra_specs.hw_video_ram:
+        video_card = client_factory.create('ns0:VirtualMachineVideoCard')
+        video_card.videoRamSizeInKB = extra_specs.hw_video_ram
+        video_card.key = -1
+        virtual_device_config_spec = client_factory.create('ns0:VirtualDeviceConfigSpec')
+        virtual_device_config_spec.operation = "add"
+        virtual_device_config_spec.device = video_card
+        return virtual_device_config_spec
 
 def create_serial_port_spec(client_factory):
     """Creates config spec for serial port."""
@@ -490,12 +530,9 @@ def get_network_attach_config_spec(client_factory, vif_info, index,
                                    vif_limits=None):
     """Builds the vif attach config spec."""
     config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
-    vif_spec = _create_vif_spec(client_factory, vif_info, vif_limits)
-    config_spec.deviceChange = [vif_spec]
-    if vif_info['iface_id'] is not None:
-        config_spec.extraConfig = [_iface_id_option_value(client_factory,
-                                                          vif_info['iface_id'],
-                                                          index)]
+
+    append_vif_infos_to_config_spec(client_factory, config_spec, [vif_info], vif_limits, index)
+
     return config_spec
 
 
@@ -639,7 +676,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
     capacity_in_bytes = 0
 
     # Determine if we need to get the details of the root disk
-    root_disk = None
+    root_disk = not uuid is None
     root_device = None
     if uuid:
         root_disk = '%s.vmdk' % uuid
@@ -650,8 +687,8 @@ def get_vmdk_info(session, vm_ref, uuid=None):
         if device.__class__.__name__ == "VirtualDisk":
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
-                path = ds_obj.DatastorePath.parse(device.backing.fileName)
-                if root_disk and path.basename == root_disk:
+                if not root_device or root_device.controllerKey > device.controllerKey or \
+                                        root_device.controllerKey == device.controllerKey and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
         elif device.__class__.__name__ == "VirtualLsiLogicController":
@@ -665,7 +702,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
         elif device.__class__.__name__ == "ParaVirtualSCSIController":
             adapter_type_dict[device.key] = constants.ADAPTER_TYPE_PARAVIRTUAL
 
-    if root_disk:
+    if uuid:
         vmdk_device = root_device
 
     if vmdk_device:
@@ -1104,6 +1141,14 @@ def _get_vm_ref_from_vm_uuid(session, instance_uuid):
         return vm_refs[0]
 
 
+def find_by_inventory_path(session, inv_path):
+    return session._call_method(
+        session.vim,
+        "FindByInventoryPath",
+        session.vim.service_content.searchIndex,
+        inventoryPath=inv_path)
+
+
 def _get_vm_ref_from_extraconfig(session, instance_uuid):
     """Get reference to the VM with the uuid specified."""
     vms = session._call_method(vim_util, "get_objects",
@@ -1204,6 +1249,25 @@ def get_stats_from_cluster(session, cluster):
                      'max_mem_mb_per_host': max_mem_mb_per_host}}
     return stats
 
+def _get_server_group(context, instance):
+    server_group_info = None
+    try:
+        instance_group_object = objects.instance_group.InstanceGroup
+        server_group = instance_group_object.get_by_instance_uuid(
+            context, instance.uuid)
+        if server_group:
+            server_group_info = GroupInfo(server_group.uuid, server_group.policies)
+    except nova.exception.InstanceGroupNotFound as e:
+        pass
+
+    return server_group_info
+
+
+def update_cluster_placement(session, context, instance, cluster, vm_ref):
+    server_group_info = _get_server_group(context, instance)
+    if server_group_info is None:
+        return
+    cluster_util.update_placement(session, cluster, vm_ref, server_group_info)
 
 def get_host_ref(session, cluster=None):
     """Get reference to a host within the cluster specified."""
@@ -1252,7 +1316,7 @@ def get_vmdk_backed_disk_device(hardware_devices, uuid):
         if (device.__class__.__name__ == "VirtualDisk" and
                 device.backing.__class__.__name__ ==
                 "VirtualDiskFlatVer2BackingInfo" and
-                device.backing.uuid == uuid):
+                getattr(device.backing, 'uuid', None) == uuid):
             return device
 
 
@@ -1356,6 +1420,18 @@ def destroy_vm(session, instance, vm_ref=None):
         LOG.info("Destroyed the VM", instance=instance)
     except Exception:
         LOG.exception(_('Destroy VM failed'), instance=instance)
+
+
+def mark_vm_as_template(session, instance, vm_ref=None):
+    """Mark a VM instance as template. Assumes VM is powered off."""
+    try:
+        if not vm_ref:
+            vm_ref = get_vm_ref(session, instance)
+        LOG.debug("Marking the VM as template", instance=instance)
+        session._call_method(session.vim, "MarkAsTemplate", vm_ref)
+        LOG.info("Marked the VM as template", instance=instance)
+    except Exception:
+        LOG.exception(_('Mark VM as template failed'), instance=instance)
 
 
 def create_virtual_disk(session, dc_ref, adapter_type, disk_type,
