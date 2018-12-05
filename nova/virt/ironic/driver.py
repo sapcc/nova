@@ -338,7 +338,6 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.firewall_driver.unfilter_instance(instance, network_info)
 
     def _set_instance_uuid(self, node, instance):
-
         patch = [{'path': '/instance_uuid', 'op': 'add',
                   'value': instance.uuid}]
         try:
@@ -361,6 +360,17 @@ class IronicDriver(virt_driver.ComputeDriver):
             raise ironic.exc.BadRequest(
                 _("Ironic node uuid not supplied to "
                   "driver for instance %s.") % instance.uuid)
+        timer = loopingcall.FixedIntervalLoopingCall(self._wait_for_available,
+                                                     instance, node_uuid)
+        try:
+            timer.start(interval=CONF.ironic.api_retry_interval).wait()
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.error("Error deploying instance %(instance)s on "
+                          "baremetal node %(node)s.",
+                          {'instance': instance.uuid,
+                           'node': node_uuid})
+
         node = self._get_node(node_uuid)
         self._set_instance_uuid(node, instance)
 
@@ -373,8 +383,8 @@ class IronicDriver(virt_driver.ComputeDriver):
             LOG.warning('Attempt to clean-up from failed spawn of '
                         'instance %s failed due to no instance_uuid '
                         'present on the node.', instance.uuid)
-            return
-        self._cleanup_deploy(node, instance)
+        else:
+            self._cleanup_deploy(node, instance)
 
     def _add_instance_info_to_node(self, node, instance, image_meta, flavor,
                                    preserve_ephemeral=None,
@@ -477,6 +487,34 @@ class IronicDriver(virt_driver.ComputeDriver):
         self._unplug_vifs(node, instance, network_info)
         self._stop_firewall(instance, network_info)
         self._remove_instance_info_from_node(node, instance)
+
+    def _wait_for_available(self, instance, node_uuid):
+        """Wait for the node to be marked as AVAILABLE in Ironic."""
+        instance.refresh()
+        node = self._get_node(node_uuid)
+        abort_states = (ironic_states.CLEANFAIL,
+                        ironic_states.DEPLOYWAIT,
+                        ironic_states.DEPLOYING,
+                        ironic_states.ACTIVE)
+
+        if (instance.task_state == task_states.DELETING or
+            instance.vm_state in (vm_states.ERROR, vm_states.DELETED)):
+            raise exception.InstanceDeployFailure(
+                _("Instance %s provisioning was aborted") % instance.uuid)
+
+        if not (self._node_resources_used(node) or
+                self._node_resources_unavailable(node)):
+            # job is done
+            LOG.debug("Ironic node %(node)s is now AVAILABLE",
+                      dict(node=node.uuid), instance=instance)
+            raise loopingcall.LoopingCallDone()
+
+        if (node.target_provision_state in abort_states
+                or node.provision_state in abort_states):
+            # ironic is trying to deploy now
+            raise exception.InstanceNotFound(instance_id=instance.uuid)
+
+        _log_ironic_polling('become AVAILABLE', node, instance)
 
     def _wait_for_active(self, instance):
         """Wait for the node to be marked as ACTIVE in Ironic."""
@@ -1069,11 +1107,6 @@ class IronicDriver(virt_driver.ComputeDriver):
         try:
             if node.provision_state in _UNPROVISION_STATES:
                 self._unprovision(instance, node)
-            else:
-                # NOTE(hshiina): if spawn() fails before ironic starts
-                #                provisioning, instance information should be
-                #                removed from ironic node.
-                self._remove_instance_info_from_node(node, instance)
         finally:
             self._cleanup_deploy(node, instance, network_info)
 
