@@ -6173,7 +6173,7 @@ class ComputeManager(manager.Manager):
         try:
             self.compute_rpcapi.neutron_bind_port(context, instance, dest)
         except Exception as e:
-            LOG.error("ERROR ================================================> %s" % e)
+            LOG.exception("Bind neutron port failed.", instance=instance)
 
     @wrap_exception()
     @wrap_instance_event(prefix='compute')
@@ -6515,7 +6515,6 @@ class ComputeManager(manager.Manager):
                 instance.progress = 0
                 instance.save(expected_task_state=task_states.MIGRATING)
 
-        LOG.debug("INSTANCE AFTER MIGRATION =========================================> %s" % instance)
 
         # NOTE(tr3buchet): tear down networks on source host
         self.network_api.setup_networks_on_host(context, instance,
