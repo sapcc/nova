@@ -175,6 +175,7 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
+
         spawn_background_task(self.update_cached_instances)
 
     def _get_base_folder(self):
@@ -1932,10 +1933,10 @@ class VMwareVMOps(object):
                 return hardware.InstanceInfo(
                     state=constants.POWER_STATES[vm_util._VM_VALUE_CACHE[vm_ref.value]["runtime.powerState"]])
 
-        LOG.info("VM instance data was not found on the cache. "
-                 "Making request to vCenter for retrieving VM info.")
-
         try:
+            if not CONF.vmware.use_property_collector:
+                LOG.debug("VM instance data was not found on the cache.")
+
             vm_props = self._session._call_method(vutil,
                                                   "get_object_properties_dict",
                                                   vm_ref,
@@ -2417,6 +2418,9 @@ class VMwareVMOps(object):
 
     @synchronized('update_cache')
     def update_cached_instances(self):
+        if not CONF.vmware.use_property_collector:
+            return
+
         vim = self._session.vim
         options = None
         if self._property_collector is None:
