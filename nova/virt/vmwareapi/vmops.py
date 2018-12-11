@@ -33,6 +33,7 @@ from oslo_config import cfg
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
+from oslo_service import loopingcall
 from oslo_utils import excutils
 from oslo_utils import strutils
 from oslo_utils import units
@@ -66,9 +67,6 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
-from oslo_service import periodic_task
-from eventlet import sleep, spawn as spawn_background_task
-from oslo_concurrency.lockutils import lock, synchronized
 
 CONF = nova.conf.CONF
 
@@ -166,6 +164,7 @@ class VMwareVMOps(object):
         self._volumeops = volumeops
         self._cluster = cluster
         self._property_collector = None
+        self._property_collector_version = ''
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
                                                             self._cluster)
         self._datastore_regex = datastore_regex
@@ -175,8 +174,11 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
-
-        spawn_background_task(self.update_cached_instances)
+        self._poll_state = loopingcall.FixedIntervalLoopingCall(
+            self.update_cached_instances)
+        if CONF.vmware.use_property_collector:
+            self._poll_state.start(interval=CONF.vmware.task_poll_interval * 2.0,
+                                   stop_on_exception=False)
 
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
@@ -1363,12 +1365,8 @@ class VMwareVMOps(object):
     def reboot(self, instance, network_info, reboot_type="SOFT"):
         """Reboot a VM instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        lst_properties = ["summary.guest.toolsStatus", "runtime.powerState",
-                          "summary.guest.toolsRunningStatus"]
-        props = self._session._call_method(vutil,
-                                           "get_object_properties_dict",
-                                           vm_ref,
-                                           lst_properties)
+
+        props = self._get_instance_props(vm_ref)
         pwr_state = props.get('runtime.powerState')
         tools_status = props.get('summary.guest.toolsStatus')
         tools_running_status = props.get('summary.guest.toolsRunningStatus')
@@ -1621,6 +1619,7 @@ class VMwareVMOps(object):
             return
 
         vm_util.power_off_instance(self._session, instance)
+        self.update_cached_instances()
 
     def _clean_shutdown(self, instance, timeout, retry_interval):
         """Perform a soft shutdown on the VM.
@@ -1673,16 +1672,25 @@ class VMwareVMOps(object):
         return False
 
     def _get_instance_props(self, vm_ref):
-        lst_properties = ["summary.guest.toolsStatus",
+        lst_properties = ["config.instanceUuid",
                           "runtime.powerState",
+                          "summary.guest.toolsStatus",
                           "summary.guest.toolsRunningStatus",
-                          "config.instanceUuid"]
-        return self._session._call_method(vutil,
-                                          "get_object_properties_dict",
-                                          vm_ref, lst_properties)
+                         ]
+
+        self.update_cached_instances()
+        vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
+
+        if set(vm_props.keys()).issuperset(lst_properties):
+            return vm_props
+        else:
+            return self._session._call_method(
+                vutil, "get_object_properties_dict",
+                vm_ref, lst_properties)
 
     def power_on(self, instance):
         vm_util.power_on_instance(self._session, instance)
+        self.update_cached_instances()
 
     def _update_instance_progress(self, context, instance, step, total_steps):
         """Update instance progress percent to reflect current step number
@@ -1927,22 +1935,22 @@ class VMwareVMOps(object):
         """Return data about the VM instance."""
         lst_properties = ["runtime.powerState"]
 
+        if not vm_util._VM_VALUE_CACHE:
+            self.update_cached_instances()
+
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        if vm_ref.value in vm_util._VM_VALUE_CACHE:
-            if "runtime.powerState" in vm_util._VM_VALUE_CACHE[vm_ref.value]:
-                return hardware.InstanceInfo(
-                    state=constants.POWER_STATES[vm_util._VM_VALUE_CACHE[vm_ref.value]["runtime.powerState"]])
+        vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
+        if not vm_props or "runtime.powerState" not in vm_props:
+            try:
+                if not CONF.vmware.use_property_collector:
+                    LOG.debug("VM instance data was not found on the cache.")
 
-        try:
-            if not CONF.vmware.use_property_collector:
-                LOG.debug("VM instance data was not found on the cache.")
+                vm_props = self._session._call_method(
+                    vutil, "get_object_properties_dict",
+                    vm_ref, lst_properties)
+            except vexc.ManagedObjectNotFoundException:
+                raise exception.InstanceNotFound(instance_id=instance.uuid)
 
-            vm_props = self._session._call_method(vutil,
-                                                  "get_object_properties_dict",
-                                                  vm_ref,
-                                                  lst_properties)
-        except vexc.ManagedObjectNotFoundException:
-            raise exception.InstanceNotFound(instance_id=instance.uuid)
         return hardware.InstanceInfo(
             state=constants.POWER_STATES[vm_props['runtime.powerState']])
 
@@ -2416,60 +2424,79 @@ class VMwareVMOps(object):
         internal_access_path = jsonutils.dumps(mks_auth)
         return ctype.ConsoleMKS(ticket.host, ticket.port, internal_access_path)
 
-    @synchronized('update_cache')
+    @staticmethod
+    def _parse_change_set(change_set):
+        for change in change_set:
+            if change.op not in ("assign", "modify"):
+                continue
+
+            val = getattr(change, "val", None)
+            if change.name == "config.managedBy":
+                yield change.name, val and getattr(val, "extensionKey") == constants.EXTENSION_KEY
+            else:
+                yield change.name, val
+
+    @utils.synchronized("vmware.update_cache")
     def update_cached_instances(self):
         if not CONF.vmware.use_property_collector:
             return
 
         vim = self._session.vim
-        options = None
+        options = self._session.vim.client.factory.create("ns0:WaitOptions")
+        options.maxWaitSeconds = 0
+
         if self._property_collector is None:
-            self._property_collector = vim.service_content.propertyCollector
-            vim.CreateFilter(self._property_collector, spec=self._get_vm_monitor_spec(vim), partialUpdates=False)
-        update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
-                                          options=options)
+            pc = vim.service_content.propertyCollector
+            self._property_collector = self._session._call_method(self._session.vim,
+                "CreatePropertyCollector", pc)
+            vim.CreateFilter(self._property_collector,
+                spec=self._get_vm_monitor_spec(vim),
+                partialUpdates=False)
+
+        update_set = vim.WaitForUpdatesEx(self._property_collector,
+            version=self._property_collector_version,
+            options=options)
+
         while update_set:
             self._property_collector_version = update_set.version
             if update_set.filterSet and update_set.filterSet[0].objectSet:
                 for update in update_set.filterSet[0].objectSet:
-                    if update.obj['_type'] == "VirtualMachine":
-                        if update.kind == "leave":
-                            LOG.info("Removing instance from cache...")
-                            cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(update.obj.value, {}).get(
-                                'config.instanceUuid')
-                            vm_util.vm_ref_cache_delete(cache_id_to_delete)
-                            vm_util.vm_value_cache_delete(update.obj.value)
-                        else:
-                            if update.kind == "enter":
-                                for change in update.changeSet:
-                                    if change['op'] == 'assign':
-                                        if hasattr(change, 'val'):
-                                            vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
-                                if len(update.changeSet) > 1:
-                                    if hasattr(update.changeSet[0], 'val') and hasattr(update.changeSet[1], 'val'):
-                                        if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
-                                            LOG.info("Adding vm to cache...")
-                                            vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
+                    vm_ref = update.obj
+                    if vm_ref["_type"] != "VirtualMachine":
+                        continue
+                    values = vm_util._VM_VALUE_CACHE[vm_ref.value]
 
-                            elif update.kind == "modify":
-                                if update.changeSet[0].name == "config.instanceUuid":
-                                    for change in update.changeSet:
-                                        if change['op'] == 'assign':
-                                            if hasattr(change, 'val'):
-                                                vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
-                                    if len(update.changeSet) > 1:
-                                        if hasattr(update.changeSet[1], 'val'):
-                                            if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
-                                                if hasattr(update.changeSet[0], 'val'):
-                                                    vm_util.vm_ref_cache_update(update.changeSet[0].val, update.obj)
-                                else:
-                                    for change in update.changeSet:
-                                        if change['op'] == 'assign':
-                                            if hasattr(change, 'val'):
-                                                vm_util._VM_VALUE_CACHE[update.obj.value][change.name] = change.val
+                    if update.kind == "leave":
+                        instance_uuid = values.get("config.instanceUuid")
+                        vm_util.vm_ref_cache_delete(instance_uuid)
+                        vm_util.vm_value_cache_delete(vm_ref)
+                        LOG.debug("Removed instance %s (%s) from cache...", instance_uuid, vm_ref.value)
+                    else:
+                        changes = dict(self._parse_change_set(update.changeSet))
+                        LOG.debug("%s.%s.%s: %s", vm_ref["_type"], update.kind, vm_ref.value, changes)
+                        if not (changes.get("config.managedBy") or
+                                values.get("config.managedBy")):
+                            LOG.debug("%s Not managed by nova", vm_ref.value)
+                            continue
 
-            update_set = vim.WaitForUpdatesEx(self._property_collector, version=self._property_collector_version,
-                                          options=options)
+                        instance_uuid = changes.get("config.instanceUuid")
+
+                        if update.kind == "enter":
+                            vm_util.vm_ref_cache_update(instance_uuid, vm_ref)
+                        elif update.kind == "modify":
+                            old_instance_uuid = values.get("config.instanceUuid")
+                            new_instance_uuid = changes.get("config.instanceUuid")
+
+                            if old_instance_uuid != new_instance_uuid:
+                                vm_util.vm_ref_cache_delete(old_instance_uuid)
+                                vm_util.vm_ref_cache_update(instance_uuid, vm_ref)
+
+                        values.update(changes)
+                        LOG.debug("%s.%s.%s -> %s", vm_ref["_type"], update.kind, vm_ref.value, values)
+
+            update_set = vim.WaitForUpdatesEx(self._property_collector,
+                version=self._property_collector_version,
+                options=options)
 
 
     def _get_vm_monitor_spec(self, vim):
@@ -2498,7 +2525,12 @@ class VMwareVMOps(object):
         property_spec_vm = vutil.build_property_spec(
             vim.client.factory,
             "VirtualMachine",
-            ["config.instanceUuid", "config.managedBy", "runtime.powerState"])
+            ["config.instanceUuid",
+             "config.managedBy",
+             "runtime.powerState",
+             "summary.guest.toolsStatus",
+             "summary.guest.toolsRunningStatus",
+            ])
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
             [property_spec, property_spec_vm],

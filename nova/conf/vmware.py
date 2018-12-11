@@ -290,7 +290,7 @@ Possible values:
 The minimum size a disk is expected to have.
 Some VASA providers need disks in the multiple MB range."""),
     cfg.BoolOpt('use_property_collector',
-                default=False,
+                default=True,
                 help="""
 Should the driver use a property collector to fetch essential properties
 and keep a local copy of the values. This should reduce the load on the vcenter api and be quicker,
