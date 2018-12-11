@@ -33,7 +33,6 @@ from oslo_config import cfg
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
-from oslo_service import loopingcall
 from oslo_utils import excutils
 from oslo_utils import strutils
 from oslo_utils import units
@@ -174,11 +173,6 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
-        self._poll_state = loopingcall.FixedIntervalLoopingCall(
-            self.update_cached_instances)
-        if CONF.vmware.use_property_collector:
-            self._poll_state.start(interval=CONF.vmware.task_poll_interval * 2.0,
-                                   stop_on_exception=False)
 
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
@@ -2376,6 +2370,19 @@ class VMwareVMOps(object):
         return ds_util.get_dc_info(self._session, ds_ref)
 
     def list_instances(self):
+        if not CONF.vmware.use_property_collector:
+            lst_vm_names = self._list_instances_in_cluster()
+        else:
+            self.update_cached_instances()
+            lst_vm_names = [item["config.instanceUuid"]
+                            for item in vm_util._VM_VALUE_CACHE.values()
+                            if "config.instanceUuid" in item and item.get("config.managedBy")]
+
+        LOG.debug("Got total of %s instances", str(len(lst_vm_names)))
+
+        return lst_vm_names
+
+    def _list_instances_in_cluster(self):
         """Lists the VM instances that are registered with vCenter cluster."""
         properties = ['runtime.connectionState',
                       'config.extraConfig["nvp.vm-uuid"]']
@@ -2388,7 +2395,6 @@ class VMwareVMOps(object):
                 'VirtualMachine', properties)
         lst_vm_names = self._get_valid_vms_from_retrieve_result(vms)
 
-        LOG.debug("Got total of %s instances", str(len(lst_vm_names)))
         return lst_vm_names
 
     def get_vnc_console(self, instance):
