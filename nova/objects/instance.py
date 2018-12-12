@@ -1576,11 +1576,11 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                                  'baremetal': len(old_flavor.extra_specs) > 0}
                     if itype.get('baremetal', False):
                         old_val = counts.get(itype['name'], 0)
-                        counts.update({itype['name']: old_val + 1})
+                        counts.update({itype['name']: old_val + i[1]})
                     else:
-                        counts['instances'] = counts['instances'] + 1
-                        counts['cores'] = counts['cores'] + i[1]
-                        counts['ram'] = counts['ram'] + i[2]
+                        counts['instances'] = counts['instances'] + i[1]
+                        counts['cores'] = counts['cores'] + i[2]
+                        counts['ram'] = counts['ram'] + i[3]
 
             return counts
 
@@ -1590,6 +1590,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             )
         project_query = context.session.query(
             models.Instance.instance_type_id,
+            func.count(models.Instance.id),
             func.sum(models.Instance.vcpus),
             func.sum(models.Instance.memory_mb)).\
             filter_by(deleted=0).\
