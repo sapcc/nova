@@ -1523,7 +1523,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                                  'baremetal': len(old_flavor.extra_specs) > 0}
                     if itype.get('baremetal', False):
                         old_val = counts.get(itype['name'], 0)
-                        counts.update({itype['name']: old_val + 1})
+                        counts.update({itype['name']: old_val + i[1]})
                     else:
                         counts['instances'] = counts['instances'] + i[1]
                         counts['cores'] = counts['cores'] + i[2]
