@@ -957,9 +957,34 @@ class VMwareVMOps(object):
                                            network_info)
         vm_util.append_vif_infos_to_config_spec(client_factory, reconfig_spec, vif_infos, extra_specs.vif_limits)
 
+        self._append_serial_port_replacement_to_reconfig_spec(client_factory, vm_ref, reconfig_spec)
+
         vm_util.reconfigure_vm(self._session, vm_ref, reconfig_spec)
 
         return vm_ref
+
+    def _append_serial_port_replacement_to_reconfig_spec(self, client_factory, vm_ref, reconfig_spec):
+        hardware_devices = self._session._call_method(vutil,
+                                                      "get_object_property",
+                                                      vm_ref,
+                                                      "config.hardware.device")
+
+        if hardware_devices.__class__.__name__ == "ArrayOfVirtualDevice":
+            hardware_devices = hardware_devices.VirtualDevice
+
+        if not reconfig_spec.deviceChange:
+            reconfig_spec.deviceChange = []
+
+        for device in hardware_devices:
+            if device.__class__.__name__ == "VirtualSerialPort":
+                removal = client_factory.create('ns0:VirtualDeviceConfigSpec')
+                removal.device = device
+                removal.operation = 'remove'
+                reconfig_spec.deviceChange.append(removal)
+
+        serial_port_spec = vm_util.create_serial_port_spec(client_factory)
+        if serial_port_spec:
+            reconfig_spec.deviceChange.append(serial_port_spec)
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info, block_device_info=None):
