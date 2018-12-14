@@ -5512,8 +5512,8 @@ class _ComputeAPIUnitTestMixIn(object):
             mock_inst_get.return_value = objects.InstanceList(
                 self.context, objects=build_req_instances[:1] + cell_instances)
 
-            instances = self.compute_api.get_all(
-                self.context, search_opts={'foo': 'bar'},
+            self.assertRaises(exception.NovaException,
+                self.compute_api.get_all, self.context, search_opts={'foo': 'bar'},
                 limit=None, marker='fake-marker', sort_keys=['baz'],
                 sort_dirs=['desc'])
 
@@ -5524,8 +5524,6 @@ class _ComputeAPIUnitTestMixIn(object):
             mock_inst_get.assert_called_once_with(
                 self.context, {'foo': 'bar'}, None, None,
                 fields, ['baz'], ['desc'])
-            for i, instance in enumerate(build_req_instances + cell_instances):
-                self.assertEqual(instance, instances[i])
 
     @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
     @mock.patch.object(objects.CellMapping, 'get_by_uuid',
@@ -6129,8 +6127,8 @@ class Cellsv1DeprecatedTestMixIn(object):
             mock_inst_get.return_value = objects.InstanceList(
                 self.context, objects=build_req_instances[:1] + cell_instances)
 
-            instances = self.compute_api.get_all(
-                self.context, search_opts={'foo': 'bar'},
+            self.assertRaises(exception.NovaException,
+                self.compute_api.get_all, self.context, search_opts={'foo': 'bar'},
                 limit=None, marker='fake-marker', sort_keys=['baz'],
                 sort_dirs=['desc'])
 
@@ -6141,8 +6139,6 @@ class Cellsv1DeprecatedTestMixIn(object):
             mock_inst_get.assert_called_once_with(
                 self.context, {'foo': 'bar'}, limit=None, marker=None,
                 fields=fields, sort_keys=['baz'], sort_dirs=['desc'])
-            for i, instance in enumerate(build_req_instances + cell_instances):
-                self.assertEqual(instance, instances[i])
 
     @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
     @mock.patch.object(objects.CellMapping, 'get_by_uuid',
