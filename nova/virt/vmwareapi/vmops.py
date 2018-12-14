@@ -82,7 +82,7 @@ vmops_opts = [
                 default=True,
                 help='Create a snapshot of the VM before cloning it'),
     cfg.BoolOpt('image_as_template',
-                default=True,
+                default=False,
                 help='Keep Glance images as VM templates in vCenter per datastore and create instances as clone from template.'),
     cfg.BoolOpt('fetch_image_from_other_datastores',
                 default=True,
