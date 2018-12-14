@@ -2544,10 +2544,10 @@ class API(base.Base):
                            build_req_instances.objects +
                            insts.objects)))
 
-        if len(instances) != len(build_req_instances) + len(insts):
+        if limit is not None and len(instances) != len(build_req_instances) + len(insts):
             raise exception.NovaException(
                 _('Duplicate instances found, '
-                  'database inconsistentency between cells and api'))
+                  'database inconsistentency between cells and api, breaks pagination'))
 
         if filter_ip:
             instances = self._ip_filter(instances, filters, orig_limit)
