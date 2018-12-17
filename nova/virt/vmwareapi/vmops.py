@@ -969,14 +969,14 @@ class VMwareVMOps(object):
                                                       vm_ref,
                                                       "config.hardware.device")
 
-        if hardware_devices.__class__.__name__ == "ArrayOfVirtualDevice":
+        if vm_util.is_vim_instance(hardware_devices, "ArrayOfVirtualDevice"):
             hardware_devices = hardware_devices.VirtualDevice
 
         if not reconfig_spec.deviceChange:
             reconfig_spec.deviceChange = []
 
         for device in hardware_devices:
-            if device.__class__.__name__ == "VirtualSerialPort":
+            if vm_util.is_vim_instance(device, "VirtualSerialPort"):
                 removal = client_factory.create('ns0:VirtualDeviceConfigSpec')
                 removal.device = device
                 removal.operation = 'remove'
