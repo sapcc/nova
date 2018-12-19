@@ -27,8 +27,6 @@ from oslo_log import log as logging
 
 from nova.i18n import _LW
 from nova.scheduler import weights
-from nova.context import get_admin_context
-from nova.db.api import instance_count
 
 CONF = cfg.CONF
 
@@ -37,10 +35,6 @@ LOG = logging.getLogger(__name__)
 
 class _SoftAffinityWeigherBase(weights.BaseHostWeigher):
     policy_name = None
-
-    def __init__(self):
-        super(_SoftAffinityWeigherBase, self).__init__()
-        self._context = None
 
     def _weigh_object(self, host_state, request_spec):
         """Higher weights win."""
@@ -52,26 +46,11 @@ class _SoftAffinityWeigherBase(weights.BaseHostWeigher):
         if self.policy_name not in policies:
             return 0
 
-        group_hosts = request_spec.instance_group.hosts
+        instances = set(host_state.instances.keys())
+        members = set(request_spec.instance_group.members)
+        member_on_host = instances.intersection(members)
 
-        if not group_hosts or host_state.host not in group_hosts:
-            return 0
-
-        if not request_spec.instance_group.members:
-            return 0
-
-        if host_state.instances:
-            instances = set(host_state.instances.keys())
-            members = set(request_spec.instance_group.members)
-            member_on_host = instances.intersection(members)
-
-            return len(member_on_host)
-        else:
-            self._context = self._context or get_admin_context()
-            return instance_count(self._context, filters={
-                'host': host_state.host,
-                'uuid': request_spec.instance_group.members
-            })
+        return len(member_on_host)
 
 
 class ServerGroupSoftAffinityWeigher(_SoftAffinityWeigherBase):

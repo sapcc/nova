@@ -848,11 +848,6 @@ def instance_get_all_by_host(context, host, columns_to_join=None):
     return IMPL.instance_get_all_by_host(context, host, columns_to_join)
 
 
-def instance_count(context, filters=None):
-    """Count instances."""
-    return IMPL.instance_count(context, filters=filters)
-
-
 def instance_get_all_by_host_and_node(context, host, node,
                                       columns_to_join=None):
     """Get all instances belonging to a node."""

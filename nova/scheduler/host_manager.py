@@ -354,8 +354,6 @@ class HostManager(object):
         weigher_classes = self.weight_handler.get_matching_classes(
                 CONF.filter_scheduler.weight_classes)
         self.weighers = [cls() for cls in weigher_classes]
-        self._require_instances = any(f.requires_instances
-                                      for f in self.default_filters)
         # Dict of aggregates keyed by their ID
         self.aggs_by_id = {}
         # Dict of set of aggregate IDs keyed by the name of the host belonging
@@ -752,8 +750,6 @@ class HostManager(object):
         host_info = self._instance_info.get(host_name)
         if host_info and host_info.get("updated"):
             inst_dict = host_info["instances"]
-        elif not self._require_instances:
-            inst_dict = {}
         else:
             # Host is running old version, or updates aren't flowing.
             inst_dict = self._get_instances_by_host(context, host_name)
