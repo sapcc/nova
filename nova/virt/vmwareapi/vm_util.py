@@ -213,14 +213,20 @@ def _get_allocation_info(client_factory, limits, allocation_type):
         allocation.shares = shares
     return allocation
 
-def append_vif_infos_to_config_spec(client_factory, config_spec, vif_infos, vif_limits, index=0):
-    if not config_spec.deviceChange:
+def append_vif_infos_to_config_spec(client_factory,
+                                    config_spec,
+                                    vif_infos,
+                                    vif_limits,
+                                    index=0):
+    if not hasattr(config_spec, 'deviceChange') or \
+            not config_spec.deviceChange:
         config_spec.deviceChange = []
     for vif_info in vif_infos:
         vif_spec = _create_vif_spec(client_factory, vif_info, vif_limits)
         config_spec.deviceChange.append(vif_spec)
 
-    if not config_spec.extraConfig:
+    if not hasattr(config_spec, 'extraConfig') or \
+            not config_spec.extraConfig:
         config_spec.extraConfig = []
     port_index = index
     for vif_info in vif_infos:
@@ -688,7 +694,8 @@ def get_vmdk_info(session, vm_ref, uuid=None):
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
                 if not root_device or root_device.controllerKey > device.controllerKey or \
-                                        root_device.controllerKey == device.controllerKey and root_device.unitNumber > device.unitNumber:
+                                        root_device.controllerKey == device.controllerKey \
+                        and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
         elif device.__class__.__name__ == "VirtualLsiLogicController":
