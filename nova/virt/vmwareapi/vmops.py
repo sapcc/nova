@@ -384,10 +384,11 @@ class VMwareVMOps(object):
         video_ram = image_meta.properties.get('hw_video_ram', 0)
         max_vram = int(flavor.extra_specs.get('hw_video:ram_max_mb', 0))
 
+
+        if video_ram > max_vram:
+            raise exception.RequestedVRamTooHigh(req_vram=video_ram,
+                                                 max_vram=max_vram)
         if video_ram and video_ram:
-            if video_ram > max_vram:
-                raise exception.RequestedVRamTooHigh(req_vram=video_ram,
-                                                     max_vram=max_vram)
             extra_specs.hw_video_ram = video_ram * units.Mi / units.Ki
 
         if CONF.vmware.pbm_enabled:
