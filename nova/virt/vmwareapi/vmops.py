@@ -511,10 +511,9 @@ class VMwareVMOps(object):
                                self._session,
                                vm_name,
                                vi.datastore.name,
-                               self._get_project_folder(
-                                   vi.dc_info,
-                                   project_id=vi.instance.project_id,
-                                   type_='Images'),
+                               self._get_project_folder(vi.dc_info,
+                                        project_id=vi.instance.project_id,
+                                        type_='Images'),
                                self._root_resource_pool)
         # The size of the image is different from the size of the virtual disk.
         # We want to use the latter. On vSAN this is the only way to get this
