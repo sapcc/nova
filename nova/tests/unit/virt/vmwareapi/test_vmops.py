@@ -57,7 +57,7 @@ class DsPathMatcher(object):
         return str(ds_path_param) == self.expected_ds_path_str
 
 
-class VMwareVMOpsTestCase(test.NoDBTestCase):
+class VMwareVMOpsTestCase(test.TestCase):
     def setUp(self):
         super(VMwareVMOpsTestCase, self).setUp()
         ds_util.dc_cache_reset()
@@ -77,6 +77,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 ref=fake_ds_ref, name='fake_ds',
                 capacity=10 * units.Gi,
                 freespace=10 * units.Gi)
+        fake_dc_ref = vmwareapi_fake.ManagedObjectReference("Datacenter")
         self._dc_info = ds_util.DcInfo(
                 ref='fake_dc_ref', name='fake_dc',
                 vmFolder='fake_vm_folder')
@@ -103,7 +104,8 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         self._vmops = vmops.VMwareVMOps(self._session, self._virtapi, None,
                                         cluster=cluster.obj)
         self._cluster = cluster
-        self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id})
+        self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id,
+                                                        'owner': ''})
         subnet_4 = network_model.Subnet(cidr='192.168.0.1/24',
                                         dns=[network_model.IP('192.168.0.1')],
                                         gateway=
@@ -290,8 +292,9 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             mock_save.assert_called_once_with()
         self.assertEqual(50, self._instance.progress)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake_ref')
-    def test_get_info(self, mock_get_vm_ref):
+    @mock.patch.object(vm_util, 'get_vm_ref', return_value=vmwareapi_fake.ManagedObjectReference())
+    @mock.patch.object(vm_util, '_VM_VALUE_CACHE', return_value='fake-ref')
+    def test_get_info(self, mock_update_cached_instances, mock_get_vm_ref):
         result = {
             'summary.config.numCpu': 4,
             'summary.config.memorySizeMB': 128,
@@ -1128,6 +1131,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             get_vm_config_info.assert_called_once_with(self._instance,
                 image_info, extra_specs)
             build_virtual_machine.assert_called_once_with(self._instance,
+                                                          self._context,
                 image_info, vi.dc_info, vi.datastore, [],
                 extra_specs, self._get_metadata())
             enlist_image.assert_called_once_with(image_info.image_id,
@@ -1192,6 +1196,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             get_vm_config_info.assert_called_once_with(self._instance,
                 image_info, extra_specs)
             build_virtual_machine.assert_called_once_with(self._instance,
+                                                          self._context,
                 image_info, vi.dc_info, vi.datastore, [],
                 extra_specs, self._get_metadata(is_image_used=False))
             volumeops.attach_root_volume.assert_called_once_with(
@@ -1246,6 +1251,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         get_vm_config_info.assert_called_once_with(
             self._instance, image_info, extra_specs)
         build_virtual_machine.assert_called_once_with(self._instance,
+                                                      self._context,
             image_info, vi.dc_info, vi.datastore, [],
             extra_specs, self._get_metadata(is_image_used=False))
 
@@ -1266,9 +1272,11 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
     @mock.patch.object(
             vmops.VMwareVMOps, '_sized_image_exists', return_value=False)
     @mock.patch.object(vmops.VMwareVMOps, '_extend_virtual_disk')
+    @mock.patch.object(vmops.VMwareVMOps, '_extend_if_required')
     @mock.patch.object(vm_util, 'copy_virtual_disk')
     def _test_use_disk_image_as_linked_clone(self,
                                              mock_copy_virtual_disk,
+                                             mock_extend_if_required,
                                              mock_extend_virtual_disk,
                                              mock_sized_image_exists,
                                              flavor_fits_image=False):
@@ -1298,12 +1306,10 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 self._session, self._dc_info.ref,
                 str(vi.cache_image_path),
                 str(sized_cached_image_ds_loc))
-
-        if not flavor_fits_image:
-            mock_extend_virtual_disk.assert_called_once_with(
-                    self._instance, vi.root_gb * units.Mi,
-                    str(sized_cached_image_ds_loc),
-                    self._dc_info.ref)
+        mock_extend_if_required.assert_called_once_with(
+            self._dc_info,
+            vi.ii,
+            vi.instance, str(sized_cached_image_ds_loc))
 
         mock_attach_disk_to_vm.assert_called_once_with(
                 "fake_vm_ref", self._instance, vi.ii.adapter_type,
@@ -1319,9 +1325,11 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         self._test_use_disk_image_as_linked_clone(flavor_fits_image=True)
 
     @mock.patch.object(vmops.VMwareVMOps, '_extend_virtual_disk')
+    @mock.patch.object(vmops.VMwareVMOps, '_extend_if_required')
     @mock.patch.object(vm_util, 'copy_virtual_disk')
     def _test_use_disk_image_as_full_clone(self,
                                           mock_copy_virtual_disk,
+                                          mock_extend_if_required,
                                           mock_extend_virtual_disk,
                                           flavor_fits_image=False):
         extra_specs = vm_util.ExtraSpecs()
@@ -1350,10 +1358,10 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 str(vi.cache_image_path),
                 fake_path)
 
-        if not flavor_fits_image:
-            mock_extend_virtual_disk.assert_called_once_with(
-                    self._instance, vi.root_gb * units.Mi,
-                    fake_path, self._dc_info.ref)
+        mock_extend_if_required.assert_called_once_with(
+            self._dc_info,
+            vi.ii,
+            vi.instance, fake_path)
 
         mock_attach_disk_to_vm.assert_called_once_with(
                 "fake_vm_ref", self._instance, vi.ii.adapter_type,
@@ -1428,7 +1436,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                             'MoveDatastoreFile_Task',
                             'DeleteDatastoreFile_Task',
                             'SearchDatastore_Task',
-                            'ExtendVirtualDisk_Task',
+                            'SearchDatastore_Task',
         ]
         if extras:
             expected_methods.extend(extras)
@@ -1492,6 +1500,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             'id': self._image_id,
             'disk_format': 'vmdk',
             'size': image_size,
+            'owner': ''
         }
         image = objects.ImageMeta.from_dict(image)
         image_info = images.VMwareImage(
@@ -1547,6 +1556,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                     extra_specs,
                     constants.DEFAULT_OS_TYPE,
                     profile_spec=None,
+                    vm_name=None,
                     metadata='fake-metadata')
             mock_create_vm.assert_called_once_with(
                     self._session,
@@ -1777,6 +1787,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         get_vm_config_info.assert_called_once_with(self._instance,
             image_info, extra_specs)
         build_virtual_machine.assert_called_once_with(self._instance,
+                                                      self._context,
             image_info, vi.dc_info, vi.datastore, [], extra_specs, metadata)
         enlist_image.assert_called_once_with(image_info.image_id,
                                              vi.datastore, vi.dc_info.ref)
@@ -2508,25 +2519,33 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         base_folder = self._vmops._get_base_folder()
         self.assertEqual('my_prefix_base', base_folder)
 
-    def _test_reboot_vm(self, reboot_type="SOFT", tool_status=True):
+    @mock.patch.object(vmops.VMwareVMOps, '_get_instance_props')
+    def _test_reboot_vm(self, get_instance_props, reboot_type="SOFT", tool_status=True):
 
         expected_methods = ['get_object_properties_dict']
+        get_instance_props.return_value = {
+                    "runtime.powerState": "poweredOn",
+                    "summary.guest.toolsStatus": "toolsOk",
+                    "summary.guest.toolsRunningStatus": "guestToolsRunning"}
         if reboot_type == "SOFT":
             expected_methods.append('RebootGuest')
         else:
             expected_methods.append('ResetVM_Task')
 
         def fake_call_method(module, method, *args, **kwargs):
-            expected_method = expected_methods.pop(0)
-            self.assertEqual(expected_method, method)
-            if expected_method == 'get_object_properties_dict' and tool_status:
+            if method == 'get_object_properties_dict' and tool_status:
                 return {
                     "runtime.powerState": "poweredOn",
                     "summary.guest.toolsStatus": "toolsOk",
                     "summary.guest.toolsRunningStatus": "guestToolsRunning"}
-            elif expected_method == 'get_object_properties_dict':
+            elif method == 'get_object_properties_dict':
                 return {"runtime.powerState": "poweredOn"}
-            elif expected_method == 'ResetVM_Task':
+            elif method == 'CreatePropertyCollector':
+                return {
+                    "runtime.powerState": "poweredOn",
+                    "summary.guest.toolsStatus": "toolsOk",
+                    "summary.guest.toolsRunningStatus": "guestToolsRunning"}
+            elif method == 'ResetVM_Task':
                 return 'fake-task'
 
         with test.nested(
