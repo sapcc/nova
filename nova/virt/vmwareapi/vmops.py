@@ -515,14 +515,17 @@ class VMwareVMOps(object):
     def _fetch_image_as_ova(self, context, vi, image_ds_loc):
         """Download root disk of an OVA image as streamOptimized."""
 
-        vm_name = self._get_image_template_vm_name(vi.ii.image_id, vi.datastore.name)
+        vm_name = self._get_image_template_vm_name(vi.ii.image_id,
+                                                   vi.datastore.name)
 
         image_size, src_folder_ds_path = images.fetch_image_ova(context,
                                vi.instance,
                                self._session,
                                vm_name,
                                vi.datastore.name,
-                               self._get_project_folder(vi.dc_info, project_id=vi.instance.project_id, type_='Images'),
+                               self._get_project_folder(vi.dc_info,
+                                        project_id=vi.instance.project_id,
+                                        type_='Images'),
                                self._root_resource_pool)
 
         # The size of the image is different from the size of the virtual disk.
