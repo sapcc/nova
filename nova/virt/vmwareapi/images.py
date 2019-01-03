@@ -369,7 +369,9 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
             imported_vm_ref = write_handle.get_imported_vm()
 
             break
-        except vexc.DuplicateName:
+        except vexc.VimException as e:
+            if 'DuplicateName' not in e.msg():
+                pass
             LOG.debug("Handling name duplication during import of VM %s", vm_name)
             vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
             waited_for_ongoing_import = _wait_for_import_task(session, vm_ref)
