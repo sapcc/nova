@@ -151,15 +151,17 @@ ALL_OPTS = [enabled_opt,
 
 
 def register_opts(conf):
+    conf.register_group(shellinabox_opt_group)
     conf.register_opts(ALL_OPTS, group=shellinabox_opt_group)
 
 
 def register_cli_opts(conf):
+    conf.register_group(shellinabox_opt_group)
     conf.register_cli_opts([proxyclient_url_opt,
                             base_url_opt,
                             shellinaboxproxy_host_opt,
                             shellinaboxproxy_port_opt],
-                           shellinabox_opt_group.name)
+                           shellinabox_opt_group)
 
 
 def list_opts():
@@ -167,4 +169,4 @@ def list_opts():
     # As soon as this bug is fixed is oslo.config and Nova uses the
     # version which contains this fix, we can pass in the OptGroup instead
     # of its name. This allows the generation of the group help too.
-    return {shellinabox_opt_group.name: ALL_OPTS}
+    return {shellinabox_opt_group: ALL_OPTS}
