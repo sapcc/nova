@@ -57,6 +57,7 @@ from nova.conf import rdp
 from nova.conf import remote_debug
 from nova.conf import scheduler
 from nova.conf import serial_console
+from nova.conf import shellinabox
 from nova.conf import service
 from nova.conf import service_token
 from nova.conf import servicegroup
@@ -109,6 +110,7 @@ quota.register_opts(CONF)
 rdp.register_opts(CONF)
 scheduler.register_opts(CONF)
 serial_console.register_opts(CONF)
+shellinabox.register_opts(CONF)
 service.register_opts(CONF)
 service_token.register_opts(CONF)
 servicegroup.register_opts(CONF)
