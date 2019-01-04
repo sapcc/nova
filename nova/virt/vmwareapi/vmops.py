@@ -623,14 +623,14 @@ class VMwareVMOps(object):
         except vexc.FileAlreadyExistsException:
             pass
 
-    """def _cache_stream_optimized_image(self, vi, tmp_image_ds_loc):
+    def _cache_stream_optimized_image(self, vi, tmp_image_ds_loc):
         dst_path = vi.cache_image_folder.join("%s.vmdk" % vi.ii.image_id)
         ds_util.mkdir(self._session, vi.cache_image_folder, vi.dc_info.ref)
         try:
             ds_util.disk_move(self._session, vi.dc_info.ref,
                               tmp_image_ds_loc, dst_path)
         except vexc.FileAlreadyExistsException:
-            pass """
+            pass
 
 
 
