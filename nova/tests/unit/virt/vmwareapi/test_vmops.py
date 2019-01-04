@@ -1021,7 +1021,8 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.lockutils, 'lock')
-    def test_spawn_mask_block_device_info_password(self, mock_lock,
+    @mock.patch.object(ds_util, 'get_datastore')
+    def test_spawn_mask_block_device_info_password(self, mock_get_datastore, mock_lock,
         mock_build_virtual_machine, mock_get_vm_config_info,
         mock_fetch_image_if_missing, mock_debug, mock_glance):
         # Very simple test that just ensures block_device_info auth_password
@@ -1030,7 +1031,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         bdm = [{'boot_index': 0, 'disk_bus': constants.DEFAULT_ADAPTER_TYPE,
                 'connection_info': {'data': data}}]
         bdi = {'block_device_mapping': bdm}
-
+        mock_get_datastore.return_value = self._ds
         self.password_logged = False
 
         # Tests that the parameters to the to_xml method are sanitized for
@@ -1055,7 +1056,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_imagecache = mock.Mock()
         mock_imagecache.get_image_cache_folder.return_value = cache_root_folder
         dc_info = ds_util.DcInfo(
-            ref=self._cluster, name='fake_dc',
+            ref=self._cluster.obj, name='fake_dc',
             vmFolder=vmwareapi_fake.ManagedObjectReference(name='fake_vm_folder',
                                                            value='Folder'))
         vi = vmops.VirtualMachineInstanceConfigInfo(
