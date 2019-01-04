@@ -74,10 +74,11 @@ class VMwareVMOpsTestCase(test.TestCase):
                 ref=fake_ds_ref, name='fake_ds',
                 capacity=10 * units.Gi,
                 freespace=10 * units.Gi)
-        fake_dc_ref = vmwareapi_fake.ManagedObjectReference("Datacenter")
         self._dc_info = ds_util.DcInfo(
                 ref='fake_dc_ref', name='fake_dc',
-                vmFolder='fake_vm_folder')
+                vmFolder=vmwareapi_fake.ManagedObjectReference(
+                    name='fake_vm_folder',
+                    value='Folder'))
         cluster = vmwareapi_fake.create_cluster('fake_cluster', fake_ds_ref)
         self._uuid = uuids.foo
         fake_info_cache = {
@@ -177,6 +178,11 @@ class VMwareVMOpsTestCase(test.TestCase):
             "package:%s\n" % (
                 uuids.image,
                 version.version_string_with_package()))
+
+        vm_util.vm_value_cache_update("test_id",
+                                      'runtime.powerState', 'poweredOn')
+        vm_util.vm_value_cache_update("fake_powered_off",
+                                      'runtime.powerState', 'poweredOff')
 
     def test_get_machine_id_str(self):
         result = vmops.VMwareVMOps._get_machine_id_str(self.network_info)
@@ -299,14 +305,20 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock_save.assert_called_once_with()
         self.assertEqual(50, self._instance.progress)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value=vmwareapi_fake.ManagedObjectReference())
-    @mock.patch.object(vm_util, '_VM_VALUE_CACHE', return_value='fake-ref')
-    def test_get_info(self, mock_update_cached_instances, mock_get_vm_ref):
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    @mock.patch.object(vm_util, '_VM_VALUE_CACHE')
+    def test_get_info(self, mock_value_cache,
+                      mock_update_cached_instances, mock_get_vm_ref):
+
         result = {
             'summary.config.numCpu': 4,
             'summary.config.memorySizeMB': 128,
             'runtime.powerState': 'poweredOn'
         }
+
+        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
+                                                            value='test_id')
 
         with mock.patch.object(self._session, '_call_method',
                                return_value=result):
@@ -316,12 +328,14 @@ class VMwareVMOpsTestCase(test.TestCase):
             expected = hardware.InstanceInfo(state=power_state.RUNNING)
             self.assertEqual(expected, info)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake_ref')
+    @mock.patch.object(vm_util, 'get_vm_ref')
     def test_get_info_when_ds_unavailable(self, mock_get_vm_ref):
         result = {
             'runtime.powerState': 'poweredOff'
         }
 
+        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
+            value='fake_powered_off')
         with mock.patch.object(self._session, '_call_method',
                                return_value=result):
             info = self._vmops.get_info(self._instance)
@@ -330,8 +344,13 @@ class VMwareVMOpsTestCase(test.TestCase):
             self.assertEqual(hardware.InstanceInfo(state=power_state.SHUTDOWN),
                              info)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake_ref')
-    def test_get_info_instance_deleted(self, mock_get_vm_ref):
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    @mock.patch.object(vm_util, '_VM_VALUE_CACHE')
+    def test_get_info_instance_deleted(self, mock_value_cache,
+                                       mock_update_cached_instances,
+                                       mock_get_vm_ref):
+        vm_util.vm_value_cache_reset()
         props = ['summary.config.numCpu', 'summary.config.memorySizeMB',
                  'runtime.powerState']
         prop_cpu = vmwareapi_fake.Prop(props[0], 4)
@@ -341,6 +360,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         obj_content = vmwareapi_fake.ObjectContent(None, prop_list=prop_list)
         result = vmwareapi_fake.FakeRetrieveResult()
         result.add_object(obj_content)
+
+        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
+            value='fake_powered_off')
 
         def mock_call_method(module, method, *args, **kwargs):
             raise vexc.ManagedObjectNotFoundException()
@@ -487,7 +509,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                 vm_ref, self._instance, mock.ANY, destroy_disk=True)
 
     @mock.patch.object(time, 'sleep')
-    def _test_clean_shutdown(self, mock_sleep,
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    def _test_clean_shutdown(self, mock_update_cached_instances,
+                             mock_sleep,
                              timeout, retry_interval,
                              returns_on, returns_off,
                              vmware_tools_status,
@@ -1147,7 +1171,9 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.lockutils, 'lock')
-    def test_spawn_mask_block_device_info_password(self, mock_lock,
+    @mock.patch.object(ds_util, 'get_datastore')
+    def test_spawn_mask_block_device_info_password(self, mock_get_datastore,
+        mock_lock,
         mock_build_virtual_machine, mock_get_vm_config_info,
         mock_fetch_image_if_missing, mock_debug, mock_glance):
         # Very simple test that just ensures block_device_info auth_password
@@ -1156,7 +1182,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         bdm = [{'boot_index': 0, 'disk_bus': constants.DEFAULT_ADAPTER_TYPE,
                 'connection_info': {'data': data}}]
         bdi = {'block_device_mapping': bdm}
-
+        mock_get_datastore.return_value = self._ds
         self.password_logged = False
 
         # Tests that the parameters to the to_xml method are sanitized for
@@ -1169,12 +1195,26 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_debug.side_effect = fake_debug
         self.flags(flat_injected=False)
         self.flags(enabled=False, group='vnc')
+        extra_specs = vm_util.ExtraSpecs()
+        flavor_fits_image = False
+        file_size = 10 * units.Gi if flavor_fits_image else 5 * units.Gi
+        image_info = images.VMwareImage(
+            image_id=self._image_id,
+            file_size=file_size,
+            linked_clone=False)
 
-        mock_vi = mock.Mock()
-        mock_vi.root_gb = 1
-        mock_vi.ii.file_size = 2 * units.Gi
-        mock_vi.instance.flavor.root_gb = 1
-        mock_get_vm_config_info.return_value = mock_vi
+        cache_root_folder = self._ds.build_path("vmware_base", self._image_id)
+        mock_imagecache = mock.Mock()
+        mock_imagecache.get_image_cache_folder.return_value = cache_root_folder
+        dc_info = ds_util.DcInfo(
+            ref=self._cluster.obj, name='fake_dc',
+            vmFolder=vmwareapi_fake.ManagedObjectReference(
+                name='fake_vm_folder',
+                value='Folder'))
+        vi = vmops.VirtualMachineInstanceConfigInfo(
+            self._instance, image_info,
+            self._ds, dc_info, mock_imagecache, extra_specs)
+        mock_get_vm_config_info.return_value = vi
 
         # Call spawn(). We don't care what it does as long as it generates
         # the log message, which we check below.
@@ -2056,6 +2096,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         extra_specs = vm_util.ExtraSpecs()
 
         vm_ref = self._vmops.build_virtual_machine(self._instance,
+                                                   self._context,
                                                    image, self._dc_info,
                                                    self._ds,
                                                    self.network_info,
@@ -2534,9 +2575,15 @@ class VMwareVMOpsTestCase(test.TestCase):
                 cookies='Fake-CookieJar')
 
     @mock.patch.object(images, 'fetch_image_stream_optimized',
-                       return_value=123)
-    def test_fetch_image_as_vapp(self, mock_fetch_image):
+                       return_value=(123, '123'))
+    @mock.patch.object(vmops.VMwareVMOps, '_get_project_folder')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_image_template_vm_name',
+                       return_value='fake-name')
+    def test_fetch_image_as_vapp(self, mock_template_vm_name,
+                                mock_get_project_folder,
+                                mock_fetch_image):
         vi = self._make_vm_config_info()
+        mock_get_project_folder.return_value = vi.dc_info.vmFolder
         image_ds_loc = mock.Mock()
         image_ds_loc.parent.basename = 'fake-name'
         self._vmops._fetch_image_as_vapp(self._context, vi, image_ds_loc)
@@ -2550,12 +2597,23 @@ class VMwareVMOpsTestCase(test.TestCase):
                 self._vmops._root_resource_pool)
         self.assertEqual(vi.ii.file_size, 123)
 
-    @mock.patch.object(images, 'fetch_image_ova', return_value=123)
-    def test_fetch_image_as_ova(self, mock_fetch_image):
+    @mock.patch.object(images, 'fetch_image_ova', return_value=(123, '123'))
+    @mock.patch.object(vmops.VMwareVMOps, '_get_project_folder')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_image_template_vm_name',
+                       return_value='fake-name')
+    def test_fetch_image_as_ova(self, mock_template_vm_name,
+                                mock_get_project_folder,
+                                mock_fetch_image):
         vi = self._make_vm_config_info()
+        mock_get_project_folder.return_value = vi.dc_info.vmFolder
         image_ds_loc = mock.Mock()
         image_ds_loc.parent.basename = 'fake-name'
         self._vmops._fetch_image_as_ova(self._context, vi, image_ds_loc)
+
+        mock_template_vm_name.assert_called_once_with(
+            vi.ii.image_id, vi.datastore.name
+        )
+
         mock_fetch_image.assert_called_once_with(
                 self._context,
                 vi.instance,
@@ -2741,7 +2799,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         self.assertEqual('my_prefix_base', base_folder)
 
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_props')
-    def _test_reboot_vm(self, get_instance_props, reboot_type="SOFT", tool_status=True):
+    def _test_reboot_vm(self, get_instance_props, reboot_type="SOFT",
+                        tool_status=True):
 
         expected_methods = ['get_object_properties_dict']
         get_instance_props.return_value = {

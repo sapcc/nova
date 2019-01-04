@@ -32,7 +32,7 @@ from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 
 
-class ConfigDriveTestCase(test.NoDBTestCase):
+class ConfigDriveTestCase(test.TestCase):
 
     REQUIRES_LOCKING = True
 
@@ -92,6 +92,7 @@ class ConfigDriveTestCase(test.NoDBTestCase):
             'id': image_ref,
             'disk_format': 'vmdk',
             'size': int(metadata['size']),
+            'owner': '',
         })
 
         class FakeInstanceMetadata(object):
