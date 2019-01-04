@@ -1671,6 +1671,9 @@ class ComputeTestCase(BaseTestCase,
                                                          'm1.small')
         self.tiny_flavor = objects.Flavor.get_by_name(self.context, 'm1.tiny')
 
+        self.stub_out('eventlet.greenthread.sleep',
+                       lambda *a, **kw: None)
+
     def fake_share_info(self):
         share_mapping = {}
         share_mapping['id'] = 1
