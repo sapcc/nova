@@ -174,7 +174,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
             mock_get_vmdk_info.assert_called_once_with(
                     session, mock.sentinel.vm_ref, 'fake-vm')
             mock_call_method.assert_called_once_with(
-                    session.vim, "UnregisterVM", mock.sentinel.vm_ref)
+                    session.vim, "MarkAsTemplate", mock.sentinel.vm_ref)
 
     @mock.patch('oslo_vmware.rw_handles.ImageReadHandle')
     @mock.patch('oslo_vmware.rw_handles.VmdkWriteHandle')
@@ -222,7 +222,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
             mock_image_transfer.assert_called_once_with(mock_read_handle,
                                                         mock_write_handle)
             mock_call_method.assert_called_once_with(
-                    session.vim, "UnregisterVM", mock.sentinel.vm_ref)
+                    session.vim, "MarkAsTemplate", mock.sentinel.vm_ref)
             mock_get_vmdk_info.assert_called_once_with(
                     session, mock.sentinel.vm_ref, 'fake-vm')
 
@@ -232,6 +232,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
         image_id = nova.tests.unit.image.fake.get_valid_image_id()
         mdata = {'size': raw_disk_size_in_bytes,
                  'disk_format': 'vmdk',
+                 'owner': '',
                  'properties': {
                      "vmware_ostype": constants.DEFAULT_OS_TYPE,
                      "vmware_adaptertype": constants.DEFAULT_ADAPTER_TYPE,
@@ -268,6 +269,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
         image_id = nova.tests.unit.image.fake.get_valid_image_id()
         mdata = {'size': raw_disk_size_in_btyes,
                  'disk_format': disk_format,
+                 "owner": '',
                  'properties': {
                      "vmware_ostype": os_type,
                      "vmware_adaptertype": adapter_type,
