@@ -390,10 +390,6 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     if not imported_vm_ref:
         raise vexc.VMwareDriverException("Could not import image %s within %d attempts." % (vm_name, max_attempts))
 
-    image_transfer(read_handle, write_handle)
-
-    imported_vm_ref = write_handle.get_imported_vm()
-
     LOG.info("Downloaded image file data %(image_ref)s",
              {'image_ref': instance.image_ref}, instance=instance)
     vmdk = vm_util.get_vmdk_info(session, imported_vm_ref, vm_name)
