@@ -877,7 +877,7 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and
@@ -887,6 +887,12 @@ class ComputeDriver(object):
             node which the caller want to get resources from
             a driver that manages only one node can safely ignore this
         :returns: Dictionary describing resources
+        """
+        raise NotImplementedError()
+
+    def get_cluster_metrics(self):
+        """ Retrieve cluster metrics information.
+        :return: Dictionary describing the cluster information.
         """
         raise NotImplementedError()
 
