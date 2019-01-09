@@ -27,6 +27,7 @@ from nova.api.openstack import wsgi
 from nova.api import validation
 from nova.cells import rpcapi as cells_rpcapi
 import nova.conf
+import nova.context
 from nova import exception
 from nova.i18n import _
 from nova.policies import cells as cells_policies
@@ -85,6 +86,10 @@ def _scrub_cell(cell, detail=False):
     cell_info['type'] = 'parent' if cell['is_parent'] else 'child'
     return cell_info
 
+def _scrub_cell_v2(cell, detail=False):
+    keys = ['uuid', 'name', 'transport_url', 'database_connection']
+
+    return _filter_keys(cell.obj_to_primitive().get('nova_object.data', {}), keys)
 
 class CellsController(wsgi.Controller):
     """Controller for Cell resources."""
@@ -94,22 +99,29 @@ class CellsController(wsgi.Controller):
 
     def _get_cells(self, ctxt, req, detail=False):
         """Return all cells."""
-        # Ask the CellsManager for the most recent data
-        items = self.cells_rpcapi.get_cell_info_for_neighbors(ctxt)
-        items = common.limited(items, req)
-        items = [_scrub_cell(item, detail=detail) for item in items]
-        return dict(cells=items)
+        if CONF.cells.enable:
+            scrubber = _scrub_cell
+            key = 'cells'
+            # Ask the CellsManager for the most recent data
+            items = self.cells_rpcapi.get_cell_info_for_neighbors(ctxt)
+        else:
+            scrubber = _scrub_cell_v2
+            key = 'cellsv2'
+            nova.context.load_cells()
+            items = nova.context.CELLS
 
-    @wsgi.expected_errors(501)
-    @common.check_cells_enabled
+        items = common.limited(items, req)
+        items = [scrubber(item, detail=detail) for item in items]
+        resp = {'cells': [], 'cellsv2': []}
+        resp[key] = items
+        return resp
+
     def index(self, req):
         """Return all cells in brief."""
         ctxt = req.environ['nova.context']
         ctxt.can(cells_policies.BASE_POLICY_NAME)
         return self._get_cells(ctxt, req)
 
-    @wsgi.expected_errors(501)
-    @common.check_cells_enabled
     def detail(self, req):
         """Return all cells in detail."""
         ctxt = req.environ['nova.context']
