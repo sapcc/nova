@@ -372,7 +372,8 @@ class VMwareVifTestCase(test.NoDBTestCase):
         fake_network_obj = {'type': 'DistributedVirtualPortgroup',
                             'dvpg': 'fake-key',
                             'dvsw': 'fake-props'}
-        mock_network_name.side_effect = [None, fake_network_obj]
+
+        mock_network_name.side_effect = [fake_network_obj]
         vif_info = network_model.NetworkInfo([
                 network_model.VIF(type=network_model.VIF_TYPE_DVS,
                                   address='DE:AD:BE:EF:00:00',
@@ -381,7 +382,7 @@ class VMwareVifTestCase(test.NoDBTestCase):
         network_ref = vif._get_neutron_network('fake-session',
                                                'fake-cluster',
                                                vif_info)
-        calls = [mock.call('fake-session', 'fa0', 'fake-cluster'),
-                 mock.call('fake-session', 'fake', 'fake-cluster')]
+        calls = [
+                 mock.call('fake-session', 'fa0', 'fake-cluster')]
         mock_network_name.assert_has_calls(calls)
         self.assertEqual(fake_network_obj, network_ref)
