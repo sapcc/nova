@@ -1421,8 +1421,10 @@ def supports_direct_io(dirpath):
 
     return hasDirectIO
 
+
 # Copied and modified from oslo_concurrency.lockutils
-# - Added option for a different default value of the semaphore (e.g larger than 1)
+# - Added option for a different default value of the semaphore
+# (e.g larger than 1)
 class Semaphores(object):
     """A garbage collected container of semaphores.
     This collection internally uses a weak value dictionary so that when a

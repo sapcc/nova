@@ -44,7 +44,6 @@ class VMwareVolumeOps(object):
                           disk_size=None, linked_clone=False,
                           device_name=None, disk_io_limits=None):
         """Attach disk to VM by reconfiguration."""
-        instance_name = instance.name
         client_factory = self._session.vim.client.factory
         devices = self._session._call_method(vutil,
                                              "get_object_property",
@@ -99,7 +98,6 @@ class VMwareVolumeOps(object):
     def detach_disk_from_vm(self, vm_ref, instance, device,
                             destroy_disk=False):
         """Detach disk from VM by reconfiguration."""
-        instance_name = instance.name
         client_factory = self._session.vim.client.factory
         vmdk_detach_config_spec = vm_util.get_vmdk_detach_config_spec(
                                     client_factory, device, destroy_disk)
@@ -457,7 +455,8 @@ class VMwareVolumeOps(object):
         detached = False
         LOG.debug("Relocating volume's backing: %(backing)s to resource "
                   "pool: %(rp)s, datastore: %(ds)s, host: %(host)s.",
-                  {'backing': volume_ref.value, 'rp': res_pool.value, 'ds': datastore.value,
+                  {'backing': volume_ref.value, 'rp': res_pool.value,
+                   'ds': datastore.value,
                    'host': host.value})
         try:
             vm_util.relocate_vm(self._session, volume_ref, res_pool, datastore,

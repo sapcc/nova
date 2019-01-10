@@ -13,7 +13,6 @@
 #    under the License.
 
 import contextlib
-import json
 
 from oslo_config import cfg
 from oslo_db import exception as db_exc
@@ -1504,15 +1503,18 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             counts = {'instances': 0, 'cores': 0, 'ram': 0}
 
             if instances:
-                # TODO: cache flavor_ids
+                # TODO(): cache flavor_ids
                 instance_types = objects.FlavorList.get_by_id(
                     context, [x[0] for x in instances])
 
                 for i in instances:
                     itype = instance_types.get(i[0])
                     if not itype:
-                        # Not found in flavor db of upstream api, searching locally
-                        LOG.warning('flavor with ref id %s not found in flavor db', i[0])
+                        # Not found in flavor db of upstream api, searching
+                        # locally
+                        LOG.warning(
+                            'flavor with ref id %s not found in flavor db',
+                                                                        i[0])
                         flavor_query = context.session.query(
                             models.InstanceTypes). \
                             filter_by(id=i[0]). \
@@ -1573,4 +1575,5 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                               'cores': <count across user>,
                               'ram': <count across user>}}
         """
-        return cls._get_counts_in_db_baremetalaware(context, project_id, user_id=user_id)
+        return cls._get_counts_in_db_baremetalaware(context, project_id,
+                                                        user_id=user_id)

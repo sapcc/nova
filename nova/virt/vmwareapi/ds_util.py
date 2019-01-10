@@ -177,7 +177,8 @@ def _get_allowed_datastores(data_stores, datastore_regex):
     return allowed
 
 
-def get_available_datastores(session, cluster=None, datastore_regex=None, dc_ref=None):
+def get_available_datastores(session, cluster=None, datastore_regex=None,
+                             dc_ref=None):
     """Get the datastore list and choose the first local storage."""
     if cluster:
         ds = session._call_method(vutil,

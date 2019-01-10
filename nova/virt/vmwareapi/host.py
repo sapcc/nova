@@ -17,7 +17,6 @@
 Management class for host-related functions (start, reboot, etc).
 """
 
-from oslo_log import log as logging
 from oslo_utils import units
 from oslo_utils import versionutils
 from oslo_vmware import exceptions as vexc
@@ -27,12 +26,12 @@ from nova import context
 from nova import exception
 from nova import objects
 from nova.objects import fields as obj_fields
+from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
 from oslo_log import log as logging
 from oslo_vmware import vim_util as vutil
-from nova.virt.vmwareapi import cluster_util
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -43,7 +42,9 @@ def _get_ds_capacity_and_freespace(session, cluster=None,
     capacity = 0
     freespace = 0
     try:
-        for ds in ds_util.get_available_datastores(session, cluster, datastore_regex):
+        for ds in ds_util.get_available_datastores(session,
+                                                   cluster,
+                                                   datastore_regex):
             capacity += ds.capacity
             freespace += ds.freespace
     except exception.DatastoreNotFound:
@@ -110,7 +111,8 @@ class VCState(object):
              obj_fields.HVType.VMWARE,
              obj_fields.VMMode.HVM)]
         data["cpu_model"] = self.to_cpu_model()
-        data["resource_scheduling"] = cluster_util._is_drs_enabled(self._session, self._cluster)
+        data["resource_scheduling"] = cluster_util._is_drs_enabled(
+                                            self._session, self._cluster)
 
         self._stats = data
         if self._auto_service_disabled:
@@ -146,7 +148,9 @@ class VCState(object):
         property_spec = vutil.build_property_spec(
             vim.client.factory,
             "HostSystem",
-            ["hardware.cpuPkg", "hardware.cpuInfo", "config.featureCapability"])
+            ["hardware.cpuPkg",
+             "hardware.cpuInfo",
+             "config.featureCapability"])
 
         property_filter_spec = vutil.build_property_filter_spec(
             vim.client.factory,
@@ -155,10 +159,11 @@ class VCState(object):
         options = vim.client.factory.create('ns0:RetrieveOptions')
         options.maxObjects = max_objects
 
-        pc_result = vim.RetrievePropertiesEx(property_collector, specSet=[property_filter_spec], options=options)
+        pc_result = vim.RetrievePropertiesEx(property_collector,
+                                             specSet=[property_filter_spec],
+                                             options=options)
 
         result = []
-        topology = dict()
 
         """ Retrieving needed hardware properties from ESX hosts """
         with vutil.WithRetrieval(vim, pc_result) as pc_objects:
@@ -174,11 +179,14 @@ class VCState(object):
                     cpu_vendor = t.vendor.title()
 
                 features = []
-                for featureCapability in props_in.get("config.featureCapability", []):
+                for featureCapability in props_in.get(
+                                    "config.featureCapability", []):
                     for feature in featureCapability[1]:
                         if feature.featureName.startswith("cpuid."):
                             if feature.value == "1":
-                                features.append(feature.featureName.split(".", 1)[1].lower())
+                                features.append(
+                                    feature.featureName.split(
+                                        ".", 1)[1].lower())
 
                 props = {
                     "model": processor_type,

@@ -16,7 +16,6 @@ import copy
 
 from nova.api.validation import parameter_types
 from nova import db
-from nova.quota import QUOTAS
 
 common_quota = {
     'type': ['integer', 'string'],

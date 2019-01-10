@@ -76,6 +76,7 @@ class CPUMonitorBase(MonitorBase):
             fields.MonitorMetricType.CPU_PERCENT,
         ])
 
+
 class VmwareMonitorBase(MonitorBase):
 
     def get_metric_names(self):

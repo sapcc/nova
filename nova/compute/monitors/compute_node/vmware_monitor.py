@@ -1,3 +1,19 @@
+# Copyright 2013 OpenStack Foundation
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
+
 from oslo_log import log as logging
 from oslo_utils import timeutils
 
@@ -29,7 +45,8 @@ class Monitor(base.VmwareMonitorBase):
         self._data["timestamp"] = timeutils.utcnow()
         try:
             metric_stats = self.driver.get_cluster_metrics()
-            self._data['storage.percent.usage'] = metric_stats['datastore_percent']
+            self._data['storage.percent.usage'] = metric_stats[
+                'datastore_percent']
             self._data['storage.total'] = metric_stats['datastore_total']
             self._data['storage.used'] = metric_stats['datastore_used']
             self._data['storage.free'] = metric_stats['datastore_free']
@@ -43,7 +60,6 @@ class Monitor(base.VmwareMonitorBase):
             self._data['memory.percent'] = metric_stats['memory_percent']
 
             LOG.info("Cluster metrics: %s", self._data)
-
 
         except (NotImplementedError, TypeError, KeyError):
             LOG.exception(_LE("Not all properties needed are implemented "

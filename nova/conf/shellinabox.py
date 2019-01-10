@@ -25,7 +25,7 @@ enabled_opt = cfg.BoolOpt('enabled',
                           help="""
 Enable the shellinabox console feature.
 
-In order to use this feature, the service ``nova-shellinaboxproxy`` needs to 
+In order to use this feature, the service ``nova-shellinaboxproxy`` needs to
 run.
 This service is typically executed on the controller node.
 
@@ -46,7 +46,7 @@ Interdependencies to other options:
 base_url_opt = cfg.StrOpt('base_url',
                           default='http://127.0.0.1:6084/',
                           help="""
-The URL an end user would use to connect to the ``nova-shellinaboxproxy`` 
+The URL an end user would use to connect to the ``nova-shellinaboxproxy``
 service.
 
 The ``nova-shellinaboxproxy`` service is called with this token enriched URL
@@ -63,7 +63,7 @@ Services which consume this:
 Interdependencies to other options:
 
 * The IP address must be identical to the address to which the
-  ``nova-shellinaboxproxy`` service is listening (see option 
+  ``nova-shellinaboxproxy`` service is listening (see option
   ``shellinaboxproxy_host``
   in this section).
 * The port must be the same as in the option ``shellinaboxproxy_port`` of this
@@ -121,7 +121,7 @@ shellinaboxproxy_port_opt = cfg.IntOpt('port',
                                        min=1,
                                        max=65535,
                                        help="""
-The port number which is used by the ``nova-shellinaboxproxy`` service to 
+The port number which is used by the ``nova-shellinaboxproxy`` service to
 listen
 for incoming requests.
 

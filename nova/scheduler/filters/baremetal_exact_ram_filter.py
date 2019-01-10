@@ -13,18 +13,19 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from nova.scheduler.filters import exact_ram_filter
 from oslo_log import log as logging
-from .exact_ram_filter import ExactRamFilter
 
 LOG = logging.getLogger(__name__)
 
 
-class BaremetalExactRamFilter(ExactRamFilter):
+class BaremetalExactRamFilter(exact_ram_filter.ExactRamFilter):
     """Exact RAM Filter."""
 
     def host_passes(self, host_state, spec_obj):
         extra_specs = spec_obj.flavor.extra_specs
-        if not 'capabilities:cpu_arch' in extra_specs:
+        if 'capabilities:cpu_arch' not in extra_specs:
             return True
 
-        return super(BaremetalExactRamFilter, self).host_passes(host_state, spec_obj)
+        return super(BaremetalExactRamFilter, self).host_passes(host_state,
+                                                                spec_obj)

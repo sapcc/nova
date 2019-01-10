@@ -102,7 +102,7 @@ value of VSPC.
     cfg.StrOpt('serial_log_uri',
                help="""
 Specifies the server where the Virtual Serial Port Concentrator is
-storing console log files and responding to get requests. 
+storing console log files and responding to get requests.
 If defined it will override serial_log_dir.
 """),
 ]
@@ -293,8 +293,8 @@ Some VASA providers need disks in the multiple MB range."""),
                 default=True,
                 help="""
 Should the driver use a property collector to fetch essential properties
-and keep a local copy of the values. This should reduce the load on the vcenter api and be quicker,
-then polling each value individually
+and keep a local copy of the values. This should reduce the load on the vcenter
+api and be quicker, then polling each value individually
 """)
 ]
 

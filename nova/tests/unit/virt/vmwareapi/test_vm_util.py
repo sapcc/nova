@@ -255,7 +255,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         devices = [disk, e_disk, controller]
         return devices
 
-    def _vmdk_path_and_adapter_type_devices_nomatch(self, filename, parent=None):
+    def _vmdk_path_and_adapter_type_devices_nomatch(self, filename,
+                                                    parent=None):
         # Test the adapter_type returned for a lsiLogic sas controller
         controller_key = 1000
         disk = fake.DataObject()
