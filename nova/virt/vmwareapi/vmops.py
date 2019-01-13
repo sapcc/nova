@@ -1656,9 +1656,8 @@ class VMwareVMOps(object):
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         if vm_ref.value in vm_util._VM_VALUE_CACHE:
-            if "runtime.powerState" in vm_util._VM_VALUE_CACHE[vm_ref.value]:
-                vm_util._VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState",
-                                                          None)
+            vm_util._VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState",
+                                                      None)
 
         props = self._get_instance_props(vm_ref)
 
