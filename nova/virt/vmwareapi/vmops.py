@@ -1652,8 +1652,10 @@ class VMwareVMOps(object):
         """
         LOG.debug("Performing Soft shutdown on instance",
                  instance=instance)
+
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        del vm_util._VM_VALUE_CACHE[vm_ref.value]["runtime.powerState"]
+        if "runtime.powerState" in vm_util._VM_VALUE_CACHE[vm_ref.value]:
+            vm_util._VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState")
 
         props = self._get_instance_props(vm_ref)
 
