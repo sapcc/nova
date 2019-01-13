@@ -1509,8 +1509,9 @@ def power_on_instance(session, instance, vm_ref=None):
     if vm_ref is None:
         vm_ref = get_vm_ref(session, instance)
 
-    if "runtime.powerState" in _VM_VALUE_CACHE[vm_ref.value]:
-        _VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState")
+    if vm_ref.value in _VM_VALUE_CACHE:
+        if "runtime.powerState" in _VM_VALUE_CACHE[vm_ref.value]:
+            _VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState", None)
 
     LOG.debug("Powering on the VM", instance=instance)
     try:
@@ -1571,8 +1572,10 @@ def power_off_instance(session, instance, vm_ref=None):
 
     if vm_ref is None:
         vm_ref = get_vm_ref(session, instance)
-    if "runtime.powerState" in _VM_VALUE_CACHE[vm_ref.value]:
-        _VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState")
+
+    if vm_ref.value in _VM_VALUE_CACHE:
+        if "runtime.powerState" in _VM_VALUE_CACHE[vm_ref.value]:
+            _VM_VALUE_CACHE[vm_ref.value].pop("runtime.powerState", None)
 
     LOG.debug("Powering off the VM", instance=instance)
     try:
