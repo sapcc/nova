@@ -539,9 +539,15 @@ class IronicDriverTestCase(test.NoDBTestCase):
                                           self.instance_uuid,
                                           fields=ironic_driver._NODE_FIELDS)
 
+    @mock.patch.object(objects.Instance, 'save')
+    @mock.patch.object(nova_context, 'get_admin_context')
+    @mock.patch.object(objects.InstanceList, 'get_by_filters')
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(cw.IronicClientWrapper, 'call')
     @mock.patch.object(objects.Instance, 'get_by_uuid')
-    def test_list_instances(self, mock_inst_by_uuid, mock_call):
+    def test_list_instances(self, mock_inst_by_uuid, mock_call, mock_loop,
+                            mock_get_by_filters, mock_get_admin_context,
+                            mock_save):
         nodes = []
         instances = []
         for i in range(2):
@@ -551,14 +557,23 @@ class IronicDriverTestCase(test.NoDBTestCase):
                                                              uuid=uuid))
             nodes.append(ironic_utils.get_test_node(instance_uuid=uuid))
 
-        mock_inst_by_uuid.side_effect = instances
+        mock_inst_by_uuid.side_effect = [instances[0], instances[1]]
         mock_call.return_value = nodes
+
+        mock_get_admin_context.return_value = self.ctx
+
+        fake_looping_call = FakeLoopingCall()
+        mock_loop.return_value = fake_looping_call
+
+        mock_get_by_filters.return_value = instances
 
         response = self.driver.list_instances()
         mock_call.assert_called_with("node.list", associated=True, limit=0)
-        expected_calls = [mock.call(mock.ANY, instances[0].uuid),
-                          mock.call(mock.ANY, instances[1].uuid)]
-        mock_inst_by_uuid.assert_has_calls(expected_calls)
+        expected_calls = [mock.call(self.ctx,
+                          {'uuid': [instances[0].uuid, instances[1].uuid]},
+                                    expected_attrs=['name', 'host'],
+                                    use_slave=True)]
+        mock_get_by_filters.assert_has_calls(expected_calls)
         self.assertEqual(['instance-00000000', 'instance-00000001'],
                           sorted(response))
 
@@ -1106,11 +1121,9 @@ class IronicDriverTestCase(test.NoDBTestCase):
         self.assertIsNone(instance.default_ephemeral_device)
         self.assertFalse(mock_save.called)
 
-        mock_looping.assert_called_once_with(mock_wait_active,
-                                             instance)
-        fake_looping_call.start.assert_called_once_with(
-            interval=CONF.ironic.api_retry_interval)
-        fake_looping_call.wait.assert_called_once_with()
+        self.assertEqual(mock_looping.call_count, 2)
+        self.assertEqual(fake_looping_call.start.call_count, 2)
+        self.assertEqual(fake_looping_call.wait.call_count, 2)
 
     @mock.patch.object(ironic_driver.IronicDriver, '_generate_configdrive')
     @mock.patch.object(configdrive, 'required_by')
@@ -1365,11 +1378,12 @@ class IronicDriverTestCase(test.NoDBTestCase):
         self.assertEqual([mock.call('fake_uuid1'), mock.call('fake_uuid2')],
                          mock_delete.call_args_list)
 
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(configdrive, 'required_by')
     @mock.patch.object(FAKE_CLIENT, 'node')
     @mock.patch.object(ironic_driver.IronicDriver, '_add_volume_target_info')
     def test_spawn_node_driver_validation_fail(self, mock_avti, mock_node,
-                                               mock_required_by):
+                                               mock_required_by, mock_loop):
         mock_required_by.return_value = False
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         node = ironic_utils.get_test_node(driver='fake', uuid=node_uuid)
@@ -1390,6 +1404,7 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_avti.assert_called_once_with(self.ctx, instance, None)
         mock_node.validate.assert_called_once_with(node_uuid)
 
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(configdrive, 'required_by')
     @mock.patch.object(FAKE_CLIENT, 'node')
     @mock.patch.object(ironic_driver.IronicDriver, '_add_volume_target_info')
@@ -1397,7 +1412,8 @@ class IronicDriverTestCase(test.NoDBTestCase):
     @mock.patch.object(ironic_driver.IronicDriver, '_cleanup_deploy')
     def test_spawn_node_prepare_for_deploy_fail(self, mock_cleanup_deploy,
                                                 mock_sf, mock_avti,
-                                                mock_node, mock_required_by):
+                                                mock_node, mock_required_by,
+                                                mock_loop):
         mock_required_by.return_value = False
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         node = ironic_utils.get_test_node(driver='fake', uuid=node_uuid)
@@ -1407,6 +1423,9 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_node.get.return_value = node
         mock_node.validate.return_value = ironic_utils.get_test_validation()
         image_meta = ironic_utils.get_test_image_meta()
+
+        fake_looping_call = FakeLoopingCall()
+        mock_loop.return_value = fake_looping_call
 
         class TestException(Exception):
             pass
@@ -1420,6 +1439,7 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_node.validate.assert_called_once_with(node_uuid)
         mock_cleanup_deploy.assert_called_with(node, instance, None)
 
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(configdrive, 'required_by')
     @mock.patch.object(objects.Instance, 'save')
     @mock.patch.object(FAKE_CLIENT, 'node')
@@ -1429,7 +1449,7 @@ class IronicDriverTestCase(test.NoDBTestCase):
     def test_spawn_node_configdrive_fail(self,
                                          mock_sf, mock_configdrive,
                                          mock_avti, mock_node, mock_save,
-                                         mock_required_by):
+                                         mock_required_by, mock_loop):
         mock_required_by.return_value = True
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         node = ironic_utils.get_test_node(driver='fake', uuid=node_uuid)
@@ -1439,6 +1459,9 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_node.get.return_value = node
         mock_node.validate.return_value = ironic_utils.get_test_validation()
         image_meta = ironic_utils.get_test_image_meta()
+
+        fake_looping_call = FakeLoopingCall()
+        mock_loop.return_value = fake_looping_call
 
         class TestException(Exception):
             pass
@@ -1454,6 +1477,7 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_node.validate.assert_called_once_with(node_uuid)
         mock_cleanup_deploy.assert_called_with(node, instance, None)
 
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(configdrive, 'required_by')
     @mock.patch.object(FAKE_CLIENT, 'node')
     @mock.patch.object(ironic_driver.IronicDriver, '_add_volume_target_info')
@@ -1461,7 +1485,8 @@ class IronicDriverTestCase(test.NoDBTestCase):
     @mock.patch.object(ironic_driver.IronicDriver, '_cleanup_deploy')
     def test_spawn_node_trigger_deploy_fail(self, mock_cleanup_deploy,
                                             mock_sf, mock_avti,
-                                            mock_node, mock_required_by):
+                                            mock_node, mock_required_by,
+                                            mock_loop):
         mock_required_by.return_value = False
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         node = ironic_utils.get_test_node(driver='fake', uuid=node_uuid)
@@ -1482,6 +1507,7 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_node.validate.assert_called_once_with(node_uuid)
         mock_cleanup_deploy.assert_called_once_with(node, instance, None)
 
+    @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(configdrive, 'required_by')
     @mock.patch.object(FAKE_CLIENT, 'node')
     @mock.patch.object(ironic_driver.IronicDriver, '_add_volume_target_info')
@@ -1489,7 +1515,8 @@ class IronicDriverTestCase(test.NoDBTestCase):
     @mock.patch.object(ironic_driver.IronicDriver, '_cleanup_deploy')
     def test_spawn_node_trigger_deploy_fail2(self, mock_cleanup_deploy,
                                              mock_sf, mock_avti,
-                                             mock_node, mock_required_by):
+                                             mock_node, mock_required_by,
+                                             mock_looping):
         mock_required_by.return_value = False
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         node = ironic_utils.get_test_node(driver='fake', uuid=node_uuid)
@@ -1497,6 +1524,9 @@ class IronicDriverTestCase(test.NoDBTestCase):
         instance = fake_instance.fake_instance_obj(self.ctx, node=node_uuid)
         instance.flavor = flavor
         image_meta = ironic_utils.get_test_image_meta()
+
+        fake_looping_call = FakeLoopingCall()
+        mock_looping.return_value = fake_looping_call
 
         mock_node.get.return_value = node
         mock_node.validate.return_value = ironic_utils.get_test_validation()
@@ -3260,7 +3290,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
             temp_data['target_mode'] = mode
 
         def _fake_log_error(msg, *args, **kwargs):
-            regex = r'Invalid Socat console URL .*'
+            regex = r'Invalid Socat or Shellinabox console URL .*'
             self.assertThat(msg, matchers.MatchesRegex(regex))
 
         mock_node.get_console.side_effect = _fake_get_console
@@ -3287,7 +3317,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
             temp_data['target_mode'] = mode
 
         def _fake_log_error(msg, *args, **kwargs):
-            regex = r'Invalid Socat console URL .*'
+            regex = r'Invalid Socat or Shellinabox console URL .*'
             self.assertThat(msg, matchers.MatchesRegex(regex))
 
         mock_node.get_console.side_effect = _fake_get_console
@@ -3364,9 +3394,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
         mock_node.get_console.side_effect = _fake_get_console
         mock_node.set_console_mode.side_effect = _fake_set_console_mode
 
-        self.assertRaises(exception.ConsoleTypeUnavailable,
-                          self.driver.get_serial_console,
-                          self.ctx, self.instance)
-
+        result = self.driver.get_serial_console(self.ctx, self.instance)
+        self.assertIsNotNone(result)
         self.assertGreater(mock_node.get_console.call_count, 1)
         self.assertEqual(2, mock_node.set_console_mode.call_count)

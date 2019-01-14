@@ -349,7 +349,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                'numa_topology': None,
                }
 
-    def get_available_resource(self, nodename=None):
+    def get_available_resource(self, nodename):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and
