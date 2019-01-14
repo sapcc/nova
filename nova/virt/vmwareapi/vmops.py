@@ -30,7 +30,6 @@ import time
 import cluster_util
 import decorator
 from oslo_concurrency import lockutils
-from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
@@ -72,30 +71,6 @@ CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
 RESIZE_TOTAL_STEPS = 6
-
-vmops_opts = [
-    cfg.BoolOpt('full_clone_snapshots',
-                default=False,
-                help='Use full clones for creating image snapshots instead'
-                     ' of linked clones.'
-                     'With the right hardware support, it might be faster,'
-                     ' especially on the export'),
-    cfg.BoolOpt('clone_from_snapshot',
-                default=True,
-                help='Create a snapshot of the VM before cloning it'),
-    cfg.BoolOpt('image_as_template',
-                default=False,
-                help='Keep Glance images as VM templates in vCenter per '
-                     'datastore and create instances as clone from template.'),
-    cfg.BoolOpt('fetch_image_from_other_datastores',
-                default=True,
-                help='Before fetching from Glance an image missing on the'
-                     ' datastore first look for it on other '
-                     'datastores and clone it from there if available.'),
-    ]
-
-
-CONF.register_opts(vmops_opts, 'vmware')
 
 
 class VirtualMachineInstanceConfigInfo(object):
