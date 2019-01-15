@@ -57,10 +57,10 @@ from nova.conf import rdp
 from nova.conf import remote_debug
 from nova.conf import scheduler
 from nova.conf import serial_console
-from nova.conf import shellinabox
 from nova.conf import service
 from nova.conf import service_token
 from nova.conf import servicegroup
+from nova.conf import shellinabox
 from nova.conf import spice
 from nova.conf import upgrade_levels
 from nova.conf import vendordata
