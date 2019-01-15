@@ -164,5 +164,3 @@ class QuotaClassSetsController(wsgi.Controller):
     def delete(self, req, id, body):
         context = req.environ['nova.context']
         objects.Quotas.delete_class(context, id)
-
-

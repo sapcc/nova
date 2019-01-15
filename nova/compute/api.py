@@ -2544,10 +2544,12 @@ class API(base.Base):
                            build_req_instances.objects +
                            insts.objects)))
 
-        if limit is not None and len(instances) != len(build_req_instances) + len(insts):
+        if limit is not None and len(instances) != len(build_req_instances) +\
+                len(insts):
             raise exception.NovaException(
                 _('Duplicate instances found, '
-                  'database inconsistentency between cells and api, breaks pagination'))
+                  'database inconsistentency between cells and api,'
+                  ' breaks pagination'))
 
         if filter_ip:
             instances = self._ip_filter(instances, filters, orig_limit)
@@ -3259,7 +3261,8 @@ class API(base.Base):
             try:
                 res_deltas = {'cores': deltas.get('cores', 0),
                               'ram': deltas.get('ram', 0)}
-                res_deltas.update(deltas) # may have instances deltas if switching between quota:separate and not
+                res_deltas.update(deltas)  # may have instances deltas if
+                #  switching between quota:separate and not
                 objects.Quotas.check_deltas(context, res_deltas,
                                             project_id, user_id=user_id,
                                             check_project_id=project_id,

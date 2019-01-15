@@ -532,9 +532,11 @@ class ComputeManager(manager.Manager):
 
         if CONF.max_concurrent_builds_per_project > 0:
             self._per_project_build_semaphore = nova.utils.Semaphores(
-                semaphore_default=lambda: eventlet.semaphore.Semaphore(CONF.max_concurrent_builds_per_project))
+                semaphore_default=lambda: eventlet.semaphore.Semaphore(
+                    CONF.max_concurrent_builds_per_project))
         else:
-            self._per_project_build_semaphore = nova.utils.Semaphores(compute_utils.UnlimitedSemaphore)
+            self._per_project_build_semaphore = nova.utils.Semaphores(
+                compute_utils.UnlimitedSemaphore)
 
         if CONF.max_concurrent_live_migrations > 0:
             self._live_migration_semaphore = eventlet.semaphore.Semaphore(
@@ -1307,7 +1309,8 @@ class ComputeManager(manager.Manager):
             group = objects.InstanceGroup.get_by_hint(context, group_hint)
             if 'anti-affinity' in group.policies:
                 group_hosts = group.get_hosts(exclude=[instance.uuid])
-                resource_scheduling = self.driver.capabilities.get("resource_scheduling", False)
+                resource_scheduling = self.driver.capabilities.get(
+                                                "resource_scheduling", False)
                 if self.host in group_hosts and not resource_scheduling:
                     msg = _("Anti-affinity instance group policy "
                             "was violated.")
@@ -1736,31 +1739,35 @@ class ComputeManager(manager.Manager):
             with self._per_project_build_semaphore.get(instance.project_id):
                 with self._build_semaphore:
                     try:
-                        result = self._do_build_and_run_instance(*args, **kwargs)
+                        result = self._do_build_and_run_instance(*args,
+                                                                 **kwargs)
                     except Exception:
                         # NOTE(mriedem): This should really only happen if
-                        # _decode_files in _do_build_and_run_instance fails, and
-                        # that's before a guest is spawned so it's OK to remove
-                        # allocations for the instance for this node from Placement
-                        # below as there is no guest consuming resources anyway.
-                        # The _decode_files case could be handled more specifically
-                        # but that's left for another day.
+                        # _decode_files in _do_build_and_run_instance fails,
+                        # and that's before a guest is spawned so it's OK to
+                        # remove allocations for the instance for this node
+                        # from Placement below as there is no guest consuming
+                        # resources anyway. The _decode_files case could be
+                        # handled more specifically but that's left for
+                        # another day.
                         result = build_results.FAILED
                         raise
                     finally:
                         if result == build_results.FAILED:
-                            # Remove the allocation records from Placement for the
-                            # instance if the build failed. The instance.host is
-                            # likely set to None in _do_build_and_run_instance
+                            # Remove the allocation records from Placement for
+                            # the instance if the build failed. The instance.
+                            # host islikely set to None in
+                            #  _do_build_and_run_instance
                             # which means if the user deletes the instance, it
-                            # will be deleted in the API, not the compute service.
-                            # Setting the instance.host to None in
+                            # will be deleted in the API, not the compute
+                            # service. Setting the instance.host to None in
                             # _do_build_and_run_instance means that the
-                            # ResourceTracker will no longer consider this instance
-                            # to be claiming resources against it, so we want to
-                            # reflect that same thing in Placement.  No need to
-                            # call this for a reschedule, as the allocations will
-                            # have already been removed in
+                            # ResourceTracker will no longer consider this
+                            # instance to be claiming resources against it,
+                            # so we want to reflect that same thing in
+                            # Placement.  No need to call this for a
+                            # reschedule, as the allocations will have already
+                            # been removed in
                             # self._do_build_and_run_instance().
                             self._delete_allocation_for_instance(context,
                                                                  instance.uuid)
@@ -5221,7 +5228,8 @@ class ComputeManager(manager.Manager):
 
             if console_type == 'serial':
                 # add only token
-                access_url = '%s?token=%s' % (CONF.serial_console.base_url, token)
+                access_url = '%s?token=%s' % (CONF.serial_console.base_url,
+                                              token)
             elif console_type == 'shellinabox':
                 # token and internal url for shellinabox
                 access_url = '%s%s?token=%s' % (

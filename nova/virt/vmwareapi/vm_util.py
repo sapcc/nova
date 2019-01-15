@@ -26,7 +26,6 @@ from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import units
 from oslo_vmware import exceptions as vexc
-from oslo_vmware.objects import datastore as ds_obj
 from oslo_vmware import pbm
 from oslo_vmware import vim_util as vutil
 from suds import sudsobject
@@ -35,10 +34,10 @@ import nova.conf
 from nova import exception
 from nova.i18n import _
 from nova.network import model as network_model
-from nova.virt.vmwareapi import constants
-from nova.virt.vmwareapi import vim_util
 from nova import objects
 from nova.virt.vmwareapi import cluster_util
+from nova.virt.vmwareapi import constants
+from nova.virt.vmwareapi import vim_util
 
 LOG = logging.getLogger(__name__)
 
@@ -95,7 +94,8 @@ class ExtraSpecs(object):
     def __init__(self, cpu_limits=None, hw_version=None,
                  storage_policy=None, cores_per_socket=None,
                  memory_limits=None, disk_io_limits=None,
-                 vif_limits=None, hv_enabled=None, firmware=None, hw_video_ram=None):
+                 vif_limits=None, hv_enabled=None, firmware=None,
+                 hw_video_ram=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -107,6 +107,7 @@ class ExtraSpecs(object):
         self.hv_enabled = hv_enabled
         self.firmware = firmware
         self.hw_video_ram = hw_video_ram
+
 
 def vm_value_cache_reset():
     global _VM_VALUE_CACHE
@@ -213,22 +214,31 @@ def _get_allocation_info(client_factory, limits, allocation_type):
         allocation.shares = shares
     return allocation
 
-def append_vif_infos_to_config_spec(client_factory, config_spec, vif_infos, vif_limits, index=0):
-    if not config_spec.deviceChange:
+
+def append_vif_infos_to_config_spec(client_factory,
+                                    config_spec,
+                                    vif_infos,
+                                    vif_limits,
+                                    index=0):
+    if not hasattr(config_spec, 'deviceChange') or \
+            not config_spec.deviceChange:
         config_spec.deviceChange = []
     for vif_info in vif_infos:
         vif_spec = _create_vif_spec(client_factory, vif_info, vif_limits)
         config_spec.deviceChange.append(vif_spec)
 
-    if not config_spec.extraConfig:
+    if not hasattr(config_spec, 'extraConfig') or \
+            not config_spec.extraConfig:
         config_spec.extraConfig = []
     port_index = index
     for vif_info in vif_infos:
         if vif_info['iface_id']:
-            config_spec.extraConfig.append(_iface_id_option_value(client_factory,
-                                                                  vif_info['iface_id'],
-                                                                  port_index))
+            config_spec.extraConfig.append(_iface_id_option_value(
+                                                      client_factory,
+                                                      vif_info['iface_id'],
+                                                      port_index))
             port_index += 1
+
 
 def get_vm_create_spec(client_factory, instance, data_store_name,
                        vif_infos, extra_specs,
@@ -246,7 +256,8 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     config_spec.version = extra_specs.hw_version
 
     # Allow nested hypervisor instances to host 64 bit VMs.
-    if (os_type in ("vmkernel5Guest", "vmkernel6Guest", "windowsHyperVGuest")) or (extra_specs.hv_enabled == "True"):
+    if (os_type in ("vmkernel5Guest", "vmkernel6Guest", "windowsHyperVGuest"))\
+            or (extra_specs.hv_enabled == "True"):
         config_spec.nestedHVEnabled = "True"
 
     # Append the profile spec
@@ -290,7 +301,8 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
     if serial_port_spec:
         devices.append(serial_port_spec)
 
-    virtual_device_config_spec = create_video_card_spec(client_factory, extra_specs)
+    virtual_device_config_spec = create_video_card_spec(client_factory,
+                                                        extra_specs)
     if virtual_device_config_spec:
         devices.append(virtual_device_config_spec)
 
@@ -318,7 +330,10 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     config_spec.extraConfig = extra_config
 
-    append_vif_infos_to_config_spec(client_factory, config_spec, vif_infos, extra_specs.vif_limits)
+    append_vif_infos_to_config_spec(client_factory,
+                                    config_spec,
+                                    vif_infos,
+                                    extra_specs.vif_limits)
 
     # Set the VM to be 'managed' by 'OpenStack'
     managed_by = client_factory.create('ns0:ManagedByInfo')
@@ -328,15 +343,18 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     return config_spec
 
+
 def create_video_card_spec(client_factory, extra_specs):
     if extra_specs.hw_video_ram:
         video_card = client_factory.create('ns0:VirtualMachineVideoCard')
         video_card.videoRamSizeInKB = extra_specs.hw_video_ram
         video_card.key = -1
-        virtual_device_config_spec = client_factory.create('ns0:VirtualDeviceConfigSpec')
+        virtual_device_config_spec = client_factory.create(
+            'ns0:VirtualDeviceConfigSpec')
         virtual_device_config_spec.operation = "add"
         virtual_device_config_spec.device = video_card
         return virtual_device_config_spec
+
 
 def create_serial_port_spec(client_factory):
     """Creates config spec for serial port."""
@@ -531,7 +549,11 @@ def get_network_attach_config_spec(client_factory, vif_info, index,
     """Builds the vif attach config spec."""
     config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
 
-    append_vif_infos_to_config_spec(client_factory, config_spec, [vif_info], vif_limits, index)
+    append_vif_infos_to_config_spec(client_factory,
+                                    config_spec,
+                                    [vif_info],
+                                    vif_limits,
+                                    index)
 
     return config_spec
 
@@ -676,10 +698,8 @@ def get_vmdk_info(session, vm_ref, uuid=None):
     capacity_in_bytes = 0
 
     # Determine if we need to get the details of the root disk
-    root_disk = not uuid is None
     root_device = None
-    if uuid:
-        root_disk = '%s.vmdk' % uuid
+
     vmdk_device = None
 
     adapter_type_dict = {}
@@ -688,7 +708,8 @@ def get_vmdk_info(session, vm_ref, uuid=None):
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
                 if not root_device or root_device.controllerKey > device.controllerKey or \
-                                        root_device.controllerKey == device.controllerKey and root_device.unitNumber > device.unitNumber:
+                                        root_device.controllerKey == device.controllerKey \
+                        and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
         elif device.__class__.__name__ == "VirtualLsiLogicController":
@@ -1249,6 +1270,7 @@ def get_stats_from_cluster(session, cluster):
                      'max_mem_mb_per_host': max_mem_mb_per_host}}
     return stats
 
+
 def _get_server_group(context, instance):
     server_group_info = None
     try:
@@ -1256,8 +1278,9 @@ def _get_server_group(context, instance):
         server_group = instance_group_object.get_by_instance_uuid(
             context, instance.uuid)
         if server_group:
-            server_group_info = GroupInfo(server_group.uuid, server_group.policies)
-    except nova.exception.InstanceGroupNotFound as e:
+            server_group_info = GroupInfo(server_group.uuid,
+                                          server_group.policies)
+    except nova.exception.InstanceGroupNotFound:
         pass
 
     return server_group_info
@@ -1268,6 +1291,7 @@ def update_cluster_placement(session, context, instance, cluster, vm_ref):
     if server_group_info is None:
         return
     cluster_util.update_placement(session, cluster, vm_ref, server_group_info)
+
 
 def get_host_ref(session, cluster=None):
     """Get reference to a host within the cluster specified."""
@@ -1719,5 +1743,7 @@ def rename_vm(session, vm_ref, instance):
                                        newName=vm_name)
     session._wait_for_task(rename_task)
 
+
 def is_vim_instance(o, vim_type_name):
-    return isinstance(o, sudsobject.Factory.subclass(vim_type_name, sudsobject.Object))
+    return isinstance(o, sudsobject.Factory.subclass(vim_type_name,
+                                                     sudsobject.Object))

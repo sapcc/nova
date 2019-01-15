@@ -102,7 +102,7 @@ value of VSPC.
     cfg.StrOpt('serial_log_uri',
                help="""
 Specifies the server where the Virtual Serial Port Concentrator is
-storing console log files and responding to get requests. 
+storing console log files and responding to get requests.
 If defined it will override serial_log_dir.
 """),
 ]
@@ -293,9 +293,33 @@ Some VASA providers need disks in the multiple MB range."""),
                 default=True,
                 help="""
 Should the driver use a property collector to fetch essential properties
-and keep a local copy of the values. This should reduce the load on the vcenter api and be quicker,
-then polling each value individually
-""")
+and keep a local copy of the values. This should reduce the load on the vcenter
+api and be quicker, then polling each value individually
+"""),
+    cfg.BoolOpt('full_clone_snapshots',
+                default=False,
+                help="""
+Use full clones for creating image snapshots instead of linked clones.
+With the right hardware support, it might be faster, especially on the
+export
+"""),
+    cfg.BoolOpt('clone_from_snapshot',
+                default=True,
+                help="""
+Create a snapshot of the VM before cloning it
+"""),
+    cfg.BoolOpt('image_as_template',
+                default=False,
+                help="""
+Keep Glance images as VM templates in vCenter per datastore and create
+instances as clone from template.
+"""),
+    cfg.BoolOpt('fetch_image_from_other_datastores',
+                default=True,
+                help="""
+Before fetching from Glance an image missing on the datastore first look for it
+on other datastores and clone it from there if available.
+"""),
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +

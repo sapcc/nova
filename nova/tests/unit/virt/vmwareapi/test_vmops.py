@@ -57,7 +57,7 @@ class DsPathMatcher(object):
         return str(ds_path_param) == self.expected_ds_path_str
 
 
-class VMwareVMOpsTestCase(test.NoDBTestCase):
+class VMwareVMOpsTestCase(test.TestCase):
     def setUp(self):
         super(VMwareVMOpsTestCase, self).setUp()
         ds_util.dc_cache_reset()
@@ -77,9 +77,12 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 ref=fake_ds_ref, name='fake_ds',
                 capacity=10 * units.Gi,
                 freespace=10 * units.Gi)
+
         self._dc_info = ds_util.DcInfo(
                 ref='fake_dc_ref', name='fake_dc',
-                vmFolder='fake_vm_folder')
+                vmFolder=vmwareapi_fake.ManagedObjectReference
+                                                        (name='fake_vm_folder',
+                                                        value='Folder'))
         cluster = vmwareapi_fake.create_cluster('fake_cluster', fake_ds_ref)
         self._uuid = uuidsentinel.foo
         self._instance_values = {
@@ -103,7 +106,8 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         self._vmops = vmops.VMwareVMOps(self._session, self._virtapi, None,
                                         cluster=cluster.obj)
         self._cluster = cluster
-        self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id})
+        self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id,
+                                                        'owner': ''})
         subnet_4 = network_model.Subnet(cidr='192.168.0.1/24',
                                         dns=[network_model.IP('192.168.0.1')],
                                         gateway=
@@ -167,6 +171,11 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             "flavor:swap:33550336\n"
             "imageid:70a599e0-31e7-49b7-b260-868f441e862b\n"
             "package:%s\n" % version.version_string_with_package())
+
+        vm_util.vm_value_cache_update("test_id", 'runtime.powerState',
+                                                            'poweredOn')
+        vm_util.vm_value_cache_update("fake_powered_off", 'runtime.powerState',
+                                                                  'poweredOff')
 
     def test_get_machine_id_str(self):
         result = vmops.VMwareVMOps._get_machine_id_str(self.network_info)
@@ -290,13 +299,20 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             mock_save.assert_called_once_with()
         self.assertEqual(50, self._instance.progress)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake_ref')
-    def test_get_info(self, mock_get_vm_ref):
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    @mock.patch.object(vm_util, '_VM_VALUE_CACHE')
+    def test_get_info(self, mock_value_cache, mock_update_cached_instances,
+                      mock_get_vm_ref):
+
         result = {
             'summary.config.numCpu': 4,
             'summary.config.memorySizeMB': 128,
             'runtime.powerState': 'poweredOn'
         }
+
+        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
+                                                            value='test_id')
 
         with mock.patch.object(self._session, '_call_method',
                                return_value=result):
@@ -306,12 +322,13 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             expected = hardware.InstanceInfo(state=power_state.RUNNING)
             self.assertEqual(expected, info)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake_ref')
+    @mock.patch.object(vm_util, 'get_vm_ref')
     def test_get_info_when_ds_unavailable(self, mock_get_vm_ref):
         result = {
             'runtime.powerState': 'poweredOff'
         }
-
+        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
+            value='fake_powered_off')
         with mock.patch.object(self._session, '_call_method',
                                return_value=result):
             info = self._vmops.get_info(self._instance)
@@ -320,8 +337,13 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             self.assertEqual(hardware.InstanceInfo(state=power_state.SHUTDOWN),
                              info)
 
-    @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake_ref')
-    def test_get_info_instance_deleted(self, mock_get_vm_ref):
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    @mock.patch.object(vm_util, '_VM_VALUE_CACHE')
+    def test_get_info_instance_deleted(self, mock_value_cache,
+                                       mock_update_cached_instances,
+                                       mock_get_vm_ref):
+        vm_util.vm_value_cache_reset()
         props = ['summary.config.numCpu', 'summary.config.memorySizeMB',
                  'runtime.powerState']
         prop_cpu = vmwareapi_fake.Prop(props[0], 4)
@@ -331,6 +353,8 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         obj_content = vmwareapi_fake.ObjectContent(None, prop_list=prop_list)
         result = vmwareapi_fake.FakeRetrieveResult()
         result.add_object(obj_content)
+        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
+            value='fake_powered_off')
 
         def mock_call_method(module, method, *args, **kwargs):
             raise vexc.ManagedObjectNotFoundException()
@@ -478,7 +502,9 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 vm_ref, self._instance, mock.ANY, destroy_disk=True)
 
     @mock.patch.object(time, 'sleep')
-    def _test_clean_shutdown(self, mock_sleep,
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    def _test_clean_shutdown(self, mock_update_cached_instances,
+                             mock_sleep,
                              timeout, retry_interval,
                              returns_on, returns_off,
                              vmware_tools_status,
@@ -1007,8 +1033,9 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.lockutils, 'lock')
-    def test_spawn_mask_block_device_info_password(self, mock_lock,
-        mock_build_virtual_machine, mock_get_vm_config_info,
+    @mock.patch.object(ds_util, 'get_datastore')
+    def test_spawn_mask_block_device_info_password(self, mock_get_datastore,
+        mock_lock, mock_build_virtual_machine, mock_get_vm_config_info,
         mock_fetch_image_if_missing, mock_debug, mock_glance):
         # Very simple test that just ensures block_device_info auth_password
         # is masked when logged; the rest of the test just fails out early.
@@ -1016,7 +1043,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         bdm = [{'boot_index': 0, 'disk_bus': constants.DEFAULT_ADAPTER_TYPE,
                 'connection_info': {'data': data}}]
         bdi = {'block_device_mapping': bdm}
-
+        mock_get_datastore.return_value = self._ds
         self.password_logged = False
 
         # Tests that the parameters to the to_xml method are sanitized for
@@ -1029,12 +1056,26 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         mock_debug.side_effect = fake_debug
         self.flags(flat_injected=False)
         self.flags(enabled=False, group='vnc')
+        extra_specs = vm_util.ExtraSpecs()
+        flavor_fits_image = False
+        file_size = 10 * units.Gi if flavor_fits_image else 5 * units.Gi
+        image_info = images.VMwareImage(
+            image_id=self._image_id,
+            file_size=file_size,
+            linked_clone=False)
 
-        mock_vi = mock.Mock()
-        mock_vi.root_gb = 1
-        mock_vi.ii.file_size = 2 * units.Gi
-        mock_vi.instance.flavor.root_gb = 1
-        mock_get_vm_config_info.return_value = mock_vi
+        cache_root_folder = self._ds.build_path("vmware_base", self._image_id)
+        mock_imagecache = mock.Mock()
+        mock_imagecache.get_image_cache_folder.return_value = cache_root_folder
+        dc_info = ds_util.DcInfo(
+            ref=self._cluster.obj, name='fake_dc',
+            vmFolder=vmwareapi_fake.ManagedObjectReference(
+                                                        name='fake_vm_folder',
+                                                        value='Folder'))
+        vi = vmops.VirtualMachineInstanceConfigInfo(
+            self._instance, image_info,
+            self._ds, dc_info, mock_imagecache, extra_specs)
+        mock_get_vm_config_info.return_value = vi
 
         # Call spawn(). We don't care what it does as long as it generates
         # the log message, which we check below.
@@ -1128,6 +1169,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             get_vm_config_info.assert_called_once_with(self._instance,
                 image_info, extra_specs)
             build_virtual_machine.assert_called_once_with(self._instance,
+                                                          self._context,
                 image_info, vi.dc_info, vi.datastore, [],
                 extra_specs, self._get_metadata())
             enlist_image.assert_called_once_with(image_info.image_id,
@@ -1192,6 +1234,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             get_vm_config_info.assert_called_once_with(self._instance,
                 image_info, extra_specs)
             build_virtual_machine.assert_called_once_with(self._instance,
+                                                          self._context,
                 image_info, vi.dc_info, vi.datastore, [],
                 extra_specs, self._get_metadata(is_image_used=False))
             volumeops.attach_root_volume.assert_called_once_with(
@@ -1246,6 +1289,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         get_vm_config_info.assert_called_once_with(
             self._instance, image_info, extra_specs)
         build_virtual_machine.assert_called_once_with(self._instance,
+                                                      self._context,
             image_info, vi.dc_info, vi.datastore, [],
             extra_specs, self._get_metadata(is_image_used=False))
 
@@ -1266,9 +1310,11 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
     @mock.patch.object(
             vmops.VMwareVMOps, '_sized_image_exists', return_value=False)
     @mock.patch.object(vmops.VMwareVMOps, '_extend_virtual_disk')
+    @mock.patch.object(vmops.VMwareVMOps, '_extend_if_required')
     @mock.patch.object(vm_util, 'copy_virtual_disk')
     def _test_use_disk_image_as_linked_clone(self,
                                              mock_copy_virtual_disk,
+                                             mock_extend_if_required,
                                              mock_extend_virtual_disk,
                                              mock_sized_image_exists,
                                              flavor_fits_image=False):
@@ -1298,12 +1344,10 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 self._session, self._dc_info.ref,
                 str(vi.cache_image_path),
                 str(sized_cached_image_ds_loc))
-
-        if not flavor_fits_image:
-            mock_extend_virtual_disk.assert_called_once_with(
-                    self._instance, vi.root_gb * units.Mi,
-                    str(sized_cached_image_ds_loc),
-                    self._dc_info.ref)
+        mock_extend_if_required.assert_called_once_with(
+            self._dc_info,
+            vi.ii,
+            vi.instance, str(sized_cached_image_ds_loc))
 
         mock_attach_disk_to_vm.assert_called_once_with(
                 "fake_vm_ref", self._instance, vi.ii.adapter_type,
@@ -1319,9 +1363,11 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         self._test_use_disk_image_as_linked_clone(flavor_fits_image=True)
 
     @mock.patch.object(vmops.VMwareVMOps, '_extend_virtual_disk')
+    @mock.patch.object(vmops.VMwareVMOps, '_extend_if_required')
     @mock.patch.object(vm_util, 'copy_virtual_disk')
     def _test_use_disk_image_as_full_clone(self,
                                           mock_copy_virtual_disk,
+                                          mock_extend_if_required,
                                           mock_extend_virtual_disk,
                                           flavor_fits_image=False):
         extra_specs = vm_util.ExtraSpecs()
@@ -1350,10 +1396,10 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 str(vi.cache_image_path),
                 fake_path)
 
-        if not flavor_fits_image:
-            mock_extend_virtual_disk.assert_called_once_with(
-                    self._instance, vi.root_gb * units.Mi,
-                    fake_path, self._dc_info.ref)
+        mock_extend_if_required.assert_called_once_with(
+            self._dc_info,
+            vi.ii,
+            vi.instance, fake_path)
 
         mock_attach_disk_to_vm.assert_called_once_with(
                 "fake_vm_ref", self._instance, vi.ii.adapter_type,
@@ -1428,7 +1474,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                             'MoveDatastoreFile_Task',
                             'DeleteDatastoreFile_Task',
                             'SearchDatastore_Task',
-                            'ExtendVirtualDisk_Task',
+                            'SearchDatastore_Task',
         ]
         if extras:
             expected_methods.extend(extras)
@@ -1492,6 +1538,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
             'id': self._image_id,
             'disk_format': 'vmdk',
             'size': image_size,
+            'owner': ''
         }
         image = objects.ImageMeta.from_dict(image)
         image_info = images.VMwareImage(
@@ -1547,6 +1594,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                     extra_specs,
                     constants.DEFAULT_OS_TYPE,
                     profile_spec=None,
+                    vm_name=None,
                     metadata='fake-metadata')
             mock_create_vm.assert_called_once_with(
                     self._session,
@@ -1777,6 +1825,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         get_vm_config_info.assert_called_once_with(self._instance,
             image_info, extra_specs)
         build_virtual_machine.assert_called_once_with(self._instance,
+                                                      self._context,
             image_info, vi.dc_info, vi.datastore, [], extra_specs, metadata)
         enlist_image.assert_called_once_with(image_info.image_id,
                                              vi.datastore, vi.dc_info.ref)
@@ -1922,6 +1971,7 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         extra_specs = vm_util.ExtraSpecs()
 
         vm_ref = self._vmops.build_virtual_machine(self._instance,
+                                                   self._context,
                                                    image, self._dc_info,
                                                    self._ds,
                                                    self.network_info,
@@ -2302,9 +2352,15 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 cookies='Fake-CookieJar')
 
     @mock.patch.object(images, 'fetch_image_stream_optimized',
-                       return_value=123)
-    def test_fetch_image_as_vapp(self, mock_fetch_image):
+                       return_value=(123, '123'))
+    @mock.patch.object(vmops.VMwareVMOps, '_get_project_folder')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_image_template_vm_name',
+                       return_value='fake-name')
+    def test_fetch_image_as_vapp(self, mock_template_vm_name,
+                                mock_get_project_folder,
+                                mock_fetch_image):
         vi = self._make_vm_config_info()
+        mock_get_project_folder.return_value = vi.dc_info.vmFolder
         image_ds_loc = mock.Mock()
         image_ds_loc.parent.basename = 'fake-name'
         self._vmops._fetch_image_as_vapp(self._context, vi, image_ds_loc)
@@ -2318,12 +2374,23 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                 self._vmops._root_resource_pool)
         self.assertEqual(vi.ii.file_size, 123)
 
-    @mock.patch.object(images, 'fetch_image_ova', return_value=123)
-    def test_fetch_image_as_ova(self, mock_fetch_image):
+    @mock.patch.object(images, 'fetch_image_ova', return_value=(123, '123'))
+    @mock.patch.object(vmops.VMwareVMOps, '_get_project_folder')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_image_template_vm_name',
+                       return_value='fake-name')
+    def test_fetch_image_as_ova(self, mock_template_vm_name,
+                                mock_get_project_folder,
+                                mock_fetch_image):
         vi = self._make_vm_config_info()
+        mock_get_project_folder.return_value = vi.dc_info.vmFolder
         image_ds_loc = mock.Mock()
         image_ds_loc.parent.basename = 'fake-name'
         self._vmops._fetch_image_as_ova(self._context, vi, image_ds_loc)
+
+        mock_template_vm_name.assert_called_once_with(
+            vi.ii.image_id, vi.datastore.name
+        )
+
         mock_fetch_image.assert_called_once_with(
                 self._context,
                 vi.instance,
@@ -2508,25 +2575,34 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
         base_folder = self._vmops._get_base_folder()
         self.assertEqual('my_prefix_base', base_folder)
 
-    def _test_reboot_vm(self, reboot_type="SOFT", tool_status=True):
+    @mock.patch.object(vmops.VMwareVMOps, '_get_instance_props')
+    def _test_reboot_vm(self, get_instance_props, reboot_type="SOFT",
+                        tool_status=True):
 
         expected_methods = ['get_object_properties_dict']
+        get_instance_props.return_value = {
+                    "runtime.powerState": "poweredOn",
+                    "summary.guest.toolsStatus": "toolsOk",
+                    "summary.guest.toolsRunningStatus": "guestToolsRunning"}
         if reboot_type == "SOFT":
             expected_methods.append('RebootGuest')
         else:
             expected_methods.append('ResetVM_Task')
 
         def fake_call_method(module, method, *args, **kwargs):
-            expected_method = expected_methods.pop(0)
-            self.assertEqual(expected_method, method)
-            if expected_method == 'get_object_properties_dict' and tool_status:
+            if method == 'get_object_properties_dict' and tool_status:
                 return {
                     "runtime.powerState": "poweredOn",
                     "summary.guest.toolsStatus": "toolsOk",
                     "summary.guest.toolsRunningStatus": "guestToolsRunning"}
-            elif expected_method == 'get_object_properties_dict':
+            elif method == 'get_object_properties_dict':
                 return {"runtime.powerState": "poweredOn"}
-            elif expected_method == 'ResetVM_Task':
+            elif method == 'CreatePropertyCollector':
+                return {
+                    "runtime.powerState": "poweredOn",
+                    "summary.guest.toolsStatus": "toolsOk",
+                    "summary.guest.toolsRunningStatus": "guestToolsRunning"}
+            elif method == 'ResetVM_Task':
                 return 'fake-task'
 
         with test.nested(
@@ -2718,3 +2794,107 @@ class VMwareVMOpsTestCase(test.NoDBTestCase):
                                                     'fake-attach-spec')
         _network_api.update_instance_vnic_index(mock.ANY,
             self._instance, self._network_values, 1)
+
+    """
+        The test covers the negative failure scenario, where `hw_video_ram`,
+        coming from the image is bigger than the maximum allowed video ram from
+        the flavor.
+        """
+
+    def test_video_ram(self):
+        meta_dict = {'id': self._image_id, 'properties': {'hw_video_ram': 120}}
+        image_meta, flavor = self._get_image_and_flavor_for_test_video(
+            meta_dict)
+
+        self.assertRaises(exception.RequestedVRamTooHigh,
+                          self._vmops._get_extra_specs,
+                          flavor,
+                          image_meta)
+
+    """
+    Testing VM provisioning result in the case where `hw_video_ram`,
+    coming from the image is not specified. This is a success scenario,
+    in the case where `hw_video_ram` property is not set.
+    """
+
+    def test_video_ram_if_none(self):
+        meta_dict = {'id': self._image_id, 'properties': {}}
+        image_meta, flavor = self._get_image_and_flavor_for_test_video(
+            meta_dict)
+
+        extra_specs = self._vmops._get_extra_specs(flavor, image_meta)
+        self.assertIsNone(extra_specs.hw_video_ram)
+
+    """
+    Testing VM provisioning result in the case where `hw_video:ram_max_mb`,
+    coming from the flavor is not specified. This is a success scenario,
+    in the case where `hw_video_ram` property is not set.
+    """
+
+    def test_max_video_ram_none(self):
+        meta_dict = {'id': self._image_id, 'properties': {'hw_video_ram': 120}}
+        image_meta = objects.ImageMeta.from_dict(meta_dict)
+        flavor_extra_specs = {'quota:cpu_limit': 7,
+                              'quota:cpu_reservation': 6}
+        flavor = objects.Flavor(name='my-flavor',
+                                memory_mb=6,
+                                vcpus=28,
+                                root_gb=496,
+                                ephemeral_gb=8128,
+                                swap=33550336,
+                                extra_specs=flavor_extra_specs)
+
+        self.assertRaises(exception.RequestedVRamTooHigh,
+                          self._vmops._get_extra_specs,
+                          flavor,
+                          image_meta)
+
+    """
+    Testing VM provisioning result in the case where `hw_video_ram`,
+    coming from the image is less than the maximum allowed video ram from
+    the flavor. This is a success scenario, in the case where `hw_video_ram`
+    property is set in the extra spec.
+    """
+
+    def test_success_video_ram(self):
+        expected_video_ram = 90
+        meta_dict = {'id': self._image_id, 'properties': {
+            'hw_video_ram': expected_video_ram}}
+        image_meta, flavor = self._get_image_and_flavor_for_test_video(
+            meta_dict)
+
+        extra_specs = self._vmops._get_extra_specs(flavor, image_meta)
+        print(extra_specs)
+        self.assertEqual(self._calculate_expected_fake_video_ram(
+            expected_video_ram), extra_specs.hw_video_ram)
+
+    """
+    Testing VM provisioning result in the case where `hw_video_ram`,
+    coming from the image is equal to 0. This is a success scenario, in the
+    case where `hw_video_ram` property is not set in the extra spec.
+    """
+
+    def test_zero_video_ram(self):
+        meta_dict = {'id': self._image_id, 'properties': {'hw_video_ram': 0}}
+        image_meta, flavor = self._get_image_and_flavor_for_test_video(
+            meta_dict)
+
+        extra_specs = self._vmops._get_extra_specs(flavor, image_meta)
+        self.assertIsNone(extra_specs.hw_video_ram)
+
+    def _calculate_expected_fake_video_ram(self, amount):
+        return amount * units.Mi / units.Ki
+
+    def _get_image_and_flavor_for_test_video(self, meta_dict):
+        image_meta = objects.ImageMeta.from_dict(meta_dict)
+        flavor_extra_specs = {'quota:cpu_limit': 7,
+                              'quota:cpu_reservation': 6,
+                              'hw_video:ram_max_mb': 100}
+        flavor = objects.Flavor(name='my-flavor',
+                                memory_mb=6,
+                                vcpus=28,
+                                root_gb=496,
+                                ephemeral_gb=8128,
+                                swap=33550336,
+                                extra_specs=flavor_extra_specs)
+        return image_meta, flavor
