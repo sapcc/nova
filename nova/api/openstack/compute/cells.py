@@ -86,10 +86,12 @@ def _scrub_cell(cell, detail=False):
     cell_info['type'] = 'parent' if cell['is_parent'] else 'child'
     return cell_info
 
+
 def _scrub_cell_v2(cell, detail=False):
     keys = ['uuid', 'name', 'transport_url', 'database_connection']
+    nova_object_data = cell.obj_to_primitive().get('nova_object.data', {})
+    return _filter_keys(nova_object_data, keys)
 
-    return _filter_keys(cell.obj_to_primitive().get('nova_object.data', {}), keys)
 
 class CellsController(wsgi.Controller):
     """Controller for Cell resources."""
