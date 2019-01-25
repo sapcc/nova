@@ -510,12 +510,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
                                              imported_vm_ref,
                                              vm_name)
                 vm_util.mark_vm_as_template(session, instance, imported_vm_ref)
-                try:
-                    return vmdk.capacity_in_bytes, vmdk.path.parent
-                except AttributeError:
-                    from oslo_vmware.objects.datastore import DatastorePath
-                    return vmdk.capacity_in_bytes, DatastorePath.parse(
-                        vmdk.path).parent
+                return vmdk.capacity_in_bytes, vmdk.path
         raise exception.ImageUnacceptable(
             reason=_("Extracting vmdk from OVA failed."),
             image_id=image_ref)
