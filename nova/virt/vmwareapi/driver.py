@@ -20,6 +20,8 @@ A connection to the VMware vCenter platform.
 """
 import os
 import re
+import ssl
+import OpenSSL
 from six.moves import urllib
 
 from oslo_log import log as logging
@@ -35,6 +37,8 @@ from oslo_vmware import vim_util
 from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
+from nova import network
+from nova import objects
 import nova.conf
 from nova import exception
 from nova.i18n import _
@@ -43,6 +47,7 @@ import nova.privsep.path
 from nova.virt import driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
+from oslo_vmware import vim_util as vutil
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import host
 from nova.virt.vmwareapi import vim_util as nova_vim_util
@@ -88,7 +93,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVCDriver, self).__init__(virtapi)
-
+        self.network_api = network.API()
         if (CONF.vmware.host_ip is None or
             CONF.vmware.host_username is None or
             CONF.vmware.host_password is None):
@@ -268,6 +273,189 @@ class VMwareVCDriver(driver.ComputeDriver):
                                      network_info, image_meta, resize_instance,
                                      block_device_info, power_on)
 
+    def ensure_filtering_rules_for_instance(self, instance, network_info):
+        pass
+
+    def pre_live_migration(self, context, instance, block_device_info,
+                           network_info, disk_info, migrate_data):
+        return migrate_data
+
+    def post_live_migration_at_source(self, context, instance, network_info):
+        pass
+
+    def post_live_migration_at_destination(self, context, instance,
+                                           network_info,
+                                           block_migration=False,
+                                           block_device_info=None):
+        pass
+
+    def cleanup_live_migration_destination_check(self, context,
+                                                 dest_check_data):
+        pass
+
+    def neutron_bind_port(self, context, instance, host):
+        self.network_api.migrate_instance_finish(context, instance, host)
+
+    def live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration=False,
+                       migrate_data=None, server_data=None):
+        LOG.debug('POST METHOD ====================================================> %s' % post_method)
+        """Live migration of an instance to another host."""
+        self._vmops.live_migration(context, instance, dest, post_method,
+                                   recover_method, block_migration,
+                                   migrate_data, server_data)
+
+    def check_can_live_migrate_source(self, context, instance,
+                                      dest_check_data, block_device_info=None):
+        LOG.debug('DETACHING VOLUME ==================================================================>')
+        bdms = block_device_info['block_device_mapping']
+        if not bdms:
+            # there are no volumes attached, go ahead
+            return dest_check_data
+        # detach all volumes from their shadow VMs
+        for bdm in bdms:
+            connection_info = bdm['connection_info']
+            data = connection_info['data']
+            volume_ref = vim_util.get_moref(data['volume'], 'VirtualMachine')
+            hw_devs = self._session._call_method(vim_util,
+                                                 "get_object_property",
+                                                 volume_ref,
+                                                 "config.hardware.device")
+            volume_id = data['volume_id']
+            device = vm_util.get_vmdk_volume_disk(hw_devs)
+            if device is None:
+                LOG.debug("Volume with id '%s' is already detached from its "
+                          "shadow VM", volume_id, instance=instance)
+                continue
+            try:
+                LOG.debug("Detaching volume with id '%s' from its shadow VM",
+                          volume_id, instance=instance)
+                self._volumeops.detach_disk_from_vm(volume_ref, instance,
+                                                    device)
+            except Exception as e:
+                LOG.error("Failed to detach volume with id '%s' from its "
+                          "shadow VM: %s", volume_id, e, instance=instance)
+                # do not raise the original exception as this will put the
+                # instance in ERROR state and the operation cannot be retried
+                raise exception.MigrationPreCheckError(reason=e.message)
+        return dest_check_data
+
+    def check_can_live_migrate_destination(self, context, instance,
+                                           src_compute_info, dst_compute_info,
+                                           block_migration=False,
+                                           disk_over_commit=False):
+        # the information that we need for the destination compute node
+        # is the name of its cluster and datastore regex
+        data = objects.VMwareLiveMigrateData()
+        data.cluster_name = CONF.vmware.cluster_name
+        data.datastore_regex = CONF.vmware.datastore_regex
+        data.host_ip = CONF.vmware.host_ip
+        data.host_username = CONF.vmware.host_username
+        data.host_password = CONF.vmware.host_password
+        data.instance_uuid = self._session.vim.service_content.about.instanceUuid
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM,
+                                               cert)
+        data.thumbprint = x509.digest("sha1")
+
+        return data
+
+    def get_server_data(self, context, instance, migrate_data):
+
+        data = dict()
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      CONF.vmware.cluster_name)
+        cluster_hosts = self._session._call_method(vutil,
+                                                   'get_object_property',
+                                                   cluster_ref, 'host')
+        LOG.debug("cluster_hosts ")
+        cluster_datastores = self._session._call_method(vutil,
+                                                        'get_object_property',
+                                                        cluster_ref,
+                                                        'datastore')
+        LOG.debug("cluster_datastores: %s", cluster_datastores)
+        if not cluster_datastores:
+            LOG.warning('No datastores found in the destination cluster')
+            return None
+
+        ds_hosts = None
+        for ds in cluster_datastores.ManagedObjectReference:
+            ds_hosts = self._session._call_method(vutil, 'get_object_property',
+                                                  ds, 'host')
+
+            if ds_hosts:
+                break
+        LOG.debug('HOST =====================================> %s' % data)
+        data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
+        for ds_host in ds_hosts.DatastoreHostMount:
+            if 'host' not in data:
+                LOG.debug('HOST NOT IN DATA : ===============================>')
+                for cluster_host in cluster_hosts.ManagedObjectReference:
+                    if ds_host.key.value == cluster_host.value:
+                        if self._check_host_status(cluster_host) == True:
+                            data['host'] = cluster_host.value
+                            break
+                        else:
+                            continue
+
+        networks = self._session._call_method(vutil,
+                                              'get_object_property',
+                                              vutil.get_moref(data['host'],
+                                                              "HostSystem"),
+                                              'network')
+
+        data['portgroup_key'] = []
+        data['dvs_uuid'] = []
+        data['portgroup_name'] = []
+        for network in networks[0]:
+            if network._type != 'Network':
+                net = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 network,
+                                                 'config')
+                if net.name == CONF.vmware.default_portgroup:
+                    data['portgroup_key'].append(net.key)
+                    data['portgroup_name'].append(net.name)
+                    dvs_uuid = self._session._call_method(vutil,
+                                                          'get_object_property',
+                                                          net.distributedVirtualSwitch,
+                                                          'uuid')
+                    data['dvs_uuid'].append(dvs_uuid)
+
+        data['networks'] = networks
+
+        res_pool_ref = vm_util.get_res_pool_ref(self._session, cluster_ref)
+        data['res_pool'] = res_pool_ref.value
+        data['cluster_ref'] = cluster_ref
+        if res_pool_ref is None:
+            LOG.error("Cannot find resource pool", instance=instance)
+            raise exception.HostNotFound()
+
+        return data
+
+    def _check_host_status(self, host):
+        LOG.debug(host)
+        host_status = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 host,
+                                                 'runtime')
+
+        if host_status.powerState.lower() != "poweredon" or\
+                host_status.connectionState.lower() != 'connected':
+            return False
+        return True
+
+    def unfilter_instance(self, instance, network_info):
+        pass
+
+    def rollback_live_migration_at_destination(self, context, instance,
+                                               network_info,
+                                               block_device_info,
+                                               destroy_disks=True,
+                                               migrate_data=None):
+        """Clean up destination node after a failed live migration."""
+        self.destroy(context, instance, network_info, block_device_info)
+
     def get_instance_disk_info(self, instance, block_device_info=None):
         pass
 
@@ -311,6 +499,20 @@ class VMwareVCDriver(driver.ComputeDriver):
         read_log_data, remaining = nova.privsep.path.last_bytes(
             path, MAX_CONSOLE_BYTES)
         return read_log_data
+
+    def get_instance_network(self, instance):
+        networks = []
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_networks = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 vm_ref, 'network')
+
+        for vm_net in vm_networks[0]:
+            network = self._session._call_method(vutil,
+                                                 'get_object_property',
+                                                 vm_net, 'name')
+            networks.append(network)
+        return networks
 
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
