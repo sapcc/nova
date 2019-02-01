@@ -320,7 +320,11 @@ instances as clone from template.
 Before fetching from Glance an image missing on the datastore first look for it
 on other datastores and clone it from there if available.
 """),
-    cfg.StrOpt('default_portgroup', help='Default portgroup for migration')
+    cfg.StrOpt('default_portgroup', help='Default portgroup for migration'),
+    cfg.StrOpt('cross_migrate_attached_disks', help="""
+Flag for checking if a cross vCenter migration is allowed on instances with
+attached disks.
+""")
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +

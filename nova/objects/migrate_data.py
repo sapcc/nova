@@ -383,6 +383,7 @@ class PowerVMLiveMigrateData(LiveMigrateData):
             if field in legacy:
                 setattr(self, field, legacy[field])
 
+
 @obj_base.NovaObjectRegistry.register
 class VMwareLiveMigrateData(LiveMigrateData):
     VERSION = '1.2'

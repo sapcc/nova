@@ -912,7 +912,7 @@ class ComputeDriver(object):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         """Live migration of an instance to another host.
 
         :param context: security context
@@ -928,6 +928,7 @@ class ComputeDriver(object):
             expected nova.compute.manager._rollback_live_migration.
         :param block_migration: if true, migrate VM disk.
         :param migrate_data: a LiveMigrateData object
+        :param server_data: dict info about target compute node
 
         """
         raise NotImplementedError()
@@ -1090,6 +1091,25 @@ class ComputeDriver(object):
                    ...]"
         """
         raise NotImplementedError()
+
+    def get_instance_network(self, instance):
+        """Retrieve network properties for an instance.
+
+        :param instance: nova.objects.Instance
+        :return:
+            list of network names `networks = []`
+        """
+
+    def get_server_data(self, context, instance, migrate_data):
+        """Retrieve needed information, for performing cross vCenter migration,
+        from the target vCenter.
+
+        :param context: security context
+        :param instance: nova.objects.Instance
+        :param migrate_data: dict object
+        :return:
+            dict with information about the target vCenter
+        """
 
     def refresh_security_group_rules(self, security_group_id):
         """This method is called after a change to security groups.
@@ -1677,6 +1697,14 @@ class ComputeDriver(object):
         :returns: a string representing the host ID
         """
         return instance.get('host')
+
+    def neutron_bind_port(self, context, instance, host):
+        """ Rpc call to the target vCenter for binding neutron port.
+
+        :param context: security context
+        :param instance: nova.objects.Instance
+        :param host: target host
+        """
 
 
 def load_compute_driver(virtapi, compute_driver=None):

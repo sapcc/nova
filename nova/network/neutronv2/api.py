@@ -1683,7 +1683,6 @@ class API(base_api.NetworkAPI):
             ports_needed_per_instance = 1
         else:
             net_ids_requested = []
-            print('REQUESTED NETWORKS %s' % requested_networks)
             for request in requested_networks:
                 if request.port_id:
                     port = self._show_port(context, request.port_id,
@@ -2194,8 +2193,9 @@ class API(base_api.NetworkAPI):
 
     def migrate_instance_finish(self, context, instance, migration):
         """Finish migrating the network of an instance."""
-        migration = {'source_compute': instance.host,
-                     'dest_compute': migration}
+        if not 'dest_compute' in migration:
+            migration = {'source_compute': instance.host,
+                         'dest_compute': migration, }
         self._update_port_binding_for_instance(context, instance,
                                                migration['dest_compute'],
                                                migration=migration)

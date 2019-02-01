@@ -21,9 +21,7 @@ Class for VM tasks like spawn, snapshot, suspend, resume etc.
 
 import collections
 import copy
-import json
 import math
-import ssl
 import os
 import re
 import six
@@ -46,6 +44,7 @@ from nova.api.metadata import base as instance_metadata
 from nova import compute
 from nova.compute import power_state
 from nova.compute import task_states
+from nova.compute import vm_states
 import nova.conf
 from nova.console import type as ctype
 from nova import context as nova_context
@@ -67,6 +66,7 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
+from nova.compute import rpcapi as compute_rpcapi
 
 CONF = nova.conf.CONF
 
@@ -2025,15 +2025,13 @@ class VMwareVMOps(object):
         migrated to. Return the current datastore if it is already connected to
         the specified cluster.
         """
-        vmdk = vm_util.get_vmdk_info(self._session, vm_ref, uuid=instance.uuid)
-        ds_ref = vmdk.device.backing.datastore
         cluster_datastores = self._session._call_method(vutil,
                                                         'get_object_property',
                                                         cluster_ref,
                                                         'datastore')
 
         if not cluster_datastores:
-            LOG.warn('No datastores found in the destination cluster',
+            LOG.warning('No datastores found in the destination cluster',
                      instance=instance)
             return
 
@@ -2045,7 +2043,6 @@ class VMwareVMOps(object):
                        migrate_data, server_data=None):
 
         if CONF.vmware.host_ip != migrate_data.host_ip:
-            LOG.debug('POST METHOD ===========================================> %s' % post_method)
             self.cross_vcenter_live_migration(context, instance, dest,
                                               post_method, recover_method,
                                               block_migration,
@@ -2077,8 +2074,8 @@ class VMwareVMOps(object):
                 raise exception.HostNotFound(host=dest)
             LOG.debug("Migrating instance to datastore %s", ds.name,
                       instance=instance)
-            # find ESX host in the destination cluster which is connected to the
-            # target datastore
+            # find ESX host in the destination cluster which is connected to
+            #  the target datastore
             esx_host = self._find_esx_host(cluster_ref, ds.ref)
             if esx_host is None:
                 LOG.error("Cannot find ESX host", instance=instance)
@@ -2125,10 +2122,48 @@ class VMwareVMOps(object):
                     recover_method(context, instance, dest, block_migration)
             post_method(context, instance, dest, block_migration)
 
+    def __validate_attached_disk_migration(self, instance):
+        """Validates that we have no more than one VirtualDisk to the instance
+        If more than one is found (`virtual_disk_attached`) than we skip
+        migration
+        :param instance:
+        :return: virtual_disk_attached
+        """
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        devices = self._session._call_method(vutil,
+                                             "get_object_property",
+                                             vm_ref,
+                                             "config.hardware.device")
+        virtual_disk_attached = 0
+        for device in devices.VirtualDevice:
+            if device.__class__.__name__ == 'VirtualDisk':
+                virtual_disk_attached += 1
+                if virtual_disk_attached > 1:
+                    break
+        return virtual_disk_attached
+
     def cross_vcenter_live_migration(self, context, instance, dest,
                                      post_method, recover_method,
                                      block_migration,
                                      migrate_data, server_data=None):
+
+        if CONF.vmware.cross_migrate_attached_disks == 'False':
+            """
+            If cross_migrate_attached_disks is set to False in nova.conf
+            that means that we have to check for attached volumes and if we
+            found any we will skip the live migration proccess.
+            """
+            attached_disk_migration = self.__validate_attached_disk_migration(
+                instance)
+            if attached_disk_migration > 1:
+                LOG.info("Cross vCenter Live migration not allowed on instance"
+                         " with attached volume", instance=instance)
+                instance.power_state = power_state.RUNNING
+                instance.vm_state = vm_states.ACTIVE
+                instance.task_state = None
+                instance.save()
+                return
+
         LOG.debug("Live migration data %s", migrate_data, instance=instance)
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         cluster_name = migrate_data.cluster_name
@@ -2178,26 +2213,23 @@ class VMwareVMOps(object):
                 for cn in cluster_networks[0]:
                     if hasattr(device, 'macAddress'):
                         if device.backing.port.portgroupKey == cn.value:
-                            portgroup_ref = vutil.get_moref(cn, cn._type)
-                            portgroup = self._session._call_method(vutil,
-                                                                   'get_object_property',
-                                                                   portgroup_ref.value,
-                                                                   'name')
                             dev = self._session.vim.client.factory.create(
                                 'ns0:VirtualDeviceConfigSpec')
                             dev.operation = "edit"
                             dev.device = device
-                            dev.device.backing = self._session.vim.client.factory.create(
-                                'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
-                            dev.device.backing.port = self._session.vim.client.factory.create(
+                            dev.device.backing = self._session.vim.client.\
+                                factory.create(
+                    'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
+                            dev.device.backing.port = self._session.vim.\
+                                client.factory.create(
                                 'ns0:DistributedVirtualSwitchPortConnection')
 
                             for key, portgroup_key in enumerate(
                                     server_data['portgroup_key']):
-                                LOG.debug('KEY: %s' % key)
                                 if server_data['portgroup_name'][
                                     key] == CONF.vmware.default_portgroup:
-                                    dev.device.backing.port.portgroupKey = portgroup_key
+                                    dev.device.backing.port.portgroupKey = \
+                                        portgroup_key
                                     dev.device.backing.port.switchUuid = \
                                     server_data['dvs_uuid'][key]
                                     devices.append(dev)
@@ -2216,7 +2248,8 @@ class VMwareVMOps(object):
             with excutils.save_and_reraise_exception():
                 recover_method(context, instance, dest, block_migration)
         post_method(context, instance, dest, block_migration)
-
+        self.compute_rpcapi = compute_rpcapi.ComputeAPI()
+        self.compute_rpcapi.neutron_bind_port(context, instance, dest)
 
     def get_migrate_service_info(self, migrate_data):
         client_factory = self._session.vim.client.factory

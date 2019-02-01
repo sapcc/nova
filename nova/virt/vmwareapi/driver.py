@@ -18,11 +18,11 @@
 """
 A connection to the VMware vCenter platform.
 """
+import OpenSSL
 import os
 import re
-import ssl
-import OpenSSL
 from six.moves import urllib
+import ssl
 
 from oslo_log import log as logging
 from oslo_utils import excutils
@@ -37,17 +37,16 @@ from oslo_vmware import vim_util
 from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
-from nova import network
-from nova import objects
 import nova.conf
 from nova import exception
 from nova.i18n import _
+from nova import network
+from nova import objects
 from nova.objects import fields as obj_fields
 import nova.privsep.path
 from nova.virt import driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
-from oslo_vmware import vim_util as vutil
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import host
 from nova.virt.vmwareapi import vim_util as nova_vim_util
@@ -299,7 +298,6 @@ class VMwareVCDriver(driver.ComputeDriver):
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
                        migrate_data=None, server_data=None):
-        LOG.debug('POST METHOD ====================================================> %s' % post_method)
         """Live migration of an instance to another host."""
         self._vmops.live_migration(context, instance, dest, post_method,
                                    recover_method, block_migration,
@@ -307,7 +305,6 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def check_can_live_migrate_source(self, context, instance,
                                       dest_check_data, block_device_info=None):
-        LOG.debug('DETACHING VOLUME ==================================================================>')
         bdms = block_device_info['block_device_mapping']
         if not bdms:
             # there are no volumes attached, go ahead
@@ -352,7 +349,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         data.host_ip = CONF.vmware.host_ip
         data.host_username = CONF.vmware.host_username
         data.host_password = CONF.vmware.host_password
-        data.instance_uuid = self._session.vim.service_content.about.instanceUuid
+        data.instance_uuid = self._session.vim.service_content.about.\
+            instanceUuid
         cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
         x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM,
                                                cert)
@@ -365,11 +363,11 @@ class VMwareVCDriver(driver.ComputeDriver):
         data = dict()
         cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
                                                       CONF.vmware.cluster_name)
-        cluster_hosts = self._session._call_method(vutil,
+        cluster_hosts = self._session._call_method(vim_util,
                                                    'get_object_property',
                                                    cluster_ref, 'host')
         LOG.debug("cluster_hosts ")
-        cluster_datastores = self._session._call_method(vutil,
+        cluster_datastores = self._session._call_method(vim_util,
                                                         'get_object_property',
                                                         cluster_ref,
                                                         'datastore')
@@ -380,46 +378,45 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         ds_hosts = None
         for ds in cluster_datastores.ManagedObjectReference:
-            ds_hosts = self._session._call_method(vutil, 'get_object_property',
+            ds_hosts = self._session._call_method(vim_util,
+                                                  'get_object_property',
                                                   ds, 'host')
 
             if ds_hosts:
                 break
-        LOG.debug('HOST =====================================> %s' % data)
         data['datastore'] = cluster_datastores.ManagedObjectReference[0].value
         for ds_host in ds_hosts.DatastoreHostMount:
             if 'host' not in data:
-                LOG.debug('HOST NOT IN DATA : ===============================>')
                 for cluster_host in cluster_hosts.ManagedObjectReference:
                     if ds_host.key.value == cluster_host.value:
-                        if self._check_host_status(cluster_host) == True:
+                        if self._check_host_status(cluster_host) is True:
                             data['host'] = cluster_host.value
                             break
                         else:
                             continue
 
-        networks = self._session._call_method(vutil,
+        networks = self._session._call_method(vim_util,
                                               'get_object_property',
-                                              vutil.get_moref(data['host'],
+                                              vim_util.get_moref(data['host'],
                                                               "HostSystem"),
                                               'network')
 
         data['portgroup_key'] = []
         data['dvs_uuid'] = []
         data['portgroup_name'] = []
-        for network in networks[0]:
-            if network._type != 'Network':
-                net = self._session._call_method(vutil,
+        for found_net in networks[0]:
+            if found_net._type != 'Network':
+                net = self._session._call_method(vim_util,
                                                  'get_object_property',
-                                                 network,
+                                                 found_net,
                                                  'config')
                 if net.name == CONF.vmware.default_portgroup:
                     data['portgroup_key'].append(net.key)
                     data['portgroup_name'].append(net.name)
-                    dvs_uuid = self._session._call_method(vutil,
-                                                          'get_object_property',
-                                                          net.distributedVirtualSwitch,
-                                                          'uuid')
+                    dvs_uuid = self._session._call_method(vim_util,
+                                                  'get_object_property',
+                                                  net.distributedVirtualSwitch,
+                                                  'uuid')
                     data['dvs_uuid'].append(dvs_uuid)
 
         data['networks'] = networks
@@ -435,7 +432,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def _check_host_status(self, host):
         LOG.debug(host)
-        host_status = self._session._call_method(vutil,
+        host_status = self._session._call_method(vim_util,
                                                  'get_object_property',
                                                  host,
                                                  'runtime')
@@ -503,12 +500,12 @@ class VMwareVCDriver(driver.ComputeDriver):
     def get_instance_network(self, instance):
         networks = []
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        vm_networks = self._session._call_method(vutil,
+        vm_networks = self._session._call_method(vim_util,
                                                  'get_object_property',
                                                  vm_ref, 'network')
 
         for vm_net in vm_networks[0]:
-            network = self._session._call_method(vutil,
+            network = self._session._call_method(vim_util,
                                                  'get_object_property',
                                                  vm_net, 'name')
             networks.append(network)

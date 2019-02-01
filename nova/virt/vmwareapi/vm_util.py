@@ -577,6 +577,7 @@ def get_network_detach_config_spec(client_factory, device, port_index):
                                                       port_index)]
     return config_spec
 
+
 def update_vif_spec(client_factory, vif_info, device):
     """Updates the backing for the VIF spec."""
     network_spec = client_factory.create('ns0:VirtualDeviceConfigSpec')
@@ -1032,7 +1033,7 @@ def clone_vm_spec(client_factory, location,
     return clone_spec
 
 
-def relocate_vm_spec(client_factory, service, res_pool=None, datastore=None,
+def relocate_vm_spec(client_factory, service=None, res_pool=None, datastore=None,
                      host=None,
                      disk_move_type="moveAllDiskBackingsAndAllowSharing",
                      devices=None):

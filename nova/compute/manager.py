@@ -98,7 +98,6 @@ from nova.virt import event as virtevent
 from nova.virt import storage_users
 from nova.virt import virtapi
 from nova.volume import cinder
-from nova.virt.vmwareapi import vm_util
 
 CONF = nova.conf.CONF
 
@@ -6189,7 +6188,6 @@ class ComputeManager(manager.Manager):
                                        self._rollback_live_migration,
                                        block_migration, migrate_data,
                                        server_data)
-            self.compute_rpcapi.neutron_bind_port(context, instance, dest)
         except Exception:
             LOG.exception('Live migration failed.', instance=instance)
             with excutils.save_and_reraise_exception():
@@ -6507,7 +6505,6 @@ class ComputeManager(manager.Manager):
     @wrap_instance_fault
     def post_live_migration_at_destination(self, context, instance,
                                            block_migration):
-        LOG.debug('POST - post_live_migration_at_destination ============================================> ')
         """Post operations for live migration .
 
         :param context: security context

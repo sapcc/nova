@@ -270,6 +270,8 @@ class VMwareVolumeOps(object):
             host_mor = vm_util.get_host_ref_for_vm(self._session, instance)
         except exception.InstanceNotFound:
             host_mor = vm_util.get_host_ref(self._session, self._cluster)
+        except oslo_vmw_exceptions.ManagedObjectNotFoundException:
+            host_mor = vm_util.get_host_ref(self._session, self._cluster)
 
         hbas_ret = self._session._call_method(
                                       vutil,
