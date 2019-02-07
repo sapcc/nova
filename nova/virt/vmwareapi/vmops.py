@@ -1459,10 +1459,8 @@ class VMwareVMOps(object):
             if snapshot_ref:
                 self._delete_vm_snapshot(instance, vm_ref, snapshot_ref)
 
-
     def reboot(self, instance, network_info, reboot_type="SOFT"):
         """Reboot a VM instance."""
-
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         props = self._get_instance_props(vm_ref)
