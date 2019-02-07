@@ -34,6 +34,7 @@ from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
 from oslo_utils import strutils
+from oslo_utils import timeutils
 from oslo_utils import units
 from oslo_utils import uuidutils
 from oslo_vmware import exceptions as vexc
@@ -1447,8 +1448,10 @@ class VMwareVMOps(object):
             if snapshot_ref:
                 self._delete_vm_snapshot(instance, vm_ref, snapshot_ref)
 
+
     def reboot(self, instance, network_info, reboot_type="SOFT"):
         """Reboot a VM instance."""
+
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
         props = self._get_instance_props(vm_ref)
@@ -2220,6 +2223,68 @@ class VMwareVMOps(object):
             dc_info = self.get_datacenter_ref_and_name(ds.ref)
             datastores_info.append((ds, dc_info))
         self._imagecache.update(context, instances, datastores_info)
+
+        if CONF.vmware.image_as_template:
+            self._age_cached_image_templates(dc_info, instances)
+
+    def _age_cached_image_templates(self, dc_info, instances):
+        project_ids = set()
+        for inst in instances:
+            project_ids.add(inst.project_id)
+        for project_id in project_ids:
+            folder_ref = self._get_project_folder(dc_info,
+                                                  project_id=project_id,
+                                                  type_='Images')
+            self._destroy_expired_image_templates(self._session, folder_ref)
+
+    def _destroy_expired_image_templates(self, session, templ_vm_folder_ref):
+        client_factory = session.vim.client.factory
+        task_filter_spec = client_factory.create('ns0:TaskFilterSpec')
+        task_filter_spec.entity = client_factory.create(
+                                        'ns0:TaskFilterSpecByEntity')
+        task_filter_spec.entity.entity = templ_vm_folder_ref
+        task_filter_spec.entity.recursion = "children"
+
+        expired_templ_vms = {}
+        try:
+            task_collector = session._call_method(session.vim,
+                                          "CreateCollectorForTasks",
+                                          session.vim.service_content.taskManager,
+                                          filter=task_filter_spec)
+
+            while True:
+                page_tasks = session._call_method(session.vim,
+                                                  "ReadNextTasks",
+                                                  task_collector,
+                                                  maxCount=10)
+                if len(page_tasks) == 0:
+                    break
+
+                for ti in page_tasks:
+                    templ_vm_ref = None
+                    if ti.descriptionId == "VirtualMachine.clone":
+                        templ_vm_ref = ti.entity
+                    elif ti.descriptionId == "Folder.createVm":
+                        templ_vm_ref = ti.result
+
+                    if templ_vm_ref and timeutils.is_older_than(ti.queueTime,
+                            CONF.remove_unused_original_minimum_age_seconds):
+                        expired_templ_vms[templ_vm_ref.value] = templ_vm_ref
+        finally:
+            if task_collector:
+                session._call_method(session.vim,
+                                     "DestroyCollector",
+                                     task_collector)
+
+        for templ_vm_ref in expired_templ_vms.values():
+            try:
+                destroy_task = session._call_method(session.vim,
+                                                    "Destroy_Task",
+                                                    templ_vm_ref)
+                session._wait_for_task(destroy_task)
+            except vexc.ManagedObjectNotFoundException:
+                # already destroyed
+                pass
 
     def _get_valid_vms_from_retrieve_result(self, retrieve_result):
         """Returns list of valid vms from RetrieveResult object."""
