@@ -17,7 +17,6 @@ from oslo_serialization import jsonutils
 from nova import availability_zones
 from nova.compute import utils as compute_utils
 from nova.conductor.tasks import base
-import nova.conf
 from nova import exception
 from nova.i18n import _
 from nova import objects
@@ -26,7 +25,6 @@ from nova.scheduler import utils as scheduler_utils
 
 LOG = logging.getLogger(__name__)
 
-CONF = nova.conf.CONF
 
 def replace_allocation_with_migration(context, instance, migration):
     """Replace instance's allocation with one for a migration.
@@ -182,11 +180,10 @@ class MigrationTask(base.TaskBase):
             scheduler_utils.populate_retry(legacy_props,
                                            self.instance.uuid)
 
-        if not CONF.always_resize_on_same_host:
-            # NOTE(sbauza): Force_hosts/nodes needs to be reset
-            # if we want to make sure that the next destination
-            # is not forced to be the original host
-            self.request_spec.reset_forced_destinations()
+        # NOTE(sbauza): Force_hosts/nodes needs to be reset
+        # if we want to make sure that the next destination
+        # is not forced to be the original host
+        self.request_spec.reset_forced_destinations()
 
         # NOTE(danms): Right now we only support migrate to the same
         # cell as the current instance, so request that the scheduler
