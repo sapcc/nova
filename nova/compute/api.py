@@ -3457,12 +3457,12 @@ class API(base.Base):
         instance.update(extra_instance_updates)
         instance.save(expected_task_state=[None])
 
-        filter_properties = {'ignore_hosts': [], 'force_hosts': []}
+        filter_properties = {'ignore_hosts': []}
 
-        if CONF.always_resize_on_same_host:
-            filter_properties['force_hosts'].append(instance.host)
-        elif not CONF.allow_resize_to_same_host:
+        if not CONF.allow_resize_to_same_host:
             filter_properties['ignore_hosts'].append(instance.host)
+        else:
+            filter_properties['force_nodes'] = [instance.node]
 
         if self.cell_type == 'api':
             # Create migration record.
@@ -3485,7 +3485,6 @@ class API(base.Base):
             request_spec = objects.RequestSpec.get_by_instance_uuid(
                 context, instance.uuid)
             request_spec.ignore_hosts = filter_properties['ignore_hosts']
-            request_spec.force_hosts = filter_properties['force_hosts']
         except exception.RequestSpecNotFound:
             # Some old instances can still have no RequestSpec object attached
             # to them, we need to support the old way
