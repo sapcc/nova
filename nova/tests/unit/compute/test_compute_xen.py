@@ -28,6 +28,7 @@ from nova.virt.xenapi import vm_utils
 class ComputeXenTestCase(stubs.XenAPITestBaseNoDB):
     def setUp(self):
         super(ComputeXenTestCase, self).setUp()
+        CONF.set_override('sync_power_state_interval', 1)
         self.flags(compute_driver='xenapi.XenAPIDriver')
         self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
