@@ -286,9 +286,26 @@ class VMwareVCDriver(driver.ComputeDriver):
                                            network_info,
                                            block_migration=False,
                                            block_device_info=None):
-        pass
+
+        if block_device_info is not None:
+            block_device_mapping = driver.block_device_info_get_mapping(
+                block_device_info)
+            for disk in block_device_mapping:
+                connection_info = disk['connection_info']
+                adapter_type = disk.get('disk_bus')
+                # TODO(hartsocks): instance is unnecessary, remove it
+                # we still use instance in many locations for no other purpose
+                # than logging, can we simplify this?
+                self._volumeops.attach_volume(connection_info,
+                                              instance, adapter_type)
+
+        self._vmops.power_on(instance)
 
     def cleanup_live_migration_destination_check(self, context,
+                                                 dest_check_data):
+        pass
+
+    def cleanup_cold_migration_destination_check(self, context,
                                                  dest_check_data):
         pass
 
@@ -297,14 +314,35 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None, server_data=None):
+                       migrate_data=None, server_data=None,
+                       block_device_info=None):
         """Live migration of an instance to another host."""
         self._vmops.live_migration(context, instance, dest, post_method,
                                    recover_method, block_migration,
                                    migrate_data, server_data)
 
+    def cold_migration_with_volumes(self, context, instance, dest,
+                       post_method, recover_method, block_migration=False,
+                       migrate_data=None, server_data=None,
+                       block_device_info=None):
+        """Live migration of an instance to another host."""
+        self._vmops.cold_migration_with_volumes(context, instance, dest,
+                                                post_method,
+                                   recover_method, block_migration,
+                                   migrate_data, server_data,
+                                                block_device_info)
+
     def check_can_live_migrate_source(self, context, instance,
                                       dest_check_data, block_device_info=None):
+        if block_device_info['block_device_mapping']:
+            msg = _("Cannot live migrate instance with volume attached")
+            raise exception.MigrationPreCheckError(reason=msg)
+        return dest_check_data
+
+    def check_can_cold_migrate_source(self, context, instance,
+                                      dest_check_data, block_device_info=None):
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        self._vmops.power_off(instance)
         bdms = block_device_info['block_device_mapping']
         if not bdms:
             # there are no volumes attached, go ahead
@@ -313,28 +351,40 @@ class VMwareVCDriver(driver.ComputeDriver):
         for bdm in bdms:
             connection_info = bdm['connection_info']
             data = connection_info['data']
-            volume_ref = vim_util.get_moref(data['volume'], 'VirtualMachine')
             hw_devs = self._session._call_method(vim_util,
                                                  "get_object_property",
-                                                 volume_ref,
+                                                 vm_ref,
                                                  "config.hardware.device")
+
             volume_id = data['volume_id']
-            device = vm_util.get_vmdk_volume_disk(hw_devs)
+
+            if hw_devs.__class__.__name__ == "ArrayOfVirtualDevice":
+                hw_devs = hw_devs.VirtualDevice
+
+            for device in hw_devs:
+                if device.__class__.__name__ == "VirtualDisk":
+                   if device.key != 2000:
+                       try:
+                           LOG.debug(
+                               "Detaching volume with id '%s' from its shadow VM",
+                               volume_id, instance=instance)
+                           self._volumeops.detach_disk_from_vm(vm_ref,
+                                                               instance,
+                                                               device)
+                       except Exception as e:
+                           LOG.error(
+                               "Failed to detach volume with id '%s' from its "
+                               "shadow VM: %s", volume_id, e,
+                               instance=instance)
+                           # do not raise the original exception as this will put the
+                           # instance in ERROR state and the operation cannot be retried
+                           raise exception.MigrationPreCheckError(
+                               reason=e.message)
             if device is None:
                 LOG.debug("Volume with id '%s' is already detached from its "
                           "shadow VM", volume_id, instance=instance)
                 continue
-            try:
-                LOG.debug("Detaching volume with id '%s' from its shadow VM",
-                          volume_id, instance=instance)
-                self._volumeops.detach_disk_from_vm(volume_ref, instance,
-                                                    device)
-            except Exception as e:
-                LOG.error("Failed to detach volume with id '%s' from its "
-                          "shadow VM: %s", volume_id, e, instance=instance)
-                # do not raise the original exception as this will put the
-                # instance in ERROR state and the operation cannot be retried
-                raise exception.MigrationPreCheckError(reason=e.message)
+
         return dest_check_data
 
     def check_can_live_migrate_destination(self, context, instance,
@@ -344,6 +394,27 @@ class VMwareVCDriver(driver.ComputeDriver):
         # the information that we need for the destination compute node
         # is the name of its cluster and datastore regex
         data = objects.VMwareLiveMigrateData()
+        data.cluster_name = CONF.vmware.cluster_name
+        data.datastore_regex = CONF.vmware.datastore_regex
+        data.host_ip = CONF.vmware.host_ip
+        data.host_username = CONF.vmware.host_username
+        data.host_password = CONF.vmware.host_password
+        data.instance_uuid = self._session.vim.service_content.about.\
+            instanceUuid
+        cert = ssl.get_server_certificate((CONF.vmware.host_ip, 443))
+        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM,
+                                               cert)
+        data.thumbprint = x509.digest("sha1")
+
+        return data
+
+    def check_can_cold_migrate_destination(self, context, instance,
+                                           src_compute_info, dst_compute_info,
+                                           block_migration=False,
+                                           disk_over_commit=False):
+        # the information that we need for the destination compute node
+        # is the name of its cluster and datastore regex
+        data = objects.VMwareColdMigrateData()
         data.cluster_name = CONF.vmware.cluster_name
         data.datastore_regex = CONF.vmware.datastore_regex
         data.host_ip = CONF.vmware.host_ip

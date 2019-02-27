@@ -5928,6 +5928,48 @@ class ComputeManager(manager.Manager):
     @wrap_exception()
     @wrap_instance_event(prefix='compute')
     @wrap_instance_fault
+    def check_can_cold_migrate_destination(self, ctxt, instance,
+                                           block_migration, disk_over_commit):
+        """Check if it is possible to execute live migration.
+
+        This runs checks on the destination host, and then calls
+        back to the source host to check the results.
+
+        :param context: security context
+        :param instance: dict of instance data
+        :param block_migration: if true, prepare for block migration
+                                if None, calculate it in driver
+        :param disk_over_commit: if true, allow disk over commit
+                                 if None, ignore disk usage checking
+        :returns: a dict containing migration info
+        """
+        return self._do_check_can_cold_migrate_destination(ctxt, instance,
+                                                           block_migration,
+                                                           disk_over_commit)
+
+    def _do_check_can_cold_migrate_destination(self, ctxt, instance,
+                                               block_migration,
+                                               disk_over_commit):
+        src_compute_info = obj_base.obj_to_primitive(
+            self._get_compute_info(ctxt, instance.host))
+        dst_compute_info = obj_base.obj_to_primitive(
+            self._get_compute_info(ctxt, CONF.host))
+        dest_check_data = self.driver.check_can_cold_migrate_destination(ctxt,
+            instance, src_compute_info, dst_compute_info,
+            block_migration, disk_over_commit)
+        LOG.debug('destination check data is %s', dest_check_data)
+        try:
+            migrate_data = self.compute_rpcapi.\
+                                check_can_cold_migrate_source(ctxt, instance,
+                                                              dest_check_data)
+        finally:
+            self.driver.cleanup_cold_migration_destination_check(ctxt,
+                    dest_check_data)
+        return migrate_data
+
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
     def neutron_bind_port(self, context, instance, host):
         self.driver.neutron_bind_port(context, instance, host)
 
@@ -5953,6 +5995,33 @@ class ComputeManager(manager.Manager):
         block_device_info = self._get_instance_block_device_info(
                             ctxt, instance, refresh_conn_info=False, bdms=bdms)
         result = self.driver.check_can_live_migrate_source(ctxt, instance,
+                                                           dest_check_data,
+                                                           block_device_info)
+        LOG.debug('source check data is %s', result)
+        return result
+
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def check_can_cold_migrate_source(self, ctxt, instance, dest_check_data):
+        """Check if it is possible to execute live migration.
+
+        This checks if the cold migration can succeed, based on the
+        results from check_can_cold_migrate_destination.
+
+        :param ctxt: security context
+        :param instance: dict of instance data
+        :param dest_check_data: result of check_can_live_migrate_destination
+        :returns: a dict containing migration info
+        """
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            ctxt, instance.uuid)
+        is_volume_backed = compute_utils.is_volume_backed_instance(
+            ctxt, instance, bdms)
+        dest_check_data.is_volume_backed = is_volume_backed
+        block_device_info = self._get_instance_block_device_info(
+            ctxt, instance, refresh_conn_info=False, bdms=bdms)
+        result = self.driver.check_can_cold_migrate_source(ctxt, instance,
                                                            dest_check_data,
                                                            block_device_info)
         LOG.debug('source check data is %s', result)
@@ -6074,6 +6143,15 @@ class ComputeManager(manager.Manager):
         return migrate_data
 
     @staticmethod
+    def _neutron_failed_cold_migration_callback(event_name, instance):
+        msg = ('Neutron reported failure during cold migration '
+               'with %(event)s for instance %(uuid)s')
+        msg_args = {'event': event_name, 'uuid': instance.uuid}
+        if CONF.vif_plugging_is_fatal:
+            raise exception.VirtualInterfacePlugException(msg % msg_args)
+        LOG.error(msg, msg_args)
+
+    @staticmethod
     def _neutron_failed_live_migration_callback(event_name, instance):
         msg = ('Neutron reported failure during live migration '
                'with %(event)s for instance %(uuid)s')
@@ -6089,6 +6167,18 @@ class ComputeManager(manager.Manager):
         # meaning that the operator disabled using them.
         if (CONF.vif_plugging_timeout and utils.is_neutron() and
                 CONF.compute.live_migration_wait_for_vif_plug):
+            return [('network-vif-plugged', vif['id'])
+                    for vif in instance.get_network_info()]
+        else:
+            return []
+
+    @staticmethod
+    def _get_neutron_events_for_cold_migration(instance):
+        # We don't generate events if CONF.vif_plugging_timeout=0
+        # or if waiting during live migration is disabled,
+        # meaning that the operator disabled using them.
+        if (CONF.vif_plugging_timeout and utils.is_neutron() and
+                CONF.compute.cold_migration_wait_for_vif_plug):
             return [('network-vif-plugged', vif['id'])
                     for vif in instance.get_network_info()]
         else:
@@ -6200,6 +6290,87 @@ class ComputeManager(manager.Manager):
                 self._set_instance_obj_error_state(context, instance,
                                                    clean_task_state=True)
 
+    def _do_cold_migration_with_volumes(self, context, dest, instance,
+                                        block_migration,
+                                        migration, migrate_data):
+        # NOTE(danms): We should enhance the RT to account for migrations
+        # and use the status field to denote when the accounting has been
+        # done on source/destination. For now, this is just here for status
+        # reporting
+        self._set_migration_status(migration, 'preparing')
+        events = self._get_neutron_events_for_cold_migration(instance)
+        try:
+            if ('block_migration' in migrate_data and
+                    migrate_data.block_migration):
+                block_device_info = self._get_instance_block_device_info(
+                    context, instance)
+
+            block_device_info = self._get_instance_block_device_info(
+                context, instance)
+            disk = self.driver.get_instance_disk_info(
+                instance, block_device_info=block_device_info)
+
+            deadline = CONF.vif_plugging_timeout
+            error_cb = self._neutron_failed_cold_migration_callback
+            # In order to avoid a race with the vif plugging that the virt
+            # driver does on the destination host, we register our events
+            # to wait for before calling pre_live_migration.
+            with self.virtapi.wait_for_instance_event(
+                    instance, events, deadline=deadline,
+                    error_callback=error_cb):
+                vm_networks = self.driver.get_instance_network(instance)
+                migrate_data = self.compute_rpcapi.pre_cold_migration(
+                    context, instance,
+                    block_migration, disk, dest, migrate_data, vm_networks)
+        except exception.VirtualInterfacePlugException:
+            with excutils.save_and_reraise_exception():
+                LOG.exception('Failed waiting for network virtual interfaces '
+                              'to be plugged on the destination host %s.',
+                              dest, instance=instance)
+                self._cleanup_pre_live_migration(
+                    context, dest, instance, migration, migrate_data)
+        except eventlet.timeout.Timeout:
+            msg = 'Timed out waiting for events: %s'
+            LOG.warning(msg, events, instance=instance)
+            if CONF.vif_plugging_is_fatal:
+                self._cleanup_pre_live_migration(
+                    context, dest, instance, migration, migrate_data)
+                raise exception.MigrationError(reason=msg % events)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception('Pre live migration failed at %s',
+                              dest, instance=instance)
+                self._cleanup_pre_live_migration(
+                    context, dest, instance, migration, migrate_data)
+
+        server_data = self.compute_rpcapi.get_source_server_data(context,
+                                                                 instance,
+                                                                 dest,
+                                                                 migrate_data)
+
+        self._set_migration_status(migration, 'running')
+
+        if migrate_data:
+            migrate_data.migration = migration
+        LOG.debug('migration data is %s', migrate_data)
+        try:
+            self.driver.cold_migration_with_volumes(context, instance, dest,
+                                       self._post_live_migration,
+                                       self._rollback_live_migration,
+                                       block_migration, migrate_data,
+                                       server_data)
+        except Exception:
+            LOG.exception('Migration failed.', instance=instance)
+            with excutils.save_and_reraise_exception():
+                # Put instance and migration into error state,
+                # as its almost certainly too late to rollback
+                self._set_migration_status(migration, 'error')
+                # first refresh instance as it may have got updated by
+                # post_live_migration_at_destination
+                instance.refresh()
+                self._set_instance_obj_error_state(context, instance,
+                                                   clean_task_state=True)
+
     @wrap_exception()
     @wrap_instance_event(prefix='compute')
     @wrap_instance_fault
@@ -6228,6 +6399,35 @@ class ComputeManager(manager.Manager):
                       context, dest, instance,
                       block_migration, migration,
                       migrate_data)
+
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def cold_migration_with_volumes(self, context, dest, instance,
+                                    block_migration, migration, migrate_data):
+        """Executing live migration.
+
+        :param context: security context
+        :param dest: destination host
+        :param instance: a nova.objects.instance.Instance object
+        :param block_migration: if true, prepare for block migration
+        :param migration: an nova.objects.Migration object
+        :param migrate_data: implementation specific params
+
+        """
+        self._set_migration_status(migration, 'queued')
+
+        def dispatch_cold_migration_with_volumes(*args, **kwargs):
+            with self._live_migration_semaphore:
+                self._do_cold_migration_with_volumes(*args, **kwargs)
+
+        # NOTE(danms): We spawn here to return the RPC worker thread back to
+        # the pool. Since what follows could take a really long time, we don't
+        # want to tie up RPC workers.
+        self.instance_running_pool.spawn_n(dispatch_cold_migration_with_volumes,
+                                           context, dest, instance,
+                                           block_migration, migration,
+                                           migrate_data)
 
     @wrap_exception()
     @wrap_instance_event(prefix='compute')
@@ -6382,6 +6582,7 @@ class ComputeManager(manager.Manager):
                                    '%s', bdm.volume_id, self.host,
                                    six.text_type(e), instance=instance)
                     else:
+                        old_attachment_id = None
                         LOG.error('Volume attachment %s not deleted on source '
                                   'host %s during post_live_migration: %s',
                                   old_attachment_id, self.host,

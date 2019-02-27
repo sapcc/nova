@@ -280,6 +280,10 @@ class ComputeTaskManager(base.Base):
         if live and not rebuild and not flavor:
             self._live_migrate(context, instance, scheduler_hint,
                                block_migration, disk_over_commit, request_spec)
+        elif not live and flavor.name == instance.flavor.name:
+            self._cold_migrate_with_volumes(context, instance, scheduler_hint,
+                               block_migration, disk_over_commit, request_spec)
+
         elif not live and not rebuild and flavor:
             instance_uuid = instance.uuid
             with compute_utils.EventReporter(context, 'cold_migrate',
@@ -290,6 +294,79 @@ class ComputeTaskManager(base.Base):
                                    host_list)
         else:
             raise NotImplementedError()
+
+    def _cold_migrate_with_volumes(self, context, instance, scheduler_hint,
+                      block_migration, disk_over_commit, request_spec):
+        destination = scheduler_hint.get("host")
+
+        def _set_vm_state(context, instance, ex, vm_state=None,
+                          task_state=None):
+            request_spec = {'instance_properties': {
+                'uuid': instance.uuid, },
+            }
+            scheduler_utils.set_vm_state_and_notify(context,
+                instance.uuid,
+                'compute_task', 'migrate_server',
+                dict(vm_state=vm_state,
+                     task_state=task_state,
+                     expected_task_state=task_states.MIGRATING,),
+                ex, request_spec)
+
+        migration = self._get_migration_obj(context, instance, destination, "migration")
+        task = self._build_cold_migrate_with_volumes_task(context, instance,
+                                                          destination,
+                                             block_migration, disk_over_commit,
+                                             migration, request_spec)
+        try:
+            task.execute()
+        except (exception.NoValidHost,
+                exception.ComputeHostNotFound,
+                exception.ComputeServiceUnavailable,
+                exception.InvalidHypervisorType,
+                exception.InvalidCPUInfo,
+                exception.UnableToMigrateToSelf,
+                exception.DestinationHypervisorTooOld,
+                exception.InvalidLocalStorage,
+                exception.InvalidSharedStorage,
+                exception.HypervisorUnavailable,
+                exception.InstanceInvalidState,
+                exception.MigrationPreCheckError,
+                exception.MigrationPreCheckClientException,
+                exception.MigrationSchedulerRPCError) as ex:
+            with excutils.save_and_reraise_exception():
+                # TODO(johngarbutt) - eventually need instance actions here
+                _set_vm_state(context, instance, ex, instance.vm_state)
+                migration.status = 'error'
+                migration.save()
+        except Exception as ex:
+            LOG.error('Migration of instance %(instance_id)s to host'
+                      ' %(dest)s unexpectedly failed.',
+                      {'instance_id': instance.uuid, 'dest': destination},
+                      exc_info=True)
+            # Reset the task state to None to indicate completion of
+            # the operation as it is done in case of known exceptions.
+            _set_vm_state(context, instance, ex, vm_states.ERROR,
+                          task_state=None)
+            migration.status = 'error'
+            migration.save()
+            raise exception.MigrationError(reason=six.text_type(ex))
+
+    def _get_migration_obj(self, context, instance, destination, migration_type):
+        migration = objects.Migration(context=context.elevated())
+        migration.dest_compute = destination
+        migration.status = 'accepted'
+        migration.instance_uuid = instance.uuid
+        migration.source_compute = instance.host
+        migration.migration_type = migration_type
+        if instance.obj_attr_is_set('flavor'):
+            migration.old_instance_type_id = instance.flavor.id
+            migration.new_instance_type_id = instance.flavor.id
+        else:
+            migration.old_instance_type_id = instance.instance_type_id
+            migration.new_instance_type_id = instance.instance_type_id
+        migration.create()
+
+        return migration
 
     def _cold_migrate(self, context, instance, flavor, filter_properties,
                       clean_shutdown, request_spec, host_list):
@@ -404,19 +481,8 @@ class ComputeTaskManager(base.Base):
                      expected_task_state=task_states.MIGRATING,),
                 ex, request_spec)
 
-        migration = objects.Migration(context=context.elevated())
-        migration.dest_compute = destination
-        migration.status = 'accepted'
-        migration.instance_uuid = instance.uuid
-        migration.source_compute = instance.host
-        migration.migration_type = 'live-migration'
-        if instance.obj_attr_is_set('flavor'):
-            migration.old_instance_type_id = instance.flavor.id
-            migration.new_instance_type_id = instance.flavor.id
-        else:
-            migration.old_instance_type_id = instance.instance_type_id
-            migration.new_instance_type_id = instance.instance_type_id
-        migration.create()
+        migration = self._get_migration_obj(context, instance, destination,
+                                               "live-migration")
 
         task = self._build_live_migrate_task(context, instance, destination,
                                              block_migration, disk_over_commit,
@@ -460,6 +526,18 @@ class ComputeTaskManager(base.Base):
                                  block_migration, disk_over_commit, migration,
                                  request_spec=None):
         return live_migrate.LiveMigrationTask(context, instance,
+                                              destination, block_migration,
+                                              disk_over_commit, migration,
+                                              self.compute_rpcapi,
+                                              self.servicegroup_api,
+                                              self.scheduler_client,
+                                              request_spec)
+
+    def _build_cold_migrate_with_volumes_task(self, context, instance,
+                                              destination,
+                                 block_migration, disk_over_commit, migration,
+                                 request_spec=None):
+        return migrate.MigrateWithVolumeTask(context, instance,
                                               destination, block_migration,
                                               disk_over_commit, migration,
                                               self.compute_rpcapi,

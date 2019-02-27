@@ -3390,6 +3390,7 @@ class API(base.Base):
         host_name is always None in the resize case.
         host_name can be set in the cold migration case only.
         """
+
         if host_name is not None:
             # Cannot migrate to the host where the instance exists
             # because it is useless.
@@ -3447,7 +3448,12 @@ class API(base.Base):
                                          current_instance_type,
                                          new_instance_type)
 
-        instance.task_state = task_states.RESIZE_PREP
+        if current_instance_type_name == new_instance_type_name and \
+                host_name != instance.host:
+            instance.task_state = task_states.MIGRATING
+        else:
+            instance.task_state = task_states.RESIZE_PREP
+
         instance.progress = 0
         instance.update(extra_instance_updates)
         instance.save(expected_task_state=[None])

@@ -525,6 +525,34 @@ class ComputeAPI(object):
         else:
             return result
 
+    def check_can_cold_migrate_destination(self, ctxt, instance, destination,
+                                           block_migration, disk_over_commit):
+        version = self._ver(ctxt, '4.11')
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            # NOTE(eliqiao): This is a new feature that is only available
+            # once all compute nodes support at least version 4.11.
+            # This means the new REST API that supports this needs to handle
+            # this exception correctly. This can all be removed when we bump
+            # the major version of this RPC API.
+            if block_migration is None or disk_over_commit is None:
+                raise exception.LiveMigrationWithOldNovaNotSupported()
+            else:
+                version = '4.0'
+
+        cctxt = client.prepare(server=destination, version=version)
+        result = cctxt.call(ctxt, 'check_can_cold_migrate_destination',
+                            instance=instance,
+                            block_migration=block_migration,
+                            disk_over_commit=disk_over_commit)
+        if isinstance(result, migrate_data_obj.VMwareColdMigrateData):
+            return result
+        elif result:
+            return migrate_data_obj.VMwareColdMigrateData.detect_implementation(
+                result)
+        else:
+            return result
+
     def check_can_live_migrate_source(self, ctxt, instance, dest_check_data):
         dest_check_data_obj = dest_check_data
         version = self._ver(ctxt, '4.8')
@@ -539,6 +567,27 @@ class ComputeAPI(object):
                             instance=instance,
                             dest_check_data=dest_check_data)
         if isinstance(result, migrate_data_obj.LiveMigrateData):
+            return result
+        elif dest_check_data_obj and result:
+            dest_check_data_obj.from_legacy_dict(result)
+            return dest_check_data_obj
+        else:
+            return result
+
+    def check_can_cold_migrate_source(self, ctxt, instance, dest_check_data):
+        dest_check_data_obj = dest_check_data
+        version = self._ver(ctxt, '4.8')
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            version = '4.0'
+            if dest_check_data:
+                dest_check_data = dest_check_data.to_legacy_dict()
+        source = _compute_host(None, instance)
+        cctxt = client.prepare(server=source, version=version)
+        result = cctxt.call(ctxt, 'check_can_cold_migrate_source',
+                            instance=instance,
+                            dest_check_data=dest_check_data)
+        if isinstance(result, migrate_data_obj.VMwareColdMigrateData):
             return result
         elif dest_check_data_obj and result:
             dest_check_data_obj.from_legacy_dict(result)
@@ -763,6 +812,25 @@ class ComputeAPI(object):
                    dest=dest, block_migration=block_migration,
                    migrate_data=migrate_data, **args)
 
+    def cold_migration_with_volumes(self, ctxt, instance, dest,
+                                    block_migration, host,
+                                    migration, migrate_data=None):
+        args = {'migration': migration}
+        version = self._ver(ctxt, '4.8')
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            version = '4.2'
+            if migrate_data:
+                migrate_data = migrate_data.to_legacy_dict(
+                    pre_migration_result=True)
+        if not client.can_send_version(version):
+            version = '4.0'
+            args.pop('migration')
+        cctxt = client.prepare(server=host, version=version)
+        cctxt.cast(ctxt, 'cold_migration_with_volumes', instance=instance,
+                   dest=dest, block_migration=block_migration,
+                   migrate_data=migrate_data, **args)
+
     def live_migration_force_complete(self, ctxt, instance, migration):
         version = self._ver(ctxt, '4.12')
         kwargs = {}
@@ -813,6 +881,30 @@ class ComputeAPI(object):
                             disk=disk, migrate_data=migrate_data,
                             vm_networks=vm_networks)
         if isinstance(result, migrate_data_obj.LiveMigrateData):
+            return result
+        elif migrate_data_orig and result:
+            migrate_data_orig.from_legacy_dict(
+                {'pre_live_migration_result': result})
+            return migrate_data_orig
+        else:
+            return result
+
+    def pre_cold_migration(self, ctxt, instance, block_migration, disk,
+            host, migrate_data=None, vm_networks=None):
+        migrate_data_orig = migrate_data
+        version = self._ver(ctxt, '4.8')
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            version = '4.0'
+            if migrate_data:
+                migrate_data = migrate_data.to_legacy_dict()
+        cctxt = client.prepare(server=host, version=version)
+        result = cctxt.call(ctxt, 'pre_live_migration',
+                            instance=instance,
+                            block_migration=block_migration,
+                            disk=disk, migrate_data=migrate_data,
+                            vm_networks=vm_networks)
+        if isinstance(result, migrate_data_obj.VMwareColdMigrateData):
             return result
         elif migrate_data_orig and result:
             migrate_data_orig.from_legacy_dict(

@@ -719,6 +719,13 @@ Related options:
   failing if ``vif_plugging_is_fatal`` is True, or simply continuing with the
   live migration
 """),
+    cfg.BoolOpt('cold_migration_wait_for_vif_plug',
+        # TODO(mriedem): Change to default=True starting in Stein.
+        default=False,
+        help="""
+Determine if the source compute host should wait for a ``network-vif-plugged``
+event from the (neutron) networking service before starting the actual transfer
+of the guest to the destination compute host.
 ]
 
 interval_opts = [
