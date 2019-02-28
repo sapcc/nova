@@ -380,24 +380,25 @@ class VMwareVCDriver(driver.ComputeDriver):
 
             for device in hw_devs:
                 if device.__class__.__name__ == "VirtualDisk":
-                   if device.key != 2000:
-                       try:
-                           LOG.debug(
-                           "Detaching volume with id '%s' from its shadow VM",
-                           volume_id, instance=instance)
-                           self._volumeops.detach_disk_from_vm(vm_ref,
-                                                               instance,
-                                                               device)
-                       except Exception as e:
-                           LOG.error(
-                               "Failed to detach volume with id '%s' from its "
-                               "shadow VM: %s", volume_id, e,
-                               instance=instance)
-                           # do not raise the original exception as this will
-                           # put the instance in ERROR state and the operation
-                           # cannot be retried
-                           raise exception.MigrationPreCheckError(
-                               reason=e.message)
+                    if device.key != 2000:
+                        try:
+                            LOG.debug(
+                            "Detaching volume with id '%s' from its shadow VM",
+                            volume_id, instance=instance)
+                            self._volumeops.detach_disk_from_vm(vm_ref,
+                                                                instance,
+                                                                device)
+                        except Exception as e:
+                            LOG.error(
+                                "Failed to detach volume with id '%s' from its"
+                                " shadow VM: %s", volume_id, e,
+                                instance=instance)
+                            # do not raise the original exception as this will
+                            # put the instance in ERROR state and the operation
+                            # cannot be retried
+                            raise exception.MigrationPreCheckError(
+                                reason=e.message)
+
             if device is None:
                 LOG.debug("Volume with id '%s' is already detached from its "
                           "shadow VM", volume_id, instance=instance)

@@ -6159,8 +6159,8 @@ class ComputeManager(manager.Manager):
         :param instance: dict of instance data
         :param block_migration: if true, prepare for block migration
         :param disk: disk info of instance
-        :param migrate_data: A dict or VMwareColdMigrateData object holding data
-                             required for cold migration without shared
+        :param migrate_data: A dict or VMwareColdMigrateData object holding
+                             data required for cold migration without shared
                              storage.
         :returns: migrate_data containing additional migration info
         """
@@ -6263,7 +6263,6 @@ class ComputeManager(manager.Manager):
         LOG.debug('pre_cold_migration result data is %s', migrate_data)
         return migrate_data
 
-
     @staticmethod
     def _neutron_failed_cold_migration_callback(event_name, instance):
         msg = ('Neutron reported failure during cold migration '
@@ -6353,33 +6352,6 @@ class ComputeManager(manager.Manager):
         """
         self._set_migration_status(migration, 'error')
         # Make sure we set this for _rollback_cold_migration()
-        # so it can find it, as expected if it was called later
-        migrate_data.migration = migration
-        self._rollback_cold_migration(context, instance, dest,
-                                      migrate_data)
-
-
-    def _cleanup_pre_cold_migration(self, context, dest, instance,
-                                    migration, migrate_data):
-        """Helper method for when pre_cold_migration fails
-
-        Sets the migration status to "error" and rolls back the live migration
-        setup on the destination host.
-
-        :param context: The user request context.
-        :type context: nova.context.RequestContext
-        :param dest: The live migration destination hostname.
-        :type dest: str
-        :param instance: The instance being live migrated.
-        :type instance: nova.objects.Instance
-        :param migration: The migration record tracking this live migration.
-        :type migration: nova.objects.Migration
-        :param migrate_data: Data about the cold migration, populated from
-                             the destination host.
-        :type migrate_data: Subclass of nova.objects.VMwareColdMigrateData
-        """
-        self._set_migration_status(migration, 'error')
-        # Make sure we set this for _rollback_live_migration()
         # so it can find it, as expected if it was called later
         migrate_data.migration = migration
         self._rollback_cold_migration(context, instance, dest,
@@ -6599,10 +6571,11 @@ class ComputeManager(manager.Manager):
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
-        self.instance_running_pool.spawn_n(dispatch_cold_migration_with_volumes,
-                                           context, dest, instance,
-                                           block_migration, migration,
-                                           migrate_data)
+        self.instance_running_pool.spawn_n(
+                                       dispatch_cold_migration_with_volumes,
+                                       context, dest, instance,
+                                       block_migration, migration,
+                                       migrate_data)
 
     @wrap_exception()
     @wrap_instance_event(prefix='compute')

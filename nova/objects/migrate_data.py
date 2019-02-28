@@ -399,6 +399,7 @@ class VMwareLiveMigrateData(LiveMigrateData):
         'target_bridge_name': fields.ListOfStringsField(nullable=False)
     }
 
+
 @obj_base.NovaObjectRegistry.register
 class VMwareColdMigrateData(LiveMigrateData):
     VERSION = '1.2'

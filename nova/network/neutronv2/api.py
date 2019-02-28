@@ -2193,7 +2193,7 @@ class API(base_api.NetworkAPI):
 
     def migrate_instance_finish(self, context, instance, migration):
         """Finish migrating the network of an instance."""
-        if not 'dest_compute' in migration:
+        if 'dest_compute' not in migration:
             migration = {'source_compute': instance.host,
                          'dest_compute': migration, }
         self._update_port_binding_for_instance(context, instance,

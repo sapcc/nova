@@ -548,8 +548,8 @@ class ComputeAPI(object):
         if isinstance(result, migrate_data_obj.VMwareColdMigrateData):
             return result
         elif result:
-            return migrate_data_obj.VMwareColdMigrateData.detect_implementation(
-                result)
+            return migrate_data_obj.VMwareColdMigrateData.\
+                detect_implementation(result)
         else:
             return result
 

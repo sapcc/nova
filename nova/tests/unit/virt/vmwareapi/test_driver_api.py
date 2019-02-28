@@ -2507,6 +2507,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                                                              None)
             mock_destroy.assert_called_once_with(self.context,
                                                  "instance", [], None)
+
     def test_post_live_migration(self):
         self.assertIsNone(self.conn.post_live_migration(self.context,
             'fake_instance', 'fake_block_device_info'))

@@ -43,6 +43,7 @@ from oslo_vmware import vim_util as vutil
 from nova.api.metadata import base as instance_metadata
 from nova import compute
 from nova.compute import power_state
+from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import vm_states
 import nova.conf
@@ -66,7 +67,6 @@ from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
-from nova.compute import rpcapi as compute_rpcapi
 
 CONF = nova.conf.CONF
 
@@ -1867,7 +1867,6 @@ class VMwareVMOps(object):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
-        LOG.debug("DESTINATION ===========================================> %s" % dest)
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                      uuid=instance.uuid)

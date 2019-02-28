@@ -1033,7 +1033,8 @@ def clone_vm_spec(client_factory, location,
     return clone_spec
 
 
-def relocate_vm_spec(client_factory, service=None, res_pool=None, datastore=None,
+def relocate_vm_spec(client_factory, service=None, res_pool=None,
+                     datastore=None,
                      host=None,
                      disk_move_type="moveAllDiskBackingsAndAllowSharing",
                      devices=None):

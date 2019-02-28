@@ -1849,7 +1849,7 @@ class ComputeDriver(object):
         return instance.get('host')
 
     def neutron_bind_port(self, context, instance, host):
-        """ Rpc call to the target vCenter for binding neutron port.
+        """Rpc call to the target vCenter for binding neutron port.
 
         :param context: security context
         :param instance: nova.objects.Instance

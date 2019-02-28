@@ -312,7 +312,8 @@ class ComputeTaskManager(base.Base):
                      expected_task_state=task_states.MIGRATING,),
                 ex, request_spec)
 
-        migration = self._get_migration_obj(context, instance, destination, "migration")
+        migration = self._get_migration_obj(context, instance, destination,
+                                                               "migration")
         task = self._build_cold_migrate_with_volumes_task(context, instance,
                                                           destination,
                                              block_migration, disk_over_commit,
@@ -351,7 +352,8 @@ class ComputeTaskManager(base.Base):
             migration.save()
             raise exception.MigrationError(reason=six.text_type(ex))
 
-    def _get_migration_obj(self, context, instance, destination, migration_type):
+    def _get_migration_obj(self, context, instance, destination,
+                                                migration_type):
         migration = objects.Migration(context=context.elevated())
         migration.dest_compute = destination
         migration.status = 'accepted'

@@ -10,13 +10,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from oslo_log import log as logging
-from oslo_serialization import jsonutils
-import oslo_messaging as messaging
-import six
 import nova.conf
-from nova.compute import power_state
+import six
+
 from nova import availability_zones
+from nova.compute import power_state
 from nova.conductor.tasks import base
 from nova import exception
 from nova.i18n import _
@@ -25,8 +23,13 @@ from nova.scheduler import client as scheduler_client
 from nova.scheduler import utils as scheduler_utils
 from nova import utils
 
+from oslo_log import log as logging
+import oslo_messaging as messaging
+from oslo_serialization import jsonutils
+
 LOG = logging.getLogger(__name__)
 CONF = nova.conf.CONF
+
 
 def replace_allocation_with_migration(context, instance, migration):
     """Replace instance's allocation with one for a migration.
@@ -322,6 +325,7 @@ class MigrationTask(base.TaskBase):
         revert_allocation_for_migration(self.context, self._source_cn,
                                         self.instance, self._migration,
                                         self._held_allocations)
+
 
 class MigrateWithVolumeTask(base.TaskBase):
     def __init__(self, context, instance, destination,
