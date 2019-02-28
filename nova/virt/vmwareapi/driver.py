@@ -31,10 +31,11 @@ from oslo_vmware import exceptions as vexc
 from oslo_vmware import pbm
 from oslo_vmware import vim
 from oslo_vmware import vim_util
-from nova.compute import vm_states
+
 from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
+from nova.compute import vm_states
 import nova.conf
 from nova import exception
 from nova.i18n import _
