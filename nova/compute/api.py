@@ -3413,8 +3413,9 @@ class API(base.Base):
             if CONF.always_resize_on_same_host:
                 LOG.info('Setting resize to the same host')
                 host_name = instance.host
-                node = objects.ComputeNode.get_first_node_by_host_for_old_compat(
-                    context, host_name, use_slave=True)
+                node = (
+                    objects.ComputeNode.get_first_node_by_host_for_old_compat(
+                        context, host_name, use_slave=True))
             new_instance_type = flavors.get_flavor_by_flavor_id(
                     flavor_id, read_deleted="no")
             if (new_instance_type.get('root_gb') == 0 and
@@ -3499,6 +3500,7 @@ class API(base.Base):
         # resource consumption for this operation is written to the database
         # by compute.
         scheduler_hint = {'filter_properties': filter_properties}
+
         if request_spec:
             if host_name is None:
                 # If 'host_name' is not specified,
@@ -3513,7 +3515,6 @@ class API(base.Base):
                 # that is clear to the caller.
                 request_spec.requested_destination = objects.Destination(
                     host=node.host, node=node.hypervisor_hostname)
-
 
         self.compute_task_api.resize_instance(context, instance,
                 extra_instance_updates, scheduler_hint=scheduler_hint,

@@ -15,7 +15,6 @@ from oslo_serialization import jsonutils
 
 from nova import availability_zones
 from nova.conductor.tasks import base
-import nova.conf
 from nova import exception
 from nova.i18n import _
 from nova import objects
@@ -24,7 +23,6 @@ from nova.scheduler import utils as scheduler_utils
 
 LOG = logging.getLogger(__name__)
 
-CONF = nova.conf.CONF
 
 def replace_allocation_with_migration(context, instance, migration):
     """Replace instance's allocation with one for a migration.

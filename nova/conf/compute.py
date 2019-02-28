@@ -57,7 +57,7 @@ cfg.BoolOpt('always_resize_on_same_host',
         default=False,
         help="""
 This flag prevents instance to be moved to another compute node
-during resize of an instance. 
+during resize of an instance.
 """),
     cfg.ListOpt('non_inheritable_image_properties',
         default=['cache_in_nova', 'bittorrent',
