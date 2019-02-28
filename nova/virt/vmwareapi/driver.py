@@ -279,10 +279,28 @@ class VMwareVCDriver(driver.ComputeDriver):
                            network_info, disk_info, migrate_data):
         return migrate_data
 
+    def pre_cold_migration(self, context, instance, block_device_info,
+                           network_info, disk_info, migrate_data):
+        return migrate_data
+
+    def post_cold_migration(self, context, instance, block_device_info,
+                            migrate_data):
+        pass
+
     def post_live_migration_at_source(self, context, instance, network_info):
         pass
 
+    def post_cold_migration_at_source(self, context, instance, network_info):
+        pass
+
     def post_live_migration_at_destination(self, context, instance,
+                                           network_info,
+                                           block_migration=False,
+                                           block_device_info=None):
+
+        pass
+
+    def post_cold_migration_at_destination(self, context, instance,
                                            network_info,
                                            block_migration=False,
                                            block_device_info=None):
@@ -314,8 +332,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None, server_data=None,
-                       block_device_info=None):
+                       migrate_data=None, server_data=None):
         """Live migration of an instance to another host."""
         self._vmops.live_migration(context, instance, dest, post_method,
                                    recover_method, block_migration,
@@ -327,10 +344,10 @@ class VMwareVCDriver(driver.ComputeDriver):
                        block_device_info=None):
         """Live migration of an instance to another host."""
         self._vmops.cold_migration_with_volumes(context, instance, dest,
-                                                post_method,
-                                   recover_method, block_migration,
-                                   migrate_data, server_data,
-                                                block_device_info)
+                                            post_method,
+                                            recover_method, block_migration,
+                                            migrate_data, server_data,
+                                            block_device_info)
 
     def check_can_live_migrate_source(self, context, instance,
                                       dest_check_data, block_device_info=None):
@@ -366,8 +383,8 @@ class VMwareVCDriver(driver.ComputeDriver):
                    if device.key != 2000:
                        try:
                            LOG.debug(
-                               "Detaching volume with id '%s' from its shadow VM",
-                               volume_id, instance=instance)
+                           "Detaching volume with id '%s' from its shadow VM",
+                           volume_id, instance=instance)
                            self._volumeops.detach_disk_from_vm(vm_ref,
                                                                instance,
                                                                device)
@@ -376,8 +393,9 @@ class VMwareVCDriver(driver.ComputeDriver):
                                "Failed to detach volume with id '%s' from its "
                                "shadow VM: %s", volume_id, e,
                                instance=instance)
-                           # do not raise the original exception as this will put the
-                           # instance in ERROR state and the operation cannot be retried
+                           # do not raise the original exception as this will
+                           # put the instance in ERROR state and the operation
+                           # cannot be retried
                            raise exception.MigrationPreCheckError(
                                reason=e.message)
             if device is None:
@@ -524,6 +542,14 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Clean up destination node after a failed live migration."""
         self.destroy(context, instance, network_info, block_device_info)
 
+    def rollback_cold_migration_at_destination(self, context, instance,
+                                               network_info,
+                                               block_device_info,
+                                               destroy_disks=True,
+                                               migrate_data=None):
+        """Clean up destination node after a failed live migration."""
+        self.destroy(context, instance, network_info, block_device_info)
+
     def get_instance_disk_info(self, instance, block_device_info=None):
         pass
 
@@ -619,7 +645,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                'numa_topology': None,
                }
 
-    def get_available_resource(self, nodename=None):
+    def get_available_resource(self, nodename):
         """Retrieve resource info.
 
         This method is called when nova-compute launches, and

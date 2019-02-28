@@ -2145,7 +2145,6 @@ class VMwareVMOps(object):
     def cold_migration_with_volumes(self, context, instance, dest,
                        post_method, recover_method, block_migration,
                        migrate_data, server_data=None, block_device_info=None):
-            LOG.debug("COLD MIGRATION POST METHOD =================================> %s" % post_method)
             LOG.debug("Cold migration data %s", migrate_data,
                       instance=instance)
             self.migrate(context, instance, dest,

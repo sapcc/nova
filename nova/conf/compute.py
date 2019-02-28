@@ -594,6 +594,21 @@ Possible values:
 * Any positive integer representing maximum number of live migrations
   to run concurrently.
 """),
+    cfg.IntOpt('max_concurrent_cold_migrations',
+        default=1,
+        help="""
+Maximum number of cold migrations to run concurrently. This limit is enforced
+to avoid outbound cold migrations overwhelming the host/network and causing
+failures. It is not recommended that you change this unless you are very sure
+that doing so is safe and stable in your environment.
+
+Possible values:
+
+* 0 : treated as unlimited.
+* Negative value defaults to 0.
+* Any positive integer representing maximum number of cold migrations
+  to run concurrently.
+"""),
     cfg.IntOpt('max_concurrent_builds_per_project',
                default=0,
                help="""
@@ -725,7 +740,7 @@ Related options:
         help="""
 Determine if the source compute host should wait for a ``network-vif-plugged``
 event from the (neutron) networking service before starting the actual transfer
-of the guest to the destination compute host.
+of the guest to the destination compute host.""")
 ]
 
 interval_opts = [

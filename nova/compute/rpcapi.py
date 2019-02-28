@@ -865,6 +865,14 @@ class ComputeAPI(object):
         return cctxt.call(ctxt, 'post_live_migration_at_destination',
             instance=instance, block_migration=block_migration)
 
+    def post_cold_migration_at_destination(self, ctxt, instance,
+            block_migration, host):
+        version = self._ver(ctxt, '4.0')
+        cctxt = self.router.client(ctxt).prepare(
+                server=host, version=version)
+        return cctxt.call(ctxt, 'post_cold_migration_at_destination',
+            instance=instance, block_migration=block_migration)
+
     def pre_live_migration(self, ctxt, instance, block_migration, disk,
             host, migrate_data=None, vm_networks=None):
         migrate_data_orig = migrate_data
@@ -899,7 +907,7 @@ class ComputeAPI(object):
             if migrate_data:
                 migrate_data = migrate_data.to_legacy_dict()
         cctxt = client.prepare(server=host, version=version)
-        result = cctxt.call(ctxt, 'pre_live_migration',
+        result = cctxt.call(ctxt, 'pre_cold_migration',
                             instance=instance,
                             block_migration=block_migration,
                             disk=disk, migrate_data=migrate_data,
@@ -908,7 +916,7 @@ class ComputeAPI(object):
             return result
         elif migrate_data_orig and result:
             migrate_data_orig.from_legacy_dict(
-                {'pre_live_migration_result': result})
+                {'pre_cold_migration_result': result})
             return migrate_data_orig
         else:
             return result
@@ -1098,6 +1106,22 @@ class ComputeAPI(object):
         }
         cctxt = client.prepare(server=host, version=version)
         cctxt.cast(ctxt, 'rollback_live_migration_at_destination',
+                   instance=instance, **extra)
+
+    def rollback_cold_migration_at_destination(self, ctxt, instance, host,
+                                               destroy_disks=True,
+                                               migrate_data=None):
+        version = self._ver(ctxt, '4.8')
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            version = '4.0'
+            if migrate_data:
+                migrate_data = migrate_data.to_legacy_dict()
+        extra = {'destroy_disks': destroy_disks,
+                 'migrate_data': migrate_data,
+        }
+        cctxt = client.prepare(server=host, version=version)
+        cctxt.cast(ctxt, 'rollback_cold_migration_at_destination',
                    instance=instance, **extra)
 
     def set_admin_password(self, ctxt, instance, new_pass):

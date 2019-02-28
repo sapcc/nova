@@ -877,7 +877,7 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
-    def get_available_resource(self, nodename=None):
+    def get_available_resource(self, nodename):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and
@@ -1001,6 +1001,113 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def pre_cold_migration(self, context, instance, block_device_info,
+                           network_info, disk_info, migrate_data):
+        """Prepare an instance for cold migration
+
+        :param context: security context
+        :param instance: nova.objects.instance.Instance object
+        :param block_device_info: instance block device information
+        :param network_info: instance network information
+        :param disk_info: instance disk information
+        :param migrate_data: a LiveMigrateData object
+        :returns: migrate_data modified by the driver
+        """
+        raise NotImplementedError()
+
+    def cold_migration_with_volumes(self, context, instance, dest,
+                           post_method, recover_method, block_migration=False,
+                           migrate_data=None, server_data=None,
+                           block_device_info=None):
+        """Cold migration of an instance with volumes attached to another host.
+
+        :param context: security context
+        :param instance:
+            nova.db.sqlalchemy.models.Instance object
+            instance object that is migrated.
+        :param dest: destination host
+        :param post_method:
+            post operation method.
+            expected nova.compute.manager._post_cold_migration.
+        :param recover_method:
+            recovery method when any exception occurs.
+            expected nova.compute.manager._rollback_cold_migration.
+        :param block_migration: if true, migrate VM disk.
+        :param migrate_data: a LiveMigrateData object
+        :param server_data: dict info about target compute node
+        :param block_device_info: instance block device information
+
+        """
+        raise NotImplementedError()
+
+    def cold_migration_force_complete(self, instance):
+        """Force cold migration to complete
+
+        :param instance: Instance being cold migrated
+
+        """
+        raise NotImplementedError()
+
+    def cold_migration_abort(self, instance):
+        """Abort an in-progress cold migration.
+
+        :param instance: instance that is cold migrating
+
+        """
+        raise NotImplementedError()
+
+    def rollback_cold_migration_at_destination(self, context, instance,
+                                               network_info,
+                                               block_device_info,
+                                               destroy_disks=True,
+                                               migrate_data=None):
+        """Clean up destination node after a failed cold migration.
+
+        :param context: security context
+        :param instance: instance object that was being migrated
+        :param network_info: instance network information
+        :param block_device_info: instance block device information
+        :param destroy_disks:
+            if true, destroy disks at destination during cleanup
+        :param migrate_data: a VMwareColdMigrateData object
+
+        """
+        raise NotImplementedError()
+
+    def post_cold_migration(self, context, instance, block_device_info,
+                            migrate_data):
+        """Post operation of cold migration at source host.
+
+        :param context: security context
+        :instance: instance object that was migrated
+        :block_device_info: instance block device information
+        :param migrate_data: a ColdMigrateData object
+        """
+        pass
+
+    def post_cold_migration_at_source(self, context, instance, network_info):
+        """Unplug VIFs from networks at source.
+
+        :param context: security context
+        :param instance: instance object reference
+        :param network_info: instance network information
+        """
+        raise NotImplementedError(_("Hypervisor driver does not support "
+                                    "post_cold_migration_at_source method"))
+
+    def post_cold_migration_at_destination(self, context, instance,
+                                           network_info,
+                                           block_migration=False,
+                                           block_device_info=None):
+        """Post operation of cold migration at destination host.
+
+        :param context: security context
+        :param instance: instance object that is migrated
+        :param network_info: instance network information
+        :param block_migration: if true, post operation of block_migration.
+        """
+        raise NotImplementedError()
+
     def check_instance_shared_storage_local(self, context, instance):
         """Check if instance files located on shared storage.
 
@@ -1068,6 +1175,49 @@ class ComputeDriver(object):
         :param dest_check_data: result of check_can_live_migrate_destination
         :param block_device_info: result of _get_instance_block_device_info
         :returns: a LiveMigrateData object
+        """
+        raise NotImplementedError()
+
+    def check_can_cold_migrate_destination(self, context, instance,
+                                           src_compute_info, dst_compute_info,
+                                           block_migration=False,
+                                           disk_over_commit=False):
+        """Check if it is possible to execute cold migration.
+
+        This runs checks on the destination host, and then calls
+        back to the source host to check the results.
+
+        :param context: security context
+        :param instance: nova.db.sqlalchemy.models.Instance
+        :param src_compute_info: Info about the sending machine
+        :param dst_compute_info: Info about the receiving machine
+        :param block_migration: if true, prepare for block migration
+        :param disk_over_commit: if true, allow disk over commit
+        :returns: a ColdMigrateData object (hypervisor-dependent)
+        """
+        raise NotImplementedError()
+
+    def cleanup_cold_migration_destination_check(self, context,
+                                                 dest_check_data):
+        """Do required cleanup on dest host after check_can_cold_migrate calls
+
+        :param context: security context
+        :param dest_check_data: result of check_can_cold_migrate_destination
+        """
+        raise NotImplementedError()
+
+    def check_can_cold_migrate_source(self, context, instance,
+                                      dest_check_data, block_device_info=None):
+        """Check if it is possible to execute cold migration.
+
+        This checks if the live migration can succeed, based on the
+        results from check_can_cold_migrate_destination.
+
+        :param context: security context
+        :param instance: nova.db.sqlalchemy.models.Instance
+        :param dest_check_data: result of check_can_cold_migrate_destination
+        :param block_device_info: result of _get_instance_block_device_info
+        :returns: a VMwareColdMigrateData object
         """
         raise NotImplementedError()
 

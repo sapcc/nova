@@ -544,6 +544,12 @@ class ComputeManager(manager.Manager):
         else:
             self._live_migration_semaphore = compute_utils.UnlimitedSemaphore()
 
+        if CONF.max_concurrent_cold_migrations > 0:
+            self._cold_migration_semaphore = eventlet.semaphore.Semaphore(
+                CONF.max_concurrent_cold_migrations)
+        else:
+            self._cold_migration_semaphore = compute_utils.UnlimitedSemaphore()
+
         super(ComputeManager, self).__init__(service_name="compute",
                                              *args, **kwargs)
 
@@ -6142,6 +6148,122 @@ class ComputeManager(manager.Manager):
         LOG.debug('pre_live_migration result data is %s', migrate_data)
         return migrate_data
 
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def pre_cold_migration(self, context, instance, block_migration, disk,
+                           migrate_data, vm_networks):
+        """Preparations for cold migration at dest host.
+
+        :param context: security context
+        :param instance: dict of instance data
+        :param block_migration: if true, prepare for block migration
+        :param disk: disk info of instance
+        :param migrate_data: A dict or VMwareColdMigrateData object holding data
+                             required for cold migration without shared
+                             storage.
+        :returns: migrate_data containing additional migration info
+        """
+        LOG.debug('pre_cold_migration data is %s', migrate_data)
+
+        migrate_data.old_vol_attachment_ids = {}
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            context, instance.uuid)
+        network_info = self.network_api.get_instance_nw_info(context, instance)
+        self._notify_about_instance_usage(
+            context, instance, "`",
+            network_info=network_info)
+        compute_utils.notify_about_instance_action(
+            context, instance, self.host,
+            action=fields.NotificationAction.COLD_MIGRATION_PRE,
+            phase=fields.NotificationPhase.START, bdms=bdms)
+
+        connector = self.driver.get_volume_connector(instance)
+        try:
+            for bdm in bdms:
+                if bdm.is_volume and bdm.attachment_id is not None:
+                    # This bdm uses the new cinder v3.44 API.
+                    # We will create a new attachment for this
+                    # volume on this migration destination host. The old
+                    # attachment will be deleted on the source host
+                    # when the migration succeeds. The old attachment_id
+                    # is stored in dict with the key being the bdm.volume_id
+                    # so it can be restored on rollback.
+                    #
+                    # Also note that attachment_update is not needed as we
+                    # are providing the connector in the create call.
+                    attach_ref = self.volume_api.attachment_create(
+                        context, bdm.volume_id, bdm.instance_uuid,
+                        connector=connector, mountpoint=bdm.device_name)
+
+                    # save current attachment so we can detach it on success,
+                    # or restore it on a rollback.
+                    migrate_data.old_vol_attachment_ids[bdm.volume_id] = \
+                        bdm.attachment_id
+
+                    # update the bdm with the new attachment_id.
+                    bdm.attachment_id = attach_ref['id']
+                    bdm.save()
+
+            block_device_info = self._get_instance_block_device_info(
+                context, instance, refresh_conn_info=True,
+                bdms=bdms)
+
+            migrate_data = self.driver.pre_cold_migration(context,
+                                                          instance,
+                                                          block_device_info,
+                                                          network_info,
+                                                          disk,
+                                                          migrate_data)
+
+            migrate_data.target_bridge_name = vm_networks
+            LOG.debug('driver pre_cold_migration data is %s', migrate_data)
+
+            # NOTE(tr3buchet): setup networks on destination host
+            self.network_api.setup_networks_on_host(context, instance,
+                                                    self.host)
+
+            # Creating filters to hypervisors and firewalls.
+            # An example is that nova-instance-instance-xxx,
+            # which is written to libvirt.xml(Check "virsh nwfilter-list")
+            # This nwfilter is necessary on the destination host.
+            # In addition, this method is creating filtering rule
+            # onto destination host.
+            self.driver.ensure_filtering_rules_for_instance(instance,
+                                                            network_info)
+        except Exception:
+            # If we raise, migrate_data with the updated attachment ids
+            # will not be returned to the source host for rollback.
+            # So we need to rollback new attachments here.
+            with excutils.save_and_reraise_exception():
+                old_attachments = migrate_data.old_vol_attachment_ids
+                for bdm in bdms:
+                    if (bdm.is_volume and bdm.attachment_id is not None and
+                            bdm.volume_id in old_attachments):
+                        self.volume_api.attachment_delete(context,
+                                                          bdm.attachment_id)
+                        bdm.attachment_id = old_attachments[bdm.volume_id]
+                        bdm.save()
+
+        # Volume connections are complete, tell cinder that all the
+        # attachments have completed.
+        for bdm in bdms:
+            if bdm.is_volume and bdm.attachment_id is not None:
+                self.volume_api.attachment_complete(context,
+                                                    bdm.attachment_id)
+
+        self._notify_about_instance_usage(
+            context, instance, "cold_migration.pre.end",
+            network_info=network_info)
+        compute_utils.notify_about_instance_action(
+            context, instance, self.host,
+            action=fields.NotificationAction.COLD_MIGRATION_PRE,
+            phase=fields.NotificationPhase.END, bdms=bdms)
+
+        LOG.debug('pre_cold_migration result data is %s', migrate_data)
+        return migrate_data
+
+
     @staticmethod
     def _neutron_failed_cold_migration_callback(event_name, instance):
         msg = ('Neutron reported failure during cold migration '
@@ -6208,6 +6330,59 @@ class ComputeManager(manager.Manager):
         # so it can find it, as expected if it was called later
         migrate_data.migration = migration
         self._rollback_live_migration(context, instance, dest,
+                                      migrate_data)
+
+    def _cleanup_pre_cold_migration(self, context, dest, instance,
+                                    migration, migrate_data):
+        """Helper method for when pre_cold_migration fails
+
+        Sets the migration status to "error" and rolls back the live migration
+        setup on the destination host.
+
+        :param context: The user request context.
+        :type context: nova.context.RequestContext
+        :param dest: The cold migration destination hostname.
+        :type dest: str
+        :param instance: The instance being cold migrated.
+        :type instance: nova.objects.Instance
+        :param migration: The migration record tracking this live migration.
+        :type migration: nova.objects.Migration
+        :param migrate_data: Data about the live migration, populated from
+                             the destination host.
+        :type migrate_data: Subclass of nova.objects.VMwareColdMigrateData
+        """
+        self._set_migration_status(migration, 'error')
+        # Make sure we set this for _rollback_cold_migration()
+        # so it can find it, as expected if it was called later
+        migrate_data.migration = migration
+        self._rollback_cold_migration(context, instance, dest,
+                                      migrate_data)
+
+
+    def _cleanup_pre_cold_migration(self, context, dest, instance,
+                                    migration, migrate_data):
+        """Helper method for when pre_cold_migration fails
+
+        Sets the migration status to "error" and rolls back the live migration
+        setup on the destination host.
+
+        :param context: The user request context.
+        :type context: nova.context.RequestContext
+        :param dest: The live migration destination hostname.
+        :type dest: str
+        :param instance: The instance being live migrated.
+        :type instance: nova.objects.Instance
+        :param migration: The migration record tracking this live migration.
+        :type migration: nova.objects.Migration
+        :param migrate_data: Data about the cold migration, populated from
+                             the destination host.
+        :type migrate_data: Subclass of nova.objects.VMwareColdMigrateData
+        """
+        self._set_migration_status(migration, 'error')
+        # Make sure we set this for _rollback_live_migration()
+        # so it can find it, as expected if it was called later
+        migrate_data.migration = migration
+        self._rollback_cold_migration(context, instance, dest,
                                       migrate_data)
 
     def _do_live_migration(self, context, dest, instance, block_migration,
@@ -6355,8 +6530,8 @@ class ComputeManager(manager.Manager):
         LOG.debug('migration data is %s', migrate_data)
         try:
             self.driver.cold_migration_with_volumes(context, instance, dest,
-                                       self._post_live_migration,
-                                       self._rollback_live_migration,
+                                       self._post_cold_migration,
+                                       self._rollback_cold_migration,
                                        block_migration, migrate_data,
                                        server_data)
         except Exception:
@@ -6418,7 +6593,7 @@ class ComputeManager(manager.Manager):
         self._set_migration_status(migration, 'queued')
 
         def dispatch_cold_migration_with_volumes(*args, **kwargs):
-            with self._live_migration_semaphore:
+            with self._cold_migration_semaphore:
                 self._do_cold_migration_with_volumes(*args, **kwargs)
 
         # NOTE(danms): We spawn here to return the RPC worker thread back to
@@ -6695,6 +6870,181 @@ class ComputeManager(manager.Manager):
             rt.delete_allocation_for_migrated_instance(
                 ctxt, instance, source_node)
 
+    @wrap_exception()
+    @wrap_instance_fault
+    def _post_cold_migration(self, ctxt, instance,
+                             dest, block_migration=False, migrate_data=None):
+        """Post operations for cold migration.
+
+        This method is called from cold_migration
+        and mainly updating database record.
+
+        :param ctxt: security context
+        :param instance: instance dict
+        :param dest: destination host
+        :param block_migration: if true, prepare for block migration
+        :param migrate_data: if not None, it is a dict which has data
+        required for cold migration without shared storage
+
+        """
+        LOG.info('_post_cold_migration() is started..',
+                 instance=instance)
+
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            ctxt, instance.uuid)
+
+        # Cleanup source host post live-migration
+        block_device_info = self._get_instance_block_device_info(
+            ctxt, instance, bdms=bdms)
+        self.driver.post_cold_migration(ctxt, instance, block_device_info,
+                                        migrate_data)
+
+        # Detaching volumes.
+        connector = self.driver.get_volume_connector(instance)
+        for bdm in bdms:
+            if bdm.is_volume:
+                try:
+                    if bdm.attachment_id is None:
+                        # Prior to cinder v3.44:
+                        # We don't want to actually mark the volume detached,
+                        # or delete the bdm, just remove the connection from
+                        # this host.
+                        #
+                        # remove the volume connection without detaching from
+                        # hypervisor because the instance is not running
+                        # anymore on the current host
+                        self.volume_api.terminate_connection(ctxt,
+                                                             bdm.volume_id,
+                                                             connector)
+                    else:
+                        # cinder v3.44 api flow - delete the old attachment
+                        # for the source host
+                        old_attachment_id = \
+                            migrate_data.old_vol_attachment_ids[bdm.volume_id]
+                        self.volume_api.attachment_delete(ctxt,
+                                                          old_attachment_id)
+                except Exception as e:
+                    if bdm.attachment_id is None:
+                        LOG.error('Connection for volume %s not terminated on '
+                                  'source host %s during post_live_migration: '
+                                  '%s', bdm.volume_id, self.host,
+                                  six.text_type(e), instance=instance)
+                    else:
+                        old_attachment_id = None
+                        LOG.error('Volume attachment %s not deleted on source '
+                                  'host %s during post_live_migration: %s',
+                                  old_attachment_id, self.host,
+                                  six.text_type(e), instance=instance)
+
+        # Releasing vlan.
+        # (not necessary in current implementation?)
+
+        network_info = self.network_api.get_instance_nw_info(ctxt, instance)
+
+        self._notify_about_instance_usage(ctxt, instance,
+                                          "live_migration._post.start",
+                                          network_info=network_info)
+        # Releasing security group ingress rule.
+        LOG.debug('Calling driver.unfilter_instance from _post_cold_migration',
+                  instance=instance)
+        self.driver.unfilter_instance(instance,
+                                      network_info)
+
+        migration = {'source_compute': self.host,
+                     'dest_compute': dest, }
+        self.network_api.migrate_instance_start(ctxt,
+                                                instance,
+                                                migration)
+
+        destroy_vifs = False
+        try:
+            self.driver.post_cold_migration_at_source(ctxt, instance,
+                                                      network_info)
+        except NotImplementedError as ex:
+            LOG.debug(ex, instance=instance)
+            # For all hypervisors other than libvirt, there is a possibility
+            # they are unplugging networks from source node in the cleanup
+            # method
+            destroy_vifs = True
+
+        # NOTE(danms): Save source node before calling post method on
+        # destination, which will update it
+        source_node = instance.node
+
+        # Define domain at destination host, without doing it,
+        # pause/suspend/terminate do not work.
+        post_at_dest_success = True
+        try:
+            self.compute_rpcapi.post_cold_migration_at_destination(ctxt,
+                                                               instance,
+                                                               block_migration,
+                                                               dest)
+        except Exception as error:
+            post_at_dest_success = False
+            # We don't want to break _post_cold_migration() if
+            # post_live_migration_at_destination() fails as it should never
+            # affect cleaning up source node.
+            LOG.exception("Post live migration at destination %s failed",
+                          dest, instance=instance, error=error)
+
+        do_cleanup, destroy_disks = self._live_migration_cleanup_flags(
+            migrate_data)
+
+        if do_cleanup:
+            LOG.debug('Calling driver.cleanup from _post_cold_migration',
+                      instance=instance)
+            self.driver.cleanup(ctxt, instance, network_info,
+                                destroy_disks=destroy_disks,
+                                migrate_data=migrate_data,
+                                destroy_vifs=destroy_vifs)
+
+        self.instance_events.clear_events_for_instance(instance)
+
+        # NOTE(timello): make sure we update available resources on source
+        # host even before next periodic task.
+        self.update_available_resource(ctxt)
+
+        self._update_scheduler_instance_info(ctxt, instance)
+        self._notify_about_instance_usage(ctxt, instance,
+                                          "live_migration._post.end",
+                                          network_info=network_info)
+        if post_at_dest_success:
+            LOG.info('Migrating instance to %s finished successfully.',
+                     dest, instance=instance)
+
+        if migrate_data and migrate_data.obj_attr_is_set('migration'):
+            migrate_data.migration.status = 'completed'
+            migrate_data.migration.save()
+            migration = migrate_data.migration
+            rc = self.scheduler_client.reportclient
+            # Check to see if our migration has its own allocations
+            allocs = rc.get_allocations_for_consumer(ctxt, migration.uuid)
+        else:
+            # We didn't have data on a migration, which means we can't
+            # look up to see if we had new-style migration-based
+            # allocations. This should really only happen in cases of
+            # a buggy virt driver or some really old component in the
+            # system. Log a warning so we know it happened.
+            allocs = None
+            LOG.warning('Live migration ended with no migrate_data '
+                        'record. Unable to clean up migration-based '
+                        'allocations which is almost certainly not '
+                        'an expected situation.')
+
+        if allocs:
+            # We had a migration-based allocation that we need to handle
+            self._delete_allocation_after_move(ctxt,
+                                               instance,
+                                               migrate_data.migration,
+                                               instance.flavor,
+                                               source_node)
+        else:
+            # No migration-based allocations, so do the old thing and
+            # attempt to clean up any doubled per-instance allocation
+            rt = self._get_resource_tracker()
+            rt.delete_allocation_for_migrated_instance(
+                ctxt, instance, source_node)
+
     def _consoles_enabled(self):
         """Returns whether a console is enable."""
         return (CONF.vnc.enabled or CONF.spice.enabled or
@@ -6770,6 +7120,76 @@ class ComputeManager(manager.Manager):
         self._notify_about_instance_usage(
                      context, instance, "live_migration.post.dest.end",
                      network_info=network_info)
+
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def post_cold_migration_at_destination(self, context, instance,
+                                           block_migration):
+        """Post operations for cold migration .
+
+        :param context: security context
+        :param instance: Instance dict
+        :param block_migration: if true, prepare for block migration
+
+        """
+        LOG.info('Post operation of migration started',
+                 instance=instance)
+
+        # NOTE(tr3buchet): setup networks on destination host
+        #                  this is called a second time because
+        #                  multi_host does not create the bridge in
+        #                  plug_vifs
+        self.network_api.setup_networks_on_host(context, instance,
+                                                self.host)
+        migration = {'source_compute': instance.host,
+                     'dest_compute': self.host, }
+        self.network_api.migrate_instance_finish(context,
+                                                 instance,
+                                                 migration)
+
+        network_info = self.network_api.get_instance_nw_info(context, instance)
+        self._notify_about_instance_usage(
+            context, instance, "live_migration.post.dest.start",
+            network_info=network_info)
+        block_device_info = self._get_instance_block_device_info(context,
+                                                                 instance)
+
+        try:
+            self.driver.post_cold_migration_at_destination(
+                context, instance, network_info, block_migration,
+                block_device_info)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                instance.vm_state = vm_states.ERROR
+                LOG.error('Unexpected error during post cold migration at '
+                          'destination host.', instance=instance)
+        finally:
+            # Restore instance state and update host
+            current_power_state = self._get_power_state(context, instance)
+            node_name = None
+            prev_host = instance.host
+            try:
+                compute_node = self._get_compute_info(context, self.host)
+                node_name = compute_node.hypervisor_hostname
+            except exception.ComputeHostNotFound:
+                LOG.exception('Failed to get compute_info for %s', self.host)
+            finally:
+                instance.host = self.host
+                instance.power_state = current_power_state
+                instance.task_state = None
+                instance.node = node_name
+                instance.progress = 0
+                instance.save(expected_task_state=task_states.MIGRATING)
+
+        # NOTE(tr3buchet): tear down networks on source host
+        self.network_api.setup_networks_on_host(context, instance,
+                                                prev_host, teardown=True)
+        # NOTE(vish): this is necessary to update dhcp
+        self.network_api.setup_networks_on_host(context, instance, self.host)
+        self._notify_about_instance_usage(
+            context, instance, "cold_migration.post.dest.end",
+            network_info=network_info)
 
     @wrap_exception()
     @wrap_instance_fault
@@ -6861,6 +7281,94 @@ class ComputeManager(manager.Manager):
         self._set_migration_status(migration, migration_status)
 
     @wrap_exception()
+    @wrap_instance_fault
+    def _rollback_cold_migration(self, context, instance,
+                                 dest, migrate_data=None,
+                                 migration_status='error'):
+        """Recovers Instance/volume state from migrating -> running.
+
+        :param context: security context
+        :param instance: nova.objects.instance.Instance object
+        :param dest:
+            This method is called from live migration src host.
+            This param specifies destination host.
+        :param migrate_data:
+            if not none, contains implementation specific data.
+        :param migration_status:
+            Contains the status we want to set for the migration object
+
+        """
+        if (isinstance(migrate_data, migrate_data_obj.VMwareColdMigrateData)
+                and migrate_data.obj_attr_is_set('migration')):
+            migration = migrate_data.migration
+        else:
+            migration = None
+
+        if migration:
+            # Remove allocations created in Placement for the dest node.
+            # If migration is None, we must be so old we don't have placement,
+            # so no need to do something else.
+            self._revert_allocation(context, instance, migration)
+        else:
+            LOG.error('Unable to revert allocations during cold migration '
+                      'rollback; compute driver did not provide migrate_data',
+                      instance=instance)
+
+        instance.task_state = None
+        instance.progress = 0
+        instance.save(expected_task_state=[task_states.MIGRATING])
+
+        # NOTE(tr3buchet): setup networks on source host (really it's re-setup)
+        self.network_api.setup_networks_on_host(context, instance, self.host)
+
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            context, instance.uuid)
+        for bdm in bdms:
+            if bdm.is_volume:
+                # remove the connection on the destination host
+                self.compute_rpcapi.remove_volume_connection(
+                    context, instance, bdm.volume_id, dest)
+
+                if bdm.attachment_id:
+                    # 3.44 cinder api flow. Set the bdm's
+                    # attachment_id to the old attachment of the source
+                    # host. If old_attachments is not there, then
+                    # there was an error before the new attachment was made.
+                    old_attachments = migrate_data.old_vol_attachment_ids \
+                        if 'old_vol_attachment_ids' in migrate_data else None
+                    if old_attachments and bdm.volume_id in old_attachments:
+                        self.volume_api.attachment_delete(context,
+                                                          bdm.attachment_id)
+                        bdm.attachment_id = old_attachments[bdm.volume_id]
+                        bdm.save()
+
+        self._notify_about_instance_usage(context, instance,
+                                          "cold_migration._rollback.start")
+        compute_utils.notify_about_instance_action(context, instance,
+                   self.host,
+                   action=fields.NotificationAction.COLD_MIGRATION_ROLLBACK,
+                   phase=fields.NotificationPhase.START,
+                   bdms=bdms)
+
+        do_cleanup, destroy_disks = self._live_migration_cleanup_flags(
+            migrate_data)
+
+        if do_cleanup:
+            self.compute_rpcapi.rollback_cold_migration_at_destination(
+                context, instance, dest, destroy_disks=destroy_disks,
+                migrate_data=migrate_data)
+
+        self._notify_about_instance_usage(context, instance,
+                                          "cold_migration._rollback.end")
+        compute_utils.notify_about_instance_action(context, instance,
+                   self.host,
+                   action=fields.NotificationAction.COLD_MIGRATION_ROLLBACK,
+                   phase=fields.NotificationPhase.END,
+                   bdms=bdms)
+
+        self._set_migration_status(migration, migration_status)
+
+    @wrap_exception()
     @wrap_instance_event(prefix='compute')
     @wrap_instance_fault
     def rollback_live_migration_at_destination(self, context, instance,
@@ -6900,6 +7408,47 @@ class ComputeManager(manager.Manager):
         self._notify_about_instance_usage(
                         context, instance, "live_migration.rollback.dest.end",
                         network_info=network_info)
+
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def rollback_cold_migration_at_destination(self, context, instance,
+                                               destroy_disks,
+                                               migrate_data):
+        """Cleaning up image directory that is created pre_cold_migration.
+
+        :param context: security context
+        :param instance: a nova.objects.instance.Instance object sent over rpc
+        :param destroy_disks: whether to destroy volumes or not
+        :param migrate_data: contains migration info
+        """
+        network_info = self.network_api.get_instance_nw_info(context, instance)
+        self._notify_about_instance_usage(
+            context, instance, "live_migration.rollback.dest.start",
+            network_info=network_info)
+        try:
+            # NOTE(tr3buchet): tear down networks on destination host
+            self.network_api.setup_networks_on_host(context, instance,
+                                                    self.host, teardown=True)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                # NOTE(tdurakov): even if teardown networks fails driver
+                # should try to rollback live migration on destination.
+                LOG.exception('An error occurred while deallocating network.',
+                              instance=instance)
+        finally:
+            # always run this even if setup_networks_on_host fails
+            # NOTE(vish): The mapping is passed in so the driver can disconnect
+            #             from remote volumes if necessary
+            block_device_info = self._get_instance_block_device_info(context,
+                                                                     instance)
+            self.driver.rollback_cold_migration_at_destination(
+                context, instance, network_info, block_device_info,
+                destroy_disks=destroy_disks, migrate_data=migrate_data)
+
+        self._notify_about_instance_usage(
+            context, instance, "live_migration.rollback.dest.end",
+            network_info=network_info)
 
     @periodic_task.periodic_task(
         spacing=CONF.heal_instance_info_cache_interval)

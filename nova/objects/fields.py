@@ -874,6 +874,12 @@ class NotificationAction(BaseNovaEnum):
     LIVE_MIGRATION_PRE = 'live_migration_pre'
     LIVE_MIGRATION_ROLLBACK_DEST = 'live_migration_rollback_dest'
     LIVE_MIGRATION_ROLLBACK = 'live_migration_rollback'
+    COLD_MIGRATION_ABORT = 'cold_migration_abort'
+    COLD_MIGRATION_POST_DEST = 'cold_migration_post_dest'
+    COLD_MIGRATION_POST = 'cold_migration_post'
+    COLD_MIGRATION_PRE = 'cold_migration_pre'
+    COLD_MIGRATION_ROLLBACK_DEST = 'cold_migration_rollback_dest'
+    COLD_MIGRATION_ROLLBACK = 'cold_migration_rollback'
     REBUILD = 'rebuild'
     INTERFACE_DETACH = 'interface_detach'
     RESIZE_CONFIRM = 'resize_confirm'
@@ -893,10 +899,12 @@ class NotificationAction(BaseNovaEnum):
            VOLUME_DETACH, CREATE, IMPORT, EVACUATE, RESIZE_FINISH,
            LIVE_MIGRATION_ABORT, LIVE_MIGRATION_POST_DEST, LIVE_MIGRATION_POST,
            LIVE_MIGRATION_PRE, LIVE_MIGRATION_ROLLBACK,
-           LIVE_MIGRATION_ROLLBACK_DEST, REBUILD, INTERFACE_DETACH,
-           RESIZE_CONFIRM, RESIZE_PREP, RESIZE_REVERT, SHELVE_OFFLOAD,
-           SOFT_DELETE, TRIGGER_CRASH_DUMP, UNRESCUE, UNSHELVE, ADD_HOST,
-           REMOVE_HOST)
+           LIVE_MIGRATION_ROLLBACK_DEST, COLD_MIGRATION_ABORT,
+           COLD_MIGRATION_POST_DEST, COLD_MIGRATION_POST, COLD_MIGRATION_PRE,
+           COLD_MIGRATION_ROLLBACK_DEST, COLD_MIGRATION_ROLLBACK, REBUILD,
+           INTERFACE_DETACH, RESIZE_CONFIRM, RESIZE_PREP, RESIZE_REVERT,
+           SHELVE_OFFLOAD, SOFT_DELETE, TRIGGER_CRASH_DUMP, UNRESCUE, UNSHELVE,
+           ADD_HOST, REMOVE_HOST)
 
 
 # TODO(rlrossit): These should be changed over to be a StateMachine enum from
