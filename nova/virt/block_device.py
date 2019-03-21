@@ -289,11 +289,13 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
              if k in self._new_fields | set(['delete_on_termination'])}
         )
         self['mount_device'] = self._bdm_obj.device_name
+        # connection_info might not be set so default to an empty dict so that
+        # it can be serialized to an empty JSON object.
         try:
             self['connection_info'] = jsonutils.loads(
                 self._bdm_obj.connection_info)
         except TypeError:
-            self['connection_info'] = None
+            self['connection_info'] = {}
 
     def _preserve_multipath_id(self, connection_info):
         if self['connection_info'] and 'data' in self['connection_info']:
