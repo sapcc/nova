@@ -7324,6 +7324,8 @@ class ComputeManager(manager.Manager):
                     LOG.warning("Instance is suspended unexpectedly. Not "
                                 "calling the stop API. Action disabled via by "
                                 "config.", instance=db_instance)
+                    db_instance.vm_state = vm_states.SUSPENDED
+                    db_instance.save()
             elif vm_power_state == power_state.PAUSED:
                 # Note(maoy): a VM may get into the paused state not only
                 # because the user request via API calls, but also
@@ -7393,6 +7395,8 @@ class ComputeManager(manager.Manager):
                     LOG.warning("Paused instance shutdown by itself. Not "
                                 "calling stop API. Action disabled by config.",
                                 instance=db_instance)
+                    db_instance.vm_state = vm_states.STOPPED
+                    db_instance.save()
         elif vm_state in (vm_states.SOFT_DELETED,
                           vm_states.DELETED):
             if vm_power_state not in (power_state.NOSTATE,
