@@ -7309,6 +7309,8 @@ class ComputeManager(manager.Manager):
                                  'db_power_state': orig_db_power_state,
                                  'vm_power_state': vm_power_state},
                                 instance=db_instance)
+                    db_instance.vm_state = vm_states.STOPPED
+                    db_instance.save()
             elif vm_power_state == power_state.SUSPENDED:
                 if CONF.sync_power_state_unexpected_call_stop:
                     LOG.warning("Instance is suspended unexpectedly. Calling "
@@ -7342,24 +7344,40 @@ class ComputeManager(manager.Manager):
             if vm_power_state not in (power_state.NOSTATE,
                                       power_state.SHUTDOWN,
                                       power_state.CRASHED):
-                LOG.warning("Instance is not stopped. Calling "
-                            "the stop API. Current vm_state: %(vm_state)s,"
-                            " current task_state: %(task_state)s, "
-                            "original DB power_state: %(db_power_state)s, "
-                            "current VM power_state: %(vm_power_state)s",
-                            {'vm_state': vm_state,
-                             'task_state': db_instance.task_state,
-                             'db_power_state': orig_db_power_state,
-                             'vm_power_state': vm_power_state},
-                            instance=db_instance)
-                try:
-                    # NOTE(russellb) Force the stop, because normally the
-                    # compute API would not allow an attempt to stop a stopped
-                    # instance.
-                    self.compute_api.force_stop(context, db_instance)
-                except Exception:
-                    LOG.exception("error during stop() in sync_power_state.",
-                                  instance=db_instance)
+                if CONF.sync_power_state_unexpected_call_stop:
+                    LOG.warning("Instance is not stopped. Calling "
+                                "the stop API. Current vm_state: %(vm_state)s,"
+                                " current task_state: %(task_state)s, "
+                                "original DB power_state: %(db_power_state)s, "
+                                "current VM power_state: %(vm_power_state)s",
+                                {'vm_state': vm_state,
+                                 'task_state': db_instance.task_state,
+                                 'db_power_state': orig_db_power_state,
+                                 'vm_power_state': vm_power_state},
+                                instance=db_instance)
+                    try:
+                        # NOTE(russellb) Force the stop, because normally the
+                        # compute API would not allow an attempt to stop a
+                        # stopped instance.
+                        self.compute_api.force_stop(context, db_instance)
+                    except Exception:
+                        msg = "error during stop() in sync_power_state."
+                        LOG.exception(msg, instance=db_instance)
+                else:
+                    LOG.warning("Instance shutdown by itself. Not calling the "
+                                "stop API. Action disabled by config. "
+                                "Hypervisor-HA will take care. "
+                                "Current vm_state: %(vm_state)s, "
+                                "current task_state: %(task_state)s, "
+                                "original DB power_state: %(db_power_state)s, "
+                                "current VM power_state: %(vm_power_state)s",
+                                {'vm_state': vm_state,
+                                 'task_state': db_instance.task_state,
+                                 'db_power_state': orig_db_power_state,
+                                 'vm_power_state': vm_power_state},
+                                instance=db_instance)
+                    db_instance.vm_state = vm_states.ACTIVE
+                    db_instance.save()
         elif vm_state == vm_states.PAUSED:
             if vm_power_state in (power_state.SHUTDOWN,
                                   power_state.CRASHED):
