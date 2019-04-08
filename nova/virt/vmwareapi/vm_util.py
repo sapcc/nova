@@ -47,6 +47,14 @@ ALL_SUPPORTED_NETWORK_DEVICES = ['VirtualE1000', 'VirtualE1000e',
                                  'VirtualPCNet32', 'VirtualSriovEthernetCard',
                                  'VirtualVmxnet', 'VirtualVmxnet3']
 
+CONTROLLER_TO_ADAPTER_TYPE = {
+    "VirtualLsiLogicController":    constants.DEFAULT_ADAPTER_TYPE,
+    "VirtualBusLogicController":    constants.ADAPTER_TYPE_BUSLOGIC,
+    "VirtualIDEController":         constants.ADAPTER_TYPE_IDE,
+    "VirtualLsiLogicSASController": constants.ADAPTER_TYPE_LSILOGICSAS,
+    "ParaVirtualSCSIController":    constants.ADAPTER_TYPE_PARAVIRTUAL
+}
+
 # A simple cache for storing inventory folder references.
 # Format: {inventory_path: folder_ref}
 _FOLDER_PATH_REF_MAPPING = {}
@@ -714,16 +722,9 @@ def get_vmdk_info(session, vm_ref, uuid=None):
                         and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
-        elif device.__class__.__name__ == "VirtualLsiLogicController":
-            adapter_type_dict[device.key] = constants.DEFAULT_ADAPTER_TYPE
-        elif device.__class__.__name__ == "VirtualBusLogicController":
-            adapter_type_dict[device.key] = constants.ADAPTER_TYPE_BUSLOGIC
-        elif device.__class__.__name__ == "VirtualIDEController":
-            adapter_type_dict[device.key] = constants.ADAPTER_TYPE_IDE
-        elif device.__class__.__name__ == "VirtualLsiLogicSASController":
-            adapter_type_dict[device.key] = constants.ADAPTER_TYPE_LSILOGICSAS
-        elif device.__class__.__name__ == "ParaVirtualSCSIController":
-            adapter_type_dict[device.key] = constants.ADAPTER_TYPE_PARAVIRTUAL
+        elif device.__class__.__name__ in CONTROLLER_TO_ADAPTER_TYPE.keys():
+            adapter_type_dict[device.key] = CONTROLLER_TO_ADAPTER_TYPE[
+                device.__class__.__name__]
 
     if uuid:
         vmdk_device = root_device
