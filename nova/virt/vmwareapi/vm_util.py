@@ -722,7 +722,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
                         and root_device.unitNumber > device.unitNumber:
                     root_device = device
                 vmdk_device = device
-        elif device.__class__.__name__ in CONTROLLER_TO_ADAPTER_TYPE.keys():
+        elif device.__class__.__name__ in CONTROLLER_TO_ADAPTER_TYPE:
             adapter_type_dict[device.key] = CONTROLLER_TO_ADAPTER_TYPE[
                 device.__class__.__name__]
 
