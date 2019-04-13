@@ -2645,7 +2645,8 @@ class ComputeManager(manager.Manager):
             with excutils.save_and_reraise_exception():
                 self._build_resources_cleanup(instance, network_info)
         except (exception.UnexpectedTaskStateError,
-                exception.OverQuota, exception.InvalidBDM) as e:
+                exception.OverQuota, exception.InvalidBDM,
+                exception.QuotaError) as e:
             self._build_resources_cleanup(instance, network_info)
             raise exception.BuildAbortException(instance_uuid=instance.uuid,
                     reason=e.format_message())
