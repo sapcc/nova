@@ -1178,6 +1178,8 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
                                overs=overs)
         e = exception.OverQuota(**over_quota_args)
         fake_flavor = objects.Flavor(vcpus=1, memory_mb=512)
+        fake_flavor['extra_specs'] = {'quota:separate': False}
+
         instance_num = 1
         proj_count = {'instances': 1, 'cores': 1, 'ram': 512}
         user_count = proj_count.copy()

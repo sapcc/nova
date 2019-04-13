@@ -497,7 +497,7 @@ class FakeDriver(driver.ComputeDriver):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         post_method(context, instance, dest, block_migration,
                             migrate_data)
         return
@@ -688,7 +688,7 @@ class FakeLiveMigrateDriver(FakeDriver):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         self._abort_migration = False
         self._migrating = True
         while self._migrating:

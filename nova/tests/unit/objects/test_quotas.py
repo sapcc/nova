@@ -118,7 +118,7 @@ class _TestQuotasObject(object):
                                        check_user_id=user_id)
         # Should be called twice: once for key_pairs/server_group_members,
         # once for security_group_rules.
-        self.assertEqual(2, mock_count.call_count)
+        self.assertEqual(1, mock_count.call_count)
         call1 = mock.call(self.context, 'key_pairs')
         call2 = mock.call(self.context, 'server_group_members')
         call3 = mock.call(self.context, 'security_group_rules')
@@ -148,7 +148,7 @@ class _TestQuotasObject(object):
                           check_user_id=user_id)
         # Should be called twice, once for key_pairs, once for
         # server_group_members
-        self.assertEqual(2, mock_count.call_count)
+        self.assertEqual(1, mock_count.call_count)
         call1 = mock.call(self.context, 'key_pairs')
         call2 = mock.call(self.context, 'server_group_members')
         mock_count.assert_has_calls([call1, call2], any_order=True)

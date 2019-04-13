@@ -669,7 +669,8 @@ class IronicDriver(virt_driver.ComputeDriver):
                                                             'name',
                                                             'host'],
                                                         use_slave=True)
-
+        if not isinstance(instances, list):
+            instances = [instances]
         if CONF.ironic.update_host:
             for instance in instances:
                 if instance.host != self.host:

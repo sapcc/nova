@@ -204,6 +204,7 @@ class _ComputeAPIUnitTestMixIn(object):
         check_requested_networks.return_value = 1
 
         instance_type = self._create_flavor()
+        instance_type['extra_specs'] = {'quota:separate': False}
 
         port = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
         address = '10.0.0.1'
@@ -225,6 +226,7 @@ class _ComputeAPIUnitTestMixIn(object):
         image_href = "image_href"
         image_id = 0
         instance_type = self._create_flavor()
+        instance_type['extra_specs'] = {'quota:separate': False}
 
         quotas = {'instances': 1, 'cores': 1, 'ram': 1}
         quota_exception = exception.OverQuota(quotas=quotas,
@@ -3916,7 +3918,9 @@ class _ComputeAPIUnitTestMixIn(object):
         proj_count = {'instances': 1, 'cores': 1, 'ram': 512}
         user_count = proj_count.copy()
         quota_count.return_value = {'project': proj_count, 'user': user_count}
-        instance = self._create_instance_obj()
+        fake_flavor = objects.Flavor(id=1, vcpus=1, memory_mb=512)
+        fake_flavor['extra_specs'] = {'quota:separate': False}
+        instance = self._create_instance_obj(flavor=fake_flavor)
         instance.vm_state = vm_states.SOFT_DELETED
         instance.task_state = None
         instance.save()
@@ -3949,7 +3953,10 @@ class _ComputeAPIUnitTestMixIn(object):
         proj_count = {'instances': 1, 'cores': 1, 'ram': 512}
         user_count = proj_count.copy()
         quota_count.return_value = {'project': proj_count, 'user': user_count}
-        instance = self._create_instance_obj()
+        fake_flavor = self._create_flavor(id=200, flavorid='flavor-id',
+                                          name='foo', root_gb=0)
+        fake_flavor['extra_specs'] = {'quota:separate': False}
+        instance = self._create_instance_obj(flavor=fake_flavor)
         instance.vm_state = vm_states.SOFT_DELETED
         instance.task_state = None
         instance.save()
@@ -5519,7 +5526,7 @@ class _ComputeAPIUnitTestMixIn(object):
                 sort_dirs=['desc'])
 
             mock_buildreq_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, limit=None, marker='fake-marker',
+                self.context, {'foo': 'bar'}, limit=8, marker='fake-marker',
                 sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
