@@ -6865,7 +6865,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         """Spawning live_migration operation for distributing high-load.
 
         :param context: security context
