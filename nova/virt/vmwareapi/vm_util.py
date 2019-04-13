@@ -48,11 +48,11 @@ ALL_SUPPORTED_NETWORK_DEVICES = ['VirtualE1000', 'VirtualE1000e',
                                  'VirtualVmxnet', 'VirtualVmxnet3']
 
 CONTROLLER_TO_ADAPTER_TYPE = {
-    "VirtualLsiLogicController":    constants.DEFAULT_ADAPTER_TYPE,
-    "VirtualBusLogicController":    constants.ADAPTER_TYPE_BUSLOGIC,
-    "VirtualIDEController":         constants.ADAPTER_TYPE_IDE,
+    "VirtualLsiLogicController": constants.DEFAULT_ADAPTER_TYPE,
+    "VirtualBusLogicController": constants.ADAPTER_TYPE_BUSLOGIC,
+    "VirtualIDEController": constants.ADAPTER_TYPE_IDE,
     "VirtualLsiLogicSASController": constants.ADAPTER_TYPE_LSILOGICSAS,
-    "ParaVirtualSCSIController":    constants.ADAPTER_TYPE_PARAVIRTUAL
+    "ParaVirtualSCSIController": constants.ADAPTER_TYPE_PARAVIRTUAL
 }
 
 # A simple cache for storing inventory folder references.
