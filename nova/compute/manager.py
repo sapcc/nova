@@ -2232,6 +2232,9 @@ class ComputeManager(manager.Manager):
                 self.driver.clean_networks_preparation(instance, network_info)
             raise exception.BuildAbortException(instance_uuid=instance.uuid,
                     reason=e.format_message())
+        except exception.PortLimitExceeded as e:
+            raise exception.BuildAbortException(instance_uuid=instance.uuid,
+                                                reason=e.format_message())
         except Exception:
             LOG.exception('Failure prepping block device',
                           instance=instance)
