@@ -252,8 +252,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             mock.patch.object(self._volumeops._session, '_call_method',
                               return_value=[virtual_controller])
         ) as (get_vm_ref, get_volume_ref, get_vmdk_backed_disk_device,
-              _get_device_disk_type, consolidate_vmdk_volume, detach_disk_from_vm,
-              update_volume_details, session_call_method):
+              _get_device_disk_type, consolidate_vmdk_volume,
+              detach_disk_from_vm, update_volume_details, session_call_method):
 
             connection_info = {'driver_volume_type': 'vmdk',
                                'serial': 'volume-fake-id',
