@@ -2225,7 +2225,8 @@ class ComputeManager(manager.Manager):
                     self.driver.clean_networks_preparation(instance,
                                                            network_info)
         except (exception.UnexpectedTaskStateError,
-                exception.OverQuota, exception.InvalidBDM) as e:
+                exception.OverQuota, exception.InvalidBDM,
+                exception.QuotaError) as e:
             # Make sure the async call finishes
             if network_info is not None:
                 network_info.wait(do_raise=False)
