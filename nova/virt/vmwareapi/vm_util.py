@@ -905,17 +905,16 @@ def _get_device_disk_type(device):
 
 
 def get_hardware_devices(session, vm_ref):
-    ds = session._call_method(vutil,
-                            "get_object_property",
-                            vm_ref,
-                            "config.hardware.device")
-    if ds.__class__.__name__ == "ArrayOfVirtualDevice":
-        return ds.VirtualDevice
-    return ds
+    hardware_devices = session._call_method(vutil,
+                                            "get_object_property",
+                                            vm_ref,
+                                            "config.hardware.device")
+    return vim_util.get_array_items(hardware_devices)
 
 
 def get_vmdk_info(session, vm_ref, uuid=None):
     """Returns information for the primary VMDK attached to the given VM."""
+    hardware_devices = get_hardware_devices(session, vm_ref)
     vmdk_file_path = None
     vmdk_controller_key = None
     disk_type = None
@@ -927,7 +926,7 @@ def get_vmdk_info(session, vm_ref, uuid=None):
     vmdk_device = None
 
     adapter_type_dict = {}
-    for device in get_hardware_devices(session, vm_ref):
+    for device in hardware_devices:
         if device.__class__.__name__ == "VirtualDisk":
             if device.backing.__class__.__name__ == \
                     "VirtualDiskFlatVer2BackingInfo":
