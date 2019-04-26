@@ -384,8 +384,8 @@ def _import_image(session, read_handle, vm_import_spec, vm_name, vm_folder_ref,
 
             break
         except vexc.VimException as e:
-            if 'DuplicateName' not in e.msg:
-                raise e
+            if 'DuplicateName' not in e.msg():
+                pass
             LOG.debug("Handling name duplication during import of VM %s",
                       vm_name)
             vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
