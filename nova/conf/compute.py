@@ -1200,6 +1200,12 @@ Related options:
 
 * not to be confused with: ``multi_instance_display_name_template``
 """),
+    cfg.StrOpt('big_vm_flavor',
+           default="m1.flavor_2",
+           help="""
+Flavor name for creating "big" virtual machines. The amount of virtual
+machines created from this flavor will be counted against the cluster.  
+           """),
 ]
 
 

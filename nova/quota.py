@@ -400,6 +400,11 @@ class DbQuotaDriver(object):
                         common user.
         :param project_quotas: Quotas dictionary for the specified project.
         """
+        instance_list = objects.InstanceList.get_all(context)
+        big_flavor_quota = 0
+        for i in instance_list:
+            if i.get_flavor().name == CONF.big_vm_flavor:
+                big_flavor_quota += 1
 
         # Filter resources
         desired = set(keys)
@@ -429,8 +434,10 @@ class DbQuotaDriver(object):
                                              context.quota_class,
                                              usages=False,
                                              project_quotas=project_quotas)
+        quota_dict = {k: v['limit'] for k, v in quotas.items()}
+        quota_dict['big_flavor_quota'] = big_flavor_quota
 
-        return {k: v['limit'] for k, v in quotas.items()}
+        return quota_dict
 
     def limit_check(self, context, resources, values, project_id=None,
                     user_id=None):
@@ -484,6 +491,11 @@ class DbQuotaDriver(object):
                                        user_id=user_id,
                                        project_quotas=project_quotas)
 
+        quota_data = {
+            'quotas':quotas,
+            'user_quotas': user_quotas
+        }
+
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()
@@ -498,6 +510,7 @@ class DbQuotaDriver(object):
                 )
             raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
                                       usages={}, headroom=headroom)
+        return quota_data
 
     def limit_check_project_and_user(self, context, resources,
                                      project_values=None, user_values=None,
@@ -1223,7 +1236,6 @@ class QuotaEngine(object):
                         is admin and admin wants to impact on
                         common user.
         """
-
         return self._driver.limit_check(context,
                                         self.combined_resources(context),
                                         values, project_id=project_id,
