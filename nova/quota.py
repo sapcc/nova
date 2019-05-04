@@ -492,7 +492,7 @@ class DbQuotaDriver(object):
                                        project_quotas=project_quotas)
 
         quota_data = {
-            'quotas':quotas,
+            'quotas': quotas,
             'user_quotas': user_quotas
         }
 
