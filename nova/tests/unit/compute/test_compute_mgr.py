@@ -5379,11 +5379,21 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         mock_dbari.side_effect = test.TestingException()
         instance = objects.Instance(uuid=uuids.instance,
                                     task_state=None)
-        for i in range(0, 10):
-            self.assertRaises(test.TestingException,
-                              self.compute.build_and_run_instance,
-                              self.context, instance, None,
-                              None, None)
+        instance.project_id = 1
+
+        with mock.patch.object(self.compute,
+                               '_per_project_build_semaphore') as mock_sem:
+
+            for i in range(0, 10):
+                result = self.compute.build_and_run_instance(
+                                            self.context, instance, None,
+                                            None, None)
+                time.sleep(3)
+                self.assertRaises(test.TestingException,
+                                  result,
+                                  self.context, instance, None,
+                                  None, None)
+
 
         self.assertEqual(10, mock_failed.call_count)
         mock_succeeded.assert_not_called()

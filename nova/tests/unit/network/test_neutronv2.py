@@ -3479,15 +3479,10 @@ class TestNeutronv2WithMock(test.TestCase):
             mock.patch.object(client.Client, 'show_quota',
                               return_value={'quota': {'port': 1}})):
 
-                exc = self.assertRaises(exception.PortLimitExceeded,
-                                        self.api.validate_networks,
-                                        self.context, requested_networks, 1)
-                expected_exception_msg = ('The number of defined ports: '
-                                          '%(ports)d is over the limit: '
-                                          '%(quota)d' %
-                                          {'ports': 5,
-                                           'quota': 1})
-                self.assertEqual(expected_exception_msg, str(exc))
+            exc = self.api.validate_networks(self.context, requested_networks,
+                                             1)
+            self.assertEqual(exc, 0)
+
 
     def test_validate_networks_fixed_ip_no_dup1(self):
         # Test validation for a request for a network with a

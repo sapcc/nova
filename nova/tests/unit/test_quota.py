@@ -105,10 +105,19 @@ class QuotaIntegrationTestCase(test.TestCase):
             self._create_instance()
         inst_type = flavors.get_flavor_by_name('m1.small')
         image_uuid = 'cedef40a-ed67-4d10-800e-17455edce175'
+
+        old_flavor = objects.Flavor()
+        old_flavor.name = "m1.tiny"
+        old_flavor.extra_specs = dict()
+
+        with mock.patch.object(self.context, 'session.query') as mock_obj:
+            mock_obj.side_effect = old_flavor
+
         try:
             self.compute_api.create(self.context, min_count=1, max_count=1,
                                     instance_type=inst_type,
                                     image_href=image_uuid)
+
         except exception.QuotaError as e:
             expected_kwargs = {'code': 413,
                                'req': '1, 1',

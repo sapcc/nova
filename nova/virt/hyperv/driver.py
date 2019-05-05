@@ -191,7 +191,7 @@ class HyperVDriver(driver.ComputeDriver):
     def get_volume_connector(self, instance):
         return self._volumeops.get_volume_connector()
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         return self._hostops.get_available_resource()
 
     def get_available_nodes(self, refresh=False):
@@ -231,7 +231,7 @@ class HyperVDriver(driver.ComputeDriver):
 
     def live_migration(self, context, instance, dest, post_method,
                        recover_method, block_migration=False,
-                       migrate_data=None, server_data=None):
+                       migrate_data=None):
         self._livemigrationops.live_migration(context, instance, dest,
                                               post_method, recover_method,
                                               block_migration, migrate_data)
