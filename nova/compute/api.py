@@ -328,8 +328,7 @@ class API(base.Base):
                 raise exception.OnsetFileContentLimitExceeded(
                    allowed=exc.kwargs['quotas']['injected_file_content_bytes'])
 
-    def _check_metadata_properties_quota(self, context, metadata=None,
-                                         instance_type=None):
+    def _check_metadata_properties_quota(self, context, metadata=None):
         """Enforce quota limits on metadata properties."""
         if not metadata:
             metadata = {}
@@ -338,15 +337,8 @@ class API(base.Base):
             raise exception.InvalidMetadata(reason=msg)
         num_metadata = len(metadata)
         try:
-            quota_result = objects.Quotas.limit_check(context,
+            objects.Quotas.limit_check(context,
                                             metadata_items=num_metadata)
-            if instance_type['name'] == CONF.big_vm_flavor:
-                if int(quota_result['quotas']['big_flavor_quota']) >= \
-                        int(instance_type['extra_specs']['quota_limit']):
-                    raise exception.FlavorOverQuota(message=
-                                "Flavor %s quota limit exceeded" %
-                                instance_type['name'])
-
         except exception.OverQuota as exc:
             quota_metadata = exc.kwargs['quotas']['metadata_items']
             raise exception.MetadataLimitExceeded(allowed=quota_metadata)
@@ -777,7 +769,7 @@ class API(base.Base):
     def _checks_for_create_and_rebuild(self, context, image_id, image,
                                        instance_type, metadata,
                                        files_to_inject, root_bdm):
-        self._check_metadata_properties_quota(context, metadata, instance_type)
+        self._check_metadata_properties_quota(context, metadata)
         self._check_injected_file_quota(context, files_to_inject)
         self._check_requested_image(context, image_id, image,
                                     instance_type, root_bdm)

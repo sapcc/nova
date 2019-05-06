@@ -270,6 +270,7 @@ Related options:
           "RetryFilter",
           "AvailabilityZoneFilter",
           "ComputeFilter",
+          "BigFlavorFilter",
           "ComputeCapabilitiesFilter",
           "ImagePropertiesFilter",
           "ServerGroupAntiAffinityFilter",

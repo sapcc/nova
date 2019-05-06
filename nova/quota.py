@@ -400,11 +400,6 @@ class DbQuotaDriver(object):
                         common user.
         :param project_quotas: Quotas dictionary for the specified project.
         """
-        instance_list = objects.InstanceList.get_all(context)
-        big_flavor_quota = 0
-        for i in instance_list:
-            if i.get_flavor().name == CONF.big_vm_flavor:
-                big_flavor_quota += 1
 
         # Filter resources
         desired = set(keys)
@@ -434,10 +429,8 @@ class DbQuotaDriver(object):
                                              context.quota_class,
                                              usages=False,
                                              project_quotas=project_quotas)
-        quota_dict = {k: v['limit'] for k, v in quotas.items()}
-        quota_dict['big_flavor_quota'] = big_flavor_quota
 
-        return quota_dict
+        return {k: v['limit'] for k, v in quotas.items()}
 
     def limit_check(self, context, resources, values, project_id=None,
                     user_id=None):
