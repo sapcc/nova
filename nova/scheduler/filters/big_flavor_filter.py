@@ -21,6 +21,7 @@ from nova import objects
 from nova.scheduler import filters
 from nova import servicegroup
 from nova.context import get_admin_context
+from nova.db.api import aggregate_get_by_host
 
 LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
@@ -49,18 +50,28 @@ class BigFlavorFilter(filters.BaseHostFilter):
 
         return True
 
+    def get_flavor_quota_limit(self, context, host):
+
+        aggregate_list = objects.AggregateList.get_by_host(context, host)
+        flavor_quota = None
+
+        for aggr in aggregate_list:
+            if aggr.hosts[0] == host:
+                flavor_quota = aggr.metadata['flavor_quota']
+        return flavor_quota
+
     def _schedule_big_flavor(self, context, spec_obj, host):
         instance_list = objects.InstanceList.get_by_host(context, host)
+
+        flavor_quota_limit = self.get_flavor_quota_limit(context, host)
         flavor_name = spec_obj.flavor.name
-        extra_specs = spec_obj.flavor.extra_specs
         big_flavor_quota = 0
         for i in instance_list:
             if i.get_flavor().name == CONF.big_vm_flavor:
                 big_flavor_quota += 1
-
         if flavor_name == CONF.big_vm_flavor:
             if big_flavor_quota >= \
-                    int(extra_specs['quota_limit']):
+                    int(flavor_quota_limit):
                return False
         else:
             LOG.info("Flavor used is %s. Skipping flavor filtering" %
