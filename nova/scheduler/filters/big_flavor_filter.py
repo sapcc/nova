@@ -50,22 +50,29 @@ class BigFlavorFilter(filters.BaseHostFilter):
 
         return True
 
-    def get_flavor_quota_limit(self, context, host):
+    def get_flavor_quota_limit(self, context, host, flavor_extra_specs):
 
         aggregate_list = objects.AggregateList.get_by_host(context, host)
         flavor_quota = None
 
         for aggr in aggregate_list:
-            if aggr.hosts[0] == host:
-                flavor_quota = aggr.metadata['flavor_quota']
+            for aggr_host in aggr.hosts:
+                if aggr_host == host:
+                    if "support_big_flavor" in aggr.metadata:
+                        if bool(aggr.metadata["support_big_flavor"]):
+                            flavor_quota = aggr.metadata['flavor_quota']
+                            break
         return flavor_quota
 
     def _schedule_big_flavor(self, context, spec_obj, host):
         instance_list = objects.InstanceList.get_by_host(context, host)
-
-        flavor_quota_limit = self.get_flavor_quota_limit(context, host)
         flavor_name = spec_obj.flavor.name
+        flavor_extra_specs = spec_obj.flavor.extra_specs
         big_flavor_quota = 0
+
+        flavor_quota_limit = self.get_flavor_quota_limit(context, host,
+                                                         flavor_extra_specs)
+
         for i in instance_list:
             if i.get_flavor().name == CONF.big_vm_flavor:
                 big_flavor_quota += 1
