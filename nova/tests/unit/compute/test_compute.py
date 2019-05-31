@@ -162,6 +162,7 @@ class BaseTestCase(test.TestCase):
         self.compute = compute_manager.ComputeManager()
         # execute power syncing synchronously for testing:
         self.compute._sync_power_pool = eventlet_utils.SyncPool()
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
 
         # override tracker with a version that doesn't need the database:
         fake_rt = fake_resource_tracker.FakeResourceTracker(self.compute.host,
@@ -1963,7 +1964,7 @@ class ComputeTestCase(BaseTestCase,
                           filter_properties={}, requested_networks=[],
                           injected_files=None, admin_password=None,
                           node=None)
-        time.sleep(1)
+
         # check state is failed even after the periodic poll
         self._assert_state({'vm_state': vm_states.ERROR,
                             'task_state': None})
@@ -1986,7 +1987,6 @@ class ComputeTestCase(BaseTestCase,
                           filter_properties={}, requested_networks=[],
                           injected_files=None, admin_password=None,
                           node=None, block_device_mapping=[], image={})
-        time.sleep(1)
         # check state is failed even after the periodic poll
         self._assert_state({'vm_state': vm_states.ERROR,
                             'task_state': None})
@@ -2258,7 +2258,6 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj()
         self.compute.build_and_run_instance(self.context, instance, {}, {},
                                             {}, block_device_mapping=[])
-        time.sleep(1)
         db.instance_update(self.context, instance['uuid'],
                            {"task_state": task_states.POWERING_OFF})
         inst_uuid = instance['uuid']
@@ -2281,7 +2280,6 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj()
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(3)
         db.instance_update(self.context, instance['uuid'],
                            {"task_state": task_states.POWERING_OFF})
         extra = ['system_metadata', 'metadata']
@@ -2323,7 +2321,6 @@ class ComputeTestCase(BaseTestCase,
 
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(3)
 
         db.instance_update(self.context, instance['uuid'],
                            {"task_state": task_states.POWERING_OFF,
@@ -2350,7 +2347,7 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj(params)
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(1)
+
         db.instance_update(self.context, instance['uuid'],
                            {"task_state": task_states.POWERING_OFF})
         extra = ['system_metadata', 'metadata']
@@ -2412,7 +2409,6 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj()
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(1)
 
         fake_notifier.NOTIFICATIONS = []
         instance.task_state = task_states.RESCUING
@@ -2689,7 +2685,6 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj()
         self.compute.build_and_run_instance(context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(3)
         instance.task_state = task_states.SUSPENDING
         instance.save()
         self.compute.suspend_instance(context, instance)
@@ -2734,7 +2729,6 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj()
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(1)
 
         with mock.patch.object(self.compute.driver, 'suspend',
                            side_effect=NotImplementedError('suspend test')):
@@ -3446,7 +3440,6 @@ class ComputeTestCase(BaseTestCase,
         instance = self._create_fake_instance_obj()
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(3)
         instance.task_state = task_states.IMAGE_SNAPSHOT_PENDING
         instance.save()
         return instance
@@ -4319,7 +4312,6 @@ class ComputeTestCase(BaseTestCase,
                                             image={'name':
                                                    expected_image_name},
                                             block_device_mapping=[])
-        time.sleep(1)
         self.assertEqual(len(fake_notifier.NOTIFICATIONS), 2)
         instance.refresh()
         msg = fake_notifier.NOTIFICATIONS[0]
@@ -4421,7 +4413,6 @@ class ComputeTestCase(BaseTestCase,
 
         self.compute.build_and_run_instance(
                 self.context, instance, {}, {}, {}, block_device_mapping=[])
-        time.sleep(1)
 
         self.assertGreaterEqual(len(fake_notifier.NOTIFICATIONS), 2)
         msg = fake_notifier.NOTIFICATIONS[0]
@@ -5298,7 +5289,6 @@ class ComputeTestCase(BaseTestCase,
 
         self.compute.build_and_run_instance(self.context, instance, {}, {}, {},
                                             block_device_mapping=[])
-        time.sleep(1)
         time_fixture.advance_time_delta(cur_time - old_time)
         fake_notifier.NOTIFICATIONS = []
 
@@ -6354,7 +6344,6 @@ class ComputeTestCase(BaseTestCase,
             self.assertRaises(test.TestingException,
                 self.compute.live_migration,
                 c, dest, instance, False, migration, migrate_data)
-            time.sleep(1)
 
         # ensure we have updated the instance and migration objects
         self.assertEqual(vm_states.ERROR, instance.vm_state)
@@ -7826,9 +7815,9 @@ class ComputeTestCase(BaseTestCase,
                        '_sync_instance_power_state')
     def test_sync_power_states(self, mock_sync, mock_get):
         ctxt = self.context.elevated()
-        inst1 = self._create_fake_instance_obj({'host': self.compute.host})
-        inst2 = self._create_fake_instance_obj({'host': self.compute.host})
-        inst3 = self._create_fake_instance_obj({'host': self.compute.host})
+        self._create_fake_instance_obj({'host': self.compute.host})
+        self._create_fake_instance_obj({'host': self.compute.host})
+        self._create_fake_instance_obj({'host': self.compute.host})
 
         mock_get.side_effect = [
             exception.InstanceNotFound(instance_id=uuids.instance),
@@ -12787,7 +12776,6 @@ class EvacuateHostTestCase(BaseTestCase):
                            {"task_state": task_states.SCHEDULING})
         self.compute.build_and_run_instance(self.context,
                 self.inst, {}, {}, {}, block_device_mapping=[])
-        time.sleep(3)
 
         self.stub_out('nova.virt.fake.FakeDriver.instance_on_disk',
                        lambda *a, **kw: True)

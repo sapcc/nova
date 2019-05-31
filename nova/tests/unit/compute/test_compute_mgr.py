@@ -55,6 +55,7 @@ from nova.objects import migrate_data as migrate_data_obj
 from nova.objects import network_request as net_req_obj
 from nova import test
 from nova.tests import fixtures
+from nova.tests.unit.compute import eventlet_utils
 from nova.tests.unit.api.openstack import fakes
 from nova.tests.unit.compute import fake_resource_tracker
 from nova.tests.unit import fake_block_device
@@ -574,7 +575,6 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                                                     mock.sentinel.image,
                                                     mock.sentinel.request_spec,
                                                     {})
-                time.sleep(3)
             self.assertEqual(3, mock_sem.__enter__.call_count)
 
     def test_max_concurrent_builds_limited(self):
@@ -4666,6 +4666,7 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                                                        'fake-node']]}}
 
         self.useFixture(fixtures.SpawnIsSynchronousFixture())
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
 
         def fake_network_info():
             return network_model.NetworkInfo([{'address': '1.2.3.4'}])
@@ -4712,8 +4713,11 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                                               (task_states.SCHEDULING, None))
 
     def _instance_action_events(self, mock_start, mock_finish):
-        self.assertEqual(mock_start.call_count, 0)
-        self.assertEqual(mock_finish.call_count, 0)
+        mock_start.assert_called_once_with(self.context, self.instance.uuid,
+                                           mock.ANY, want_result=False)
+        mock_finish.assert_called_once_with(self.context, self.instance.uuid,
+                                            mock.ANY, exc_val=mock.ANY,
+                                            exc_tb=mock.ANY, want_result=False)
 
     @staticmethod
     def _assert_build_instance_hook_called(mock_hooks, result):
@@ -4751,8 +4755,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 security_groups=self.security_groups,
                 block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits, host_list=fake_host_list)
-        time.sleep(3)
-        # self.assertEqual(mock_hooks.setdefault().run_post.call_count, 1)
+
+        self.assertEqual(mock_hooks.setdefault().run_post.call_count, 1)
 
         self._assert_build_instance_hook_called(mock_hooks,
                                                 build_results.ACTIVE)
@@ -4783,7 +4787,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 security_groups=self.security_groups,
                 block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits, host_list=fake_host_list)
-        time.sleep(3)
         requested_network = mock_build_and_run.call_args[0][5][0]
         self.assertEqual('fake_network_id', requested_network.network_id)
         self.assertEqual('10.0.0.1', str(requested_network.address))
@@ -4819,7 +4822,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 security_groups=self.security_groups,
                 block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits, host_list=fake_host_list)
-        time.sleep(3)
 
         self._assert_build_instance_update(mock_save)
         self._assert_build_instance_hook_called(mock_hooks,
@@ -4870,7 +4872,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                     block_device_mapping=self.block_device_mapping,
                     node=self.node, limits=self.limits,
                     host_list=fake_host_list)
-            time.sleep(5)
 
         self._assert_build_instance_update(mock_save, reschedule_update=True)
         mock_build_run.assert_called_once_with(self.context, self.instance,
@@ -5104,7 +5105,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 security_groups=self.security_groups,
                 block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits, host_list=fake_host_list)
-        time.sleep(10)
 
         self._assert_build_instance_update(mock_save)
         mock_build_run.assert_called_once_with(self.context, self.instance,
@@ -5157,7 +5157,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                     block_device_mapping=self.block_device_mapping,
                     node=self.node, limits=self.limits,
                     host_list=fake_host_list)
-            time.sleep(3)
 
         self._assert_build_instance_update(mock_save, reschedule_update=True)
         mock_build_run.assert_called_once_with(self.context, self.instance,
@@ -5204,7 +5203,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 security_groups=self.security_groups,
                 block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits, host_list=fake_host_list)
-        time.sleep(3)
 
         self._assert_build_instance_update(mock_save, reschedule_update=True)
         mock_build_run.assert_called_once_with(self.context, self.instance,
@@ -5252,7 +5250,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 security_groups=self.security_groups,
                 block_device_mapping=self.block_device_mapping, node=self.node,
                 limits=self.limits, host_list=fake_host_list)
-        time.sleep(1)
 
         # self._assert_build_instance_hook_called(mock_hooks,
         #                                         build_results.FAILED)
@@ -5304,7 +5301,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         for i in range(0, 10):
             self.compute.build_and_run_instance(self.context, instance, None,
                                                 None, None)
-            time.sleep(1)
         self.assertEqual(10, mock_failed.call_count)
 
     @mock.patch.object(manager.ComputeManager, '_do_build_and_run_instance')
@@ -5345,7 +5341,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 self.compute.build_and_run_instance(self.context, instance,
                                                     None,
                                                     None, None)
-            time.sleep(10)
 
         self.assertEqual(2, mock_failed.call_count)
         self.assertEqual(8, mock_succeeded.call_count)
@@ -5362,7 +5357,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         for i in range(0, 10):
             self.compute.build_and_run_instance(self.context, instance, None,
                                                 None, None)
-            time.sleep(3)
 
         self.assertEqual(10, mock_failed.call_count)
         mock_succeeded.assert_not_called()
@@ -5388,7 +5382,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 result = self.compute.build_and_run_instance(
                                             self.context, instance, None,
                                             None, None)
-                time.sleep(3)
                 self.assertRaises(test.TestingException,
                                   result,
                                   self.context, instance, None,
@@ -5615,7 +5608,6 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                     block_device_mapping=self.block_device_mapping,
                     node=self.node, limits=self.limits,
                     host_list=fake_host_list)
-            time.sleep(1)
         self._assert_build_instance_update(mock_save, reschedule_update=True)
         mock_claim.assert_called_once_with(self.context, self.instance,
             self.node, self.limits)
@@ -6827,7 +6819,6 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase):
                                         mock.sentinel.migrate_data)
             self.assertEqual('queued', migration.status)
             migration.save.assert_called_once_with()
-            time.sleep(5)
 
         with mock.patch.object(self.compute,
                                '_live_migration_semaphore') as mock_sem:
