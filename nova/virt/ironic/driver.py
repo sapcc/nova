@@ -896,7 +896,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         # owned by ironic virt and set on the node object.
         provider_tree.update_traits(nodename, node.traits)
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and
