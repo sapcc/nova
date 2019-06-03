@@ -1817,15 +1817,12 @@ class TestAPI(TestAPIBase):
         ids = [uuids.my_netid1, uuids.my_netid2]
         mocked_client.list_networks.return_value = {'networks': self.nets2}
         mocked_client.show_quota.return_value = {'quota': {'port': 50}}
-        mocked_client.list_ports.return_value = {'ports': []}
 
         self.api.validate_networks(self.context, requested_networks, 1)
 
         mock_get_client.assert_called_once_with(self.context)
         mocked_client.list_networks.assert_called_once_with(id=ids)
         mocked_client.show_quota.assert_called_once_with(uuids.my_tenant)
-        mocked_client.list_ports.assert_called_once_with(
-            tenant_id=uuids.my_tenant, fields=['id'])
 
     @mock.patch.object(neutronapi, 'get_client')
     def test_validate_networks_without_port_quota_on_network_side(
@@ -1894,15 +1891,12 @@ class TestAPI(TestAPIBase):
         ids = [uuids.my_netid1, uuids.my_netid1]
         mocked_client.list_networks.return_value = {'networks': self.nets1}
         mocked_client.show_quota.return_value = {'quota': {'port': 50}}
-        mocked_client.list_ports.return_value = {'ports': []}
 
         self.api.validate_networks(self.context, requested_networks, 1)
 
         mock_get_client.assert_called_once_with(self.context)
         mocked_client.list_networks.assert_called_once_with(id=ids)
         mocked_client.show_quota.assert_called_once_with(uuids.my_tenant)
-        mocked_client.list_ports.assert_called_once_with(
-            tenant_id=uuids.my_tenant, fields=['id'])
 
     def test_allocate_for_instance_with_requested_networks_duplicates(self):
         # specify a duplicate network to allocate to instance
@@ -2108,7 +2102,6 @@ class TestAPI(TestAPIBase):
         ids = [uuids.my_netid1, uuids.my_netid2]
         mocked_client.list_networks.return_value = {'networks': self.nets2}
         mocked_client.show_quota.return_value = {'quota': {'port': 2}}
-        mocked_client.list_ports.return_value = {'ports': self.port_data2}
 
         max_count = self.api.validate_networks(self.context,
                                                requested_networks, 1)
@@ -2116,8 +2109,6 @@ class TestAPI(TestAPIBase):
         mock_get_client.assert_called_once_with(self.context)
         mocked_client.list_networks.assert_called_once_with(id=ids)
         mocked_client.show_quota.assert_called_once_with(uuids.my_tenant)
-        mocked_client.list_ports.assert_called_once_with(
-            tenant_id=uuids.my_tenant, fields=['id'])
 
     @mock.patch.object(neutronapi, 'get_client')
     def test_validate_networks_with_ports_and_networks(self, mock_get_client):
@@ -2135,7 +2126,6 @@ class TestAPI(TestAPIBase):
         ids = [uuids.my_netid1]
         mocked_client.list_networks.return_value = {'networks': self.nets1}
         mocked_client.show_quota.return_value = {'quota': {'port': 5}}
-        mocked_client.list_ports.return_value = {'ports': self.port_data2}
 
         max_count = self.api.validate_networks(self.context,
                                                requested_networks, 1)
@@ -2145,8 +2135,6 @@ class TestAPI(TestAPIBase):
         mocked_client.show_port.assert_called_once_with(port_b['id'])
         mocked_client.list_networks.assert_called_once_with(id=ids)
         mocked_client.show_quota.assert_called_once_with(uuids.my_tenant)
-        mocked_client.list_ports.assert_called_once_with(
-            tenant_id=uuids.my_tenant, fields=['id'])
 
     @mock.patch.object(neutronapi, 'get_client')
     def test_validate_networks_one_port_and_no_networks(self, mock_get_client):
@@ -2181,7 +2169,6 @@ class TestAPI(TestAPIBase):
         ids = [uuids.my_netid1, uuids.my_netid2]
         mocked_client.list_networks.return_value = {'networks': self.nets2}
         mocked_client.show_quota.return_value = {'quota': {'port': 5}}
-        mocked_client.list_ports.return_value = {'ports': self.port_data2}
 
         max_count = self.api.validate_networks(self.context,
                                                requested_networks, 2)
@@ -2190,8 +2177,6 @@ class TestAPI(TestAPIBase):
         mock_get_client.assert_called_once_with(self.context)
         mocked_client.list_networks.assert_called_once_with(id=ids)
         mocked_client.show_quota.assert_called_once_with(uuids.my_tenant)
-        mocked_client.list_ports.assert_called_once_with(
-            tenant_id=uuids.my_tenant, fields=['id'])
 
     @mock.patch.object(neutronapi, 'get_client')
     def test_validate_networks_unlimited_quota(self, mock_get_client):
