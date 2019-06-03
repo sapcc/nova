@@ -54,6 +54,7 @@ from nova.objects import migrate_data as migrate_data_obj
 from nova.objects import network_request as net_req_obj
 from nova import test
 from nova.tests import fixtures
+from nova.tests.unit.compute import eventlet_utils
 from nova.tests.unit.api.openstack import fakes
 from nova.tests.unit.compute import fake_resource_tracker
 from nova.tests.unit import fake_block_device
@@ -86,6 +87,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                                               fakes.FAKE_PROJECT_ID)
 
         self.useFixture(fixtures.SpawnIsSynchronousFixture())
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
         self.useFixture(fixtures.EventReporterStub())
 
     @mock.patch.object(manager.ComputeManager, '_get_power_state')
@@ -4662,6 +4664,7 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                                                        'fake-node']]}}
 
         self.useFixture(fixtures.SpawnIsSynchronousFixture())
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
 
         def fake_network_info():
             return network_model.NetworkInfo([{'address': '1.2.3.4'}])
@@ -4728,6 +4731,7 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
     def test_build_and_run_instance_with_unlimited_max_concurrent_builds(self):
         self.flags(max_concurrent_builds=0)
         self.compute = manager.ComputeManager()
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
         self._test_build_and_run_instance()
 
     @mock.patch.object(objects.InstanceActionEvent,
@@ -6220,6 +6224,7 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase):
             status='migrating')
         self.migration.save = mock.MagicMock()
         self.useFixture(fixtures.SpawnIsSynchronousFixture())
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
         self.useFixture(fixtures.EventReporterStub())
 
     @contextlib.contextmanager
