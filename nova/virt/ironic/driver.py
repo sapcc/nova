@@ -876,7 +876,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         node = self._node_from_cache(nodename)
         return list(node.traits)
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and

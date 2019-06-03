@@ -461,7 +461,7 @@ class FakeDriver(driver.ComputeDriver):
     def refresh_instance_security_rules(self, instance):
         return True
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Updates compute manager resource info on ComputeNode table.
 
            Since we don't have a real hypervisor, pretend we have lots of

@@ -515,7 +515,7 @@ class XenAPIDriver(driver.ComputeDriver):
             )
         return result
 
-    def get_available_resource(self, nodename):
+    def get_available_resource(self, nodename=None):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and

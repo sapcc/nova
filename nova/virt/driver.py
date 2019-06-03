@@ -912,7 +912,7 @@ class ComputeDriver(object):
 
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
-                       migrate_data=None):
+                       migrate_data=None, server_data=None):
         """Live migration of an instance to another host.
 
         :param context: security context
