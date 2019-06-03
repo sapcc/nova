@@ -91,6 +91,7 @@ class LimitsControllerTestV21(BaseLimitTestSuite):
         expected = {
             "limits": {
                 "rate": [],
+                'absolutePerFlavor': {},
                 "absolute": {},
             },
         }
@@ -122,6 +123,7 @@ class LimitsControllerTestV21(BaseLimitTestSuite):
         expected = {
             "limits": {
                 "rate": [],
+                'absolutePerFlavor': {},
                 "absolute": {
                     "maxTotalRAMSize": 512,
                     "maxTotalInstances": 5,
@@ -206,6 +208,7 @@ class LimitsViewBuilderTest(test.NoDBTestCase):
     def test_build_limits(self):
         expected_limits = {"limits": {
                 "rate": [],
+                "absolutePerFlavor":{},
                 "absolute": {"maxServerMeta": 1,
                              "maxImageMeta": 1,
                              "maxPersonality": 5,
@@ -216,6 +219,7 @@ class LimitsViewBuilderTest(test.NoDBTestCase):
 
     def test_build_limits_empty_limits(self):
         expected_limits = {"limits": {"rate": [],
+                            "absolutePerFlavor":{},
                            "absolute": {}}}
 
         abs_limits = {}
@@ -270,6 +274,7 @@ class LimitsControllerTestV236(BaseLimitTestSuite):
             expected_response = {
                 "limits": {
                     "rate": [],
+                    'absolutePerFlavor': {},
                     "absolute": {
                         "maxTotalRAMSize": 512,
                         "maxTotalInstances": 5,
@@ -306,6 +311,7 @@ class LimitsControllerTestV239(BaseLimitTestSuite):
             expected_response = {
                 "limits": {
                     "rate": [],
+                    'absolutePerFlavor': {},
                     "absolute": {
                         "maxServerMeta": 1,
                     },
