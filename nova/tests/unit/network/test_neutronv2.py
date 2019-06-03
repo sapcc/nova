@@ -1728,9 +1728,6 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 50}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': []})
         self.mox.ReplayAll()
         api = neutronapi.API()
         api.validate_networks(self.context, requested_networks, 1)
@@ -1759,9 +1756,6 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 50}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': []})
         self.mox.ReplayAll()
         api = neutronapi.API()
         try:
@@ -1800,9 +1794,7 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                 {'quota': {'port': 50}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                 {'ports': []})
+
         self.mox.ReplayAll()
         api = neutronapi.API()
         api.validate_networks(self.context, requested_networks, 1)
@@ -2004,10 +1996,7 @@ class TestNeutronv2(TestNeutronv2Base):
                 {'networks': self.nets2})
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
-                    {'quota': {'port': 2}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': self.port_data2})
+                    {'quota': {'port': 0}})
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
@@ -2032,9 +2021,7 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 5}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': self.port_data2})
+
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
@@ -2071,10 +2058,7 @@ class TestNeutronv2(TestNeutronv2Base):
                 {'networks': self.nets2})
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
-                    {'quota': {'port': 5}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': self.port_data2})
+                    {'quota': {'port': 3}})
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
@@ -3439,9 +3423,6 @@ class TestNeutronv2WithMock(test.TestCase):
                 list_ports_mock, list_networks_mock, show_quota_mock):
 
             self.api.validate_networks(self.context, requested_networks, 1)
-
-            self.assertEqual(len(list_port_values),
-                             len(list_ports_mock.call_args_list))
             list_networks_mock.assert_called_once_with(id=ids)
             show_quota_mock.assert_called_once_with('fake-project')
 
