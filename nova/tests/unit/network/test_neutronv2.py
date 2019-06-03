@@ -16,6 +16,7 @@
 
 import collections
 import copy
+import unittest
 
 from keystoneauth1.fixture import V2Token
 from keystoneauth1 import loading as ks_loading
@@ -1728,9 +1729,6 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 50}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': []})
         self.mox.ReplayAll()
         api = neutronapi.API()
         api.validate_networks(self.context, requested_networks, 1)
@@ -1759,9 +1757,6 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 50}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': []})
         self.mox.ReplayAll()
         api = neutronapi.API()
         try:
@@ -1800,9 +1795,7 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                 {'quota': {'port': 50}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                 {'ports': []})
+
         self.mox.ReplayAll()
         api = neutronapi.API()
         api.validate_networks(self.context, requested_networks, 1)
@@ -1993,7 +1986,9 @@ class TestNeutronv2(TestNeutronv2Base):
     def test_validate_networks_no_quota(self):
         # Test validation for a request for one instance needing
         # two ports, where the quota is 2 and 2 ports are in use
-        #  => instances which can be created = 0
+        #  => instances which can be created = 1
+        # NOTE(jkulik) We've changed this to ignore used quota, because
+        # computing used quota is too slow for an early-opt-out check.
         requested_networks = objects.NetworkRequestList(
             objects=[objects.NetworkRequest(network_id=uuids.my_netid1),
                      objects.NetworkRequest(network_id=uuids.my_netid2)])
@@ -2005,14 +2000,11 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 2}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': self.port_data2})
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
                                           requested_networks, 1)
-        self.assertEqual(0, max_count)
+        self.assertEqual(1, max_count)
 
     def test_validate_networks_with_ports_and_networks(self):
         # Test validation for a request for one instance needing
@@ -2032,9 +2024,7 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 5}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': self.port_data2})
+
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
@@ -2060,7 +2050,9 @@ class TestNeutronv2(TestNeutronv2Base):
     def test_validate_networks_some_quota(self):
         # Test validation for a request for two instance needing
         # two ports each, where the quota is 5 and 2 ports are in use
-        #  => instances which can be created = 1
+        #  => instances which can be created = 2
+        # NOTE(jkulik) We've changed this to ignore used quota, because
+        # computing used quota is too slow for an early-opt-out check.
         requested_networks = objects.NetworkRequestList(
             objects=[objects.NetworkRequest(network_id=uuids.my_netid1),
                      objects.NetworkRequest(network_id=uuids.my_netid2)])
@@ -2072,19 +2064,38 @@ class TestNeutronv2(TestNeutronv2Base):
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
                     {'quota': {'port': 5}})
-        self.moxed_client.list_ports(
-            tenant_id=uuids.my_tenant, fields=['id']).AndReturn(
-                    {'ports': self.port_data2})
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
                                           requested_networks, 2)
-        self.assertEqual(1, max_count)
+        self.assertEqual(2, max_count)
+
+    def test_validate_networks_over_limit_quota(self):
+        # Test validation for a request for one instance needing
+        # three ports, where the quota is 2
+        #  => instances which can be created = 0
+        requested_networks = objects.NetworkRequestList(
+            objects=[objects.NetworkRequest(network_id=uuids.my_netid1),
+                     objects.NetworkRequest(network_id=uuids.my_netid2),
+                     objects.NetworkRequest(network_id=uuids.my_netid3)])
+        ids = [uuids.my_netid1, uuids.my_netid2, uuids.my_netid3]
+        neutronapi.get_client(mox.IgnoreArg()).AndReturn(self.moxed_client)
+        self.moxed_client.list_networks(
+            id=mox.SameElementsAs(ids)).AndReturn(
+                {'networks': self.nets3})
+        self.moxed_client.show_quota(
+            uuids.my_tenant).AndReturn(
+                    {'quota': {'port': 2}})
+        self.mox.ReplayAll()
+        api = neutronapi.API()
+        max_count = api.validate_networks(self.context,
+                                          requested_networks, 1)
+        self.assertEqual(0, max_count)
 
     def test_validate_networks_unlimited_quota(self):
         # Test validation for a request for two instance needing
         # two ports each, where the quota is -1 (unlimited)
-        #  => instances which can be created = 1
+        #  => instances which can be created = 2
         requested_networks = objects.NetworkRequestList(
             objects=[objects.NetworkRequest(network_id=uuids.my_netid1),
                      objects.NetworkRequest(network_id=uuids.my_netid2)])
@@ -3439,12 +3450,11 @@ class TestNeutronv2WithMock(test.TestCase):
                 list_ports_mock, list_networks_mock, show_quota_mock):
 
             self.api.validate_networks(self.context, requested_networks, 1)
-
-            self.assertEqual(len(list_port_values),
-                             len(list_ports_mock.call_args_list))
             list_networks_mock.assert_called_once_with(id=ids)
             show_quota_mock.assert_called_once_with('fake-project')
 
+    # we changed the behaviour to not check too thoroughly so this works now
+    @unittest.expectedFailure
     def test_validate_networks_over_limit_quota(self):
         """Test validates that a relevant exception is being raised when
            there are more ports defined, than there is a quota for it.
