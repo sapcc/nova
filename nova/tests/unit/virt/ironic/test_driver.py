@@ -1077,12 +1077,14 @@ class IronicDriverTestCase(test.NoDBTestCase):
     @mock.patch.object(loopingcall, 'FixedIntervalLoopingCall')
     @mock.patch.object(FAKE_CLIENT, 'node')
     @mock.patch.object(ironic_driver.IronicDriver, '_add_volume_target_info')
+    @mock.patch.object(ironic_driver.IronicDriver, '_wait_for_available')
     @mock.patch.object(ironic_driver.IronicDriver, '_wait_for_active')
     @mock.patch.object(ironic_driver.IronicDriver,
                        '_add_instance_info_to_node')
     @mock.patch.object(ironic_driver.IronicDriver, '_start_firewall')
     def _test_spawn(self, mock_sf, mock_aiitn, mock_wait_active,
-                    mock_avti, mock_node, mock_looping, mock_save):
+                    mock_wait_available, mock_avti, mock_node, mock_looping,
+                    mock_save):
         node_uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         node = ironic_utils.get_test_node(driver='fake', uuid=node_uuid)
         instance = fake_instance.fake_instance_obj(self.ctx, node=node_uuid)
@@ -1094,8 +1096,8 @@ class IronicDriverTestCase(test.NoDBTestCase):
         mock_node.get_by_instance_uuid.return_value = node
         mock_node.set_provision_state.return_value = mock.MagicMock()
 
-        fake_looping_call = FakeLoopingCall()
-        mock_looping.return_value = fake_looping_call
+        fake_looping_calls = [FakeLoopingCall(), FakeLoopingCall()]
+        mock_looping.side_effect = fake_looping_calls
 
         image_meta = ironic_utils.get_test_image_meta()
 
@@ -1115,11 +1117,15 @@ class IronicDriverTestCase(test.NoDBTestCase):
         self.assertIsNone(instance.default_ephemeral_device)
         self.assertFalse(mock_save.called)
 
-        mock_looping.assert_called_once_with(mock_wait_active,
-                                             instance)
-        fake_looping_call.start.assert_called_once_with(
-            interval=CONF.ironic.api_retry_interval)
-        fake_looping_call.wait.assert_called_once_with()
+        expected_calls = [
+            mock.call(mock_wait_available, instance, node),
+            mock.call(mock_wait_active, instance)
+        ]
+        mock_looping.assert_has_calls(expected_calls)
+        for fake_looping_call in fake_looping_calls:
+            fake_looping_call.start.assert_called_once_with(
+                interval=CONF.ironic.api_retry_interval)
+            fake_looping_call.wait.assert_called_once_with()
 
     @mock.patch.object(ironic_driver.IronicDriver, '_generate_configdrive')
     @mock.patch.object(configdrive, 'required_by')
