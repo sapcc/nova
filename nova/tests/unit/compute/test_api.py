@@ -2032,6 +2032,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
             if allow_same_host:
                 filter_properties = {'ignore_hosts': []}
+                filter_properties['force_nodes'] = ['fakenode1']
             else:
                 filter_properties = {'ignore_hosts': [fake_inst['host']]}
 
@@ -4342,7 +4343,8 @@ class _ComputeAPIUnitTestMixIn(object):
         proj_count = {'instances': 1, 'cores': 1, 'ram': 512}
         user_count = proj_count.copy()
         quota_count.return_value = {'project': proj_count, 'user': user_count}
-        instance = self._create_instance_obj()
+        fake_flavor = self._create_flavor(extra_specs={})
+        instance = self._create_instance_obj(flavor=fake_flavor)
         instance.vm_state = vm_states.SOFT_DELETED
         instance.task_state = None
         instance.save()
@@ -4382,7 +4384,8 @@ class _ComputeAPIUnitTestMixIn(object):
         proj_count = {'instances': 1, 'cores': 1, 'ram': 512}
         user_count = proj_count.copy()
         quota_count.return_value = {'project': proj_count, 'user': user_count}
-        instance = self._create_instance_obj()
+        fake_flavor = self._create_flavor(extra_specs={})
+        instance = self._create_instance_obj(flavor=fake_flavor)
         instance.vm_state = vm_states.SOFT_DELETED
         instance.task_state = None
         instance.save()
@@ -6612,11 +6615,11 @@ class _ComputeAPIUnitTestMixIn(object):
                 sort_dirs=['desc'])
 
             mock_buildreq_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, limit=None, marker='fake-marker',
+                self.context, {'foo': 'bar'}, limit=10, marker='fake-marker',
                 sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, None, None,
+                self.context, {'foo': 'bar'}, 8, None,
                 fields, ['baz'], ['desc'], cell_down_support=False)
             for i, instance in enumerate(build_req_instances + cell_instances):
                 self.assertEqual(instance, instances[i])

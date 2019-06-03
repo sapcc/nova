@@ -26,7 +26,6 @@ import os
 import re
 import time
 
-import cluster_util
 import decorator
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
@@ -47,7 +46,7 @@ import nova.conf
 from nova.console import type as ctype
 from nova import context as nova_context
 from nova import exception
-from nova.i18n import _, _LI
+from nova.i18n import _
 from nova.network import neutron
 from nova import objects
 from nova.objects import fields
@@ -56,6 +55,7 @@ from nova import version
 from nova.virt import configdrive
 from nova.virt import driver
 from nova.virt import hardware
+from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
@@ -1327,8 +1327,7 @@ class VMwareVMOps(object):
             name=vm_name,
             spec=clone_spec)
         self._session._wait_for_task(vm_clone_task)
-        LOG.info(_LI("Cloned VM %s"), vm_name,
-                 instance=instance)
+        LOG.info("Cloned VM %s", vm_name, instance=instance)
         task_info = self._session._call_method(vutil,
                                                "get_object_property",
                                                vm_clone_task,

@@ -1103,7 +1103,7 @@ class ComputeDriver(object):
 
         return traits
 
-    def get_available_resource(self, nodename=None):
+    def get_available_resource(self, nodename):
         """Retrieve resource information.
 
         This method is called when nova-compute launches, and

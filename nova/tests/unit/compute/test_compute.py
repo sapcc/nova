@@ -157,6 +157,7 @@ class BaseTestCase(test.TestCase):
 
         # execute power syncing synchronously for testing:
         self.compute._sync_power_pool = eventlet_utils.SyncPool()
+        self.compute.instance_running_pool = eventlet_utils.SyncPool()
 
         # override tracker with a version that doesn't need the database:
         fake_rt = fake_resource_tracker.FakeResourceTracker(self.compute.host,
@@ -1479,6 +1480,9 @@ class ComputeTestCase(BaseTestCase,
         self.default_flavor = objects.Flavor.get_by_name(self.context,
                                                          'm1.small')
         self.tiny_flavor = objects.Flavor.get_by_name(self.context, 'm1.tiny')
+
+        self.stub_out('eventlet.greenthread.sleep',
+                       lambda *a, **kw: None)
 
     def test_wrap_instance_fault(self):
         inst = {"uuid": uuids.instance}
