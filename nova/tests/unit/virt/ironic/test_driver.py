@@ -3281,7 +3281,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
             temp_data['target_mode'] = mode
 
         def _fake_log_error(msg, *args, **kwargs):
-            regex = r'Invalid Socat console URL .*'
+            regex = r'Invalid Socat or Shellinabox console URL .*'
             self.assertThat(msg, matchers.MatchesRegex(regex))
 
         mock_node.get_console.side_effect = _fake_get_console
@@ -3308,7 +3308,7 @@ class IronicDriverConsoleTestCase(test.NoDBTestCase):
             temp_data['target_mode'] = mode
 
         def _fake_log_error(msg, *args, **kwargs):
-            regex = r'Invalid Socat console URL .*'
+            regex = r'Invalid Socat or Shellinabox console URL .*'
             self.assertThat(msg, matchers.MatchesRegex(regex))
 
         mock_node.get_console.side_effect = _fake_get_console
