@@ -82,12 +82,12 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         # nova.utils.get_ksa_adapter().get_endpoint()
         self.get_ksa_adapter.assert_called_once_with(
             'baremetal', ksa_auth=self.get_auth_plugin.return_value,
-            ksa_session='session', min_version=(1, 0),
+            ksa_session='session', min_version=(1, 46),
             max_version=(1, ksa_disc.LATEST))
         expected = {'session': 'session',
             'max_retries': CONF.ironic.api_max_retries,
             'retry_interval': CONF.ironic.api_retry_interval,
-            'os_ironic_api_version': ['1.38', '1.37'],
+            'os_ironic_api_version': ['1.46', '1.37'],
             'ironic_url':
                 self.get_ksa_adapter.return_value.get_endpoint.return_value,
             'interface': ['internal', 'public']}
@@ -108,13 +108,13 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         # nova.utils.get_endpoint_data
         self.get_ksa_adapter.assert_called_once_with(
             'baremetal', ksa_auth=self.get_auth_plugin.return_value,
-            ksa_session='session', min_version=(1, 0),
+            ksa_session='session', min_version=(1, 46),
             max_version=(1, ksa_disc.LATEST))
         # When get_endpoint_data raises any ServiceNotFound, None is returned.
         expected = {'session': 'session',
                     'max_retries': CONF.ironic.api_max_retries,
                     'retry_interval': CONF.ironic.api_retry_interval,
-                    'os_ironic_api_version': ['1.38', '1.37'],
+                    'os_ironic_api_version': ['1.46', '1.37'],
                     'ironic_url': None,
                     'region_name': CONF.ironic.region_name,
                     'interface': ['internal', 'public']}
@@ -134,7 +134,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         expected = {'session': 'session',
                     'max_retries': CONF.ironic.api_max_retries,
                     'retry_interval': CONF.ironic.api_retry_interval,
-                    'os_ironic_api_version': ['1.38', '1.37'],
+                    'os_ironic_api_version': ['1.46', '1.37'],
                     'ironic_url': endpoint,
                     'interface': ['internal', 'public']}
         mock_ir_cli.assert_called_once_with(1, **expected)
@@ -154,7 +154,7 @@ class IronicClientWrapperTestCase(test.NoDBTestCase):
         expected = {'session': 'session',
                     'max_retries': CONF.ironic.api_max_retries,
                     'retry_interval': CONF.ironic.api_retry_interval,
-                    'os_ironic_api_version': ['1.38', '1.37'],
+                    'os_ironic_api_version': ['1.46', '1.37'],
                     'ironic_url': endpoint,
                     'interface': ['admin']}
         mock_ir_cli.assert_called_once_with(1, **expected)
