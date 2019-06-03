@@ -540,25 +540,34 @@ class IronicDriverTestCase(test.NoDBTestCase):
                                           fields=ironic_driver._NODE_FIELDS)
 
     @mock.patch.object(cw.IronicClientWrapper, 'call')
-    @mock.patch.object(objects.Instance, 'get_by_uuid')
-    def test_list_instances(self, mock_inst_by_uuid, mock_call):
+    @mock.patch.object(objects.InstanceList, 'get_by_filters')
+    @mock.patch.object(objects.Instance, 'save')
+    def test_list_instances(self, mock_save, mock_get_by_filters, mock_call):
         nodes = []
         instances = []
+        self.driver.host = 'ironic-compute1'
         for i in range(2):
             uuid = uuidutils.generate_uuid()
+            hostname = 'ironic-compute{}'.format(i)
             instances.append(fake_instance.fake_instance_obj(self.ctx,
                                                              id=i,
-                                                             uuid=uuid))
+                                                             uuid=uuid,
+                                                             host=hostname))
             nodes.append(ironic_utils.get_test_node(instance_uuid=uuid))
 
-        mock_inst_by_uuid.side_effect = instances
+        mock_get_by_filters.return_value = instances
         mock_call.return_value = nodes
 
         response = self.driver.list_instances()
         mock_call.assert_called_with("node.list", associated=True, limit=0)
-        expected_calls = [mock.call(mock.ANY, instances[0].uuid),
-                          mock.call(mock.ANY, instances[1].uuid)]
-        mock_inst_by_uuid.assert_has_calls(expected_calls)
+        expected_calls = [mock.call(mock.ANY, {"uuid":[instances[0].uuid,
+                                                       instances[1].uuid]},
+                                    expected_attrs=['name', 'host'],
+                                    use_slave=True)]
+        mock_get_by_filters.assert_has_calls(expected_calls)
+        # only one instance's host has to be changed cause it's different from
+        # the driver's
+        self.assertEqual(1, mock_save.call_count)
         self.assertEqual(['instance-00000000', 'instance-00000001'],
                           sorted(response))
 
