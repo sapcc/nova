@@ -8841,7 +8841,8 @@ class ComputeAPITestCase(BaseTestCase):
             sys_meta = {k: v for k, v in instance.system_metadata.items()
                         if not k.startswith('instance_type')}
             self.assertEqual(
-                    {'image_kernel_id': uuids.kernel_id,
+                    {'boot_roles': '',
+                     'image_kernel_id': uuids.kernel_id,
                      'image_min_disk': '1',
                      'image_ramdisk_id': uuids.ramdisk_id,
                      'image_something_else': 'meow',
