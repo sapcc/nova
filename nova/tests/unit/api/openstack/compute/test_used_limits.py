@@ -141,6 +141,7 @@ class UsedLimitsTestCaseV21(test.NoDBTestCase):
 
     def _test_admin_can_fetch_used_limits_for_own_project(self, req_get):
         project_id = "123456"
+        quota_class = 'flavors'
         if 'tenant_id' in req_get:
             project_id = req_get['tenant_id']
 
@@ -161,7 +162,12 @@ class UsedLimitsTestCaseV21(test.NoDBTestCase):
             res = wsgi.ResponseObject(obj)
             self.controller.index(fake_req, res)
 
-            self.assertEqual(2, mock_get_quotas.call_count)
+            mock_get_quotas.assert_has_calls([
+                mock.call(self.fake_context, project_id, usages=True),
+                mock.call(self.fake_context, project_id,
+                          quota_class=quota_class,
+                          usages=True),
+            ])
 
     def test_admin_can_fetch_used_limits_for_own_project(self):
         req_get = {}
@@ -217,6 +223,7 @@ class UsedLimitsTestCaseV21(test.NoDBTestCase):
 
     def test_used_limits_fetched_for_context_project_id(self):
         project_id = "123456"
+        quota_class = 'flavors'
         self.fake_context.project_id = project_id
         obj = {
             "limits": {
@@ -231,7 +238,12 @@ class UsedLimitsTestCaseV21(test.NoDBTestCase):
             res = wsgi.ResponseObject(obj)
             self.controller.index(fake_req, res)
 
-            self.assertEqual(2, mock_get_quotas.call_count)
+            mock_get_quotas.assert_has_calls([
+                mock.call(self.fake_context, project_id, usages=True),
+                mock.call(self.fake_context, project_id,
+                          quota_class=quota_class,
+                          usages=True),
+            ])
 
     def test_used_ram_added(self):
         fake_req = FakeRequest(self.fake_context)
