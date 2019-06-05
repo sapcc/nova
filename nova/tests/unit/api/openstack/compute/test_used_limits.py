@@ -109,6 +109,7 @@ class UsedLimitsTestCaseV21(test.NoDBTestCase):
         project_id = "123456"
         user_id = "A1234"
         tenant_id = 'abcd'
+        quota_class = "flavors"
         self.fake_context.project_id = project_id
         self.fake_context.user_id = user_id
         obj = {
@@ -130,7 +131,13 @@ class UsedLimitsTestCaseV21(test.NoDBTestCase):
             self.controller.index(fake_req, res)
             self.mock_can.assert_called_once_with(ul_policies.BASE_POLICY_NAME,
                                                   target)
-            self.assertEqual(2, mock_get_quotas.call_count)
+
+            mock_get_quotas.assert_has_calls([
+                mock.call(self.fake_context, tenant_id, usages=True),
+                mock.call(self.fake_context, tenant_id,
+                                             quota_class=quota_class,
+                                             usages=True),
+            ])
 
     def _test_admin_can_fetch_used_limits_for_own_project(self, req_get):
         project_id = "123456"
