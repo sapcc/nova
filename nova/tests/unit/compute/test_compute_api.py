@@ -2010,6 +2010,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
             if allow_same_host:
                 filter_properties = {'ignore_hosts': []}
+                filter_properties['force_nodes'] = ['fakenode1']
             else:
                 filter_properties = {'ignore_hosts': [fake_inst['host']]}
 
@@ -2057,7 +2058,6 @@ class _ComputeAPIUnitTestMixIn(object):
                     exception.RequestSpecNotFound(instance_uuid=fake_inst.id))
                 fake_spec = None
 
-            #filter_properties['force_nodes'] = ['fakenode1']exception.OverQuota, exception.InvalidBDM) as e:
             scheduler_hint = {'filter_properties': filter_properties}
 
             self.compute_api.compute_task_api.resize_instance(
