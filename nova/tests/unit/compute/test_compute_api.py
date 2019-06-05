@@ -2008,6 +2008,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
             if allow_same_host:
                 filter_properties = {'ignore_hosts': []}
+                filter_properties['force_nodes'] = ['fakenode1']
             else:
                 filter_properties = {'ignore_hosts': [fake_inst['host']]}
 
