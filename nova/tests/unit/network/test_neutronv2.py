@@ -1988,15 +1988,17 @@ class TestNeutronv2(TestNeutronv2Base):
         #  => instances which can be created = 0
         requested_networks = objects.NetworkRequestList(
             objects=[objects.NetworkRequest(network_id=uuids.my_netid1),
-                     objects.NetworkRequest(network_id=uuids.my_netid2)])
-        ids = [uuids.my_netid1, uuids.my_netid2]
+                     objects.NetworkRequest(network_id=uuids.my_netid2),
+                     objects.NetworkRequest(network_id=uuids.my_netid3)])
+
+        ids = [uuids.my_netid1, uuids.my_netid2, uuids.my_netid3]
         neutronapi.get_client(mox.IgnoreArg()).AndReturn(self.moxed_client)
         self.moxed_client.list_networks(
             id=mox.SameElementsAs(ids)).AndReturn(
-                {'networks': self.nets2})
+                {'networks': self.nets3})
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
-                    {'quota': {'port': 0}})
+                    {'quota': {'port': 2}})
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
@@ -2050,15 +2052,16 @@ class TestNeutronv2(TestNeutronv2Base):
         #  => instances which can be created = 1
         requested_networks = objects.NetworkRequestList(
             objects=[objects.NetworkRequest(network_id=uuids.my_netid1),
-                     objects.NetworkRequest(network_id=uuids.my_netid2)])
-        ids = [uuids.my_netid1, uuids.my_netid2]
+                     objects.NetworkRequest(network_id=uuids.my_netid2),
+                     objects.NetworkRequest(network_id=uuids.my_netid3)])
+        ids = [uuids.my_netid1, uuids.my_netid2, uuids.my_netid3]
         neutronapi.get_client(mox.IgnoreArg()).AndReturn(self.moxed_client)
         self.moxed_client.list_networks(
             id=mox.SameElementsAs(ids)).AndReturn(
-                {'networks': self.nets2})
+                {'networks': self.nets3})
         self.moxed_client.show_quota(
             uuids.my_tenant).AndReturn(
-                    {'quota': {'port': 3}})
+                    {'quota': {'port': 5}})
         self.mox.ReplayAll()
         api = neutronapi.API()
         max_count = api.validate_networks(self.context,
