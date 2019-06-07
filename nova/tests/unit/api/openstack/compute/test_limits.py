@@ -203,12 +203,17 @@ class LimitsViewBuilderTest(test.NoDBTestCase):
         self.rate_limits = []
         self.absolute_limits = {"metadata_items": 1,
                                 "injected_files": 5,
-                                "injected_file_content_bytes": 5}
+                                "injected_file_content_bytes": 5,
+                                "instances_zh2mlx1.2xlarge": 2,
+                                "instances_zh2mlx1_asdf": 4,}
 
     def test_build_limits(self):
         expected_limits = {"limits": {
                 "rate": [],
-                "absolutePerFlavor":{},
+                "absolutePerFlavor":{"zh2mlx1.2xlarge": {
+                                        "maxTotalInstances": 2 },
+                                     "zh2mlx1_asdf":  {
+                                        "maxTotalInstances": 4 }},
                 "absolute": {"maxServerMeta": 1,
                              "maxImageMeta": 1,
                              "maxPersonality": 5,
