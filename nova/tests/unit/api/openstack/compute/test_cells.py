@@ -713,14 +713,6 @@ class CellsTestV21(BaseCellsTest):
     def test_cells_disabled(self):
         self.flags(enable=False, group='cells')
 
-        req = self._get_request("cells")
-        self.assertRaises(exc.HTTPNotImplemented,
-                self.controller.index, req)
-
-        req = self._get_request("cells/detail")
-        self.assertRaises(exc.HTTPNotImplemented,
-                self.controller.detail, req)
-
         req = self._get_request("cells/cell1")
         self.assertRaises(exc.HTTPNotImplemented,
                 self.controller.show, req)
