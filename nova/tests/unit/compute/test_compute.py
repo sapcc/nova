@@ -41,6 +41,8 @@ import six
 import testtools
 from testtools import matchers as testtools_matchers
 
+from eventlet import greenthread
+
 import nova
 from nova import availability_zones
 from nova import block_device
@@ -7813,7 +7815,8 @@ class ComputeTestCase(BaseTestCase,
     @mock.patch.object(fake.FakeDriver, 'get_info')
     @mock.patch.object(compute_manager.ComputeManager,
                        '_sync_instance_power_state')
-    def test_sync_power_states(self, mock_sync, mock_get):
+    @mock.patch.object(greenthread, 'sleep')
+    def test_sync_power_states(self, mock_sleep, mock_sync, mock_get):
         ctxt = self.context.elevated()
         self._create_fake_instance_obj({'host': self.compute.host})
         self._create_fake_instance_obj({'host': self.compute.host})
