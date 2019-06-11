@@ -122,12 +122,12 @@ class DbQuotaDriver(object):
                         quota_class=None, defaults=True, usages=None,
                         remains=False):
         modified_quotas = {}
-        # Get the quotas for the appropriate class.  If the project ID
-        # matches the one in the context, we use the quota_class from
-        # the context, otherwise, we use the provided quota_class (if
-        # any)
-        # if project_id == context.project_id:
-        #     quota_class = context.quota_class
+        # Get the quotas for the appropriate class. We prefer the provided
+        # quota_class over the project's, because we have to set it explicitly
+        # to support retrieving the `flavors` together with the requested
+        # class.
+        if project_id == context.project_id and quota_class is None:
+            quota_class = context.quota_class
         if quota_class:
             class_quotas = objects.Quotas.get_all_class_by_name(context,
                                                                 quota_class)
