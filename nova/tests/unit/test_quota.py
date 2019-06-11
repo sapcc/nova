@@ -93,6 +93,7 @@ class QuotaIntegrationTestCase(test.TestCase):
         inst.user_id = self.user_id
         inst.project_id = self.project_id
         inst.flavor = flavors.get_flavor_by_name(flavor_name)
+        inst.instance_type_id = inst.flavor.id
         # This is needed for instance quota counting until we have the
         # ability to count allocations in placement.
         inst.vcpus = inst.flavor.vcpus
