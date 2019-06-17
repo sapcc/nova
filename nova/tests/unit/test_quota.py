@@ -765,6 +765,20 @@ class DbQuotaDriverTestCase(test.TestCase):
 
         self.calls = []
 
+        self.default_class_result = dict(
+            instances=5,
+            cores=20,
+            ram=25 * 1024,
+            floating_ips=10,
+            fixed_ips=10,
+            metadata_items=64,
+            injected_files=5,
+            injected_file_content_bytes=5 * 1024)
+
+        self.flavors_class_result = dict(injected_file_path_bytes=255,
+            security_groups=10,
+            security_group_rules=20,
+            key_pairs=100)
         self.useFixture(test.TimeOverride())
 
     def test_get_defaults(self):
@@ -818,24 +832,40 @@ class DbQuotaDriverTestCase(test.TestCase):
         self._stub_quota_class_get_all_by_name()
         result = self.driver.get_class_quotas(None, quota.QUOTAS._resources,
                                               'test_class')
-
         self.assertEqual(self.calls, ['quota_class_get_all_by_name'])
         self.assertEqual(result, dict(
-                instances=5,
-                cores=20,
-                ram=25 * 1024,
-                floating_ips=10,
-                fixed_ips=10,
-                metadata_items=64,
-                injected_files=5,
-                injected_file_content_bytes=5 * 1024,
-                injected_file_path_bytes=255,
-                security_groups=10,
-                security_group_rules=20,
-                key_pairs=100,
-                server_groups=10,
-                server_group_members=10,
-                ))
+            instances=5,
+            ram=25 * 1024,
+            metadata_items=64,
+            injected_file_content_bytes=5 * 1024
+        ))
+
+    def _stub_default_quota_class_get_all_by_name(self):
+        # Stub out quota_class_get_all_by_name
+        def fake_qcgabn(cls, context, quota_class):
+
+            self.calls.append('quota_class_get_all_by_name')
+            if quota_class == 'default':
+                return self.default_class_result
+            elif quota_class == 'flavors':
+                return self.flavors_class_result
+
+        self.stub_out('nova.objects.Quotas.get_all_class_by_name', fake_qcgabn)
+
+    def test_get_default_class_quota(self):
+        self._stub_default_quota_class_get_all_by_name()
+
+        fake_resources_defaults = dict(server_groups=10,
+            server_group_members=10)
+
+        expected_result = self.default_class_result.copy()
+        expected_result.update(self.flavors_class_result)
+        expected_result.update(fake_resources_defaults)
+
+        result = self.driver.get_class_quotas(None, quota.QUOTAS._resources,
+                                              'default')
+
+        self.assertEqual(result, expected_result)
 
     def test_get_class_quotas_no_defaults(self):
         self._stub_quota_class_get_all_by_name()
