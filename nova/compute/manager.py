@@ -7283,7 +7283,7 @@ class ComputeManager(manager.Manager):
                     db_instance.vm_state = vm_state.STOPPED
                     db_instance.save()
                 elif vm_power_state == power_state.RUNNING:
-                    LOG.WARNING("Instance started running by itself. "
+                    LOG.warning("Instance started running by itself. "
                                 "Current vm_state: %(vm_state)s, "
                                 "current task_state: %(task_state)s, "
                                 "original DB power_state: %(db_power_state)s, "
