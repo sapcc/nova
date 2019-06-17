@@ -5859,11 +5859,11 @@ class _ComputeAPIUnitTestMixIn(object):
                 sort_dirs=['desc'])
 
             mock_buildreq_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, limit=None, marker='fake-marker',
+                self.context, {'foo': 'bar'}, limit=10, marker='fake-marker',
                 sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, None, None,
+                self.context, {'foo': 'bar'}, 8, None,
                 fields, ['baz'], ['desc'])
 
     @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
@@ -6534,11 +6534,11 @@ class Cellsv1DeprecatedTestMixIn(object):
                 sort_dirs=['desc'])
 
             mock_buildreq_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, limit=None, marker='fake-marker',
+                self.context, {'foo': 'bar'}, limit=10, marker='fake-marker',
                 sort_keys=['baz'], sort_dirs=['desc'])
             fields = ['metadata', 'info_cache', 'security_groups']
             mock_inst_get.assert_called_once_with(
-                self.context, {'foo': 'bar'}, limit=None, marker=None,
+                self.context, {'foo': 'bar'}, limit=8, marker=None,
                 fields=fields, sort_keys=['baz'], sort_dirs=['desc'])
 
     @mock.patch.object(objects.BuildRequestList, 'get_by_filters')
