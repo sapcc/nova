@@ -30,8 +30,3 @@ def _build_constraint(migrate_engine):
 def upgrade(migrate_engine):
     cons = _build_constraint(migrate_engine)
     cons.create()
-
-
-def downgrade(migrate_engine):
-    cons = _build_constraint(migrate_engine)
-    cons.drop()
