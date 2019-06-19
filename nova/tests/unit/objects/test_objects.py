@@ -1089,7 +1089,7 @@ object_data = {
     'FixedIP': '1.14-53e1c10b539f1a82fe83b1af4720efae',
     'FixedIPList': '1.15-07b6261cef836cb09d2d8673f68ece15',
     'Flavor': '1.2-4ce99b41327bb230262e5a8f45ff0ce3',
-    'FlavorList': '1.1-52b5928600e7ca973aa4fc1e46f3934c',
+    'FlavorList': '1.1-912b5ce24d48bc60cc9db96104f95581',
     'FloatingIP': '1.10-52a67d52d85eb8b3f324a5b7935a335b',
     'FloatingIPList': '1.12-e4debd21fddb12cf40d36f737225fa9d',
     'HostMapping': '1.0-1a3390a696792a552ab7bd31a77ba9ac',
