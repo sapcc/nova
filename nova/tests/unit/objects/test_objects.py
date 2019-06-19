@@ -1121,7 +1121,7 @@ object_data = {
     'Migration': '1.5-48bebaada664ee15bc23b35b2b814d75',
     'MigrationContext': '1.1-9fb17b0b521370957a884636499df52d',
     'MigrationList': '1.4-983a9c29d4f1e747ce719dc9063b729b',
-    'MonitorMetric': '1.1-53b1db7c4ae2c531db79761e7acc52ba',
+    'MonitorMetric': '1.1-3cdd618b66e0be1481f7887a51ce7494',
     'MonitorMetricList': '1.1-15ecf022a68ddbb8c2a6739cfc9f8f5e',
     'NicDiagnostics': '1.0-895e9ad50e0f56d5258585e3e066aea5',
     'NUMACell': '1.3-64b5fec7c51c0a85760c56b42dd307a5',
