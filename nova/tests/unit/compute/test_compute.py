@@ -162,7 +162,6 @@ class BaseTestCase(test.TestCase):
         self.compute = compute_manager.ComputeManager()
         # execute power syncing synchronously for testing:
         self.compute._sync_power_pool = eventlet_utils.SyncPool()
-        self.compute.instance_running_pool = eventlet_utils.SyncPool()
 
         # override tracker with a version that doesn't need the database:
         fake_rt = fake_resource_tracker.FakeResourceTracker(self.compute.host,
