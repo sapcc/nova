@@ -35,5 +35,6 @@
             "type": "parent",
             "username": "username4"
         }
-    ]
+    ],
+    "cellsv2": []
 }
