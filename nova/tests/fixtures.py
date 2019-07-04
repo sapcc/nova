@@ -1012,6 +1012,8 @@ class SpawnIsSynchronousFixture(fixtures.Fixture):
         self.useFixture(fixtures.MonkeyPatch(
             'nova.utils.spawn_n', _FakeGreenThread))
         self.useFixture(fixtures.MonkeyPatch(
+            'nova.utils.PoolProxy.spawn_n', _FakeGreenThread))
+        self.useFixture(fixtures.MonkeyPatch(
             'nova.utils.spawn', _FakeGreenThread))
 
 
