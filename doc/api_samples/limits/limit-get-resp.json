@@ -21,6 +21,7 @@
             "totalFloatingIpsUsed": 0,
             "totalServerGroupsUsed": 0
         },
+		"absolutePerFlavor": {},
         "rate": []
     }
 }
