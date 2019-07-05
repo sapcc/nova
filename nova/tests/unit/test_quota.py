@@ -573,6 +573,8 @@ class QuotaEngineTestCase(test.TestCase):
             quota.AbsoluteResource('test_resource1'),
             ]
         quota_obj.register_resources(resources)
+        quota_obj._class_resources['flavors'] = {k: quota.AbsoluteResource(k)
+                for k in ['instances_bm1', 'instances_bm2']}
 
         return quota_obj
 
@@ -654,11 +656,16 @@ class QuotaEngineTestCase(test.TestCase):
                                             defaults=False,
                                             usages=False)
 
+        flavor_resources = quota_obj._class_resources['flavors']
         self.assertEqual(driver.called, [
                 ('get_user_quotas', context, quota_obj._resources,
                  'test_project', 'fake_user', None, True, True),
+                ('get_user_quotas', context, flavor_resources,
+                 'test_project', 'fake_user', 'flavors', True, True),
                 ('get_user_quotas', context, quota_obj._resources,
                  'test_project', 'fake_user', 'test_class', False, False),
+                ('get_user_quotas', context, flavor_resources,
+                 'test_project', 'fake_user', 'flavors', False, False),
                 ])
         self.assertEqual(result1, quota_obj._resources)
         self.assertEqual(result2, quota_obj._resources)
@@ -673,11 +680,17 @@ class QuotaEngineTestCase(test.TestCase):
                                                defaults=False,
                                                usages=False)
 
+        flavor_resources = quota_obj._class_resources['flavors']
         self.assertEqual(driver.called, [
                 ('get_project_quotas', context, quota_obj._resources,
                  'test_project', None, True, True, False),
+                ('get_project_quotas', context, flavor_resources,
+                 'test_project', 'flavors', True, True, False),
                 ('get_project_quotas', context, quota_obj._resources,
                  'test_project', 'test_class', False, False, False),
+                # FIXME why do we need the flavors for a custom quota class?
+                ('get_project_quotas', context, flavor_resources,
+                 'test_project', 'flavors', False, False, False),
                 ])
         self.assertEqual(result1, quota_obj._resources)
         self.assertEqual(result2, quota_obj._resources)
@@ -722,12 +735,12 @@ class QuotaEngineTestCase(test.TestCase):
                               test_resource3=2, test_resource4=1)
 
         self.assertEqual(driver.called, [
-                ('limit_check', context, quota_obj._resources, dict(
-                        test_resource1=4,
-                        test_resource2=3,
-                        test_resource3=2,
-                        test_resource4=1,
-                        ), None, None),
+                ('limit_check', context, quota_obj.combined_resources(context),
+                 dict(test_resource1=4,
+                      test_resource2=3,
+                      test_resource3=2,
+                      test_resource4=1),
+                 None, None),
                 ])
 
     def test_limit_check_project_and_user(self):
@@ -741,7 +754,7 @@ class QuotaEngineTestCase(test.TestCase):
                                                user_values=user_values)
 
         self.assertEqual([('limit_check_project_and_user', context,
-                          quota_obj._resources,
+                          quota_obj.combined_resources(context),
                           dict(test_resource1=4, test_resource2=3),
                           dict(test_resource3=2, test_resource4=1),
                           None, None)],
