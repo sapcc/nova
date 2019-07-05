@@ -603,6 +603,45 @@ class QuotaEngineTestCase(test.TestCase):
         self.assertEqual(result1, quota_obj._resources)
         self.assertEqual(result2, quota_obj._resources)
 
+    def test_class_resources(self):
+        context = FakeContext(None, None)
+        driver = FakeDriver()
+        quota_obj = quota.QuotaEngine(quota_driver_class=driver)
+        self.assertEqual(quota_obj._class_resources, {})
+        flavors = {'instances_bm1': 2, 'instances_bm7': 0}
+        driver.get_class_quotas = mock.Mock(return_value=flavors)
+
+        class FakeCountableResource(object):
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+            def __eq__(self, obj):
+                if not isinstance(obj, FakeCountableResource):
+                    return False
+                return self.args == obj.args and self.kwargs == obj.kwargs
+
+            def __repr__(self):
+                s = 'FakeCountableResource(args={}, kwargs={})'
+                return s.format(self.args, self.kwargs)
+
+        self.stub_out('nova.quota.CountableResource', FakeCountableResource)
+
+        result = quota_obj.class_resources(context, 'flavors')
+
+        expected_calls = [mock.call(context, {}, 'flavors')]
+        self.assertEqual(driver.get_class_quotas.mock_calls, expected_calls)
+        self.assertEqual(result, quota_obj._class_resources['flavors'])
+        qcr = quota.CountableResource
+        expected = {k: qcr(k, quota._instances_cores_ram_count, default=v)
+                        for k, v in flavors.items()}
+        self.assertEqual(quota_obj._class_resources['flavors'], expected)
+
+        # if we call again it doesn't have to ask the DB again
+        result = quota_obj.class_resources(context, 'flavors')
+        self.assertEqual(driver.get_class_quotas.mock_calls, expected_calls)
+        self.assertEqual(result, quota_obj._class_resources['flavors'])
+
     def test_get_user_quotas(self):
         context = FakeContext(None, None)
         driver = FakeDriver()
