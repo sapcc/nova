@@ -71,7 +71,7 @@ class QuotaClassSetsController(wsgi.Controller):
                 result[resource] = quota_set[resource]
 
         # Custom Quota Support
-        if quota_class is not 'default':
+        if quota_class != 'default':
             result = copy.copy(quota_set)
 
         return dict(quota_class_set=result)

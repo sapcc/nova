@@ -104,7 +104,7 @@ class DbQuotaDriver(object):
             flavor_quotas = class_quotas
 
         for resource_key, val in six.iteritems(flavor_quotas):
-            if resource_key is 'class_name':
+            if resource_key == 'class_name':
                 continue
 
             # Set custom resources default quota to 0
