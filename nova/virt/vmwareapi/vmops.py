@@ -1146,6 +1146,16 @@ class VMwareVMOps(object):
         # 'uuid' of the instance
         vm_util.rename_vm(self._session, vm_ref, instance)
 
+        # Make sure we don't automatically move around "big" VMs
+        memory_mb = int(instance.memory_mb)
+        if memory_mb >= CONF.bigvm_mb:
+            LOG.debug("Adding DRS override 'partiallyAutomated' for big VM.",
+                      instance=instance)
+            cluster_util.update_cluster_drs_vm_override(self._session,
+                                                        self._cluster,
+                                                        vm_ref,
+                                                        'partiallyAutomated')
+
         vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 
     def _is_bdm_valid(self, block_device_mapping):
