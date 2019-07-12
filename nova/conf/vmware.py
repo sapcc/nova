@@ -327,6 +327,16 @@ instances as clone from template.
 Before fetching from Glance an image missing on the datastore first look for it
 on other datastores and clone it from there if available.
 """),
+    cfg.IntOpt('drs_partially_automated_memory_mb',
+               default=1024 ** 2,   # 1 TB
+               min=0,
+               help="""
+Create a DRS override entry in the cluster config for instances with at least
+this amount of memory. The override will enable initial placement but prohibit
+the DRS from moving the machines for re-balancing. That's necessary, because
+they're big and most probably running HANA, which doesn't play well with
+vMotion.
+"""),
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +
