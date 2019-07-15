@@ -601,7 +601,7 @@ class VMwareVolumeOps(object):
             volume_ref = self._get_volume_ref(data['volume'])
             # Pick the resource pool on which the instance resides. Move the
             # volume to the datastore of the instance.
-            res_pool = self._get_res_pool_of_vm(vm_ref)
-            vm_util.relocate_vm(self._session, volume_ref, res_pool, datastore)
+            #res_pool = self._get_res_pool_of_vm(vm_ref)
+            #vm_util.relocate_vm(self._session, volume_ref, res_pool, datastore)
 
         self.attach_volume(connection_info, instance, adapter_type)

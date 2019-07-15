@@ -144,12 +144,17 @@ class VMwareImage(object):
         else:
             container_format = None
 
+        if image_meta.obj_attr_is_set('owner'):
+            owner = image_meta.owner
+        else:
+            owner = None
+
         props = {
             'image_id': image_id,
             'linked_clone': linked_clone,
             'container_format': container_format,
             'vsphere_location': get_vsphere_location(context, image_id),
-            'owner': image_meta.owner
+            'owner': owner
         }
 
         if image_meta.obj_attr_is_set('size'):

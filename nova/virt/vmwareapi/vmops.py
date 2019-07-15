@@ -637,6 +637,7 @@ class VMwareVMOps(object):
         """Captures all relevant information from the spawn parameters."""
 
         if (instance.flavor.root_gb != 0 and
+                instance.image_ref and
                 image_info.file_size > instance.flavor.root_gb * units.Gi):
             reason = _("Image disk size greater than requested disk size")
             raise exception.InstanceUnacceptable(instance_id=instance.uuid,
