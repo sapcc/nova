@@ -676,7 +676,20 @@ Possible values:
 Related options:
 
 * aggregate_image_properties_isolation_namespace
-""")]
+"""),
+    cfg.IntOpt(
+        "bigvm_memory_utilization_max",
+        default=50,
+        min=0,
+        max=100,
+        help="""
+Percentage of memory utilization allowing big VMs
+
+Hosts above this utilization threshold will be filtered out for instances
+identified as big VMs. Currently, this identification is done via requested
+memory size above or equal to the CONF.bigvm_mb threshold.
+""")
+]
 
 metrics_group = cfg.OptGroup(name="metrics",
                              title="Metrics parameters",
