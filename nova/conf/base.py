@@ -102,6 +102,17 @@ Related options:
 * ``monkey_patch``: This must be set to ``True`` for this option to
   have any effect
 """),
+    cfg.IntOpt(
+        'bigvm_mb',
+        default=1024 ** 2,      # 1 TB
+        min=0,
+        help="""
+Instance memory usage identifying it as big VM
+
+For a couple of operations, e.g. scheduling decisions and special settings when
+spawning, we have to identify a big VM and handle them differently. Every VM
+having more or equal to this setting's amount of RAM is a big VM.
+""")
 ]
 
 
