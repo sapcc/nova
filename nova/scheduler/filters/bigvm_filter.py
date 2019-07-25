@@ -10,13 +10,47 @@ CONF = nova.conf.CONF
 
 _AGGREGATE_KEY = 'hv_size_mb'
 
-class BigVmFilter(filters.BaseHostFilter):
+
+class BigVmBaseFilterException(Exception):
+    pass
+
+
+class BigVmBaseFilter(filters.BaseHostFilter):
+
+    RUN_ON_REBUILD = False
+
+    def _get_hv_size(self, host_state):
+        # get the hypervisor size from the host aggregate
+        metadata = utils.aggregate_metadata_get_by_host(host_state)
+        aggregate_vals = metadata.get(_AGGREGATE_KEY, None)
+        if not aggregate_vals:
+            LOG.error("%(host_state)s does not have %(aggregate_key)s set so "
+                      "probably isn't assigned to a hypervisor-size host "
+                      "aggregate, which prevents big VM scheduling.",
+                      {'host_state': host_state,
+                       'aggregate_key': _AGGREGATE_KEY})
+            raise BigVmBaseFilterException
+
+        # there should be only one value anyways ...
+        aggregate_val = list(aggregate_vals)[0]
+        try:
+            hypervisor_ram_mb = int(aggregate_val)
+        except ValueError:
+            LOG.error("%(host_state)s has an invalid value for "
+                          "%(aggregate_key)s: %(aggregate_val)s. Only "
+                          "integers are supported.",
+                          {'host_state': host_state,
+                           'aggregate_key': _AGGREGATE_KEY,
+                           'aggregate_val': aggregate_val})
+            raise BigVmBaseFilterException
+        return hypervisor_ram_mb
+
+
+class BigVmClusterUtilizationFilter(BigVmBaseFilter):
     """Only schedule big VMs to a vSphere cluster (i.e. nova-compute host) if
     the memory-utilization of the cluster is below a threshold depending on the
     hypervisor size and the requested memory.
     """
-
-    RUN_ON_REBUILD = False
 
     def _get_max_ram_percent(self, requested_ram_mb, hypervisor_ram_mb):
         """
@@ -38,28 +72,9 @@ class BigVmFilter(filters.BaseHostFilter):
         used_ram_mb = total_usable_ram_mb - free_ram_mb
         used_ram_percent = float(used_ram_mb) / total_usable_ram_mb * 100.0
 
-        # get the hypervisor size from the host aggregate
-        metadata = utils.aggregate_metadata_get_by_host(host_state)
-        aggregate_vals = metadata.get(_AGGREGATE_KEY, None)
-        if not aggregate_vals:
-            LOG.error("%(host_state)s does not have %(aggregate_key)s set so "
-                      "probably isn't assigned to a hypervisor-size host "
-                      "aggregate, which prevents big VM scheduling.",
-                      {'host_state': host_state,
-                       'aggregate_key': _AGGREGATE_KEY})
-            return False
-
-        # there should be only one value anyways ...
-        aggregate_val = list(aggregate_vals)[0]
         try:
-            hypervisor_ram_mb = int(aggregate_val)
-        except ValueError:
-            LOG.error("%(host_state)s has an invalid value for "
-                          "%(aggregate_key)s: %(aggregate_val)s. Only "
-                          "integers are supported.",
-                          {'host_state': host_state,
-                           'aggregate_key': _AGGREGATE_KEY,
-                           'aggregate_val': aggregate_val})
+            hypervisor_ram_mb = self._get_hv_size(host_state)
+        except BigVmBaseFilterException:
             return False
 
         max_ram_percent = self._get_max_ram_percent(requested_ram_mb,
@@ -73,6 +88,35 @@ class BigVmFilter(filters.BaseHostFilter):
                       {'host_state': host_state,
                        'max_ram_percent': max_ram_percent,
                        'used_ram_percent': used_ram_percent})
+            return False
+
+        return True
+
+
+class BigVmHypervisorRamFilter(BigVmBaseFilter):
+
+    def host_passes(self, host_state, spec_obj):
+        """Check if a big VM actually fits on the hypervisor"""
+        requested_ram_mb = spec_obj.memory_mb
+
+        # ignore normal VMs
+        if requested_ram_mb < CONF.bigvm_mb:
+            return True
+
+        # get the aggregate
+        try:
+            hypervisor_ram_mb = self._get_hv_size(host_state)
+        except BigVmBaseFilterException:
+            return False
+
+        # check the VM fits
+        if requested_ram_mb > hypervisor_ram_mb:
+            LOG.debug("%(host_state)s does not have the hypervisor size to "
+                      "support %(requested_ram_mb)s MB VMs. It only supports "
+                      "up to %(hypervisor_ram_mb)s MB.",
+                      {'host_state': host_state,
+                       'requested_ram_mb': requested_ram_mb,
+                       'hypervisor_ram_mb': hypervisor_ram_mb})
             return False
 
         return True

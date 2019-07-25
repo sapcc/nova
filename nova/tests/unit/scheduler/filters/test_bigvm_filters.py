@@ -9,12 +9,12 @@ from nova.tests.unit.scheduler import fakes
 CONF = nova.conf.CONF
 
 @mock.patch('nova.scheduler.filters.utils.aggregate_metadata_get_by_host')
-class TestBigVmFilter(test.NoDBTestCase):
+class TestBigVmClusterUtilizationFilter(test.NoDBTestCase):
 
     def setUp(self):
-        super(TestBigVmFilter, self).setUp()
+        super(TestBigVmClusterUtilizationFilter, self).setUp()
         self.hv_size = CONF.bigvm_mb + 1024
-        self.filt_cls = bigvm_filter.BigVmFilter()
+        self.filt_cls = bigvm_filter.BigVmClusterUtilizationFilter()
 
     def test_big_vm_with_small_vm_passes(self, agg_mock):
         spec_obj = objects.RequestSpec(
@@ -94,4 +94,47 @@ class TestBigVmFilter(test.NoDBTestCase):
         host = fakes.FakeHostState('host1', 'compute',
                 {'free_ram_mb': total_ram - (total_ram * hv_percent / 100.0),
                  'total_usable_ram_mb': total_ram})
+        self.assertTrue(self.filt_cls.host_passes(host, spec_obj))
+
+
+@mock.patch('nova.scheduler.filters.utils.aggregate_metadata_get_by_host')
+class TestBigVmHypervisorRamFilter(test.NoDBTestCase):
+
+    def setUp(self):
+        super(TestBigVmHypervisorRamFilter, self).setUp()
+        self.hv_size = CONF.bigvm_mb + 1024
+        self.filt_cls = bigvm_filter.BigVmHypervisorRamFilter()
+
+    def test_big_vm_with_small_vm_passes(self, agg_mock):
+        spec_obj = objects.RequestSpec(
+            flavor=objects.Flavor(memory_mb=1024))
+        host = fakes.FakeHostState('host1', 'compute', {})
+        self.assertTrue(self.filt_cls.host_passes(host, spec_obj))
+
+    def test_big_vm_without_aggregate(self, agg_mock):
+        agg_mock.return_value = {}
+        spec_obj = objects.RequestSpec(
+            flavor=objects.Flavor(memory_mb=CONF.bigvm_mb))
+        host = fakes.FakeHostState('host1', 'compute', {})
+        self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
+
+    def test_big_vm_with_non_int_aggregate(self, agg_mock):
+        agg_mock.return_value = {'hv_size_mb': {'foo'}}
+        spec_obj = objects.RequestSpec(
+            flavor=objects.Flavor(memory_mb=CONF.bigvm_mb))
+        host = fakes.FakeHostState('host1', 'compute', {})
+        self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
+
+    def test_big_vm_without_enough_ram(self, agg_mock):
+        agg_mock.return_value = {'hv_size_mb': {self.hv_size}}
+        spec_obj = objects.RequestSpec(
+            flavor=objects.Flavor(memory_mb=self.hv_size + 1))
+        host = fakes.FakeHostState('host1', 'compute', {})
+        self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
+
+    def test_big_vm_with_enough_ram(self, agg_mock):
+        agg_mock.return_value = {'hv_size_mb': {self.hv_size}}
+        spec_obj = objects.RequestSpec(
+            flavor=objects.Flavor(memory_mb=self.hv_size))
+        host = fakes.FakeHostState('host1', 'compute', {})
         self.assertTrue(self.filt_cls.host_passes(host, spec_obj))
