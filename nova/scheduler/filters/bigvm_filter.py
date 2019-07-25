@@ -1,3 +1,18 @@
+# Copyright (c) 2019 OpenStack Foundation
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
 from oslo_log import log as logging
 
 import nova.conf
@@ -37,11 +52,11 @@ class BigVmBaseFilter(filters.BaseHostFilter):
             hypervisor_ram_mb = int(aggregate_val)
         except ValueError:
             LOG.error("%(host_state)s has an invalid value for "
-                          "%(aggregate_key)s: %(aggregate_val)s. Only "
-                          "integers are supported.",
-                          {'host_state': host_state,
-                           'aggregate_key': _AGGREGATE_KEY,
-                           'aggregate_val': aggregate_val})
+                      "%(aggregate_key)s: %(aggregate_val)s. Only "
+                      "integers are supported.",
+                      {'host_state': host_state,
+                       'aggregate_key': _AGGREGATE_KEY,
+                       'aggregate_val': aggregate_val})
             raise BigVmBaseFilterException
         return hypervisor_ram_mb
 
@@ -53,8 +68,7 @@ class BigVmClusterUtilizationFilter(BigVmBaseFilter):
     """
 
     def _get_max_ram_percent(self, requested_ram_mb, hypervisor_ram_mb):
-        """
-        We want the hosts to have on average half the requested memory free.
+        """We want the hosts to have on average half the requested memory free.
         """
         requested_ram_mb = float(requested_ram_mb)
         hypervisor_ram_mb = float(hypervisor_ram_mb)
