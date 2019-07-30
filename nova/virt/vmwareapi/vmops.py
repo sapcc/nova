@@ -2245,34 +2245,19 @@ class VMwareVMOps(object):
 
         expired_templ_vms = {}
         try:
-            task_collector = session._call_method(session.vim,
-                                          "CreateCollectorForTasks",
-                                          session.vim.service_content.taskManager,
-                                          filter=task_filter_spec)
+            templ_task_collector = session._call_method(
+                session.vim,
+                "CreateCollectorForTasks",
+                session.vim.service_content.taskManager,
+                filter=task_filter_spec)
 
-            while True:
-                page_tasks = session._call_method(session.vim,
-                                                  "ReadNextTasks",
-                                                  task_collector,
-                                                  maxCount=10)
-                if len(page_tasks) == 0:
-                    break
-
-                for ti in page_tasks:
-                    templ_vm_ref = None
-                    if ti.descriptionId == "VirtualMachine.clone":
-                        templ_vm_ref = ti.entity
-                    elif ti.descriptionId == "Folder.createVm":
-                        templ_vm_ref = ti.result
-
-                    if templ_vm_ref and timeutils.is_older_than(ti.queueTime,
-                            CONF.remove_unused_original_minimum_age_seconds):
-                        expired_templ_vms[templ_vm_ref.value] = templ_vm_ref
+            expired_templ_vms = self._find_expired_image_templates(
+                session, templ_task_collector, templ_vm_folder_ref)
         finally:
-            if task_collector:
+            if templ_task_collector:
                 session._call_method(session.vim,
                                      "DestroyCollector",
-                                     task_collector)
+                                     templ_task_collector)
 
         for templ_vm_ref in expired_templ_vms.values():
             try:
@@ -2283,6 +2268,49 @@ class VMwareVMOps(object):
             except vexc.ManagedObjectNotFoundException:
                 # already destroyed
                 pass
+
+    def _find_expired_image_templates(self, session, templ_task_collector,
+                                      templ_vm_folder_ref):
+        session._call_method(session.vim,
+                             "ResetCollector",
+                             templ_task_collector)
+
+        all_templ_vms = self._session._call_method(vutil,
+                                                   "get_object_property",
+                                                   templ_vm_folder_ref,
+                                                   "childEntity")
+
+        expired_templ_vms = {}
+        if all_templ_vms:
+            expired_templ_vms = {ref.value: ref for ref in
+                                 all_templ_vms.ManagedObjectReference}
+        latest_tasks = self._session._call_method(vutil,
+                                                  "get_object_property",
+                                                  templ_task_collector,
+                                                  "latestPage")
+        while expired_templ_vms:
+            if latest_tasks:
+                page_tasks = latest_tasks.TaskInfo
+                latest_tasks = None
+            else:
+                page_tasks = session._call_method(session.vim,
+                                                  "ReadPreviousTasks",
+                                                  templ_task_collector,
+                                                  maxCount=3)
+
+            if len(page_tasks) == 0:
+                break
+
+            for ti in page_tasks:
+                # Look for template creation or clone from template
+                if ti.descriptionId in ["ResourcePool.ImportVAppLRO",
+                                        "VirtualMachine.clone"]:
+                    templ_vm_ref = ti.entity
+                    if not timeutils.is_older_than(ti.queueTime,
+                        CONF.remove_unused_original_minimum_age_seconds):
+                        expired_templ_vms.pop(templ_vm_ref.value, None)
+
+        return expired_templ_vms
 
     def _get_valid_vms_from_retrieve_result(self, retrieve_result):
         """Returns list of valid vms from RetrieveResult object."""
