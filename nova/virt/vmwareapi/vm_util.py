@@ -35,6 +35,7 @@ from nova import exception
 from nova.i18n import _
 from nova.network import model as network_model
 from nova import objects
+from nova.utils import is_big_vm
 from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
@@ -302,7 +303,8 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
             'ns0:ResourceAllocationInfo')
 
     reservation_lock = CONF.vmware.reserve_all_memory \
-                            or int(instance.memory_mb) >= CONF.bigvm_mb
+                            or is_big_vm(int(instance.memory_mb),
+                                         instance.flavor)
     config_spec.memoryReservationLockedToMax = reservation_lock
 
     if extra_specs.firmware:

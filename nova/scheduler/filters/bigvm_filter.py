@@ -18,6 +18,7 @@ from oslo_log import log as logging
 import nova.conf
 from nova.scheduler import filters
 from nova.scheduler.filters import utils
+from nova.utils import is_big_vm
 
 LOG = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class BigVmClusterUtilizationFilter(BigVmBaseFilter):
     def host_passes(self, host_state, spec_obj):
         requested_ram_mb = spec_obj.memory_mb
         # not scheduling a big VM -> every host is fine
-        if requested_ram_mb < CONF.bigvm_mb:
+        if not is_big_vm(requested_ram_mb, spec_obj.flavor):
             return True
 
         free_ram_mb = host_state.free_ram_mb
@@ -114,7 +115,7 @@ class BigVmHypervisorRamFilter(BigVmBaseFilter):
         requested_ram_mb = spec_obj.memory_mb
 
         # ignore normal VMs
-        if requested_ram_mb < CONF.bigvm_mb:
+        if not is_big_vm(requested_ram_mb, spec_obj.flavor):
             return True
 
         # get the aggregate

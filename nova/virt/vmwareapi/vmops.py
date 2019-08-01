@@ -1147,8 +1147,7 @@ class VMwareVMOps(object):
         vm_util.rename_vm(self._session, vm_ref, instance)
 
         # Make sure we don't automatically move around "big" VMs
-        memory_mb = int(instance.memory_mb)
-        if memory_mb >= CONF.bigvm_mb:
+        if utils.is_big_vm(int(instance.memory_mb), instance.flavor):
             LOG.debug("Adding DRS override 'partiallyAutomated' for big VM.",
                       instance=instance)
             cluster_util.update_cluster_drs_vm_override(self._session,
