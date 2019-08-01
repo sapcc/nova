@@ -106,32 +106,3 @@ class BigVmClusterUtilizationFilter(BigVmBaseFilter):
             return False
 
         return True
-
-
-class BigVmHypervisorRamFilter(BigVmBaseFilter):
-
-    def host_passes(self, host_state, spec_obj):
-        """Check if a big VM actually fits on the hypervisor"""
-        requested_ram_mb = spec_obj.memory_mb
-
-        # ignore normal VMs
-        if not is_big_vm(requested_ram_mb, spec_obj.flavor):
-            return True
-
-        # get the aggregate
-        try:
-            hypervisor_ram_mb = self._get_hv_size(host_state)
-        except BigVmBaseFilterException:
-            return False
-
-        # check the VM fits
-        if requested_ram_mb > hypervisor_ram_mb:
-            LOG.debug("%(host_state)s does not have the hypervisor size to "
-                      "support %(requested_ram_mb)s MB VMs. It only supports "
-                      "up to %(hypervisor_ram_mb)s MB.",
-                      {'host_state': host_state,
-                       'requested_ram_mb': requested_ram_mb,
-                       'hypervisor_ram_mb': hypervisor_ram_mb})
-            return False
-
-        return True
