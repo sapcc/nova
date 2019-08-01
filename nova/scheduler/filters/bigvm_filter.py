@@ -13,53 +13,48 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import time
+
 from oslo_log import log as logging
 
 import nova.conf
+from nova import context
+from nova.scheduler import client
 from nova.scheduler import filters
-from nova.scheduler.filters import utils
 from nova.utils import is_big_vm
 
 LOG = logging.getLogger(__name__)
 
 CONF = nova.conf.CONF
 
-_AGGREGATE_KEY = 'hv_size_mb'
-
-
-class BigVmBaseFilterException(Exception):
-    pass
-
 
 class BigVmBaseFilter(filters.BaseHostFilter):
+
+    _HV_SIZE_CACHE = {}
+    _HV_SIZE_CACHE_RETENTION_TIME = 10 * 60
 
     RUN_ON_REBUILD = False
 
     def _get_hv_size(self, host_state):
-        # get the hypervisor size from the host aggregate
-        metadata = utils.aggregate_metadata_get_by_host(host_state)
-        aggregate_vals = metadata.get(_AGGREGATE_KEY, None)
-        if not aggregate_vals:
-            LOG.error("%(host_state)s does not have %(aggregate_key)s set so "
-                      "probably isn't assigned to a hypervisor-size host "
-                      "aggregate, which prevents big VM scheduling.",
-                      {'host_state': host_state,
-                       'aggregate_key': _AGGREGATE_KEY})
-            raise BigVmBaseFilterException
+        # expire the cache 10min after last write
+        time_diff = time.time() - self._HV_SIZE_CACHE.get('last_modified', 0)
+        if time_diff > self._HV_SIZE_CACHE_RETENTION_TIME:
+            self._HV_SIZE_CACHE = {}
 
-        # there should be only one value anyways ...
-        aggregate_val = list(aggregate_vals)[0]
-        try:
-            hypervisor_ram_mb = int(aggregate_val)
-        except ValueError:
-            LOG.error("%(host_state)s has an invalid value for "
-                      "%(aggregate_key)s: %(aggregate_val)s. Only "
-                      "integers are supported.",
-                      {'host_state': host_state,
-                       'aggregate_key': _AGGREGATE_KEY,
-                       'aggregate_val': aggregate_val})
-            raise BigVmBaseFilterException
-        return hypervisor_ram_mb
+        if host_state.uuid not in self._HV_SIZE_CACHE:
+            scheduler_client = client.SchedulerClient()
+            placement_client = scheduler_client.reportclient
+            elevated = context.get_admin_context()
+            res = placement_client._get_inventory(elevated, host_state.uuid)
+            if not res:
+                return None
+            inventories = res.get('inventories', {})
+            hv_size_mb = inventories.get('MEMORY_MB', {}).get('max_unit')
+            self._HV_SIZE_CACHE[host_state.uuid] = hv_size_mb
+
+            self._HV_SIZE_CACHE['last_modified'] = time.time()
+
+        return self._HV_SIZE_CACHE[host_state.uuid]
 
 
 class BigVmClusterUtilizationFilter(BigVmBaseFilter):
@@ -82,15 +77,14 @@ class BigVmClusterUtilizationFilter(BigVmBaseFilter):
         if not is_big_vm(requested_ram_mb, spec_obj.flavor):
             return True
 
+        hypervisor_ram_mb = self._get_hv_size(host_state)
+        if hypervisor_ram_mb is None:
+            return False
+
         free_ram_mb = host_state.free_ram_mb
         total_usable_ram_mb = host_state.total_usable_ram_mb
         used_ram_mb = total_usable_ram_mb - free_ram_mb
         used_ram_percent = float(used_ram_mb) / total_usable_ram_mb * 100.0
-
-        try:
-            hypervisor_ram_mb = self._get_hv_size(host_state)
-        except BigVmBaseFilterException:
-            return False
 
         max_ram_percent = self._get_max_ram_percent(requested_ram_mb,
                                                     hypervisor_ram_mb)
