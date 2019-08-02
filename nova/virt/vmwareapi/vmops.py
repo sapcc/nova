@@ -1862,18 +1862,27 @@ class VMwareVMOps(object):
                           datastore, folder, vmdk.adapter_type)
 
     def migrate_disk_and_power_off(self, context, instance, dest,
-                                   flavor):
+                                   flavor, block_device_info):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
+        cinder_boot = False
+        block_device_mapping = []
+        if block_device_info is not None:
+            block_device_mapping = driver.block_device_info_get_mapping(
+                block_device_info)
+        for disk in block_device_mapping:
+            if disk.get('boot_index') == 0 and disk.get('destination_type') == "volume":
+                cinder_boot = True
+                    
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                      uuid=instance.uuid)
 
         # Checks if the migration needs a disk resize down.
-        if (flavor.root_gb < instance.flavor.root_gb or
+        if (not cinder_boot and (flavor.root_gb < instance.flavor.root_gb or
             (flavor.root_gb != 0 and
-             flavor.root_gb < vmdk.capacity_in_bytes / units.Gi)):
+             flavor.root_gb < vmdk.capacity_in_bytes / units.Gi))):
             reason = _("Unable to shrink disk.")
             raise exception.InstanceFaultRollback(
                 exception.ResizeError(reason=reason))
@@ -1899,7 +1908,8 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
 
         # 3.Reconfigure the disk properties
-        self._resize_disk(instance, vm_ref, vmdk, flavor)
+        if (not cinder_boot):
+            self._resize_disk(instance, vm_ref, vmdk, flavor)
         self._update_instance_progress(context, instance,
                                        step=3,
                                        total_steps=RESIZE_TOTAL_STEPS)
