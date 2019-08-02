@@ -1908,7 +1908,7 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
 
         # 3.Reconfigure the disk properties
-        if (not cinder_boot):
+        if not cinder_boot:
             self._resize_disk(instance, vm_ref, vmdk, flavor)
         self._update_instance_progress(context, instance,
                                        step=3,
