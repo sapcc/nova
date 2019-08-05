@@ -121,6 +121,81 @@ class ExtraSpecs(object):
         self.hw_video_ram = hw_video_ram
 
 
+class HistoryCollectorItems(object):
+
+    def __init__(self, session, history_collector, reverse_page_order=False,
+                 max_page_size=10):
+        self.session = session
+        self.history_collector = history_collector
+        self.reverse_page_order = reverse_page_order
+        self.max_page_size = max_page_size
+
+    def __iter__(self):
+        self._latest_page_read = False
+        self._page_items = None
+
+        if self.reverse_page_order:
+            self.session._call_method(self.session.vim,
+                                      "ResetCollector",
+                                      self.history_collector)
+        else:
+            self.session._call_method(self.session.vim,
+                                      "RewindCollector",
+                                      self.history_collector)
+
+        return self
+
+    def next(self):
+        if not self._page_items:
+            self._load_page()
+
+        if not self._page_items:
+            raise StopIteration
+        else:
+            return self._page_items.pop(0)
+
+    def _load_page(self):
+        if self.reverse_page_order and not self._latest_page_read:
+            self._load_latest_page()
+
+        if not self._page_items:
+            task_read_method = ("ReadPreviousTasks" if self.reverse_page_order
+                                else "ReadNextTasks")
+            self._page_items = self.session._call_method(
+                self.session.vim, task_read_method, self.history_collector,
+                maxCount=self.max_page_size)
+
+    def _load_latest_page(self):
+        self._latest_page_read = True
+        latest_page = vutil.get_object_property(self.session.vim,
+                                                self.history_collector,
+                                                "latestPage")
+        if latest_page.__class__.__name__ == "ArrayOfTaskInfo":
+            latest_page = latest_page.TaskInfo
+
+        self._page_items = latest_page
+
+
+class TaskHistoryCollectorItems(HistoryCollectorItems):
+    def __init__(self, session, task_filter_spec, reverse_page_order=False,
+                 max_page_size=10):
+        task_collector = session._call_method(
+            session.vim,
+            "CreateCollectorForTasks",
+            session.vim.service_content.taskManager,
+            filter=task_filter_spec)
+        super(TaskHistoryCollectorItems, self).__init__(session,
+                                                        task_collector,
+                                                        reverse_page_order,
+                                                        max_page_size)
+
+    def __del__(self):
+        if self.history_collector:
+            self.session._call_method(self.session.vim,
+                                      "DestroyCollector",
+                                      self.history_collector)
+
+
 def vm_value_cache_reset():
     global _VM_VALUE_CACHE
     _VM_VALUE_CACHE = {}
