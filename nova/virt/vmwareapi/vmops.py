@@ -1872,7 +1872,7 @@ class VMwareVMOps(object):
             block_device_mapping = driver.block_device_info_get_mapping(
                 block_device_info)
         for disk in block_device_mapping:
-            if disk.get('boot_index') == 0 and disk.get('destination_type') == "volume":
+            if disk.get('boot_index') == 0:
                 cinder_boot = True
                     
         vm_ref = vm_util.get_vm_ref(self._session, instance)
