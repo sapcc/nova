@@ -170,10 +170,8 @@ class HistoryCollectorItems(object):
         latest_page = vutil.get_object_property(self.session.vim,
                                                 self.history_collector,
                                                 "latestPage")
-        if latest_page.__class__.__name__ == "ArrayOfTaskInfo":
-            latest_page = latest_page.TaskInfo
 
-        self._page_items = latest_page
+        self._page_items = vim_util.get_array_items(latest_page)
 
 
 class TaskHistoryCollectorItems(HistoryCollectorItems):
