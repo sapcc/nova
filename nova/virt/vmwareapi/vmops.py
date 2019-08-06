@@ -1148,12 +1148,13 @@ class VMwareVMOps(object):
 
         # Make sure we don't automatically move around "big" VMs
         if utils.is_big_vm(int(instance.memory_mb), instance.flavor):
-            LOG.debug("Adding DRS override 'partiallyAutomated' for big VM.",
+            behavior = constants.DRS_BEHAVIOR_PARTIALLY_AUTOMATED
+            LOG.debug("Adding DRS override '%s' for big VM.", behavior,
                       instance=instance)
             cluster_util.update_cluster_drs_vm_override(self._session,
                                                         self._cluster,
                                                         vm_ref,
-                                                        'partiallyAutomated')
+                                                        behavior)
 
         vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 
