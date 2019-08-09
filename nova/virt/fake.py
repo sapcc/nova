@@ -27,6 +27,7 @@ import collections
 import contextlib
 import copy
 import time
+import uuid
 
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
@@ -713,3 +714,16 @@ class FakeLiveMigrateDriver(FakeDriver):
     def live_migration_abort(self, instance):
         self._abort_migration = True
         self._migrating = False
+
+
+class PredictableNodeUUIDDriver(SmallFakeDriver):
+    """SmallFakeDriver variant that reports a predictable node uuid in
+    get_available_resource, like IronicDriver.
+    """
+    def get_available_resource(self, nodename):
+        resources = super(
+            PredictableNodeUUIDDriver, self).get_available_resource(nodename)
+        # This is used in ComputeNode.update_from_virt_driver which is called
+        # from the ResourceTracker when creating a ComputeNode.
+        resources['uuid'] = uuid.uuid5(uuid.NAMESPACE_DNS, nodename)
+        return resources
