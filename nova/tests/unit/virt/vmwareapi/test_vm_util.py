@@ -638,6 +638,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                             extra_specs)
 
         expected = self._create_vm_config_spec()
+        expected.memoryReservationLockedToMax = False
+
         self.assertEqual(expected, result)
 
     def test_get_vm_create_spec_with_serial_port(self):
@@ -654,6 +656,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         serial_port_spec = vm_util.create_serial_port_spec(fake_factory)
         expected = self._create_vm_config_spec()
         expected.deviceChange = [serial_port_spec]
+
+        expected.memoryReservationLockedToMax = False
+
         self.assertEqual(expected, result)
 
     def test_get_vm_create_spec_with_allocations(self):
@@ -705,6 +710,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         extra_config.value = True
         extra_config.key = 'disk.EnableUUID'
         expected.extraConfig.append(extra_config)
+        expected.memoryReservationLockedToMax = False
+
         self.assertEqual(expected, result)
 
     def test_get_vm_create_spec_with_limit(self):
@@ -755,6 +762,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         cpu_allocation.shares.level = 'normal'
         cpu_allocation.shares.shares = 0
         expected.cpuAllocation = cpu_allocation
+        expected.memoryReservationLockedToMax = False
 
         expected.numCPUs = 2
         self.assertEqual(expected, result)
@@ -791,6 +799,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.managedBy = fake_factory.create('ns0:ManagedByInfo')
         expected.managedBy.type = 'instance'
         expected.managedBy.extensionKey = 'org.openstack.compute'
+
+        expected.memoryReservationLockedToMax = False
 
         expected.version = None
         expected.guestId = constants.DEFAULT_OS_TYPE
@@ -843,6 +853,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.managedBy = fake_factory.create('ns0:ManagedByInfo')
         expected.managedBy.extensionKey = 'org.openstack.compute'
         expected.managedBy.type = 'instance'
+
+        expected.memoryReservationLockedToMax = False
 
         expected.version = None
         expected.guestId = constants.DEFAULT_OS_TYPE
@@ -899,6 +911,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.managedBy.extensionKey = 'org.openstack.compute'
         expected.managedBy.type = 'instance'
 
+        expected.memoryReservationLockedToMax = False
+
         expected.tools = fake_factory.create('ns0:ToolsConfigInfo')
         expected.tools.afterPowerOn = True
         expected.tools.afterResume = True
@@ -941,6 +955,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.managedBy = fake_factory.create('ns0:ManagedByInfo')
         expected.managedBy.extensionKey = 'org.openstack.compute'
         expected.managedBy.type = 'instance'
+        expected.memoryReservationLockedToMax = False
 
         expected.tools = fake_factory.create('ns0:ToolsConfigInfo')
         expected.tools.afterPowerOn = True
@@ -1662,6 +1677,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.tools.beforeGuestReboot = True
         expected.tools.beforeGuestShutdown = True
         expected.tools.beforeGuestStandby = True
+        expected.memoryReservationLockedToMax = False
 
         self.assertEqual(expected, result)
 
@@ -1705,6 +1721,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         extra_config.value = True
         extra_config.key = 'disk.EnableUUID'
         expected.extraConfig.append(extra_config)
+        expected.memoryReservationLockedToMax = False
+
         self.assertEqual(expected, result)
 
     def test_get_vm_create_spec_with_memory_allocations(self):
@@ -1756,6 +1774,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         extra_config.value = True
         extra_config.key = 'disk.EnableUUID'
         expected.extraConfig.append(extra_config)
+        expected.memoryReservationLockedToMax = False
+
         self.assertEqual(expected, result)
 
     def test_get_swap(self):

@@ -1505,6 +1505,9 @@ class ComputeTestCase(BaseTestCase,
 
         self.image_api = image_api.API()
 
+        self.stub_out('eventlet.greenthread.sleep',
+                       lambda *a, **kw: None)
+
     def test_wrap_instance_fault(self):
         inst = {"uuid": uuids.instance}
 

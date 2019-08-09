@@ -31,7 +31,6 @@ CONF = nova.conf.CONF
 class ComputeXenTestCase(stubs.XenAPITestBaseNoDB):
     def setUp(self):
         super(ComputeXenTestCase, self).setUp()
-        CONF.set_override('sync_power_state_interval', 1)
         self.flags(compute_driver='xenapi.XenAPIDriver')
         self.flags(connection_url='http://localhost',
                    connection_password='test_pass',
@@ -41,6 +40,8 @@ class ComputeXenTestCase(stubs.XenAPITestBaseNoDB):
         self.compute = manager.ComputeManager()
         # execute power syncing synchronously for testing:
         self.compute._sync_power_pool = eventlet_utils.SyncPool()
+        self.stub_out('eventlet.greenthread.sleep',
+                       lambda *a, **kw: None)
 
     def test_sync_power_states_instance_not_found(self):
         db_instance = fake_instance.fake_db_instance()
