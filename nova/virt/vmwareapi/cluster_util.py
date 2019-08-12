@@ -60,7 +60,7 @@ def _get_vm_group(cluster_config, group_info):
             return group
 
 
-def validate_vm_group(session, vm_ref):
+def fetch_cluster_properties(session, vm_ref):
     max_objects = 1
     vim = session.vim
     property_collector = vim.service_content.propertyCollector
