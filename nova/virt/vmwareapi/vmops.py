@@ -1494,7 +1494,8 @@ class VMwareVMOps(object):
 
             server_group_info = vm_util._get_server_group(context, instance)
             if server_group_info:
-                cluster = cluster_util.validate_vm_group(self._session, vm_ref)
+                cluster = cluster_util.fetch_cluster_properties(self._session,
+                                                                       vm_ref)
 
                 for key, group in enumerate(cluster.propSet[0].val.group):
                     if not hasattr(group, 'vm'):
