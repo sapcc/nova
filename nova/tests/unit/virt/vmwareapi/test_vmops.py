@@ -1004,8 +1004,7 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'destroy_vm')
     @mock.patch.object(vutil, 'get_object_property')
     @mock.patch.object(vm_util, 'TaskHistoryCollectorItems')
-    @mock.patch('oslo_utils.timeutils.is_older_than',
-                                  return_value=False)
+    @mock.patch('oslo_utils.timeutils.is_older_than')
     @mock.patch.object(ds_util, 'get_available_datastores')
     def test_manage_image_cache_templates(self, mock_get_avlbl_ds,
                                           mock_older_than,
@@ -1024,10 +1023,29 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                          used_templ_vm_ref])
         mock_get_obj_prop.return_value = templ_list
 
-        # define task for one of the templates so that it's not expired
-        mock_task_it.return_value = [mock.Mock(
-            descriptionId="VirtualMachine.clone",
-            entity=used_templ_vm_ref)]
+        EXPIRED = True
+
+        tasks_and_expirations = [
+            # NEW task with type IN scope
+            (mock.Mock(descriptionId="VirtualMachine.clone",
+                       entity=used_templ_vm_ref),
+             not EXPIRED),
+            # OLD task with type IN scope
+            (mock.Mock(descriptionId="ResourcePool.ImportVAppLRO",
+                       entity=expired_templ_vm_ref),
+             EXPIRED),
+            # NEW task with type OUT of scope
+            (mock.Mock(descriptionId="fake-task-description",
+                       entity=expired_templ_vm_ref),
+             not EXPIRED)
+        ]
+
+        mock_task_it.return_value = []
+        mock_older_than_results = []
+        for task, expired in tasks_and_expirations:
+            mock_task_it.return_value.append(task)
+            mock_older_than_results.append(expired)
+        mock_older_than.side_effect = mock_older_than_results
 
         self.flags(group='vmware', image_as_template=True)
         # any instance just to ensure calling _destroy_expired_image_templates
