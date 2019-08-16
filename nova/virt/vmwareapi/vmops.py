@@ -1874,7 +1874,6 @@ class VMwareVMOps(object):
         for disk in block_device_mapping:
             if disk.get('boot_index') == 0:
                 cinder_boot = True
-                    
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                      uuid=instance.uuid)
