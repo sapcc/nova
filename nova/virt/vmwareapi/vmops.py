@@ -245,8 +245,9 @@ class VMwareVMOps(object):
             datastore.ref,
             str(uploaded_iso_path))
 
-    def _get_instance_metadata(self, context, instance):
-        flavor = instance.flavor
+    def _get_instance_metadata(self, context, instance, flavor=None):
+        if not flavor:
+            flavor = instance.flavor
         metadata = [('name', instance.display_name),
                     ('userid', context.user_id),
                     ('username', context.user_name),
@@ -1815,7 +1816,7 @@ class VMwareVMOps(object):
         """Resizes the VM according to the flavor."""
         client_factory = self._session.vim.client.factory
         extra_specs = self._get_extra_specs(flavor, image_meta)
-        metadata = self._get_instance_metadata(context, instance)
+        metadata = self._get_instance_metadata(context, instance, flavor)
         vm_resize_spec = vm_util.get_vm_resize_spec(client_factory,
                                                     int(flavor.vcpus),
                                                     int(flavor.memory_mb),
