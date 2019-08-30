@@ -330,6 +330,15 @@ instances as clone from template.
 Before fetching from Glance an image missing on the datastore first look for it
 on other datastores and clone it from there if available.
 """),
+    cfg.StrOpt('smbios_asset_tag',
+               help="""
+Set the SMBIOS chassis asset tag to the specified value, so users can identify
+the cloud-platform they're running on. E.g. Amazon sets this to "Amazon EC2".
+
+Possible values:
+
+* Any string or empty to keep VMware default
+"""),
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +
