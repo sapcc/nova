@@ -331,7 +331,16 @@ for it on other datastores and clone it from there if available.
 Should the driver use a property collector to fetch essential properties
 and keep a local copy of the values. This should reduce the load on the
 vcenter api and be quicker, then polling each value individually
-""")
+"""),
+    cfg.StrOpt('smbios_asset_tag',
+               help="""
+Set the SMBIOS chassis asset tag to the specified value, so users can identify
+the cloud-platform they're running on. E.g. Amazon sets this to "Amazon EC2".
+
+Possible values:
+
+* Any string or empty to keep VMware default
+"""),
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +
