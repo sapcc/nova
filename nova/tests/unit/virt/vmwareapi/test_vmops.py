@@ -1122,7 +1122,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops.migrate_disk_and_power_off(self._context,
                                                self._instance,
                                                None,
-                                               flavor)
+                                               flavor,
+                                               None)
 
         fake_get_vm_ref.assert_called_once_with(self._session,
                                                 self._instance)
