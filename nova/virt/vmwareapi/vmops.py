@@ -1889,7 +1889,8 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
 
         # 3.Reconfigure the disk properties
-        self._resize_disk(instance, vm_ref, vmdk, flavor)
+        if not _is_volume_backed(block_device_info):
+            self._resize_disk(instance, vm_ref, vmdk, flavor)
         self._update_instance_progress(context, instance,
                                        step=3,
                                        total_steps=RESIZE_TOTAL_STEPS)
