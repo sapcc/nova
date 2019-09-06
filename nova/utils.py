@@ -968,6 +968,9 @@ def get_image_metadata_from_volume(volume):
     # and depends on followed volume_api.check_attach() to
     # verify it. This hack should be harmless with that check.
     image_meta['status'] = 'active'
+
+    # the owner might be missing if cinder policy disallows it
+    image_meta['owner'] = volume.get('owner', None)
     return image_meta
 
 
