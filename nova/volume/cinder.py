@@ -321,6 +321,10 @@ def _untranslate_volume_summary_view(context, vol):
         d['shared_targets'] = vol.shared_targets
         d['service_uuid'] = vol.service_uuid
 
+    # cinder only exposes the value for volumes if the policy allows
+    if hasattr(vol, 'os-vol-tenant-attr:tenant_id'):
+        d['owner'] = getattr(vol, 'os-vol-tenant-attr:tenant_id')
+
     return d
 
 
