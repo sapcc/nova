@@ -339,6 +339,16 @@ Possible values:
 
 * Any string or empty to keep VMware default
 """),
+    cfg.StrOpt('bigvm_provider_vm_group',
+               help="""
+DRS VM group to put any spawned big VM into. This can be used to influence
+placement of big VMs on special hypervisors in a cluster.
+"""),
+    cfg.StrOpt('non_bigvm_provider_vm_group',
+               help="""
+DRS VM group to put any spawned VM not identified as a big VM. This can be used
+to influence placement of big VMs on special hypervisors free from other VMs.
+"""),
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +
