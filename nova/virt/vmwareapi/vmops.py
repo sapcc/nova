@@ -1492,8 +1492,9 @@ class VMwareVMOps(object):
         try:
             vm_ref = vm_util.get_vm_ref(self._session, instance)
 
-            server_group_info = vm_util._get_server_group(context, instance)
-            if server_group_info:
+            server_group_infos = vm_util._get_server_groups(context, instance,
+                                                include_provider_groups=False)
+            if server_group_infos:
                 cluster = cluster_util.fetch_cluster_properties(self._session,
                                                                        vm_ref)
                 config_info_ex = cluster.propSet[0].val

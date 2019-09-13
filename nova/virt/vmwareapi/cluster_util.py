@@ -49,7 +49,7 @@ def _create_vm_group_spec(client_factory, group_info, vm_refs,
     group_spec = client_factory.create('ns0:ClusterGroupSpec')
     group_spec.operation = operation
     group_spec.info = group
-    return [group_spec]
+    return group_spec
 
 
 def _get_vm_group(cluster_config, group_info):
@@ -127,49 +127,59 @@ def delete_vm_group(session, cluster, vm_group):
 
 
 @utils.synchronized('vmware-vm-group-policy')
-def update_placement(session, cluster, vm_ref, group_info):
+def update_placement(session, cluster, vm_ref, group_infos):
     """Updates cluster for vm placement using DRS"""
     cluster_config = session._call_method(
         vutil, "get_object_property", cluster, "configurationEx")
 
+    # FIXME why does this not raise an error???
     if cluster_config:
-        group = _get_vm_group(cluster_config, group_info)
         client_factory = session.vim.client.factory
         config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+        config_spec.groupSpec = []
+        for group_info in group_infos:
+            group = _get_vm_group(cluster_config, group_info)
 
-        if not group:
-            """Creating group"""
-            config_spec.groupSpec = _create_vm_group_spec(
-                client_factory, group_info, [vm_ref], operation="add",
-                group=group)
+            if not group:
+                """Creating group"""
+                group_spec = _create_vm_group_spec(
+                    client_factory, group_info, [vm_ref], operation="add",
+                    group=group)
+                config_spec.groupSpec.append(group_spec)
 
-        if group:
-            # VM group exists on the cluster which is assumed to be
-            # created by VC admin. Add instance to this vm group and let
-            # the placement policy defined by the VC admin take over
-            config_spec.groupSpec = _create_vm_group_spec(
-                client_factory, group_info, [vm_ref], operation="edit",
-                group=group)
+            if group:
+                # VM group exists on the cluster which is assumed to be
+                # created by VC admin. Add instance to this vm group and let
+                # the placement policy defined by the VC admin take over
+                group_spec = _create_vm_group_spec(
+                    client_factory, group_info, [vm_ref], operation="edit",
+                    group=group)
+                config_spec.groupSpec.append(group_spec)
 
-        # If server group policies are defined (by tenants), then
-        # create/edit affinity/anti-affinity rules on cluster.
-        # Note that this might be add-on to the existing vm group
-        # (mentioned above) policy defined by VC admin i.e if VC admin has
-        # restricted placement of VMs to a specific group of hosts, then
-        # the server group policy from nova might further restrict to
-        # individual hosts on a cluster
-        if group_info.policies:
-            # VM group does not exist on cluster
-            policy = group_info.policies[0]
-            if policy != 'soft-affinity':
-                rule_name = "%s-%s" % (group_info.uuid, policy)
-                rule = _get_rule(cluster_config, rule_name)
-                operation = "edit" if rule else "add"
-                config_spec.rulesSpec = _create_cluster_rules_spec(
-                    client_factory, rule_name, [vm_ref], policy=policy,
-                    operation=operation, rule=rule)
+            # If server group policies are defined (by tenants), then
+            # create/edit affinity/anti-affinity rules on cluster.
+            # Note that this might be add-on to the existing vm group
+            # (mentioned above) policy defined by VC admin i.e if VC admin has
+            # restricted placement of VMs to a specific group of hosts, then
+            # the server group policy from nova might further restrict to
+            # individual hosts on a cluster
+            if group_info.policies:
+                # VM group does not exist on cluster
+                policy = group_info.policies[0]
+                if policy != 'soft-affinity':
+                    rule_name = "%s-%s" % (group_info.uuid, policy)
+                    rule = _get_rule(cluster_config, rule_name)
+                    operation = "edit" if rule else "add"
 
-    reconfigure_cluster(session, cluster, config_spec)
+                    rules_spec = _create_cluster_rules_spec(
+                        client_factory, rule_name, [vm_ref], policy=policy,
+                        operation=operation, rule=rule)
+                    if config_spec.rulesSpec is None:
+                        config_spec.rulesSpec = [rules_spec]
+                    else:
+                        config_spec.rulesSpec.append(rules_spec)
+
+        reconfigure_cluster(session, cluster, config_spec)
 
 
 def _create_cluster_rules_spec(client_factory, name, vm_refs,
