@@ -350,6 +350,20 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
         except exception.CinderAPIVersionNotAvailable:
             return volume_api.get(context, volume_id)
 
+    def _create_volume(self, context, instance, volume_api, size,
+                       wait_func=None, **create_kwargs):
+        av_zone = _get_volume_create_az_value(instance)
+        name = create_kwargs.pop('name', '')
+        description = create_kwargs.pop('description', '')
+        vol = volume_api.create(
+            context, size, name, description,
+            availability_zone=av_zone, **create_kwargs)
+
+        if wait_func:
+            self._call_wait_func(context, wait_func, volume_api, vol['id'])
+
+        return vol
+
     def _do_detach(self, context, instance, volume_api, virt_driver,
                    attachment_id=None, destroy_bdm=False):
         """Private method that actually does the detach.
@@ -713,15 +727,12 @@ class DriverVolSnapshotBlockDevice(DriverVolumeBlockDevice):
 
     def attach(self, context, instance, volume_api,
                virt_driver, wait_func=None):
-
         if not self.volume_id:
-            av_zone = _get_volume_create_az_value(instance)
             snapshot = volume_api.get_snapshot(context,
                                                self.snapshot_id)
-            vol = volume_api.create(context, self.volume_size, '', '',
-                                    snapshot, availability_zone=av_zone)
-            if wait_func:
-                self._call_wait_func(context, wait_func, volume_api, vol['id'])
+            vol = self._create_volume(
+                context, instance, volume_api, self.volume_size,
+                wait_func=wait_func, snapshot=snapshot)
 
             self.volume_id = vol['id']
 
@@ -741,12 +752,9 @@ class DriverVolImageBlockDevice(DriverVolumeBlockDevice):
     def attach(self, context, instance, volume_api,
                virt_driver, wait_func=None):
         if not self.volume_id:
-            av_zone = _get_volume_create_az_value(instance)
-            vol = volume_api.create(context, self.volume_size,
-                                    '', '', image_id=self.image_id,
-                                    availability_zone=av_zone)
-            if wait_func:
-                self._call_wait_func(context, wait_func, volume_api, vol['id'])
+            vol = self._create_volume(
+                context, instance, volume_api, self.volume_size,
+                wait_func=wait_func, image_id=self.image_id)
 
             self.volume_id = vol['id']
 
@@ -755,7 +763,6 @@ class DriverVolImageBlockDevice(DriverVolumeBlockDevice):
 
         super(DriverVolImageBlockDevice, self).attach(
             context, instance, volume_api, virt_driver)
-
 
 class DriverVolBlankBlockDevice(DriverVolumeBlockDevice):
 
@@ -766,11 +773,10 @@ class DriverVolBlankBlockDevice(DriverVolumeBlockDevice):
                virt_driver, wait_func=None):
         if not self.volume_id:
             vol_name = instance.uuid + '-blank-vol'
-            av_zone = _get_volume_create_az_value(instance)
-            vol = volume_api.create(context, self.volume_size, vol_name, '',
-                                    availability_zone=av_zone)
-            if wait_func:
-                self._call_wait_func(context, wait_func, volume_api, vol['id'])
+
+            vol = self._create_volume(
+                context, instance, volume_api, self.volume_size,
+                wait_func=wait_func, name=vol_name)
 
             self.volume_id = vol['id']
 
