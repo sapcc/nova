@@ -31,6 +31,8 @@ from nova.virt import driver
 from nova.virt import fake as fake_virt
 from nova.volume import cinder
 
+ATTACHMENT_ID = uuids.attachment_id
+
 
 class TestDriverBlockDevice(test.NoDBTestCase):
     # This is used to signal if we're dealing with a new style volume
@@ -256,6 +258,15 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                 bdm = getattr(self, attr % name)
                 bdm['attachment_id'] = self.attachment_id
 
+    def stub_volume_create(self, volume):
+        # For any test that creates a volume (boot from volume where the source
+        # type is blank/image/snapshot), we'll also be creating an attachment
+        # so set the self.attachment_id value on the test and stub out the
+        # attachment_create method.
+        self.volume_api.create.return_value = volume
+        self.attachment_id = ATTACHMENT_ID
+        self.volume_api.attachment_create.return_value = {'id': ATTACHMENT_ID}
+
     @mock.patch('nova.virt.block_device.LOG')
     @mock.patch('os_brick.encryptors')
     def test_driver_detach_passes_failed(self, enc, log):
@@ -343,7 +354,13 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                 # so skip those.
                 if not isinstance(test_bdm._bdm_obj.fields[fld],
                                   fields.BaseEnumField):
-                    test_bdm[alias or fld] = 'fake_changed_value'
+                    field = alias or fld
+                    if field == 'attachment_id':
+                        # Must set UUID values on UUID fields.
+                        fake_value = ATTACHMENT_ID
+                    else:
+                        fake_value = 'fake_changed_value'
+                    test_bdm[field] = fake_value
             test_bdm.save()
             for fld, alias in test_bdm._update_on_save.items():
                 self.assertEqual(test_bdm[alias or fld],
@@ -708,6 +725,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         if expected_save_calls:
             mock_save.assert_has_calls(expected_save_calls)
 
+        return instance.uuid
+
     def test_volume_attach(self, include_shared_targets=False):
         test_bdm = self.driver_classes['volume'](
             self.volume_bdm)
@@ -876,8 +895,9 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         test_bdm = self.driver_classes['volsnapshot'](
                 fake_block_device.fake_bdm_object(
                         self.context, no_volume_snapshot))
-        # When we create a volume, we attach it using the old flow.
-        self.attachment_id = None
+        # Make sure the test didn't already setup an attachment_id on the
+        # DriverVolSnapshotBlockDevice that we use to create a new volume.
+        self.assertIsNone(test_bdm.get('attachment_id'), test_bdm)
 
         snapshot = {'id': 'fake-volume-id-1',
                     'attach_status': 'detached'}
@@ -886,10 +906,11 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
         wait_func = mock.MagicMock()
         self.volume_api.get_snapshot.return_value = snapshot
-        self.volume_api.create.return_value = volume
 
-        self._test_volume_attach(test_bdm, no_volume_snapshot, volume,
-                                 wait_func=wait_func)
+        self.stub_volume_create(volume)
+
+        instance_uuid = self._test_volume_attach(
+            test_bdm, no_volume_snapshot, volume, wait_func=wait_func)
 
         self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
         self.volume_api.get_snapshot.assert_called_once_with(
@@ -898,6 +919,9 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.context, 3, '', '', availability_zone=None,
             snapshot=snapshot)
         wait_func.assert_called_once_with(self.context, 'fake-volume-id-2')
+        self.volume_api.attachment_create.assert_called_once_with(
+            self.context, volume['id'], instance_uuid)
+        self.assertEqual(ATTACHMENT_ID, test_bdm.get('attachment_id'))
 
     def test_snapshot_attach_no_volume_cinder_cross_az_attach_false(self):
         # Tests that the volume created from the snapshot has the same AZ as
@@ -908,8 +932,6 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         test_bdm = self.driver_classes['volsnapshot'](
                 fake_block_device.fake_bdm_object(
                         self.context, no_volume_snapshot))
-        # When we create a volume, we attach it using the old flow.
-        self.attachment_id = None
 
         snapshot = {'id': 'fake-volume-id-1',
                     'attach_status': 'detached'}
@@ -919,7 +941,7 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         wait_func = mock.MagicMock()
 
         self.volume_api.get_snapshot.return_value = snapshot
-        self.volume_api.create.return_value = volume
+        self.stub_volume_create(volume)
         self._test_volume_attach(test_bdm, no_volume_snapshot, volume,
                                  availability_zone='test-az',
                                  wait_func=wait_func)
@@ -998,8 +1020,9 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         test_bdm = self.driver_classes['volimage'](
                 fake_block_device.fake_bdm_object(
                         self.context, no_volume_image))
-        # When we create a volume, we attach it using the old flow.
-        self.attachment_id = None
+        # Make sure the test didn't already setup an attachment_id on the
+        # DriverVolImageBlockDevice that we use to create a new volume.
+        self.assertIsNone(test_bdm.get('attachment_id'), test_bdm)
 
         image = {'id': 'fake-image-id-1'}
         volume = {'id': 'fake-volume-id-2',
@@ -1007,14 +1030,17 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
         wait_func = mock.MagicMock()
 
-        self.volume_api.create.return_value = volume
-        self._test_volume_attach(test_bdm, no_volume_image, volume,
-                                 wait_func=wait_func)
+        self.stub_volume_create(volume)
+        instance_uuid = self._test_volume_attach(
+            test_bdm, no_volume_image, volume, wait_func=wait_func)
         self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
         self.volume_api.create.assert_called_once_with(
             self.context, 1, '', '', image_id=image['id'],
             availability_zone=None)
         wait_func.assert_called_once_with(self.context, 'fake-volume-id-2')
+        self.volume_api.attachment_create.assert_called_once_with(
+            self.context, volume['id'], instance_uuid)
+        self.assertEqual(ATTACHMENT_ID, test_bdm.get('attachment_id'))
 
     def test_image_attach_no_volume_cinder_cross_az_attach_false(self):
         # Tests that the volume created from the image has the same AZ as the
@@ -1025,15 +1051,13 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         test_bdm = self.driver_classes['volimage'](
                 fake_block_device.fake_bdm_object(
                         self.context, no_volume_image))
-        # When we create a volume, we attach it using the old flow.
-        self.attachment_id = None
 
         image = {'id': 'fake-image-id-1'}
         volume = {'id': 'fake-volume-id-2',
                   'attach_status': 'detached'}
 
         wait_func = mock.MagicMock()
-        self.volume_api.create.return_value = volume
+        self.stub_volume_create(volume)
 
         self._test_volume_attach(test_bdm, no_volume_image, volume,
                                  availability_zone='test-az',
@@ -1141,20 +1165,21 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         test_bdm = self.driver_classes['volblank'](
                 fake_block_device.fake_bdm_object(
                         self.context, no_blank_volume))
+        # Make sure the test didn't already setup an attachment_id on the
+        # DriverVolBlankBlockDevice that we use to create a new volume.
+        self.assertIsNone(test_bdm.get('attachment_id'), test_bdm)
         instance = fake_instance.fake_instance_obj(mock.sentinel.ctx,
                                                    **{'uuid': uuids.uuid})
         volume_class = self.driver_classes['volume']
         volume = {'id': 'fake-volume-id-2',
                   'display_name': '%s-blank-vol' % uuids.uuid}
+        self.stub_volume_create(volume)
 
-        with test.nested(
-            mock.patch.object(self.volume_api, 'create', return_value=volume),
-            mock.patch.object(volume_class, 'attach')
-        ) as (vol_create, vol_attach):
+        with mock.patch.object(volume_class, 'attach') as vol_attach:
             test_bdm.attach(self.context, instance, self.volume_api,
                             self.virt_driver)
 
-            vol_create.assert_called_once_with(
+            self.volume_api.create.assert_called_once_with(
                 self.context, test_bdm.volume_size,
                 '%s-blank-vol' % uuids.uuid,
                 '', availability_zone=None)
@@ -1162,6 +1187,9 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                                                self.volume_api,
                                                self.virt_driver)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
+        self.volume_api.attachment_create.assert_called_once_with(
+            self.context, volume['id'], instance.uuid)
+        self.assertEqual(ATTACHMENT_ID, test_bdm.get('attachment_id'))
 
     def test_blank_attach_volume_cinder_cross_az_attach_false(self):
         # Tests that the blank volume created is in the same availability zone
@@ -1178,21 +1206,20 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         volume_class = self.driver_classes['volume']
         volume = {'id': 'fake-volume-id-2',
                   'display_name': '%s-blank-vol' % uuids.uuid}
+        self.stub_volume_create(volume)
 
-        with mock.patch.object(self.volume_api, 'create',
-                               return_value=volume) as vol_create:
-            with mock.patch.object(volume_class, 'attach') as vol_attach:
-                test_bdm.attach(self.context, instance, self.volume_api,
-                                self.virt_driver)
+        with mock.patch.object(volume_class, 'attach') as vol_attach:
+            test_bdm.attach(self.context, instance, self.volume_api,
+                            self.virt_driver)
 
-                vol_create.assert_called_once_with(
-                    self.context, test_bdm.volume_size,
-                    '%s-blank-vol' % uuids.uuid,
-                    '', availability_zone='test-az')
-                vol_attach.assert_called_once_with(self.context, instance,
-                                                   self.volume_api,
-                                                   self.virt_driver)
-                self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
+            self.volume_api.create.assert_called_once_with(
+                self.context, test_bdm.volume_size,
+                '%s-blank-vol' % uuids.uuid,
+                '', availability_zone='test-az')
+            vol_attach.assert_called_once_with(self.context, instance,
+                                               self.volume_api,
+                                               self.virt_driver)
+            self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
 
     def test_convert_block_devices(self):
         bdms = objects.BlockDeviceMappingList(
@@ -1359,7 +1386,7 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                          E(bdm)._proxy_as_attr)
 
     def _test_boot_from_volume_source_blank_volume_type(
-            self, bdm, expected_volume_type):
+            self, bdm):
         self.flags(cross_az_attach=False, group='cinder')
         test_bdm = self.driver_classes['volblank'](bdm)
         updates = {'uuid': uuids.uuid, 'availability_zone': 'test-az'}
@@ -1368,23 +1395,22 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         volume_class = self.driver_classes['volume']
         volume = {'id': 'fake-volume-id-2',
                   'display_name': '%s-blank-vol' % uuids.uuid}
+        self.stub_volume_create(volume)
 
-        with mock.patch.object(self.volume_api, 'create',
-                               return_value=volume) as vol_create:
-            with mock.patch.object(volume_class, 'attach') as vol_attach:
-                test_bdm.attach(self.context, instance, self.volume_api,
-                                self.virt_driver)
+        with mock.patch.object(volume_class, 'attach') as vol_attach:
+            test_bdm.attach(self.context, instance, self.volume_api,
+                            self.virt_driver)
 
-                vol_create.assert_called_once_with(
-                    self.context, test_bdm.volume_size,
-                    '%s-blank-vol' % uuids.uuid, '',
-                    availability_zone='test-az')
-                vol_attach.assert_called_once_with(
-                    self.context, instance, self.volume_api, self.virt_driver)
-                self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
+            self.volume_api.create.assert_called_once_with(
+                self.context, test_bdm.volume_size,
+                '%s-blank-vol' % uuids.uuid, '',
+                availability_zone='test-az')
+            vol_attach.assert_called_once_with(
+                self.context, instance, self.volume_api, self.virt_driver)
+            self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
 
     def _test_boot_from_volume_source_image_volume_type(
-            self, bdm, expected_volume_type):
+            self, bdm):
         self.flags(cross_az_attach=False, group='cinder')
         test_bdm = self.driver_classes['volimage'](bdm)
 
@@ -1395,24 +1421,22 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         image = {'id': 'fake-image-id-1'}
         volume = {'id': 'fake-volume-id-2',
                   'display_name': 'fake-image-vol'}
+        self.stub_volume_create(volume)
 
-        with mock.patch.object(self.volume_api, 'create',
-                               return_value=volume) as vol_create:
-            with mock.patch.object(volume_class, 'attach') as vol_attach:
-                test_bdm.attach(self.context, instance, self.volume_api,
-                                self.virt_driver)
+        with mock.patch.object(volume_class, 'attach') as vol_attach:
+            test_bdm.attach(self.context, instance, self.volume_api,
+                            self.virt_driver)
 
-                vol_create.assert_called_once_with(
-                    self.context, test_bdm.volume_size,
-                    '', '', image_id=image['id'],
-                    volume_type=expected_volume_type,
-                    availability_zone='test-az')
-                vol_attach.assert_called_once_with(
-                    self.context, instance, self.volume_api, self.virt_driver)
-                self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
+            self.volume_api.create.assert_called_once_with(
+                self.context, test_bdm.volume_size,
+                '', '', image_id=image['id'],
+                availability_zone='test-az')
+            vol_attach.assert_called_once_with(
+                self.context, instance, self.volume_api, self.virt_driver)
+            self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
 
     def _test_boot_from_volume_source_snapshot_volume_type(
-            self, bdm, expected_volume_type):
+            self, bdm):
         self.flags(cross_az_attach=False, group='cinder')
         test_bdm = self.driver_classes['volsnapshot'](bdm)
 
@@ -1425,30 +1449,31 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         volume_class = self.driver_classes['volume']
         volume = {'id': 'fake-volume-id-2',
                   'display_name': 'fake-snapshot-vol'}
+        self.stub_volume_create(volume)
 
         with test.nested(
-            mock.patch.object(self.volume_api, 'create', return_value=volume),
             mock.patch.object(self.volume_api, 'get_snapshot',
                               return_value=snapshot),
             mock.patch.object(volume_class, 'attach')
         ) as (
-            vol_create, vol_get_snap, vol_attach
+            vol_get_snap, vol_attach
         ):
             test_bdm.attach(self.context, instance, self.volume_api,
                             self.virt_driver)
 
-            vol_create.assert_called_once_with(
+            self.volume_api.create.assert_called_once_with(
                 self.context, test_bdm.volume_size, '', '',
                 availability_zone='test-az', snapshot=snapshot)
             vol_attach.assert_called_once_with(
                 self.context, instance, self.volume_api, self.virt_driver)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
 
+
 class TestDriverBlockDeviceNewFlow(TestDriverBlockDevice):
     """Virt block_device tests for the Cinder 3.44 volume attach flow
     where a volume BDM has an attachment_id.
     """
-    attachment_id = uuids.attachment_id
+    attachment_id = ATTACHMENT_ID
 
     def test_volume_attach_multiattach(self):
         test_bdm = self.driver_classes['volume'](
