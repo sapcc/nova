@@ -1127,6 +1127,11 @@ class API(base.Base):
         instance_group = self._get_requested_instance_group(context,
                                    filter_properties)
 
+        if instance_group and utils.is_big_vm(base_options['memory_mb'], instance_type):
+            msg = 'Big VMs cannot be assigned to server groups because of ' \
+                  'their scheduling requirements.'
+            raise exception.InvalidRequest(msg)
+
         tags = self._create_tag_list_obj(context, tags)
 
         instances_to_build = self._provision_instances(
