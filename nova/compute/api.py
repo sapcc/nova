@@ -1066,44 +1066,36 @@ class API(base.Base):
                 context, volume_task_id)['status']
         return task_status
 
-    def _create_volume(self, context, image_id, flavor):
+    def _create_volume(self, context, image_id, flavor, availability_zone,
+                       display_name):
 
-        volume_size = 1
         volume_description = None
         volume_name = None
-        volume_az = None
         volume_type = None
+        volume_prefix = 'root_disk_'
 
         if 'volume:description' in flavor.extra_specs:
             volume_description = flavor.extra_specs['volume:description']
 
-        if 'volume:name' in flavor.extra_specs:
-            volume_name = flavor.extra_specs['volume:name']
-
-        if 'volume:az' in flavor.extra_specs:
-            volume_az = flavor.extra_specs['volume:az']
+        if 'volume:prefix' in flavor.extra_specs:
+            volume_prefix = flavor.extra_specs['volume:prefix']
+        volume_name = volume_prefix + display_name
 
         if 'volume:type' in flavor.extra_specs:
             volume_type = flavor.extra_specs['volume:type']
 
-        if 'volume:size' in flavor.extra_specs:
-            volume_size = flavor.extra_specs['volume:size']
-        else:
-            LOG.warning('`volume:size` value missing from flavor \n'
-                        'Default value will be set to 1')
-
         volume_task = self.volume_api.create(context,
-                                             volume_size,
-                                             volume_name,
-                                             volume_description,
-                                             image_id=image_id,
-                                             volume_type=volume_type,
-                                             availability_zone=volume_az)
+                                         flavor.root_gb,
+                                         volume_name,
+                                         volume_description,
+                                         image_id=image_id,
+                                         volume_type=volume_type,
+                                         availability_zone=availability_zone)
 
         self.__poll_volume_status(context, volume_task['id'])
 
         block_device_mapping = [
-            {u'device_name': u'vda', u'delete_on_termination': False,
+            {u'device_name': u'vda', u'delete_on_termination': True,
              u'volume_id': volume_task['id']}]
         return block_device_mapping
 
@@ -1133,10 +1125,11 @@ class API(base.Base):
         strategy being performed and schedule the instance(s) for
         creation.
         """
-
         if self._is_volume_create_enabled(instance_type):
             block_device_mapping = self._create_volume(context, image_href,
-                                                       instance_type)
+                                                       instance_type,
+                                                       availability_zone,
+                                                       display_name)
 
         # Normalize and setup some parameters
         if reservation_id is None:
