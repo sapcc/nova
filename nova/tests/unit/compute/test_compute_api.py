@@ -3624,7 +3624,7 @@ class _ComputeAPIUnitTestMixIn(object):
         }]
 
         expected_meta = {'min_disk': 0, 'min_ram': 0, 'properties': {},
-                         'size': 0, 'status': 'active'}
+                         'size': 0, 'status': 'active', 'owner': None}
 
         with mock.patch.object(self.compute_api.volume_api, 'get',
                                side_effect=get_vol_data):
