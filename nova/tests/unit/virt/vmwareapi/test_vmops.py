@@ -72,7 +72,7 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         self._virtapi = mock.Mock()
         self._image_id = nova.tests.unit.image.fake.get_valid_image_id()
-        fake_ds_ref = vmwareapi_fake.ManagedObjectReference('fake-ds')
+        fake_ds_ref = vmwareapi_fake.ManagedObjectReference(value='fake-ds')
         self._ds = ds_obj.Datastore(
                 ref=fake_ds_ref, name='fake_ds',
                 capacity=10 * units.Gi,
@@ -1129,8 +1129,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         dc_info = ds_util.DcInfo(
             ref=self._cluster.obj, name='fake_dc',
             vmFolder=vmwareapi_fake.ManagedObjectReference(
-                                                        name='fake_vm_folder',
-                                                        value='Folder'))
+                name='Folder',
+                value='fake_vm_folder'))
         vi = vmops.VirtualMachineInstanceConfigInfo(
             self._instance, image_info,
             self._ds, dc_info, mock_imagecache, extra_specs)
@@ -1355,7 +1355,7 @@ class VMwareVMOpsTestCase(test.TestCase):
     def test_get_ds_browser(self):
         cache = self._vmops._datastore_browser_mapping
         ds_browser = mock.Mock()
-        moref = vmwareapi_fake.ManagedObjectReference('datastore-100')
+        moref = vmwareapi_fake.ManagedObjectReference(value='datastore-100')
         self.assertIsNone(cache.get(moref.value))
         mock_call_method = mock.Mock(return_value=ds_browser)
         with mock.patch.object(self._session, '_call_method',
