@@ -873,7 +873,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                                       mock_get_datastore,
                                       mock_update_cached_instances):
 
-        fake_ds_ref = vmwareapi_fake.ManagedObjectReference('ds1')
+        fake_ds_ref = vmwareapi_fake.ManagedObjectReference(value='ds1')
         fake_ds = ds_obj.Datastore(
             ref=fake_ds_ref, name='ds1',
             capacity=10 * units.Gi,

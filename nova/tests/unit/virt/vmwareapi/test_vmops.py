@@ -1268,8 +1268,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         dc_info = ds_util.DcInfo(
             ref=self._cluster.obj, name='fake_dc',
             vmFolder=vmwareapi_fake.ManagedObjectReference(
-                name='fake_vm_folder',
-                value='Folder'))
+                name='Folder',
+                value='fake_vm_folder'))
         vi = vmops.VirtualMachineInstanceConfigInfo(
             self._instance, image_info,
             self._ds, dc_info, mock_imagecache, extra_specs)
