@@ -2322,6 +2322,52 @@ class VMwareAPIVMTestCase(test.TestCase,
         inventory = self.pt.data(self.node_name).inventory
         self.assertEqual(expected, inventory)
 
+    @mock.patch('nova.virt.vmwareapi.vm_util.get_stats_from_cluster')
+    @mock.patch('nova.virt.vmwareapi.ds_util.get_available_datastores')
+    def test_get_inventory_hostgroup_reservations(self, mock_get_avail_ds,
+                                                  mock_get_stats):
+        """reservations by hostgroup are added to the ones per cluster"""
+        ds1 = ds_obj.Datastore(ref='fake-ref', name='datastore1',
+                               capacity=10 * units.Gi, freespace=3 * units.Gi)
+        ds2 = ds_obj.Datastore(ref='fake-ref', name='datastore2',
+                               capacity=35 * units.Gi, freespace=25 * units.Gi)
+        ds3 = ds_obj.Datastore(ref='fake-ref', name='datastore3',
+                               capacity=50 * units.Gi, freespace=15 * units.Gi)
+        mock_get_avail_ds.return_value = [ds1, ds2, ds3]
+        mock_get_stats.return_value = {
+            'cpu': {'vcpus': 32,
+                    'max_vcpus_per_host': 16,
+                    'reserved_vcpus': 2},
+            'mem': {'total': 2048,
+                    'free': 2048,
+                    'max_mem_mb_per_host': 1024,
+                    'reserved_memory_mb': 512}}
+        inv = self.conn.get_inventory(self.node_name)
+        expected = {
+            orc.VCPU: {
+                'total': 32,
+                'reserved': 2,
+                'min_unit': 1,
+                'max_unit': 16,
+                'step_size': 1,
+            },
+            orc.MEMORY_MB: {
+                'total': 2048,
+                'reserved': 1024,
+                'min_unit': 1,
+                'max_unit': 1024,
+                'step_size': 1,
+            },
+            orc.DISK_GB: {
+                'total': 95,
+                'reserved': 0,
+                'min_unit': 1,
+                'max_unit': 25,
+                'step_size': 1,
+            },
+        }
+        self.assertEqual(expected, inv)
+
     def test_invalid_datastore_regex(self):
 
         # Tests if we raise an exception for Invalid Regular Expression in
