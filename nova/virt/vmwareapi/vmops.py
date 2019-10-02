@@ -1537,18 +1537,16 @@ class VMwareVMOps(object):
                                                                        vm_ref)
                 config_info_ex = cluster.propSet[0].val
 
-                if hasattr(config_info_ex, 'group'):
-                    for key, group in enumerate(config_info_ex.group):
-                        if not hasattr(group, 'vm'):
-                            continue
+            vm_groups = []
 
-                        for vm in group.vm:
-                            if vm.value == vm_ref.value and len(group.vm) == 1:
-                                cluster_util.delete_vm_group(
-                                            self._session, cluster.obj,
-                                            config_info_ex.group[key])
-                                break
-                        break
+            if hasattr(config_info_ex, 'group'):
+                for group in config_info_ex.group:
+                    if not hasattr(group, 'vm'):
+                        continue
+                    for vm in group.vm:
+                        if vm.value == vm_ref.value:
+                            vm_groups.append(group.name)
+                            break
 
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
@@ -1574,6 +1572,20 @@ class VMwareVMOps(object):
                 self._session._call_method(self._session.vim,
                                            "UnregisterVM", vm_ref)
                 LOG.debug("Unregistered the VM", instance=instance)
+
+                with lockutils.lock(server_group_infos[0].uuid,
+                                lock_file_prefix='nova-vmware-server-group'):
+                    cluster_config = vm_util.get_cluster_property(
+                        self._session, "configurationEx", self._cluster)
+                    # Check if the unregistered vm is the last vm in it's group
+                    for group in cluster_config.group:
+                        if group.name not in vm_groups:
+                            continue
+                        if not hasattr(group, 'vm'):
+                            cluster_util.delete_vm_group(
+                                self._session, cluster.obj,
+                                group)
+
             except Exception as excep:
                 LOG.warning("In vmwareapi:vmops:_destroy_instance, got "
                             "this exception while un-registering the VM: %s",

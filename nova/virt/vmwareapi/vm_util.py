@@ -22,6 +22,7 @@ import collections
 import copy
 import functools
 
+from oslo_concurrency import lockutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
@@ -707,6 +708,13 @@ def _get_device_disk_type(device):
         else:
             return constants.DEFAULT_DISK_TYPE
 
+
+def get_cluster_property(session, prop_list, cluster):
+    cluster_config = session._call_method(
+        vutil, "get_object_property", cluster,
+        prop_list)
+
+    return cluster_config
 
 def get_vmdk_info(session, vm_ref, uuid=None):
     """Returns information for the primary VMDK attached to the given VM."""
@@ -1419,7 +1427,12 @@ def update_cluster_placement(session, context, instance, cluster, vm_ref):
                                             include_provider_groups=True)
     if not server_group_infos:
         return
-    cluster_util.update_placement(session, cluster, vm_ref, server_group_infos)
+
+    with lockutils.lock(server_group_infos[0].uuid,
+                        lock_file_prefix='nova-vmware-server-group'):
+        cluster_util.update_placement(session,
+                                      cluster,
+                                      vm_ref, server_group_infos)
 
 
 def get_host_ref(session, cluster=None):
