@@ -620,6 +620,10 @@ class ClusterComputeResource(ManagedObject):
         self.set("summary", summary)
 
         configuration = DataObject()
+        drsConfig = DataObject()
+        drsConfig.enabled = True
+        configuration.drsConfig = drsConfig
+        self.set('configuration.drsConfig', drsConfig)
         configuration.dasConfig = DataObject()
         policy = None
         configuration.dasConfig.admissionControlPolicy = policy
