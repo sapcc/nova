@@ -752,6 +752,31 @@ class HostSystem(ManagedObject):
         hardware.memorySize = units.Gi
         summary.hardware = hardware
 
+        cpuPkg = DataObject('HostCpuPackage')
+        cpuPkg.description = 'Intel(R) Xeon(R) CPU E5-4650 v4 @ 2.20GHz'
+        cpuPkg.vendor = 'intel'
+        cpu_pkgs = _create_array_of_type('HostCpuPackage')
+        cpu_pkgs.HostCpuPackage = [cpuPkg, cpuPkg]
+        self.set('hardware.cpuPkg', cpu_pkgs)
+        cpuInfo = DataObject('CpuInfo')
+        cpuInfo.numCpuCores = hardware.numCpuCores
+        cpuInfo.numCpuPackages = hardware.numCpuPkgs
+        cpuInfo.numCpuThreads = hardware.numCpuThreads
+        self.set('hardware.cpuInfo', cpuInfo)
+
+        aes = DataObject('HostFeatureCapability')
+        aes.featureName = 'cpuid.AES'
+        aes.value = '1'
+        avx = DataObject('HostFeatureCapability')
+        avx.featureName = 'cpuid.AVX'
+        avx.value = '1'
+        amd = DataObject('HostFeatureCapability')
+        amd.featureName = 'cpuid.AMD'
+        amd.value = '0'
+        caps = _create_array_of_type('HostFeatureCapability')
+        caps.HostFeatureCapability = [aes, avx, amd]
+        self.set('config.featureCapability', caps)
+
         runtime = DataObject()
         if connected:
             runtime.connectionState = "connected"

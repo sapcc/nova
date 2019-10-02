@@ -171,24 +171,27 @@ class VCState(object):
         with vutil.WithRetrieval(vim, pc_result) as pc_objects:
             for objContent in pc_objects:
                 props_in = {prop.name: prop.val for prop in objContent.propSet}
+
                 processor_type = None
                 cpu_vendor = None
-                hardware_cpu_pkg = props_in.get("hardware.cpuPkg", [])[0]
-
-                if hardware_cpu_pkg and hardware_cpu_pkg[0]:
-                    t = hardware_cpu_pkg[0]
-                    processor_type = t.description
-                    cpu_vendor = t.vendor.title()
+                if 'hardware.cpuPkg' in props_in:
+                    hardware_cpu_pkg = props_in["hardware.cpuPkg"]
+                    if hardware_cpu_pkg.HostCpuPackage:
+                        t = hardware_cpu_pkg.HostCpuPackage[0]
+                        processor_type = t.description
+                        cpu_vendor = t.vendor.title()
 
                 features = []
-                for featureCapability in props_in.get(
-                                    "config.featureCapability", []):
-                    for feature in featureCapability[1]:
-                        if feature.featureName.startswith("cpuid."):
-                            if feature.value == "1":
-                                features.append(
-                                    feature.featureName.split(
-                                        ".", 1)[1].lower())
+                if 'config.featureCapability' in props_in:
+                    feature_capability = props_in["config.featureCapability"]
+                    for feature in feature_capability.HostFeatureCapability:
+                        if not feature.featureName.startswith("cpuid."):
+                            continue
+                        if feature.value != "1":
+                            continue
+
+                        name = feature.featureName
+                        features.append(name.split(".", 1)[1].lower())
 
                 props = {
                     "model": processor_type,
