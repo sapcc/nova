@@ -94,11 +94,13 @@ class VCState(object):
             return data
 
         data["vcpus"] = stats['cpu']['vcpus']
+        data["vcpus_reserved"] = stats['cpu']['reserved_vcpus']
         data["disk_total"] = capacity / units.Gi
         data["disk_available"] = freespace / units.Gi
         data["disk_used"] = data["disk_total"] - data["disk_available"]
         data["host_memory_total"] = stats['mem']['total']
         data["host_memory_free"] = stats['mem']['free']
+        data['host_memory_reserved'] = stats['mem']['reserved_memory_mb']
         data["hypervisor_type"] = about_info.name
         data["hypervisor_version"] = versionutils.convert_version_to_int(
                 str(about_info.version))
