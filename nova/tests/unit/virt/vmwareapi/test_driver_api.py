@@ -24,6 +24,7 @@ import datetime
 
 from eventlet import greenthread
 import mock
+from oslo_serialization import jsonutils
 from oslo_utils import fixture as utils_fixture
 from oslo_utils import units
 from oslo_utils import uuidutils
@@ -2263,7 +2264,11 @@ class VMwareAPIVMTestCase(test.TestCase,
         self.assertEqual('VMware vCenter Server', stats['hypervisor_type'])
         self.assertEqual(5001000, stats['hypervisor_version'])
         self.assertEqual(self.node_name, stats['hypervisor_hostname'])
-        self.assertEqual(stats['cpu_info'], 'null')
+        cpu_info = {'features': ['aes', 'avx'],
+                    'vendor': 'Intel',
+                    'topology': {'threads': 16, 'sockets': 2, 'cores': 8},
+                    'model': 'Intel(R) Xeon(R) CPU E5-4650 v4 @ 2.20GHz'}
+        self.assertEqual(jsonutils.loads(stats['cpu_info']), cpu_info)
         self.assertEqual(
                 [("i686", "vmware", "hvm"), ("x86_64", "vmware", "hvm")],
                 stats['supported_instances'])
