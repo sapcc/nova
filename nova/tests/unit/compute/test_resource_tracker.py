@@ -599,15 +599,15 @@ class TestUpdateAvailableResources(BaseTestCase):
         get_cn_mock.assert_called_once_with(mock.ANY, _HOSTNAME, _NODENAME)
         expected_resources = copy.deepcopy(_COMPUTE_NODE_FIXTURES[0])
         vals = {
-            'free_disk_gb': 5,  # 6GB avail - 1 GB reserved
-            'local_gb': 6,
-            'free_ram_mb': 0,  # 512MB avail - 512MB reserved
-            'memory_mb_used': 512,  # 0MB used + 512MB reserved
-            'vcpus_used': 1,
-            'local_gb_used': 1,  # 0GB used + 1 GB reserved
-            'memory_mb': 512,
+            'free_disk_gb': 5,  # local_gb
+            'local_gb': 5,  # 6GB avail - 1 GB reserved
+            'free_ram_mb': 0,  # memory_mb
+            'memory_mb_used': 0,  # 0MB used
+            'vcpus_used': 0,
+            'local_gb_used': 0,  # 0GB used
+            'memory_mb': 0,     # 512MB avail - 512MB reserved
             'current_workload': 0,
-            'vcpus': 4,
+            'vcpus': 3,     # 4 CPUs - 1 CPU reserved
             'running_vms': 0
         }
         _update_compute_node(expected_resources, **vals)
@@ -646,15 +646,15 @@ class TestUpdateAvailableResources(BaseTestCase):
         get_cn_mock.assert_called_once_with(mock.ANY, _HOSTNAME, _NODENAME)
         expected_resources = copy.deepcopy(_COMPUTE_NODE_FIXTURES[0])
         vals = {
-            'free_disk_gb': 5,  # 6GB avail - 1 GB reserved
-            'local_gb': 6,
-            'free_ram_mb': 384,  # 512MB avail - 128MB reserved
-            'memory_mb_used': 128,  # 0MB used + 128MB reserved
-            'vcpus_used': 2,
-            'local_gb_used': 1,  # 0GB used + 1 GB reserved
-            'memory_mb': 512,
+            'free_disk_gb': 5,  # local_gb
+            'local_gb': 5,  # 6GB avail - 1 GB reserved
+            'free_ram_mb': 384,  # memory_mb
+            'memory_mb_used': 0,  # 0MB used
+            'vcpus_used': 0,
+            'local_gb_used': 0,  # 0GB used
+            'memory_mb': 384,   # 512MB avail - 128MB reserved
             'current_workload': 0,
-            'vcpus': 4,
+            'vcpus': 2,     # 4 vcpus - 2 reserved
             'running_vms': 0
         }
         _update_compute_node(expected_resources, **vals)
@@ -3123,6 +3123,9 @@ class TestUpdateUsageFromInstance(BaseTestCase):
         self.flags(reserved_host_memory_mb=2048)
         self.flags(reserved_host_disk_mb=(11 * 1024))
         cn = objects.ComputeNode(memory_mb=1024, local_gb=10)
+        resources = {'hypervisor_hostname': 'foo', 'memory_mb': 1024,
+                     'local_gb': 10}
+        self.rt._copy_resources(cn, resources)
         self.rt.compute_nodes['foo'] = cn
 
         @mock.patch.object(self.rt,
@@ -3131,7 +3134,7 @@ class TestUpdateUsageFromInstance(BaseTestCase):
         @mock.patch('nova.objects.Service.get_minimum_version',
                     return_value=22)
         def test(version_mock, uufi, rdia):
-            self.rt._update_usage_from_instances('ctxt', [], 'foo', {})
+            self.rt._update_usage_from_instances('ctxt', [], 'foo')
 
         test()
 
@@ -3148,7 +3151,7 @@ class TestUpdateUsageFromInstance(BaseTestCase):
                     return_value=22)
         def test(version_mock, uufi, rdia):
             self.rt._update_usage_from_instances('ctxt', [self.instance],
-                                                 _NODENAME, {})
+                                                 _NODENAME)
 
             uufi.assert_called_once_with('ctxt', self.instance, _NODENAME,
                                          require_allocation_refresh=True)
@@ -3165,7 +3168,7 @@ class TestUpdateUsageFromInstance(BaseTestCase):
                     return_value=22)
         def test(version_mock, uufi, rdia):
             self.rt._update_usage_from_instances('ctxt', [self.instance],
-                                                 _NODENAME, {})
+                                                 _NODENAME)
 
             uufi.assert_called_once_with('ctxt', self.instance, _NODENAME,
                                          require_allocation_refresh=False)
