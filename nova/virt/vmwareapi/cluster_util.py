@@ -68,6 +68,14 @@ def _create_host_group_spec(client_factory, name, host_refs, operation="add",
     return group_spec
 
 
+def get_cluster_property(session, prop_list, cluster):
+    cluster_config = session._call_method(
+        vutil, "get_object_property", cluster,
+        prop_list)
+
+    return cluster_config
+
+
 def _get_vm_group(cluster_config, group_info):
     if not hasattr(cluster_config, 'group'):
         return

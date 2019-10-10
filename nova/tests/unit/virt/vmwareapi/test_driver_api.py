@@ -1644,49 +1644,34 @@ class VMwareAPIVMTestCase(test.TestCase,
         instances = self.conn.list_instances()
         self.assertEqual(0, len(instances))
 
-    @mock.patch('nova.virt.vmwareapi.cluster_util.fetch_cluster_properties')
     @mock.patch('nova.virt.vmwareapi.cluster_util.delete_vm_group')
     @mock.patch('nova.virt.vmwareapi.vm_util._get_server_group')
     @mock.patch('nova.virt.vmwareapi.vm_util.update_cluster_placement')
-    @mock.patch('nova.virt.vmwareapi.vm_util.get_cluster_property')
+    @mock.patch('nova.virt.vmwareapi.cluster_util.get_cluster_property')
     def test_destroy_with_vm_group(self, mock_get_cluster_prop,
                                            mock_update_placement,
                                            mock_get_sg,
-                                           mock_delete_group,
-                                           mock_fetch):
+                                           mock_delete_group):
         """ Test deletion of a vm group when the deleted vm is the last in
             the vm group
         """
         self._create_vm()
+        fake_server_group = collections.namedtuple('GroupInfo', ['uuid',
+                                                                'policies'])
+        fake_server_group.uuid = 'test_group'
+        mock_get_sg.return_value = fake_server_group
         fake_factory = vmwareapi_fake.FakeFactory()
 
-        vm_ref = vmwareapi_fake.ManagedObjectReference('VirtualMachine',
-                                                       'vm-1')
-        group_info = fake_factory.create('ns0:ClusterGroupInfo')
         fake_cluster_config_info = fake_factory.create(
             'ns0:ClusterConfigInfoEx')
         group = fake_factory.create('ns0:ClusterVmGroup')
-        group.vm = [vm_ref]
         group.name = 'test_group'
+        group_info = fake_factory.create('ns0:ClusterGroupInfo')
         group_info = group
+
         fake_cluster_config_info.group = [group_info]
+        mock_get_cluster_prop.return_value = fake_cluster_config_info
 
-        fake_cluster_config_info2 = fake_factory.create(
-            'ns0:ClusterConfigInfoEx')
-        group2 = fake_factory.create('ns0:ClusterVmGroup')
-        group2.name = 'test_group'
-        group_info2 = fake_factory.create('ns0:ClusterGroupInfo')
-        group_info2 = group2
-        fake_cluster_config_info2.group = [group_info2]
-        mock_get_cluster_prop.return_value = fake_cluster_config_info2
-
-        fake_cluster = vmwareapi_fake.ClusterComputeResource('cluster1')
-        fake_prop_list = [vmwareapi_fake.Prop(name="configurationEx",
-                                                val=fake_cluster_config_info)]
-        fake_obj_content = vmwareapi_fake.ObjectContent(fake_cluster,
-                                                        fake_prop_list)
-
-        mock_fetch.return_value = fake_obj_content
         self.conn.destroy(self.context, self.instance, self.network_info)
         mock_delete_group.assert_called_once()
 

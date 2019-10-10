@@ -1548,6 +1548,7 @@ class VMwareVMOps(object):
                             vm_groups.append(group.name)
                             break
 
+
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vutil,
@@ -1575,16 +1576,17 @@ class VMwareVMOps(object):
 
                 with lockutils.lock(server_group_infos[0].uuid,
                                 lock_file_prefix='nova-vmware-server-group'):
-                    cluster_config = vm_util.get_cluster_property(
+                    cluster_config = cluster_util.get_cluster_property(
                         self._session, "configurationEx", self._cluster)
-                    # Check if the unregistered vm is the last vm in it's group
+                    # Check if the unregistered vm is the last vm in its group
                     for group in cluster_config.group:
-                        if group.name not in vm_groups:
-                            continue
-                        if not hasattr(group, 'vm'):
-                            cluster_util.delete_vm_group(
-                                self._session, cluster.obj,
-                                group)
+                        for group_info in server_group_infos:
+                            if group.name == group_info.uuid:
+                                if not hasattr(group, 'vm'):
+                                    cluster_util.delete_vm_group(
+                                        self._session, self._cluster,
+                                        group)
+                                break
 
             except Exception as excep:
                 LOG.warning("In vmwareapi:vmops:_destroy_instance, got "
