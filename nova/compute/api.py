@@ -24,6 +24,7 @@ import copy
 import functools
 import re
 import string
+import time
 
 from castellan import key_manager
 from oslo_log import log as logging
@@ -1057,6 +1058,65 @@ class API(base.Base):
 
         return objects.InstanceGroup.get_by_uuid(context, group_hint)
 
+    def __poll_volume_status(self, context, volume_task_id):
+        task_status = ''
+        while task_status != 'available':
+            time.sleep(1)
+            task_status = self.volume_api.get(
+                context, volume_task_id)['status']
+        return task_status
+
+    def _create_volume(self, context, image_id, flavor):
+
+        volume_size = 1
+        volume_description = None
+        volume_name = None
+        volume_az = None
+        volume_type = None
+
+        if 'volume:description' in flavor.extra_specs:
+            volume_description = flavor.extra_specs['volume:description']
+
+        if 'volume:name' in flavor.extra_specs:
+            volume_name = flavor.extra_specs['volume:name']
+
+        if 'volume:az' in flavor.extra_specs:
+            volume_az = flavor.extra_specs['volume:az']
+
+        if 'volume:type' in flavor.extra_specs:
+            volume_type = flavor.extra_specs['volume:type']
+
+        if 'volume:size' in flavor.extra_specs:
+            volume_size = flavor.extra_specs['volume:size']
+        else:
+            LOG.warning('`volume:size` value missing from flavor \n'
+                        'Default value will be set to 1')
+
+        volume_task = self.volume_api.create(context,
+                                             volume_size,
+                                             volume_name,
+                                             volume_description,
+                                             image_id=image_id,
+                                             volume_type=volume_type,
+                                             availability_zone=volume_az)
+
+        self.__poll_volume_status(context, volume_task['id'])
+
+        block_device_mapping = [
+            {u'device_name': u'vda', u'delete_on_termination': False,
+             u'volume_id': volume_task['id']}]
+        return block_device_mapping
+
+    def _is_volume_create_enabled(self, flavor):
+        """Flag `volume:create` coming from the Flavor object indicates whether
+         or not to create volume which later will be used as root disk
+        """
+        is_volume_create = ('volume:create', 'True')
+        for spec in flavor.extra_specs.items():
+            if spec == is_volume_create:
+                return True
+        return False
+
     def _create_instance(self, context, instance_type,
                image_href, kernel_id, ramdisk_id,
                min_count, max_count,
@@ -1073,6 +1133,10 @@ class API(base.Base):
         strategy being performed and schedule the instance(s) for
         creation.
         """
+
+        if self._is_volume_create_enabled(instance_type):
+            block_device_mapping = self._create_volume(context, image_href,
+                                                       instance_type)
 
         # Normalize and setup some parameters
         if reservation_id is None:
