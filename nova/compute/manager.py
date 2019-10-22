@@ -7153,6 +7153,7 @@ class ComputeManager(manager.Manager):
                          'num_vm_instances': num_vm_instances})
 
         def _sync(db_instance):
+            LOG.debug('SYNC POWER STATE ================================================================>')
             # NOTE(melwitt): This must be synchronized as we query state from
             #                two separate sources, the driver and the database.
             #                They are set (in stop_instance) and read, in sync.
