@@ -1125,7 +1125,7 @@ class API(base.Base):
         strategy being performed and schedule the instance(s) for
         creation.
         """
-        if self._is_volume_create_enabled(instance_type):
+        if self._is_volume_create_enabled(instance_type) and image_href:
             block_device_mapping = self._create_volume(context, image_href,
                                                        instance_type,
                                                        availability_zone,
