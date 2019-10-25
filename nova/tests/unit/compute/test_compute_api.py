@@ -255,7 +255,71 @@ class _ComputeAPIUnitTestMixIn(object):
             self.assertEqual(2, mock_get_image.call_count)
             self.assertEqual(2, mock_limit_check_pu.call_count)
 
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    @mock.patch('nova.objects.Quotas.limit_check')
+    @mock.patch('nova.conductor.conductor_api.ComputeTaskAPI.build_instances')
+    @mock.patch('nova.compute.api.API._record_action_start')
+    @mock.patch('nova.compute.api.API._check_requested_networks')
+    @mock.patch('nova.compute.api.API._get_image')
+    @mock.patch('nova.compute.api.API._provision_instances')
+    @mock.patch('nova.compute.api.API._create_volume')
+    def test_create_instance_without_ephemeral_root_disk(self,
+                                                    mock_create_volume,
+                                                    provision_instances,
+                                                    get_image,
+                                                    check_requested_networks,
+                                                    record_action_start,
+                                                    build_instances,
+                                                         check_limit,
+                                                         check_deltas):
+        provision_instances.return_value = []
+        get_image.return_value = (None, {})
+        check_requested_networks.return_value = 1
+        port = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        address = '10.0.0.1'
+
+        requested_networks = objects.NetworkRequestList(
+            objects=[objects.NetworkRequest(address=address,
+                                            port_id=port)])
+
+        instance_type = self._create_flavor(extra_specs={
+                                                'volume:create': 'True'})
+        with mock.patch.object(self.compute_api.network_api,
+                               'create_pci_requests_for_sriov_ports'):
+            self.compute_api.create(self.context, instance_type, 'image_id',
+                                    requested_networks=requested_networks,
+                                    max_count=None)
+        mock_create_volume.assert_called_once()
+
+    @mock.patch('nova.compute.api.API._poll_volume_status')
+    def test_create_volume(self, mock_poll_status):
+        instance_type = self._create_flavor(extra_specs={
+            'volume:create': 'True', 'volume:description': 'test desc',
+                })
+        mock_poll_status.return_value = 'available'
+        fake_image_id = dict(id='fake-image-id')
+        mock_volume_api = mock.patch.object(self.compute_api, 'volume_api',
+                                            mock.MagicMock(spec=cinder.API))
+        mocked_volume_id = 'test_id'
+        expected_result = [{'volume_id': mocked_volume_id,
+                             'delete_on_termination': True,
+                             'device_name': u'vda'}]
+        with mock_volume_api as mock_v_api:
+            volume = fake_volume.fake_volume(1, 'test-vol', 'test-vol',
+                                         None, None, None, None, None)
+            volume['id'] = mocked_volume_id
+            mock_v_api.create.return_value = volume
+            volume_result = self.compute_api._create_volume(
+                self.context, fake_image_id, instance_type, 'test_az',
+            'test_name')
+            self.assertEqual(volume_result, expected_result)
+
     def _test_create_max_net_count(self, max_net_count, min_count, max_count):
+
+        fake_flavor = self._create_flavor(id=200, flavorid='flavor-id',
+                                          name='foo', disabled=True,
+                                          extra_specs={})
+
         with test.nested(
             mock.patch.object(self.compute_api, '_get_image',
                               return_value=(None, {})),
@@ -270,7 +334,7 @@ class _ComputeAPIUnitTestMixIn(object):
             validate_and_build_base_options
         ):
             self.assertRaises(exception.PortLimitExceeded,
-                self.compute_api.create, self.context, 'fake_flavor',
+                self.compute_api.create, self.context, fake_flavor,
                 'image_id', min_count=min_count, max_count=max_count)
 
     def test_max_net_count_zero(self):
@@ -3659,9 +3723,13 @@ class _ComputeAPIUnitTestMixIn(object):
     def test_create_with_disabled_auto_disk_config_fails(self):
         image_id = self._setup_fake_image_with_disabled_disk_config()
 
+        fake_flavor = self._create_flavor(id=200, flavorid='flavor-id',
+                                          name='foo', disabled=True,
+                                          extra_specs={})
+
         self.assertRaises(exception.AutoDiskConfigDisabledByImage,
             self.compute_api.create, self.context,
-            "fake_flavor", image_id, auto_disk_config=True)
+            fake_flavor, image_id, auto_disk_config=True)
 
     def test_rebuild_with_disabled_auto_disk_config_fails(self):
         fake_inst = self._create_instance_with_disabled_disk_config(

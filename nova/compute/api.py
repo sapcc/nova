@@ -1058,7 +1058,7 @@ class API(base.Base):
 
         return objects.InstanceGroup.get_by_uuid(context, group_hint)
 
-    def __poll_volume_status(self, context, volume_task_id):
+    def _poll_volume_status(self, context, volume_task_id):
         task_status = ''
         while task_status != 'available':
             time.sleep(1)
@@ -1092,7 +1092,7 @@ class API(base.Base):
                                          volume_type=volume_type,
                                          availability_zone=availability_zone)
 
-        self.__poll_volume_status(context, volume_task['id'])
+        self._poll_volume_status(context, volume_task['id'])
 
         block_device_mapping = [
             {u'device_name': u'vda', u'delete_on_termination': True,
