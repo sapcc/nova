@@ -1471,13 +1471,17 @@ class Semaphores(object):
         return len(self._semaphores)
 
 
+def is_baremetal_flavor(flavor):
+    return 'capabilities:cpu_arch' in flavor.extra_specs
+
+
 def is_big_vm(memory_mb, flavor):
     # small VMs are not big
     if memory_mb < CONF.bigvm_mb:
         return False
 
     # baremetal instances are not big
-    if 'capabilities:cpu_arch' in flavor.extra_specs:
+    if is_baremetal_flavor(flavor):
         return False
 
     return True
