@@ -326,9 +326,9 @@ class VMwareVMOps(object):
 
         return config_spec
 
-    def build_virtual_machine(self, instance, context, image_info,
-                              dc_info, datastore, network_info, extra_specs,
-                              metadata, folder_type='Instances', vm_name=None):
+    def build_virtual_machine(self, instance, context, image_info, datastore,
+                              network_info, extra_specs, metadata, vm_folder,
+                              vm_name=None):
         config_spec = self._get_vm_config_spec(instance,
                                                image_info,
                                                datastore,
@@ -337,12 +337,8 @@ class VMwareVMOps(object):
                                                metadata,
                                                vm_name=vm_name)
 
-        folder = self._get_project_folder(dc_info,
-                                          project_id=instance.project_id,
-                                          type_=folder_type)
-
         # Create the VM
-        vm_ref = vm_util.create_vm(self._session, instance, folder,
+        vm_ref = vm_util.create_vm(self._session, instance, vm_folder,
                                    config_spec, self._root_resource_pool)
 
         vm_util.update_cluster_placement(self._session,
@@ -515,7 +511,7 @@ class VMwareVMOps(object):
             vm_name,
             vi.datastore.name,
             self._get_project_folder(vi.dc_info,
-                                     project_id=vi.instance.project_id,
+                                     project_id=vi.ii.owner,
                                      type_='Images'),
             self._root_resource_pool,
             image_id=vi.ii.image_id)
@@ -537,7 +533,7 @@ class VMwareVMOps(object):
                                vm_name,
                                vi.datastore.name,
                                self._get_project_folder(vi.dc_info,
-                                        project_id=vi.instance.project_id,
+                                        project_id=vi.ii.owner,
                                         type_='Images'),
                                self._root_resource_pool)
 
@@ -733,7 +729,7 @@ class VMwareVMOps(object):
                     "CloneVM_Task",
                     other_templ_vm_ref,
                     folder=self._get_project_folder(vi.dc_info,
-                                        project_id=vi.instance.project_id,
+                                        project_id=vi.ii.owner,
                                         type_='Images'),
                     name=self._get_image_template_vm_name(vi.ii.image_id,
                                                           vi.datastore.name),
@@ -872,15 +868,18 @@ class VMwareVMOps(object):
         max_attempts = 2
         for i in six.moves.range(max_attempts):
             try:
+                vm_folder = self._get_project_folder(vi.dc_info,
+                                                     project_id=vi.ii.owner,
+                                                     type_='Images')
+
                 templ_vm_ref = self.build_virtual_machine(vi.instance,
                                     context,
                                     vi.ii,
-                                    vi.dc_info,
                                     vi.datastore,
                                     None,
                                     extra_specs,
                                     metadata,
-                                    folder_type='Images',
+                                    vm_folder,
                                     vm_name=self._get_image_template_vm_name(
                                         vi.ii.image_id, vi.datastore.name))
 
@@ -920,7 +919,7 @@ class VMwareVMOps(object):
                                                     vi.dc_info.vmFolder,
                                                     "name")
         images_folder_path = self._get_project_folder_path(
-                                        vi.instance.project_id, 'Images')
+                                        vi.ii.owner, 'Images')
         templ_vm_name = self._get_image_template_vm_name(vi.ii.image_id,
                                                          vi.datastore.name)
         templ_vm_inventory_path = '%s/%s/%s/%s' % (vi.dc_info.name,
@@ -1086,14 +1085,16 @@ class VMwareVMOps(object):
                                                            network_info)
         else:
             metadata = self._get_instance_metadata(context, instance)
+            vm_folder = self._get_project_folder(
+                vi.dc_info, project_id=instance.project_id, type_='Instances')
             vm_ref = self.build_virtual_machine(instance,
                                                 context,
                                                 image_info,
-                                                vi.dc_info,
                                                 vi.datastore,
                                                 network_info,
                                                 extra_specs,
-                                                metadata)
+                                                metadata,
+                                                vm_folder)
 
         # Cache the vm_ref. This saves a remote call to the VC. This uses the
         # instance uuid.
