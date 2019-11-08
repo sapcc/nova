@@ -60,6 +60,7 @@ SERVICE_MANAGERS = {
     'nova-metadata': 'nova.api.manager.MetadataManager',
     'nova-scheduler': 'nova.scheduler.manager.SchedulerManager',
     'nova-cells': 'nova.cells.manager.CellsManager',
+    'nova-bigvm': 'nova.bigvm.manager.BigVmManager',
 }
 
 
