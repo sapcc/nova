@@ -60,6 +60,7 @@ SERVICE_MANAGERS = {
     'nova-compute': 'nova.compute.manager.ComputeManager',
     'nova-conductor': 'nova.conductor.manager.ConductorManager',
     'nova-scheduler': 'nova.scheduler.manager.SchedulerManager',
+    'nova-bigvm': 'nova.bigvm.manager.BigVmManager',
 }
 
 
