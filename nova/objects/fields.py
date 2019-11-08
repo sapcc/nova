@@ -793,9 +793,10 @@ class NotificationSource(BaseNovaEnum):
     CELLS = 'nova-cells'
     CONSOLE = 'nova-console'
     METADATA = 'nova-metadata'
+    BIGVM = 'nova-bigvm'
 
     ALL = (API, COMPUTE, CONDUCTOR, SCHEDULER,
-           NETWORK, CONSOLEAUTH, CELLS, CONSOLE, METADATA)
+           NETWORK, CONSOLEAUTH, CELLS, CONSOLE, METADATA, BIGVM)
 
     @staticmethod
     def get_source_by_binary(binary):
