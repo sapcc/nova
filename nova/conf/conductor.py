@@ -45,6 +45,15 @@ Topic exchange name on which conductor nodes listen.
 Number of workers for OpenStack Conductor service. The default will be the
 number of CPUs available.
 """),
+    cfg.IntOpt(
+        'prepare_empty_host_for_spawning_interval',
+        default=-1,
+        help="""
+Time in seconds between runs of the periodic task that frees up a host for
+spawning VMs with special needs like big VMs.
+
+This is disabled by default, because it only makes sense for some setups.
+"""),
 ]
 
 migrate_opts = [

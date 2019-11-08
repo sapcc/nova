@@ -112,6 +112,15 @@ Instance memory usage identifying it as big VM
 For a couple of operations, e.g. scheduling decisions and special settings when
 spawning, we have to identify a big VM and handle them differently. Every VM
 having more or equal to this setting's amount of RAM is a big VM.
+"""),
+    cfg.StrOpt(
+        'bigvm_deployment_rp_name_prefix',
+        default='bigvm-deployment',
+        help="""
+This is the prefix used when creating resource-providers in placement for
+handling spawning of VMs with special requirements like big VMs. The suffix of
+the name will contain the nova-compute host. Prefix and suffix are joined by a
+"-".
 """)
 ]
 

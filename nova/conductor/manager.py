@@ -23,6 +23,7 @@ from oslo_config import cfg
 from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
+from oslo_service import periodic_task
 from oslo_utils import excutils
 from oslo_utils import versionutils
 import six
@@ -46,12 +47,17 @@ from nova import network
 from nova import notifications
 from nova import objects
 from nova.objects import base as nova_object
+from nova.objects.compute_node import ComputeNodeList
+from nova.objects import fields
 from nova import profiler
 from nova import rpc
 from nova.scheduler import client as scheduler_client
+from nova.scheduler.client.report import get_placement_request_id
+from nova.scheduler.client.report import NESTED_PROVIDER_API_VERSION
 from nova.scheduler import utils as scheduler_utils
 from nova import servicegroup
 from nova import utils
+from nova.virt.vmwareapi.special_spawning import SpecialVmSpawningInterface
 from nova.volume import cinder
 
 LOG = logging.getLogger(__name__)
@@ -185,6 +191,240 @@ class ConductorManager(manager.Manager):
 
     def reset(self):
         objects.Service.clear_min_version_cache()
+
+    @periodic_task.periodic_task(spacing=CONF.conductor.
+                                 prepare_empty_host_for_spawning_interval,
+                                 run_immediately=True)
+    def _prepare_empty_host_for_spawning(self, context):
+        client = self.placement_client
+        special_spawn_rpc = SpecialVmSpawningInterface()
+        MEMORY_MB = fields.ResourceClass.MEMORY_MB
+        BIGVM_RESOURCE = 'CUSTOM_BIGVM'
+        VMWARE_HV_TYPE = 'VMware vCenter Server'
+        FREE_HOST_STATE_DONE = 'done'
+        FREE_HOST_STATE_ERROR = 'error'
+        FREE_HOST_STATE_STARTED = 'started'
+
+        vmware_hvs = {cn.uuid: cn.host for cn in
+            ComputeNodeList.get_by_hypervisor_type(context, VMWARE_HV_TYPE)}
+
+        # find all resource-providers that we added and also create a
+        # hypervisor-size -> resource-providers map for the others
+        hv_size_to_rp = {}
+        bigvm_providers = {}
+        for rp in client.get('/resource_providers').json():
+            if rp['name'].startswith(CONF.bigvm_deployment_rp_name_prefix):
+                bigvm_providers[rp['uuid']] = {'rp': rp}
+            elif rp['uuid'] not in vmware_hvs:  # ignore baremetal
+                continue
+            else:
+                # retrieve the HV size
+                url = '/resource_providers/{}/inventories/{}'.format(
+                        rp['uuid'], MEMORY_MB)
+                resp = client.get(url)
+                if resp.status_code != 200:
+                    LOG.error('Could not retrieve inventory for RP %(rp)s.',
+                              {'rp': rp['uuid']})
+                    continue
+                hv_size = resp.json()['max_unit']
+                hv_size_to_rp.setdefault(hv_size, []).append(rp['uuid'])
+
+        # retrieve all bigvm provider's inventories
+        for rp_uuid, rp in bigvm_providers.items():
+            inventory = client._refresh_and_get_inventory(context, rp_uuid)
+            rp['inventory'] = inventory['inventories']
+
+        # add the host to all known providers
+        for rp in bigvm_providers.values():
+            rp['host'] = vmware_hvs[rp['rp']['parent_provider_uuid']]
+
+        # check for reserved resources
+        reserved_providers = {rp_uuid: rp
+                              for rp_uuid, rp in bigvm_providers.items()
+                              if rp['inventory'].get(BIGVM_RESOURCE, {})
+                                                .get('reserved')}
+
+        for rp_uuid, rp in reserved_providers.items():
+            # find the consumer
+            allocations = client.get_allocations_for_resource_provider(context,
+                                                                       rp_uuid)
+            # we might have already deleted them and got killed or the VM got
+            # deleted in the mean time
+            failures = 0
+            for consumer_uuid, resources in allocations.items():
+                # delete the allocations
+                consumer_allocations = \
+                    client.get_allocations_for_consumer(context,
+                                                        consumer_uuid)
+                user_id = consumer_allocations['user_id']
+                project_id = consumer_allocations['project_id']
+                if client.remove_provider_from_instance_allocation(context,
+                        consumer_uuid, rp_uuid, user_id, project_id,
+                        resources['resources']):
+                    LOG.info('Removed bigvm allocations for %(consumer_uuid)s '
+                             'from RP', {'consumer_uuid': consumer_uuid})
+                else:
+                    LOG.error('Could not remove bigvm allocations for '
+                              '%(consumer_uuid)s corresponding RP.',
+                              {'consumer_uuid': consumer_uuid})
+                    failures += 1
+
+            if failures:
+                # skip removing the resource-provider because we couldn't
+                # remove all allocations. we'll retry on the next run
+                LOG.warning('Skippping removal of resource-provider '
+                            '%(rp_uuid)s as we could not remove some '
+                            'allocations.',
+                            {'rp_uuid': rp_uuid})
+                continue
+
+            # remove the hostgroup from the host
+            if not special_spawn_rpc.remove_host_from_hostgroup(context,
+                                                                rp['host']):
+                continue
+
+            # delete the resource-provider
+            client._delete_provider(context, rp_uuid)
+
+        # clean up our list of resource-providers
+        for rp_uuid in reserved_providers:
+            del bigvm_providers[rp_uuid]
+
+        def _add_resources_to_provider(context, rp_uuid, rp):
+            inv_data = {BIGVM_RESOURCE: {
+                # we use 2 here so we can reserve 1 later. in queens we can't
+                # reserve $total
+                'max_unit': 2, 'min_unit': 2, 'total': 2}}
+            res = client.set_inventory_for_provider(context, rp_uuid,
+                rp['rp']['name'], inv_data,
+                rp['rp']['parent_provider_uuid'])
+            if res.status_code == 200:
+                LOG.info('Freed up a host for spawning on %(host)s.',
+                         {'host': rp['host']})
+            else:
+                LOG.error('Adding inventory to the resource-provider for '
+                          'spawning on %(host)s failed: %(error)s',
+                          {'host': rp['host'], 'error': res.content})
+
+        # FIXME add AZs/vCenters into the mix
+
+        # check we have a resource-provider per hypervisor size
+        found_hv_sizes = set()
+        for rp_uuid, rp in bigvm_providers.items():
+            for hv_size, rp_uuids in hv_size_to_rp.items():
+                if rp['rp']['parent_provider_uuid'] in rp_uuids:
+                    found_hv_sizes.add(hv_size)
+                    break
+
+            # if there are no resources in that resource-provider, it means,
+            # that we started freeing up a host. We have to check the process
+            # state and add the resources once it's done.
+            if not rp['inventory'].get(BIGVM_RESOURCE):
+                state = special_spawn_rpc.free_host(context, rp['host'])
+                if state == FREE_HOST_STATE_DONE:
+                    _add_resources_to_provider(context, rp_uuid, rp)
+                elif state == FREE_HOST_STATE_ERROR:
+                    LOG.warning('Freeing a host for spawning failed on '
+                                '%(host)s.',
+                                {'host': rp['host']})
+                    # do some cleanup, so another compute-node is used
+                    found_hv_sizes.remove(hv_size)
+
+        # try finding a resource-provider for all missing hypervisor-sizes
+        for hv_size in set(hv_size_to_rp) - found_hv_sizes:
+            resources = {MEMORY_MB: hv_size}
+            res = client.get_allocation_candidates(context, resources)
+            if res is None:
+                continue
+            alloc_reqs, provider_summaries, allocation_request_version = res
+
+            if not provider_summaries:
+                LOG.warning('Could not find enough resources to free up a '
+                            'host for hypervisor size %(hv_size)d.',
+                            {'hv_size': hv_size})
+                continue
+
+            # filter out providers that don't match exactly
+            providers = {p: d for p, d in provider_summaries.items()
+                            if p in hv_size_to_rp[hv_size]}
+
+            # select the one with the least usage
+            def _free_memory(p):
+                memory = providers[p]['resources'][MEMORY_MB]
+                return memory['capacity'] - memory['used']
+
+            provider_uuids = sorted((p for p in providers), key=_free_memory,
+                               reverse=True)
+            for rp_uuid in provider_uuids:
+                needs_cleanup = True
+                new_rp_uuid = None
+                try:
+                    # TODO(jkulik) try to reserve the necessary memory for
+                    # freeing a full hypervisor
+
+                    # create a child resource-provider
+                    host = vmware_hvs[rp_uuid]
+                    new_rp_name = '{}-{}'.format(
+                                        CONF.bigvm_deployment_rp_name_prefix,
+                                        host)
+                    # this is basically copied from placement client, but we
+                    # don't want to set the uuid manually which it doesn't
+                    # support
+                    url = "/resource_providers"
+                    payload = {
+                        'name': new_rp_name,
+                        'parent_provider_uuid': rp_uuid
+                    }
+                    resp = client.post(url, payload,
+                                       version=NESTED_PROVIDER_API_VERSION,
+                                       global_request_id=context.global_id)
+                    placement_req_id = get_placement_request_id(resp)
+                    if resp.status_code == 201:
+                        msg = ("[%(placement_req_id)s] Created resource "
+                               "provider record via placement API for host "
+                               "%(host)s for special spawning")
+                        args = {
+                            'host': host,
+                            'placement_req_id': placement_req_id,
+                        }
+                        LOG.info(msg, args)
+                        new_rp_uuid = resp.headers['Location'].split('/')[-1]
+                    else:
+                        msg = ("[%(placement_req_id)s] Failed to create "
+                               "resource provider record in placement API "
+                               "for %(host)s for special spawning. Got "
+                               "%(status_code)d: "
+                               "%(err_text)s.")
+                        args = {
+                            'host': host,
+                            'status_code': resp.status_code,
+                            'err_text': resp.text,
+                            'placement_req_id': placement_req_id,
+                        }
+                        LOG.error(msg, args)
+                        raise exception.ResourceProviderCreationFailed(
+                                                            name=new_rp_name)
+
+                    # find a host and let DRS free it up
+                    state = special_spawn_rpc.free_host(context, host)
+                    if state == FREE_HOST_STATE_DONE:
+                        # there were free resources available immediately
+                        needs_cleanup = False
+                        new_rp = {'host': host,
+                                  'rp': {'name': new_rp_name,
+                                         'parent_provider_uuid': rp_uuid}}
+                        _add_resources_to_provider(context, new_rp_uuid,
+                                                   new_rp)
+                    elif state == FREE_HOST_STATE_STARTED:
+                        # it started working on it. we have to check back later
+                        # if it's done
+                        needs_cleanup = False
+                finally:
+                    # clean up placement, if something went wrong
+                    if needs_cleanup and new_rp_uuid is not None:
+                        client._delete_provider(context, new_rp_uuid)
+                    elif not needs_cleanup:
+                        break
 
 
 @contextlib.contextmanager
