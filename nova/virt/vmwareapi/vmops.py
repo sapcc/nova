@@ -2616,22 +2616,27 @@ class VMwareVMOps(object):
     @synchronized('update_cache')
     def update_cached_instances(self):
         vim = self._session.vim
-        options = None
+        options = vim.client.factory.create('ns0:WaitOptions')
+        options.maxWaitSeconds = 30
+        version = ''
         if self._property_collector is None:
             self._property_collector = vim.service_content.propertyCollector
             vim.CreateFilter(self._property_collector,
                              spec=self._get_vm_monitor_spec(vim),
                              partialUpdates=False)
-        update_set = vim.WaitForUpdatesEx(self._property_collector, version="",
-                                          options=options)
-        while update_set:
-            self.process_update_set(update_set)
+
+        while True:
             update_set = vim.WaitForUpdatesEx(self._property_collector,
-                                      version=self._property_collector_version,
-                                      options=options)
+                                              version=version,
+                                              options=options)
+            if update_set is None:
+                continue
+
+            self.process_update_set(update_set)
+            version = update_set.version
+
 
     def process_update_set(self, update_set):
-        self._property_collector_version = update_set.version
         if update_set.filterSet and update_set.filterSet[0].objectSet:
             for update in update_set.filterSet[0].objectSet:
                 if update.obj['_type'] == "VirtualMachine":
@@ -2648,13 +2653,14 @@ class VMwareVMOps(object):
 
     def handle_leave_event(self, update):
         LOG.info("Removing instance from cache...")
+        LOG.info("Handle Leave event: %s" % update.changeSet)
         cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(
             update.obj.value, {}).get('config.instanceUuid')
         vm_util.vm_ref_cache_delete(cache_id_to_delete)
         vm_util.vm_value_cache_delete(update.obj.value)
 
     def handle_enter_event(self, update):
-        LOG.debug('HANDLE ENTER =============================================> ')
+        LOG.debug('Handle Enter event : %s' % update.changeSet)
 
         for change in update.changeSet:
             if change.op == 'assign':
@@ -2671,7 +2677,7 @@ class VMwareVMOps(object):
                                             update.obj)
 
     def handle_modify_event(self, update):
-        LOG.debug('HANDLE MODIFY =============================================> ')
+        LOG.debug('Handle Modify event %s' % update.changeSet)
         if update.changeSet[0].name == "config.instanceUuid":
             for change in update.changeSet:
                 if change['op'] == 'assign':
