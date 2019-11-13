@@ -2653,7 +2653,6 @@ class VMwareVMOps(object):
 
     def handle_leave_event(self, update):
         LOG.info("Removing instance from cache...")
-        LOG.info("Handle Leave event: %s" % update.changeSet)
         cache_id_to_delete = vm_util._VM_VALUE_CACHE.get(
             update.obj.value, {}).get('config.instanceUuid')
         vm_util.vm_ref_cache_delete(cache_id_to_delete)
