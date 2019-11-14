@@ -2626,14 +2626,21 @@ class VMwareVMOps(object):
                              partialUpdates=False)
 
         while True:
-            update_set = vim.WaitForUpdatesEx(self._property_collector,
-                                              version=version,
-                                              options=options)
-            if update_set is None:
-                continue
+            try:
+                update_set = vim.WaitForUpdatesEx(self._property_collector,
+                                                  version=version,
+                                                  options=options)
+                LOG.debug('Update set: %s' % update_set)
+                if update_set is None:
+                    continue
 
-            self.process_update_set(update_set)
-            version = update_set.version
+                self.process_update_set(update_set)
+                version = update_set.version
+
+            except Exception as e:
+                LOG.debug("TEST ================================================>")
+                LOG.error(e)
+
 
 
     def process_update_set(self, update_set):
@@ -2659,7 +2666,7 @@ class VMwareVMOps(object):
         vm_util.vm_value_cache_delete(update.obj.value)
 
     def handle_enter_event(self, update):
-        LOG.debug('Handle Enter event : %s' % update.changeSet)
+        LOG.debug('Handle Enter event: %s' % update.changeSet)
 
         for change in update.changeSet:
             if change.op == 'assign':
@@ -2679,6 +2686,8 @@ class VMwareVMOps(object):
         LOG.debug('Handle Modify event %s' % update.changeSet)
         if update.changeSet[0].name == "config.instanceUuid":
             for change in update.changeSet:
+                LOG.debug('Value found: %s' % change)
+
                 if change['op'] == 'assign':
                     self.set_val_cache(update.obj.value,
                                        change.name,
