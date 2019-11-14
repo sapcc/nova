@@ -109,7 +109,7 @@ def fetch_cluster_properties(session, vm_ref):
 
 
 def delete_vm_group(session, cluster, vm_group):
-    """Add delete impl fro removing group if deleted vm is the last vm in a
+    """Add delete impl for removing group if deleted vm is the last vm in a
      vm group
      """
     client_factory = session.vim.client.factory

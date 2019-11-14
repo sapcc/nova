@@ -72,6 +72,7 @@ CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
 RESIZE_TOTAL_STEPS = 6
+HOST_IP_SEPARATOR = "$cluster$"
 
 
 class VirtualMachineInstanceConfigInfo(object):
@@ -131,17 +132,25 @@ def retry_if_task_in_progress(f, *args, **kwargs):
             pass
 
 
+def _get_cluster_from_dest(dest):
+    parts = dest.split(HOST_IP_SEPARATOR)
+    return parts[1]
+
+def _vm_orig_name(instance):
+    return "%s-orig" % instance.uuid
+
 class VMwareVMOps(object):
     """Management class for VM-related tasks."""
 
     def __init__(self, session, virtapi, volumeops, cluster=None,
-                 datastore_regex=None):
+                 datastore_regex=None, vcenter_host=None):
         """Initializer."""
         self.compute_api = compute.API()
         self._session = session
         self._virtapi = virtapi
         self._volumeops = volumeops
         self._cluster = cluster
+        self._vcenter_host = vcenter_host
         self._property_collector = None
         self._property_collector_version = ''
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
@@ -1820,7 +1829,8 @@ class VMwareVMOps(object):
         instance.progress = progress
         instance.save()
 
-    def _resize_vm(self, context, instance, vm_ref, flavor, image_meta):
+    def _reconfigure_vm(self, context, instance, vm_ref, flavor, image_meta,
+                        network_info=None):
         """Resizes the VM according to the flavor."""
         client_factory = self._session.vim.client.factory
         extra_specs = self._get_extra_specs(flavor, image_meta)
@@ -1830,29 +1840,28 @@ class VMwareVMOps(object):
                                                     int(flavor.memory_mb),
                                                     extra_specs,
                                                     metadata=metadata)
+        if network_info:
+            image_info = images.VMwareImage.from_image(context,
+                                                       instance.image_ref,
+                                                       image_meta)
+            vif_infos = vmwarevif.get_vif_info(self._session,
+                                               self._cluster,
+                                               utils.is_neutron(),
+                                               image_info.vif_model,
+                                               network_info)
+            vm_util.append_vif_infos_to_config_spec(client_factory,
+                                                    vm_resize_spec, vif_infos)
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
     def _resize_disk(self, instance, vm_ref, vmdk, flavor):
-        if (flavor.root_gb > instance.flavor.root_gb and
-            flavor.root_gb > vmdk.capacity_in_bytes / units.Gi):
+        if (flavor.root_gb > instance.flavor.root_gb and flavor.root_gb >
+                vmdk.capacity_in_bytes / units.Gi):
             root_disk_in_kb = flavor.root_gb * units.Mi
             ds_ref = vmdk.device.backing.datastore
             dc_info = self.get_datacenter_ref_and_name(ds_ref)
-            folder = ds_obj.DatastorePath.parse(vmdk.path).dirname
-            datastore = ds_obj.DatastorePath.parse(vmdk.path).datastore
-            resized_disk = str(ds_obj.DatastorePath(datastore, folder,
-                               'resized.vmdk'))
-            ds_util.disk_copy(self._session, dc_info.ref, vmdk.path,
-                              str(resized_disk))
-            self._extend_virtual_disk(instance, root_disk_in_kb, resized_disk,
-                                      dc_info.ref)
             self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
-            original_disk = str(ds_obj.DatastorePath(datastore, folder,
-                                'original.vmdk'))
-            ds_util.disk_move(self._session, dc_info.ref, vmdk.path,
-                              original_disk)
-            ds_util.disk_move(self._session, dc_info.ref, resized_disk,
-                              vmdk.path)
+            self._extend_virtual_disk(instance, root_disk_in_kb, vmdk.path,
+                                      dc_info.ref)
             self._volumeops.attach_disk_to_vm(vm_ref, instance,
                                               vmdk.adapter_type,
                                               vmdk.disk_type, vmdk.path)
@@ -1882,7 +1891,8 @@ class VMwareVMOps(object):
         self._create_swap(block_device_info, instance, vm_ref, dc_info,
                           datastore, folder, vmdk.adapter_type)
 
-    def migrate_disk_and_power_off(self, context, instance, dest, flavor):
+    def migrate_disk_and_power_off(self, context, instance, dest, flavor,
+                                   block_device_info):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
@@ -1902,8 +1912,6 @@ class VMwareVMOps(object):
             raise exception.InstanceFaultRollback(
                 exception.ResizeError(reason=reason))
 
-        # TODO(garyk): treat dest parameter. Migration needs to be treated.
-
         # 0. Zero out the progress to begin
         self._update_instance_progress(context, instance,
                                        step=0,
@@ -1915,45 +1923,18 @@ class VMwareVMOps(object):
                                        step=1,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
-        # 2. Reconfigure the VM properties
-        self._resize_vm(context, instance, vm_ref, flavor, instance.image_meta)
+        self._detach_volumes(instance, block_device_info)
 
-        self._update_instance_progress(context, instance,
-                                       step=2,
-                                       total_steps=RESIZE_TOTAL_STEPS)
-
-        # 3.Reconfigure the disk properties
-        if not boot_from_volume:
-            self._resize_disk(instance, vm_ref, vmdk, flavor)
-        self._update_instance_progress(context, instance,
-                                       step=3,
-                                       total_steps=RESIZE_TOTAL_STEPS)
-
-        # 4. Purge ephemeral and swap disks
-        self._remove_ephemerals_and_swap(vm_ref)
-        self._update_instance_progress(context, instance,
-                                       step=4,
-                                       total_steps=RESIZE_TOTAL_STEPS)
+    def _detach_volumes(self, instance, block_device_info):
+        block_devices = driver.block_device_info_get_mapping(block_device_info)
+        for disk in block_devices:
+            self._volumeops.detach_volume(disk['connection_info'], instance)
 
     def confirm_migration(self, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
-        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
-                                     uuid=instance.uuid)
-        if not vmdk.device:
-            return
-        ds_ref = vmdk.device.backing.datastore
-        dc_info = self.get_datacenter_ref_and_name(ds_ref)
-        folder = ds_obj.DatastorePath.parse(vmdk.path).dirname
-        datastore = ds_obj.DatastorePath.parse(vmdk.path).datastore
-        original_disk = ds_obj.DatastorePath(datastore, folder,
-                                             'original.vmdk')
-        ds_browser = self._get_ds_browser(ds_ref)
-        if ds_util.file_exists(self._session, ds_browser,
-                               original_disk.parent,
-                               original_disk.basename):
-            ds_util.disk_delete(self._session, dc_info.ref,
-                                str(original_disk))
+        vm_ref = vm_util.get_vm_ref_from_name(self._session,
+                                              _vm_orig_name(instance))
+        vm_util.destroy_vm(self._session, instance, vm_ref)
 
     def _revert_migration_update_disks(self, vm_ref, instance, vmdk,
                                        block_device_info):
@@ -1983,27 +1964,14 @@ class VMwareVMOps(object):
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
+        vm_ref = vm_util.get_vm_ref_from_name(self._session,
+                                              _vm_orig_name(instance))
+        vm_util.rename(self._session, vm_ref, instance.uuid)
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         # Ensure that the VM is off
         vm_util.power_off_instance(self._session, instance, vm_ref)
-        client_factory = self._session.vim.client.factory
-        # Reconfigure the VM properties
-        extra_specs = self._get_extra_specs(instance.flavor,
-                                            instance.image_meta)
-        metadata = self._get_instance_metadata(context, instance)
-        vm_resize_spec = vm_util.get_vm_resize_spec(
-            client_factory,
-            int(instance.flavor.vcpus),
-            int(instance.flavor.memory_mb),
-            extra_specs,
-            metadata=metadata)
-        vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
-
-        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
-                                     uuid=instance.uuid)
-        if vmdk.device:
-            self._revert_migration_update_disks(vm_ref, instance, vmdk,
-                                                block_device_info)
+        # Attach back the volumes
+        self._attach_volumes(instance, block_device_info)
 
         if power_on:
             vm_util.power_on_instance(self._session, instance)
@@ -2014,13 +1982,61 @@ class VMwareVMOps(object):
         """Completes a resize, turning on the migrated instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
-        # 5. Update ephemerals if necessary
+        # 2. Clone VM to this compute. We do it here because we can select
+        # the proper datastore for the ephemeral storage
+        vm_util.rename(self._session, vm_ref, _vm_orig_name(instance))
+        image_info = images.VMwareImage.from_image(context, instance.image_ref,
+                                                   image_meta)
+        extra_specs = self._get_extra_specs(instance.flavor, image_meta)
+        allowed_ds_types = ds_util.get_allowed_datastore_types(
+            image_info.disk_type)
+        datastore = ds_util.get_datastore(self._session, self._cluster,
+                                          self._datastore_regex,
+                                          extra_specs.storage_policy,
+                                          allowed_ds_types)
+        dc_info = self.get_datacenter_ref_and_name(datastore.ref)
+        folder = self._get_project_folder(dc_info, instance.project_id,
+                                          'Instances')
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      self._cluster)
+        self._clone_vm(vm_ref, instance.uuid, folder,
+                       self._root_resource_pool, datastore)
+        # Refresh vm_ref to point to the newly cloned instance
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        self._update_instance_progress(context, instance,
+                                       step=2,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+
+        # 3. Reconfigure the VM properties
+        self._reconfigure_vm(context, instance, vm_ref, instance.flavor,
+                             image_meta, network_info)
+        vm_util.update_cluster_placement(self._session, context, instance,
+                                         cluster_ref, vm_ref)
+        self._update_instance_progress(context, instance,
+                                       step=3,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+
+        # 4.Reconfigure the disk properties
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
+                                     uuid=instance.uuid)
+        boot_from_volume = compute_utils.is_volume_backed_instance(context,
+                                                                   instance)
+        if not boot_from_volume:
+            self._resize_disk(instance, vm_ref, vmdk, instance.flavor)
+            self._update_instance_progress(context, instance,
+                                           step=4,
+                                           total_steps=RESIZE_TOTAL_STEPS)
+
+        # 5. Reconfigure ephemerals, swap and attach volumes
+        self._remove_ephemerals_and_swap(vm_ref)
         self._resize_create_ephemerals_and_swap(vm_ref, instance,
                                                 block_device_info)
 
         self._update_instance_progress(context, instance,
                                        step=5,
                                        total_steps=RESIZE_TOTAL_STEPS)
+        self._attach_volumes(instance, block_device_info)
+
         # 6. Start VM
         if power_on:
             vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
@@ -2028,6 +2044,17 @@ class VMwareVMOps(object):
         self._update_instance_progress(context, instance,
                                        step=6,
                                        total_steps=RESIZE_TOTAL_STEPS)
+
+    def _clone_vm(self, vm_ref, name, folder, pool, datastore):
+        location = vm_util.relocate_vm_spec(self._session.vim.client.factory,
+                                            res_pool=pool, folder=folder,
+                                            datastore=datastore)
+        vm_util.clone_vm(self._session, vm_ref, name, location)
+
+    def _attach_volumes(self, instance, block_device_info):
+        disks = driver.block_device_info_get_mapping(block_device_info)
+        for disk in disks:
+            self._volumeops.attach_volume(disk['connection_info'], instance)
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""

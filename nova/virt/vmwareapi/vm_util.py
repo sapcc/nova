@@ -230,7 +230,7 @@ def _get_allocation_info(client_factory, limits, allocation_type):
 def append_vif_infos_to_config_spec(client_factory,
                                     config_spec,
                                     vif_infos,
-                                    vif_limits,
+                                    vif_limits=None,
                                     index=0):
     if not hasattr(config_spec, 'deviceChange') or \
             not config_spec.deviceChange:
@@ -1012,12 +1012,14 @@ def clone_vm_spec(client_factory, location,
 
 
 def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
-                     disk_move_type="moveAllDiskBackingsAndAllowSharing"):
+                     disk_move_type="moveAllDiskBackingsAndAllowSharing",
+                     folder=None):
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
     rel_spec.datastore = datastore
     rel_spec.host = host
     rel_spec.pool = res_pool
     rel_spec.diskMoveType = disk_move_type
+    rel_spec.folder = folder
     return rel_spec
 
 
@@ -1029,6 +1031,22 @@ def relocate_vm(session, vm_ref, res_pool=None, datastore=None, host=None,
     relocate_task = session._call_method(session.vim, "RelocateVM_Task",
                                          vm_ref, spec=rel_spec)
     session._wait_for_task(relocate_task)
+
+
+def clone_vm(session, vm_ref, name, location, power_on=False, snapshot=None,
+             template=False, config=None):
+    client_factory = session.vim.client.factory
+    clone_spec = clone_vm_spec(client_factory, location, power_on, snapshot,
+                               template, config)
+    clone_task = session._call_method(session.vim, "CloneVM_Task", vm_ref,
+                                      spec=clone_spec, name=name)
+    session._wait_for_task(clone_task)
+
+
+def rename(session, vm_ref, new_name):
+    rename_task = session._call_method(session.vim, "Rename_Task", vm_ref,
+                                       newName=new_name)
+    session._wait_for_task(rename_task)
 
 
 def get_machine_id_change_spec(client_factory, machine_id_str):

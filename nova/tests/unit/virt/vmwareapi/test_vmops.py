@@ -834,8 +834,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                 memory_mb=1024,
                                 vcpus=2,
                                 extra_specs={})
-        self._vmops._resize_vm(self._context, self._instance, 'vm-ref', flavor,
-                               None)
+        self._vmops._reconfigure_vm(self._context, self._instance, 'vm-ref', flavor,
+                                    None)
         fake_get_metadata.assert_called_once_with(self._context,
                                                   self._instance, flavor)
         fake_resize_spec.assert_called_once_with(
