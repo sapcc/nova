@@ -2538,7 +2538,7 @@ class API(base.Base):
         instances = objects.InstanceList(
             objects=list(filter(filter_method,
                            build_req_instances.objects +
-                           insts.objects))[:orig_limit])
+                           insts.objects))[:limit])
 
         if filter_ip:
             instances = self._ip_filter(instances, filters, orig_limit)
