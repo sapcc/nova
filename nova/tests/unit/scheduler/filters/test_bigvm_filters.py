@@ -334,7 +334,22 @@ class TestBigVmFlavorHostSizeFilter(test.NoDBTestCase):
                           {'full': 1, 'half': 0.5}, 'filter_scheduler')
         spec_obj = objects.RequestSpec(
             flavor=objects.Flavor(memory_mb=CONF.bigvm_mb,
-                                  extra_specs={'host_fraction': 'half'},
+                                  extra_specs={'host_fraction': 'full,half'},
+                                  name='random-name'))
+        host = fakes.FakeHostState('host1', 'compute',
+                {'uuid': uuidsentinel.host1})
+        self.filt_cls._HV_SIZE_CACHE[host.uuid] = CONF.bigvm_mb * 2 + 1024
+        self.assertTrue(self.filt_cls.host_passes(host, spec_obj))
+
+    def test_extra_specs_half_positive_with_unknown(self):
+        """test specified half size"""
+        CONF.set_override('bigvm_host_size_filter_uses_flavor_extra_specs',
+                          True, 'filter_scheduler')
+        CONF.set_override('bigvm_host_size_filter_host_fractions',
+                          {'full': 1, 'half': 0.5}, 'filter_scheduler')
+        spec_obj = objects.RequestSpec(
+            flavor=objects.Flavor(memory_mb=CONF.bigvm_mb,
+                                  extra_specs={'host_fraction': 'broken,half'},
                                   name='random-name'))
         host = fakes.FakeHostState('host1', 'compute',
                 {'uuid': uuidsentinel.host1})
