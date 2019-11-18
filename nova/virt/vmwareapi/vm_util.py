@@ -1043,10 +1043,16 @@ def clone_vm(session, vm_ref, name, location, power_on=False, snapshot=None,
     session._wait_for_task(clone_task)
 
 
-def rename(session, vm_ref, new_name):
-    rename_task = session._call_method(session.vim, "Rename_Task", vm_ref,
-                                       newName=new_name)
-    session._wait_for_task(rename_task)
+def instance_uuid_config_spec(client_factory, new_id, config_spec=None):
+    config_spec = config_spec or client_factory.create(
+        'ns0:VirtualMachineConfigSpec')
+    config_spec.instanceUuid = new_id
+    return config_spec
+
+
+def change_instance_uuid(session, vm_ref, new_id):
+    reconfigure_vm(session, vm_ref, instance_uuid_config_spec(
+        session.vim.client.factory, new_id))
 
 
 def get_machine_id_change_spec(client_factory, machine_id_str):
@@ -1875,10 +1881,10 @@ def _get_vm_name(display_name, id):
         return id[:36]
 
 
-def rename_vm(session, vm_ref, instance):
-    vm_name = _get_vm_name(instance.display_name, instance.uuid)
+def rename_vm(session, vm_ref, instance=None, vm_name=None):
+    name = vm_name or _get_vm_name(instance.display_name, instance.uuid)
     rename_task = session._call_method(session.vim, "Rename_Task", vm_ref,
-                                       newName=vm_name)
+                                       newName=name)
     session._wait_for_task(rename_task)
 
 

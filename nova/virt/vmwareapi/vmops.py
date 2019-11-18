@@ -72,7 +72,6 @@ CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
 RESIZE_TOTAL_STEPS = 6
-HOST_IP_SEPARATOR = "$cluster$"
 
 
 class VirtualMachineInstanceConfigInfo(object):
@@ -131,13 +130,6 @@ def retry_if_task_in_progress(f, *args, **kwargs):
         except vexc.TaskInProgress:
             pass
 
-
-def _get_cluster_from_dest(dest):
-    parts = dest.split(HOST_IP_SEPARATOR)
-    return parts[1]
-
-def _vm_orig_name(instance):
-    return "%s-orig" % instance.uuid
 
 class VMwareVMOps(object):
     """Management class for VM-related tasks."""
@@ -1830,7 +1822,7 @@ class VMwareVMOps(object):
         instance.save()
 
     def _reconfigure_vm(self, context, instance, vm_ref, flavor, image_meta,
-                        network_info=None):
+                        network_info=None, instance_uuid=None):
         """Resizes the VM according to the flavor."""
         client_factory = self._session.vim.client.factory
         extra_specs = self._get_extra_specs(flavor, image_meta)
@@ -1840,6 +1832,9 @@ class VMwareVMOps(object):
                                                     int(flavor.memory_mb),
                                                     extra_specs,
                                                     metadata=metadata)
+        if instance_uuid:
+            vm_resize_spec = vm_util.instance_uuid_config_spec(
+                client_factory, instance_uuid, vm_resize_spec)
         if network_info:
             image_info = images.VMwareImage.from_image(context,
                                                        instance.image_ref,
@@ -1932,8 +1927,10 @@ class VMwareVMOps(object):
 
     def confirm_migration(self, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
-        vm_ref = vm_util.get_vm_ref_from_name(self._session,
-                                              _vm_orig_name(instance))
+        vm_ref = vm_util._get_vm_ref_from_name(self._session,
+                                               vm_util._get_vm_name(
+                                                   instance.display_name,
+                                                   instance.uuid))
         vm_util.destroy_vm(self._session, instance, vm_ref)
 
     def _revert_migration_update_disks(self, vm_ref, instance, vmdk,
@@ -1964,10 +1961,11 @@ class VMwareVMOps(object):
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
-        vm_ref = vm_util.get_vm_ref_from_name(self._session,
-                                              _vm_orig_name(instance))
-        vm_util.rename(self._session, vm_ref, instance.uuid)
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util._get_vm_ref_from_name(self._session,
+                                               vm_util._get_vm_name(
+                                                   instance.display_name,
+                                                   instance.uuid))
+        vm_util.change_instance_uuid(self._session, vm_ref, instance.uuid)
         # Ensure that the VM is off
         vm_util.power_off_instance(self._session, instance, vm_ref)
         # Attach back the volumes
@@ -1981,41 +1979,36 @@ class VMwareVMOps(object):
                          block_device_info=None, power_on=True):
         """Completes a resize, turning on the migrated instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-
         # 2. Clone VM to this compute. We do it here because we can select
-        # the proper datastore for the ephemeral storage
-        vm_util.rename(self._session, vm_ref, _vm_orig_name(instance))
-        image_info = images.VMwareImage.from_image(context, instance.image_ref,
-                                                   image_meta)
-        extra_specs = self._get_extra_specs(instance.flavor, image_meta)
-        allowed_ds_types = ds_util.get_allowed_datastore_types(
-            image_info.disk_type)
-        datastore = ds_util.get_datastore(self._session, self._cluster,
-                                          self._datastore_regex,
-                                          extra_specs.storage_policy,
-                                          allowed_ds_types)
-        dc_info = self.get_datacenter_ref_and_name(datastore.ref)
-        folder = self._get_project_folder(dc_info, instance.project_id,
-                                          'Instances')
-        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
-                                                      self._cluster)
-        self._clone_vm(vm_ref, instance.uuid, folder,
-                       self._root_resource_pool, datastore)
-        # Refresh vm_ref to point to the newly cloned instance
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        # the proper datastore for the non volume backed root disks
+
+        #  Unset the config.instanceUuid from the src VM, it will be set to
+        #  the cloned VM
+        vm_util.change_instance_uuid(self._session, vm_ref, None)
+
+        #  Clone the src vm having the instance.uuid as name so that we keep
+        #  VM's paths based on the uuid
+        self._clone_vm(context, vm_ref, instance, image_meta)
+        # Refresh the vm_ref, pointing to the newly cloned VM
+        vm_ref = vm_util._get_vm_ref_from_name(self._session, instance.uuid)
+
+        # Rename the dest VM to the typical naming format
+        vm_util.rename_vm(self._session, instance)
         self._update_instance_progress(context, instance,
                                        step=2,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
         # 3. Reconfigure the VM properties
+        cluster_ref = vm_util.get_cluster_ref_by_name(self._session,
+                                                      self._cluster)
         self._reconfigure_vm(context, instance, vm_ref, instance.flavor,
-                             image_meta, network_info)
+                             image_meta, network_info,
+                             instance_uuid=instance.uuid)
         vm_util.update_cluster_placement(self._session, context, instance,
                                          cluster_ref, vm_ref)
         self._update_instance_progress(context, instance,
                                        step=3,
                                        total_steps=RESIZE_TOTAL_STEPS)
-
         # 4.Reconfigure the disk properties
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                      uuid=instance.uuid)
@@ -2045,11 +2038,24 @@ class VMwareVMOps(object):
                                        step=6,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
-    def _clone_vm(self, vm_ref, name, folder, pool, datastore):
+    def _clone_vm(self, context, vm_ref, instance, image_meta):
+        image_info = images.VMwareImage.from_image(context, instance.image_ref,
+                                                   image_meta)
+        extra_specs = self._get_extra_specs(instance.flavor, image_meta)
+        allowed_ds_types = ds_util.get_allowed_datastore_types(
+            image_info.disk_type)
+        datastore = ds_util.get_datastore(self._session, self._cluster,
+                                          self._datastore_regex,
+                                          extra_specs.storage_policy,
+                                          allowed_ds_types)
+        dc_info = self.get_datacenter_ref_and_name(datastore.ref)
+        folder = self._get_project_folder(dc_info, instance.project_id,
+                                          'Instances')
+
         location = vm_util.relocate_vm_spec(self._session.vim.client.factory,
-                                            res_pool=pool, folder=folder,
-                                            datastore=datastore)
-        vm_util.clone_vm(self._session, vm_ref, name, location)
+                                            res_pool=self._root_resource_pool,
+                                            folder=folder, datastore=datastore)
+        vm_util.clone_vm(self._session, vm_ref, instance.uuid, location)
 
     def _attach_volumes(self, instance, block_device_info):
         disks = driver.block_device_info_get_mapping(block_device_info)
