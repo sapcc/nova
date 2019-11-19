@@ -690,7 +690,7 @@ the host gets filled by the VM.
 """),
     cfg.DictOpt(
         "bigvm_host_size_filter_host_fractions",
-        default={'full': 1},
+        default={'full': '1'},
         help="""
 This dict defines what fractions of a host we support and how it's named in
 case the flavor.extra_specs attribute is used. The value provided for a name is
