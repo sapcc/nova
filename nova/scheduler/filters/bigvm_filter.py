@@ -118,13 +118,15 @@ class BigVmFlavorHostSizeFilter(BigVmBaseFilter):
         config_fractions = CONF.filter_scheduler.\
                                         bigvm_host_size_filter_host_fractions
         for name, ratio in config_fractions.items():
+            ratio = float(ratio)
             if ratio > 1:
                 LOG.error('Amount of memory cannot exceed hypervisor memory. '
                           'Wrong configuration in filter_scheduler.'
                           'bigvm_host_size_filter_host_fractions: '
-                          '%(config_dict).',
+                          '%(config_dict)s.',
                           {'config_dict': config_fractions})
-                return False
+                raise TypeError('bigvm_host_size_filter_host_fractions '
+                                'contains invalid values.')
             supported_fractions[name] = hypervisor_ram_mb * ratio
 
         return supported_fractions
@@ -172,6 +174,12 @@ class BigVmFlavorHostSizeFilter(BigVmBaseFilter):
             memory_mb = supported_fractions[host_fraction]
             if self._memory_match_with_tolerance(memory_mb, requested_ram_mb):
                 return True
+
+        LOG.info('%(host_state)s does not match %(requested_ram_mb)s for any '
+                 'of the requested fractions %(known_host_fractions)s.',
+                 {'host_state': host_state,
+                  'requested_ram_mb': requested_ram_mb,
+                  'known_host_fractions': known_host_fractions})
         return False
 
     def _check_no_flavor_extra_specs(self, host_state, supported_fractions,
