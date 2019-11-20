@@ -72,6 +72,7 @@ CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
 RESIZE_TOTAL_STEPS = 6
+HOST_IP_SEPARATOR = "$cluster$"
 
 
 class VirtualMachineInstanceConfigInfo(object):
@@ -131,17 +132,25 @@ def retry_if_task_in_progress(f, *args, **kwargs):
             pass
 
 
+def get_cluster_name_from_dest_host(dest_host):
+    parts = dest_host.split(HOST_IP_SEPARATOR)
+    if len(parts) == 2:
+        return parts[1]
+    return None
+
+
 class VMwareVMOps(object):
     """Management class for VM-related tasks."""
 
     def __init__(self, session, virtapi, volumeops, cluster=None,
-                 datastore_regex=None):
+                 datastore_regex=None, vcenter_host=None, cluster_name=None):
         """Initializer."""
         self.compute_api = compute.API()
         self._session = session
         self._virtapi = virtapi
         self._volumeops = volumeops
         self._cluster = cluster
+        self._cluster_name = cluster_name
         self._property_collector = None
         self._property_collector_version = ''
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
@@ -153,6 +162,7 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
+        self._vcenter_host = vcenter_host
 
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
@@ -167,6 +177,9 @@ class VMwareVMOps(object):
             # Aging disable ensures backward compatibility
             base_folder = CONF.image_cache_subdirectory_name
         return base_folder
+
+    def get_host_ip_addr(self):
+        return self._vcenter_host + HOST_IP_SEPARATOR + self._cluster_name
 
     def _extend_virtual_disk(self, instance, requested_size, name, dc_ref):
         service_content = self._session.vim.service_content
@@ -1902,8 +1915,6 @@ class VMwareVMOps(object):
             raise exception.InstanceFaultRollback(
                 exception.ResizeError(reason=reason))
 
-        # TODO(garyk): treat dest parameter. Migration needs to be treated.
-
         # 0. Zero out the progress to begin
         self._update_instance_progress(context, instance,
                                        step=0,
@@ -1913,26 +1924,6 @@ class VMwareVMOps(object):
         vm_util.power_off_instance(self._session, instance, vm_ref)
         self._update_instance_progress(context, instance,
                                        step=1,
-                                       total_steps=RESIZE_TOTAL_STEPS)
-
-        # 2. Reconfigure the VM properties
-        self._resize_vm(context, instance, vm_ref, flavor, instance.image_meta)
-
-        self._update_instance_progress(context, instance,
-                                       step=2,
-                                       total_steps=RESIZE_TOTAL_STEPS)
-
-        # 3.Reconfigure the disk properties
-        if not boot_from_volume:
-            self._resize_disk(instance, vm_ref, vmdk, flavor)
-        self._update_instance_progress(context, instance,
-                                       step=3,
-                                       total_steps=RESIZE_TOTAL_STEPS)
-
-        # 4. Purge ephemeral and swap disks
-        self._remove_ephemerals_and_swap(vm_ref)
-        self._update_instance_progress(context, instance,
-                                       step=4,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
     def confirm_migration(self, migration, instance, network_info):
@@ -1984,6 +1975,16 @@ class VMwareVMOps(object):
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
+        reattach_volumes = False
+        # Relocate the instance back, if needed
+        if instance.uuid not in self.list_instances():
+            self._detach_volumes(instance, block_device_info)
+            reattach_volumes = True
+            self._relocate_vm(vm_ref, context, instance, network_info)
+            # refresh vm_ref
+            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_util.update_cluster_placement(self._session, context,
+                                             instance, self._cluster, vm_ref)
         # Ensure that the VM is off
         vm_util.power_off_instance(self._session, instance, vm_ref)
         client_factory = self._session.vim.client.factory
@@ -2004,6 +2005,8 @@ class VMwareVMOps(object):
         if vmdk.device:
             self._revert_migration_update_disks(vm_ref, instance, vmdk,
                                                 block_device_info)
+        if reattach_volumes:
+            self._attach_volumes(instance, block_device_info)
 
         if power_on:
             vm_util.power_on_instance(self._session, instance)
@@ -2014,10 +2017,44 @@ class VMwareVMOps(object):
         """Completes a resize, turning on the migrated instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
-        # 5. Update ephemerals if necessary
+        flavor = instance.flavor
+        boot_from_volume = compute_utils.is_volume_backed_instance(context,
+                                                                   instance)
+        reattach_volumes = False
+        # 2. Relocate the VM if necessary
+        if self._cluster_name != get_cluster_name_from_dest_host(
+                migration.dest_host):
+            self._detach_volumes(instance, block_device_info)
+            reattach_volumes = True
+            self._relocate_vm(vm_ref, context, instance, network_info,
+                              image_meta)
+            # Refresh vm_ref
+            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_util.update_cluster_placement(self._session, context,
+                                             instance, self._cluster, vm_ref)
+        self._update_instance_progress(context, instance,
+                                       step=2,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+        # 3.Reconfigure the VM and disk
+        self._resize_vm(context, instance, vm_ref, flavor, image_meta)
+        if not boot_from_volume:
+            vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
+                                         uuid=instance.uuid)
+            self._resize_disk(instance, vm_ref, vmdk, flavor)
+        self._update_instance_progress(context, instance,
+                                       step=3,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+
+        # 4. Purge ephemeral and swap disks
+        self._remove_ephemerals_and_swap(vm_ref)
+        self._update_instance_progress(context, instance,
+                                       step=4,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+        # 5. Update ephemerals and attach volumes if necessary
         self._resize_create_ephemerals_and_swap(vm_ref, instance,
                                                 block_device_info)
-
+        if reattach_volumes:
+            self._attach_volumes(instance, block_device_info)
         self._update_instance_progress(context, instance,
                                        step=5,
                                        total_steps=RESIZE_TOTAL_STEPS)
@@ -2028,6 +2065,49 @@ class VMwareVMOps(object):
         self._update_instance_progress(context, instance,
                                        step=6,
                                        total_steps=RESIZE_TOTAL_STEPS)
+
+    def _relocate_vm(self, vm_ref, context, instance, network_info,
+                     image_meta=None):
+        image_meta = image_meta or instance.image_meta
+        image_info = images.VMwareImage.from_image(context, instance.image_ref,
+                                                   image_meta)
+        extra_specs = self._get_extra_specs(instance.flavor, image_meta)
+        allowed_ds_types = ds_util.get_allowed_datastore_types(
+            image_info.disk_type)
+        datastore = ds_util.get_datastore(self._session, self._cluster,
+                                          self._datastore_regex,
+                                          extra_specs.storage_policy,
+                                          allowed_ds_types)
+        dc_info = self.get_datacenter_ref_and_name(datastore.ref)
+        folder = self._get_project_folder(dc_info, instance.project_id,
+                                          'Instances')
+
+        spec = vm_util.relocate_vm_spec(self._session.vim.client.factory,
+                                            res_pool=self._root_resource_pool,
+                                            folder=folder, datastore=datastore)
+        if network_info:
+            image_info = images.VMwareImage.from_image(context,
+                                                       instance.image_ref,
+                                                       image_meta)
+            vif_infos = vmwarevif.get_vif_info(self._session,
+                                               self._cluster,
+                                               utils.is_neutron(),
+                                               image_info.vif_model,
+                                               network_info)
+            vm_util.append_vif_infos_to_config_spec(
+                self._session.vim.client.factory, spec, vif_infos)
+
+        vm_util.relocate_vm(self._session, vm_ref, spec)
+
+    def _detach_volumes(self, instance, block_device_info):
+        block_devices = driver.block_device_info_get_mapping(block_device_info)
+        for disk in block_devices:
+            self._volumeops.detach_volume(disk['connection_info'], instance)
+
+    def _attach_volumes(self, instance, block_device_info):
+        disks = driver.block_device_info_get_mapping(block_device_info)
+        for disk in disks:
+            self._volumeops.attach_volume(disk['connection_info'], instance)
 
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""

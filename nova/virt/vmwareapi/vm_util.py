@@ -230,7 +230,7 @@ def _get_allocation_info(client_factory, limits, allocation_type):
 def append_vif_infos_to_config_spec(client_factory,
                                     config_spec,
                                     vif_infos,
-                                    vif_limits,
+                                    vif_limits=None,
                                     index=0):
     if not hasattr(config_spec, 'deviceChange') or \
             not config_spec.deviceChange:
@@ -1012,20 +1012,22 @@ def clone_vm_spec(client_factory, location,
 
 
 def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
-                     disk_move_type="moveAllDiskBackingsAndAllowSharing"):
+                     disk_move_type="moveAllDiskBackingsAndAllowSharing",
+                     folder=None):
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
     rel_spec.datastore = datastore
     rel_spec.host = host
+    rel_spec.folder = folder
     rel_spec.pool = res_pool
     rel_spec.diskMoveType = disk_move_type
     return rel_spec
 
 
 def relocate_vm(session, vm_ref, res_pool=None, datastore=None, host=None,
-                disk_move_type="moveAllDiskBackingsAndAllowSharing"):
+                disk_move_type="moveAllDiskBackingsAndAllowSharing", spec=None):
     client_factory = session.vim.client.factory
-    rel_spec = relocate_vm_spec(client_factory, res_pool, datastore, host,
-                                disk_move_type)
+    rel_spec = spec or relocate_vm_spec(client_factory, res_pool, datastore,
+                                        host, disk_move_type)
     relocate_task = session._call_method(session.vim, "RelocateVM_Task",
                                          vm_ref, spec=rel_spec)
     session._wait_for_task(relocate_task)
@@ -1867,3 +1869,8 @@ def rename_vm(session, vm_ref, instance):
 def is_vim_instance(o, vim_type_name):
     return isinstance(o, sudsobject.Factory.subclass(vim_type_name,
                                                      sudsobject.Object))
+
+
+def get_mor_name(session, mor):
+    return session._call_method(vutil, "get_object_property",
+                                mor, "name")

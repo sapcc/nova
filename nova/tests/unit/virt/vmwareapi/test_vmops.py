@@ -84,7 +84,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                 vmFolder=vmwareapi_fake.ManagedObjectReference
                                                         (name='fake_vm_folder',
                                                         value='Folder'))
-        cluster = vmwareapi_fake.create_cluster('fake_cluster', fake_ds_ref)
+        self._cluster_name = 'fake_cluster'
+        self._host = 'testhostname'
+        cluster = vmwareapi_fake.create_cluster(self._cluster_name, fake_ds_ref)
         self._uuid = uuidsentinel.foo
         self._instance_values = {
             'name': 'fake_name',
@@ -105,7 +107,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._instance.flavor = self._flavor
 
         self._vmops = vmops.VMwareVMOps(self._session, self._virtapi, None,
-                                        cluster=cluster.obj)
+                                        cluster=cluster.obj,
+                                        cluster_name=self._cluster_name,
+                                        vcenter_host=self._host)
         self._cluster = cluster
         self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id,
                                                         'owner': ''})
@@ -606,18 +610,39 @@ class VMwareVMOpsTestCase(test.TestCase):
                                   vmware_tools_status="toolsNotOk",
                                   succeeds=False)
 
-    def _test_finish_migration(self, power_on=True, resize_instance=False):
+    def _test_finish_migration(self, power_on=True,
+                               resize_instance=False, migration=None):
         with test.nested(
                 mock.patch.object(self._vmops,
                                   '_resize_create_ephemerals_and_swap'),
                 mock.patch.object(self._vmops, "_update_instance_progress"),
                 mock.patch.object(vm_util, "power_on_instance"),
                 mock.patch.object(vm_util, "get_vm_ref",
-                                  return_value='fake-ref')
+                                  return_value='fake-ref'),
+                mock.patch.object(vmops.VMwareVMOps,
+                                  "_remove_ephemerals_and_swap"),
+                mock.patch.object(vm_util, 'get_vmdk_info'),
+                mock.patch.object(vmops.VMwareVMOps, "_resize_vm"),
+                mock.patch.object(vmops.VMwareVMOps, "_resize_disk"),
+                mock.patch.object(vmops.VMwareVMOps, "_relocate_vm"),
+                mock.patch.object(vmops.VMwareVMOps, "_detach_volumes"),
+                mock.patch.object(vmops.VMwareVMOps, "_attach_volumes")
         ) as (fake_resize_create_ephemerals_and_swap,
-              fake_update_instance_progress, fake_power_on, fake_get_vm_ref):
+              fake_update_instance_progress, fake_power_on, fake_get_vm_ref,
+              fake_remove_ephemerals_and_swap, fake_get_vmdk_info,
+              fake_resize_vm, fake_resize_disk, fake_relocate_vm,
+              fake_detach_volumes, fake_attach_volumes):
+            migration = migration or objects.Migration(
+                dest_host=self._vmops.get_host_ip_addr())
+            vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
+                                    'fake-adapter',
+                                    'fake-disk',
+                                    self._instance.flavor.root_gb * units.Gi,
+                                    'fake-device')
+            fake_get_vmdk_info.return_value = vmdk
+            vm_ref_calls = [mock.call(self._session, self._instance)]
             self._vmops.finish_migration(context=self._context,
-                                         migration=None,
+                                         migration=migration,
                                          instance=self._instance,
                                          disk_info=None,
                                          network_info=None,
@@ -627,6 +652,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                          power_on=power_on)
             fake_resize_create_ephemerals_and_swap.assert_called_once_with(
                 'fake-ref', self._instance, None)
+            fake_remove_ephemerals_and_swap.assert_called_once_with('fake-ref')
             if power_on:
                 fake_power_on.assert_called_once_with(self._session,
                                                       self._instance,
@@ -634,12 +660,28 @@ class VMwareVMOpsTestCase(test.TestCase):
             else:
                 self.assertFalse(fake_power_on.called)
 
-        calls = [
-                mock.call(self._context, self._instance, step=5,
-                          total_steps=vmops.RESIZE_TOTAL_STEPS),
-                mock.call(self._context, self._instance, step=6,
-                          total_steps=vmops.RESIZE_TOTAL_STEPS)]
-        fake_update_instance_progress.assert_has_calls(calls)
+            fake_resize_vm.assert_called_once_with(self._context,
+                                                   self._instance, 'fake-ref',
+                                                   self._instance.flavor,
+                                                   mock.ANY)
+            fake_resize_disk.assert_called_once_with(self._instance, 'fake-ref',
+                                                     vmdk,
+                                                     self._instance.flavor)
+            if self._vmops.get_host_ip_addr() != migration.dest_host:
+                fake_relocate_vm.\
+                    assert_called_once_with('fake-ref', self._context,
+                                            self._instance, None, None)
+                fake_detach_volumes.assert_called_once_with(self._instance,
+                                                            None)
+                fake_attach_volumes.assert_called_once_with(self._instance,
+                                                            None)
+                vm_ref_calls.append(mock.call(self._session, self._instance))
+
+            calls = [mock.call(self._context, self._instance, step=i,
+                               total_steps=vmops.RESIZE_TOTAL_STEPS) for i in
+                     range(2, 7)]
+            fake_update_instance_progress.assert_has_calls(calls)
+            fake_get_vm_ref.assert_has_calls(vm_ref_calls)
 
     def test_finish_migration_power_on(self):
         self._test_finish_migration(power_on=True, resize_instance=False)
@@ -649,6 +691,12 @@ class VMwareVMOpsTestCase(test.TestCase):
 
     def test_finish_migration_power_on_resize(self):
         self._test_finish_migration(power_on=True, resize_instance=True)
+
+    def test_finish_migration_another_cluster(self):
+        dest_host = self._vmops.get_host_ip_addr() + "-2"
+        self._test_finish_migration(power_on=True, resize_instance=False,
+                                    migration=objects.Migration(
+                                        dest_host=dest_host))
 
     @mock.patch.object(vmops.VMwareVMOps, '_create_swap')
     @mock.patch.object(vmops.VMwareVMOps, '_create_ephemeral')
@@ -716,7 +764,13 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'power_off_instance')
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
     @mock.patch.object(vm_util, 'power_on_instance')
-    def _test_finish_revert_migration(self, fake_power_on,
+    @mock.patch.object(vmops.VMwareVMOps, '_detach_volumes')
+    @mock.patch.object(vmops.VMwareVMOps, '_attach_volumes')
+    @mock.patch.object(vmops.VMwareVMOps, '_relocate_vm')
+    @mock.patch.object(vmops.VMwareVMOps, 'list_instances')
+    def _test_finish_revert_migration(self, fake_list_instances,
+                                      fake_relocate_vm, fake_attach_volumes,
+                                      fake_detach_volumes, fake_power_on,
                                       fake_get_vm_ref, fake_power_off,
                                       fake_resize_spec, fake_reconfigure_vm,
                                       fake_get_browser,
@@ -725,7 +779,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                       fake_remove_ephemerals_and_swap,
                                       fake_resize_create_ephemerals_and_swap,
                                       fake_get_extra_specs,
-                                      power_on):
+                                      power_on, instances_list=None):
         """Tests the finish_revert_migration method on vmops."""
         datastore = ds_obj.Datastore(ref='fake-ref', name='fake')
         device = vmwareapi_fake.DataObject()
@@ -750,14 +804,16 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._vmops._volumeops = mock.Mock()
             mock_attach_disk = self._vmops._volumeops.attach_disk_to_vm
             mock_detach_disk = self._vmops._volumeops.detach_disk_from_vm
+            instances_list = instances_list or [self._instance.uuid]
+            fake_list_instances.return_value = instances_list
+            same_cluster = self._instance.uuid in instances_list
 
             self._vmops.finish_revert_migration(self._context,
                                                 instance=self._instance,
                                                 network_info=None,
                                                 block_device_info=None,
                                                 power_on=power_on)
-            fake_get_vm_ref.assert_called_once_with(self._session,
-                                                    self._instance)
+            vm_ref_calls = [mock.call(self._session, self._instance)]
             fake_power_off.assert_called_once_with(self._session,
                                                    self._instance,
                                                    'fake-ref')
@@ -808,6 +864,16 @@ class VMwareVMOpsTestCase(test.TestCase):
             fake_remove_ephemerals_and_swap.assert_called_once_with('fake-ref')
             fake_resize_create_ephemerals_and_swap.assert_called_once_with(
                 'fake-ref', self._instance, None)
+            if not same_cluster:
+                fake_detach_volumes.assert_called_once_with(self._instance,
+                                                            None)
+                fake_relocate_vm.\
+                    assert_called_once_with('fake-ref', self._context,
+                                            self._instance, None)
+                fake_attach_volumes.assert_called_once_with(self._instance,
+                                                            None)
+                vm_ref_calls.append(mock.call(self._session, self._instance))
+        fake_get_vm_ref.assert_has_calls(vm_ref_calls)
         if power_on:
             fake_power_on.assert_called_once_with(self._session,
                                                   self._instance)
@@ -819,6 +885,11 @@ class VMwareVMOpsTestCase(test.TestCase):
 
     def test_finish_revert_migration_power_off(self):
         self._test_finish_revert_migration(power_on=False)
+
+    def test_finish_revert_migration_another_cluster(self):
+        instances_list = ["fake_uuid_foo_bar"]
+        self._test_finish_revert_migration(power_on=True,
+                                           instances_list=instances_list)
 
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
@@ -964,17 +1035,12 @@ class VMwareVMOpsTestCase(test.TestCase):
                           self._test_migrate_disk_and_power_off,
                           flavor_root_gb=self._instance.flavor.root_gb - 1)
 
-    @mock.patch.object(vmops.VMwareVMOps, "_remove_ephemerals_and_swap")
     @mock.patch.object(vm_util, 'get_vmdk_info')
-    @mock.patch.object(vmops.VMwareVMOps, "_resize_disk")
-    @mock.patch.object(vmops.VMwareVMOps, "_resize_vm")
     @mock.patch.object(vm_util, 'power_off_instance')
     @mock.patch.object(vmops.VMwareVMOps, "_update_instance_progress")
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
     def _test_migrate_disk_and_power_off(self, fake_get_vm_ref, fake_progress,
-                                         fake_power_off, fake_resize_vm,
-                                         fake_resize_disk, fake_get_vmdk_info,
-                                         fake_remove_ephemerals_and_swap,
+                                         fake_power_off, fake_get_vmdk_info,
                                          flavor_root_gb):
         vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
                                 'fake-adapter',
@@ -995,29 +1061,28 @@ class VMwareVMOpsTestCase(test.TestCase):
         fake_power_off.assert_called_once_with(self._session,
                                                self._instance,
                                                'fake-ref')
-        fake_resize_vm.assert_called_once_with(self._context, self._instance,
-                                               'fake-ref', flavor, mock.ANY)
-        fake_resize_disk.assert_called_once_with(self._instance, 'fake-ref',
-                                                 vmdk, flavor)
         calls = [mock.call(self._context, self._instance, step=i,
                            total_steps=vmops.RESIZE_TOTAL_STEPS)
-                 for i in range(4)]
+                 for i in range(2)]
         fake_progress.assert_has_calls(calls)
 
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch.object(vmops.VMwareVMOps, '_resize_create_ephemerals_and_swap')
     @mock.patch.object(vmops.VMwareVMOps, "_remove_ephemerals_and_swap")
     @mock.patch.object(vm_util, 'get_vmdk_info')
     @mock.patch.object(vmops.VMwareVMOps, "_resize_disk")
     @mock.patch.object(vmops.VMwareVMOps, "_resize_vm")
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'power_on_instance')
     @mock.patch.object(vmops.VMwareVMOps, "_update_instance_progress")
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
-    def test_migrate_disk_and_power_off_root_block_device(self,
-                                         fake_get_vm_ref, fake_progress,
-                                         fake_power_off, fake_resize_vm,
-                                         fake_resize_disk, fake_get_vmdk_info,
-                                         fake_remove_ephemerals_and_swap,
-                                         fake_bdm_get_by_instance_uuid):
+    def test_finish_migration_root_block_device(self, fake_get_vm_ref,
+                                                fake_progress, fake_power_on,
+                                                fake_resize_vm,
+                                                fake_resize_disk,
+                                                fake_get_vmdk_info,
+                                                fake_remove_eph_and_swap,
+                                                fake_resize_create_eph_swap,
+                                                fake_bdm_get_by_instance_uuid):
         # shrinking the root-disk should be ignored
         flavor_root_gb = self._instance.flavor.root_gb - 1
 
@@ -1063,31 +1128,32 @@ class VMwareVMOpsTestCase(test.TestCase):
         )
         fake_bdm_get_by_instance_uuid.return_value = bdms
 
-        vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
-                                'fake-adapter',
-                                'fake-disk',
-                                self._instance.flavor.root_gb * units.Gi,
-                                'fake-device')
-        fake_get_vmdk_info.return_value = vmdk
-        flavor = fake_flavor.fake_flavor_obj(self._context,
-                                             root_gb=flavor_root_gb)
-        self._vmops.migrate_disk_and_power_off(self._context,
-                                               self._instance,
-                                               None,
-                                               flavor)
-
+        migration = objects.Migration(dest_host=self._vmops.get_host_ip_addr())
+        self._vmops.finish_migration(context=self._context,
+                                     migration=migration,
+                                     instance=self._instance,
+                                     disk_info=None,
+                                     network_info=None,
+                                     block_device_info=None,
+                                     resize_instance=True,
+                                     image_meta=self._image_meta,
+                                     power_on=True)
         fake_get_vm_ref.assert_called_once_with(self._session,
                                                 self._instance)
-
-        fake_power_off.assert_called_once_with(self._session,
-                                               self._instance,
-                                               'fake-ref')
+        fake_resize_create_eph_swap.assert_called_once_with(
+            'fake-ref', self._instance, None)
+        fake_remove_eph_and_swap.assert_called_once_with('fake-ref')
+        fake_power_on.assert_called_once_with(self._session, self._instance,
+                                              vm_ref='fake-ref')
         fake_resize_vm.assert_called_once_with(self._context, self._instance,
-                                               'fake-ref', flavor, mock.ANY)
+                                               'fake-ref',
+                                               self._instance.flavor,
+                                               self._image_meta)
+        fake_get_vmdk_info.assert_not_called()
         fake_resize_disk.assert_not_called()
         calls = [mock.call(self._context, self._instance, step=i,
                            total_steps=vmops.RESIZE_TOTAL_STEPS)
-                 for i in range(4)]
+                 for i in range(2,7)]
         fake_progress.assert_has_calls(calls)
 
     @mock.patch.object(vutil, 'get_inventory_path', return_value='fake_path')

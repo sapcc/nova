@@ -129,7 +129,9 @@ class VMwareVCDriver(driver.ComputeDriver):
                                         virtapi,
                                         self._volumeops,
                                         self._cluster_ref,
-                                        datastore_regex=self._datastore_regex)
+                                        datastore_regex=self._datastore_regex,
+                                        vcenter_host=CONF.vmware.host_ip,
+                                        cluster_name=self._cluster_name)
         self._vc_state = host.VCState(self._session,
                                       self._nodename,
                                       self._cluster_ref,
@@ -509,7 +511,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def get_host_ip_addr(self):
         """Returns the IP address of the vCenter host."""
-        return CONF.vmware.host_ip
+        return self._vmops.get_host_ip_addr()
 
     def snapshot(self, context, instance, image_id, update_task_state):
         """Create snapshot from a running VM instance."""

@@ -258,7 +258,8 @@ class VMwareAPIVMTestCase(test.TestCase,
         self.assertFalse(self.conn.need_legacy_block_device_info)
 
     def test_get_host_ip_addr(self):
-        self.assertEqual(HOST, self.conn.get_host_ip_addr())
+        self.assertEqual(self.conn.get_host_ip_addr(),
+                         self.conn._vmops.get_host_ip_addr())
 
     def test_init_host_with_no_session(self):
         self.conn._session = mock.Mock()
