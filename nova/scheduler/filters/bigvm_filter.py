@@ -174,6 +174,12 @@ class BigVmFlavorHostSizeFilter(BigVmBaseFilter):
             memory_mb = supported_fractions[host_fraction]
             if self._memory_match_with_tolerance(memory_mb, requested_ram_mb):
                 return True
+
+        LOG.info('%(host_state)s does not match %(requested_ram_mb)s for any '
+                 'of the requested fractions %(known_host_fractions)s.',
+                 {'host_state': host_state,
+                  'requested_ram_mb': requested_ram_mb,
+                  'known_host_fractions': known_host_fractions})
         return False
 
     def _check_no_flavor_extra_specs(self, host_state, supported_fractions,
