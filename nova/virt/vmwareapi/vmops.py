@@ -1975,16 +1975,6 @@ class VMwareVMOps(object):
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        reattach_volumes = False
-        # Relocate the instance back, if needed
-        if instance.uuid not in self.list_instances():
-            self._detach_volumes(instance, block_device_info)
-            reattach_volumes = True
-            self._relocate_vm(vm_ref, context, instance, network_info)
-            # refresh vm_ref
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
-            vm_util.update_cluster_placement(self._session, context,
-                                             instance, self._cluster, vm_ref)
         # Ensure that the VM is off
         vm_util.power_off_instance(self._session, instance, vm_ref)
         client_factory = self._session.vim.client.factory
@@ -2005,7 +1995,14 @@ class VMwareVMOps(object):
         if vmdk.device:
             self._revert_migration_update_disks(vm_ref, instance, vmdk,
                                                 block_device_info)
-        if reattach_volumes:
+        # Relocate the instance back, if needed
+        if instance.uuid not in self.list_instances():
+            self._detach_volumes(instance, block_device_info)
+            self._relocate_vm(vm_ref, context, instance, network_info)
+            # refresh vm_ref
+            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_util.update_cluster_placement(self._session, context,
+                                             instance, self._cluster, vm_ref)
             self._attach_volumes(instance, block_device_info)
 
         if power_on:
