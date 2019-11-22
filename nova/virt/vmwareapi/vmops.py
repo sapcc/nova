@@ -731,19 +731,21 @@ class VMwareVMOps(object):
                             lock_file_prefix='nova-vmware-fetch_image'):
             self.check_cache_folder(vi.datastore.name, vi.datastore.ref)
             ds_browser = self._get_ds_browser(vi.datastore.ref)
-            image_available = ds_util.file_exists(self._session,
-                                                  ds_browser,
-                                                  vi.cache_image_folder,
-                                                  vi.cache_image_path.basename)
 
-            if not image_available and CONF.vmware.image_as_template:
+            if CONF.vmware.image_as_template:
                 templ_vm_ref = self._find_image_template_vm(vi)
                 image_available = (templ_vm_ref is not None)
 
-                if not image_available and\
-                        CONF.vmware.fetch_image_from_other_datastores:
+                if (not image_available and
+                        CONF.vmware.fetch_image_from_other_datastores):
                     templ_vm_ref = self._fetch_image_from_other_datastores(vi)
                     image_available = (templ_vm_ref is not None)
+            else:
+                image_available = ds_util.file_exists(
+                    self._session,
+                    ds_browser,
+                    vi.cache_image_folder,
+                    vi.cache_image_path.basename)
 
             if not image_available:
                 LOG.debug("Preparing fetch location", instance=vi.instance)
