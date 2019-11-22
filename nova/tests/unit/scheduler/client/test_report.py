@@ -2144,6 +2144,18 @@ class TestAggregates(SchedulerReportClientTestCase):
             self.ks_adap_mock.get.reset_mock()
             log_mock.reset_mock()
 
+    def test_get_provider_aggregates_conn_failure(self):
+        self.ks_adap_mock.get.side_effect = ks_exc.EndpointNotFound()
+        self.assertRaises(
+            ks_exc.ClientException,
+            self.client._get_provider_aggregates, self.context, uuids.cn)
+        expected_url = '/resource_providers/' + uuids.cn + '/aggregates'
+
+        self.ks_adap_mock.get.assert_called_once_with(
+            expected_url, microversion='1.1',
+            headers={'X-Openstack-Request-Id': self.context.global_id},
+            raise_exc=False)
+
 
 class TestTraits(SchedulerReportClientTestCase):
     trait_api_kwargs = {'raise_exc': False, 'microversion': '1.6'}
