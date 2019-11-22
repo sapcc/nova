@@ -1869,13 +1869,24 @@ class _TestInstanceListObject(object):
         mock_fault_get.assert_called_once_with(self.context,
             [x['uuid'] for x in fake_insts])
 
+    @mock.patch('nova.objects.InstanceMappingList.get_by_instance_uuids')
     @mock.patch.object(db, 'instance_fault_get_by_instance_uuids')
-    def test_fill_faults(self, mock_fault_get):
+    def test_fill_faults(self,
+                         mock_fault_get,
+                         mock_get_inst_map_list):
         inst1 = objects.Instance(uuid=uuids.db_fault_1)
         inst2 = objects.Instance(uuid=uuids.db_fault_2)
         insts = [inst1, inst2]
         for inst in insts:
             inst.obj_reset_changes()
+
+        mock_get_inst_map_list.return_value = [
+            mock.Mock(cell_mapping=None,
+                      instance_uuid=uuids.db_fault_1),
+            mock.Mock(cell_mapping=None,
+                      instance_uuid=uuids.db_fault_2)
+        ]
+
         db_faults = {
             'uuid1': [{'id': 123,
                        'instance_uuid': uuids.db_fault_1,
@@ -1902,7 +1913,7 @@ class _TestInstanceListObject(object):
         for inst in inst_list:
             self.assertEqual(set(), inst.obj_what_changed())
 
-        mock_fault_get.assert_called_once_with(self.context,
+        mock_fault_get.assert_called_once_with(mock.ANY,
                                                [x.uuid for x in insts],
                                                latest=True)
 

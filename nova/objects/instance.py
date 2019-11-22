@@ -31,6 +31,7 @@ from nova.cells import rpcapi as cells_rpcapi
 from nova.cells import utils as cells_utils
 from nova.compute import task_states
 from nova.compute import vm_states
+from nova import context as nova_context
 from nova import db
 from nova.db.sqlalchemy import api as db_api
 from nova.db.sqlalchemy import models
@@ -1426,11 +1427,30 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
         :returns: A list of instance uuids for which faults were found.
         """
         uuids = [inst.uuid for inst in self]
-        faults = objects.InstanceFaultList.get_latest_by_instance_uuids(
+        inst_mappings = objects.InstanceMappingList.get_by_instance_uuids(
             self._context, uuids)
+        inst_cell_mappings = {}
+        for im in inst_mappings:
+            cm = im.cell_mapping
+            cell_id = getattr(cm, 'id', None) if cm else None
+            cm_inst = inst_cell_mappings.get(cell_id)
+            if not cm_inst:
+                cm_inst = {
+                    'cell_mapping': cm,
+                    'instance_uuids': []
+                }
+                inst_cell_mappings[cell_id] = cm_inst
+            cm_inst['instance_uuids'].append(im.instance_uuid)
+
         faults_by_uuid = {}
-        for fault in faults:
-            faults_by_uuid[fault.instance_uuid] = fault
+        for cm_inst in inst_cell_mappings.values():
+            with nova_context.target_cell(
+                    self._context, cm_inst['cell_mapping']) as cell_ctxt:
+                faults = (objects.InstanceFaultList.
+                    get_latest_by_instance_uuids(cell_ctxt,
+                                                 cm_inst['instance_uuids']))
+                for fault in faults:
+                    faults_by_uuid[fault.instance_uuid] = fault
 
         for instance in self:
             if instance.uuid in faults_by_uuid:
