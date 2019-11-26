@@ -13,6 +13,7 @@
 #    under the License.
 
 import contextlib
+import itertools
 
 from oslo_config import cfg
 from oslo_db import exception as db_exc
@@ -1429,26 +1430,25 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
         uuids = [inst.uuid for inst in self]
         inst_mappings = objects.InstanceMappingList.get_by_instance_uuids(
             self._context, uuids)
-        inst_cell_mappings = {}
-        for im in inst_mappings:
-            cm = im.cell_mapping
-            cell_id = getattr(cm, 'id', None) if cm else None
-            cm_inst = inst_cell_mappings.get(cell_id)
-            if not cm_inst:
-                cm_inst = {
-                    'cell_mapping': cm,
-                    'instance_uuids': []
-                }
-                inst_cell_mappings[cell_id] = cm_inst
-            cm_inst['instance_uuids'].append(im.instance_uuid)
+
+        def _group_inst_mappings_by_cell_id(instance_mappings):
+            def _im_cell_id(instance_mapping):
+                cm = instance_mapping.cell_mapping
+                cell_id = getattr(cm, 'id', None) if cm else None
+                return cell_id
+
+            instance_mappings = sorted(instance_mappings, key=_im_cell_id)
+            return itertools.groupby(instance_mappings, key=_im_cell_id)
 
         faults_by_uuid = {}
-        for cm_inst in inst_cell_mappings.values():
-            with nova_context.target_cell(
-                    self._context, cm_inst['cell_mapping']) as cell_ctxt:
+        for cell_id, ims in _group_inst_mappings_by_cell_id(inst_mappings):
+            cm, inst_uuids = None, []
+            for im in ims:
+                inst_uuids.append(im.instance_uuid)
+                cm = im.cell_mapping
+            with nova_context.target_cell(self._context, cm) as cell_ctxt:
                 faults = (objects.InstanceFaultList.
-                    get_latest_by_instance_uuids(cell_ctxt,
-                                                 cm_inst['instance_uuids']))
+                    get_latest_by_instance_uuids(cell_ctxt, inst_uuids))
                 for fault in faults:
                     faults_by_uuid[fault.instance_uuid] = fault
 
