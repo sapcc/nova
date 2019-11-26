@@ -162,7 +162,8 @@ class _SpecialVmSpawningServer(object):
             # get all the vms in a cluster, because we need to find a host
             # without big VMs. Take the one with least memory used.
             props = ['config.hardware.memoryMB', 'runtime.host',
-                     'runtime.powerState']
+                     'runtime.powerState',
+                     'summary.quickStats.hostMemoryUsage']
             cluster_vms = self._vmops._list_instances_in_cluster(props)
             if not cluster_vms:
                 LOG.error('Got no VMs for freeing a host for spawning. '
@@ -173,7 +174,8 @@ class _SpecialVmSpawningServer(object):
             vms_per_host = {}
             for vm_uuid, vm_props in cluster_vms:
                 props = (vm_props.get('config.hardware.memoryMB', 0),
-                         vm_props.get('runtime.powerState', 'poweredOff'))
+                         vm_props.get('runtime.powerState', 'poweredOff'),
+                         vm_props.get('summary.quickStats.hostMemoryUsage', 0))
                 vms_per_host.setdefault(vm_props.get('runtime.host'), []). \
                         append(props)
 
@@ -181,15 +183,15 @@ class _SpecialVmSpawningServer(object):
             # FIXME ask david if we use big VMs here or the smaller special
             # spawning vms
             vms_per_host = {h: vms for h, vms in vms_per_host.items()
-                            if all(mem < CONF.bigvm_mb for mem, state in vms)}
+                            if all(mem < CONF.bigvm_mb
+                                   for mem, state, used_mem in vms)}
 
             if not vms_per_host:
                 LOG.warning('No suitable host found for freeing a host for '
                             'spawning.')
                 return FREE_HOST_STATE_ERROR
 
-            mem_per_host = {h: sum(mem for mem, state in vms
-                                   if state != 'poweredOff')
+            mem_per_host = {h: sum(used_mem for mem, state, used_mem in vms)
                             for h, vms in vms_per_host.items()}
 
             # take the one with least memory used
