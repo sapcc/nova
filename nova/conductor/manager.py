@@ -66,7 +66,7 @@ LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 
 MEMORY_MB = fields.ResourceClass.MEMORY_MB
-BIGVM_RESOURCE = 'CUSTOM_BIGVM'
+BIGVM_RESOURCE = special_spawning.BIGVM_RESOURCE
 VMWARE_HV_TYPE = 'VMware vCenter Server'
 
 

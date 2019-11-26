@@ -32,6 +32,8 @@ FREE_HOST_STATE_DONE = 'done'
 FREE_HOST_STATE_ERROR = 'error'
 FREE_HOST_STATE_STARTED = 'started'
 
+BIGVM_RESOURCE = 'CUSTOM_BIGVM'
+
 
 @profiler.trace_cls("rpc")
 class SpecialVmSpawningInterface(object):

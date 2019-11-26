@@ -63,6 +63,7 @@ from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import imagecache
 from nova.virt.vmwareapi import images
+from nova.virt.vmwareapi import special_spawning
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
@@ -1184,7 +1185,7 @@ class VMwareVMOps(object):
             # reserve the bigvm resource. this prohibits any further
             # deployment on that host.
             inv_data = rp.inventory
-            rp.inventory['CUSTOM_BIGVM']['reserved'] = 1
+            rp.inventory[special_spawning.BIGVM_RESOURCE]['reserved'] = 1
             placement_client.set_inventory_for_provider(context,
                                         rp.uuid, rp_name, inv_data,
                                         parent_provider_uuid=parent_rp_uuid)
