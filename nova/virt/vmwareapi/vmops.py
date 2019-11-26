@@ -1273,37 +1273,6 @@ class VMwareVMOps(object):
         self._session._wait_for_task(delete_snapshot_task)
         LOG.debug("Deleted Snapshot of the VM instance", instance=instance)
 
-    def _create_linked_clone_from_snapshot(self, instance,
-                                           vm_ref, snapshot_ref, dc_info):
-        """Create linked clone VM to be deployed to same ds as source VM
-        """
-        client_factory = self._session.vim.client.factory
-        rel_spec = vm_util.relocate_vm_spec(
-                client_factory,
-                datastore=None,
-                host=None,
-                disk_move_type="createNewChildDiskBacking")
-        clone_spec = vm_util.clone_vm_spec(client_factory, rel_spec,
-                power_on=False, snapshot=snapshot_ref, template=True)
-        vm_name = "%s_%s" % (constants.SNAPSHOT_VM_PREFIX,
-                             uuidutils.generate_uuid())
-
-        LOG.debug("Creating linked-clone VM from snapshot", instance=instance)
-        vm_clone_task = self._session._call_method(
-                                self._session.vim,
-                                "CloneVM_Task",
-                                vm_ref,
-                                folder=dc_info.vmFolder,
-                                name=vm_name,
-                                spec=clone_spec)
-        self._session._wait_for_task(vm_clone_task)
-        LOG.info("Created linked-clone VM from snapshot", instance=instance)
-        task_info = self._session._call_method(vutil,
-                                               "get_object_property",
-                                               vm_clone_task,
-                                               "info")
-        return task_info.result
-
     def _create_vm_clone(self, instance, vm_ref, snapshot_ref, dc_info,
                          disk_move_type=None, image_id=None, disks=None):
         """Clone VM to be deployed to same ds as source VM
