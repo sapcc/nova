@@ -502,48 +502,14 @@ def _create_vif_spec(client_factory, vif_info, vif_limits=None):
     # NOTE(asomya): Only works on ESXi if the portgroup binding is set to
     # ephemeral. Invalid configuration if set to static and the NIC does
     # not come up on boot if set to dynamic.
-    network_ref = vif_info['network_ref']
-    network_name = vif_info['network_name']
     mac_address = vif_info['mac_address']
-    backing = None
-    if network_ref and network_ref['type'] == 'OpaqueNetwork':
-        backing = client_factory.create(
-                'ns0:VirtualEthernetCardOpaqueNetworkBackingInfo')
-        backing.opaqueNetworkId = network_ref['network-id']
-        backing.opaqueNetworkType = network_ref['network-type']
-        # Configure externalId
-        if network_ref['use-external-id']:
-            # externalId is only supported from vCenter 6.0 onwards
-            if hasattr(net_device, 'externalId'):
-                net_device.externalId = vif_info['iface_id']
-            else:
-                dp = client_factory.create('ns0:DynamicProperty')
-                dp.name = "__externalId__"
-                dp.val = vif_info['iface_id']
-                net_device.dynamicProperty = [dp]
-    elif (network_ref and
-            network_ref['type'] == "DistributedVirtualPortgroup"):
-        backing = client_factory.create(
-                'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
-        portgroup = client_factory.create(
-                    'ns0:DistributedVirtualSwitchPortConnection')
-        portgroup.switchUuid = network_ref['dvsw']
-        portgroup.portgroupKey = network_ref['dvpg']
-        if 'dvs_port_key' in network_ref:
-            portgroup.portKey = network_ref['dvs_port_key']
-        backing.port = portgroup
-    else:
-        backing = client_factory.create(
-                  'ns0:VirtualEthernetCardNetworkBackingInfo')
-        backing.deviceName = network_name
-
+    set_net_device_backing(client_factory, net_device, vif_info)
     connectable_spec = client_factory.create('ns0:VirtualDeviceConnectInfo')
     connectable_spec.startConnected = True
     connectable_spec.allowGuestControl = True
     connectable_spec.connected = True
 
     net_device.connectable = connectable_spec
-    net_device.backing = backing
 
     # The Server assigns a Key to the device. Here we pass a -ve temporary key.
     # -ve because actual keys are +ve numbers and we don't
@@ -565,6 +531,43 @@ def _create_vif_spec(client_factory, vif_info, vif_limits=None):
 
     network_spec.device = net_device
     return network_spec
+
+
+def set_net_device_backing(client_factory, net_device, vif_info):
+    network_ref = vif_info['network_ref']
+    network_name = vif_info['network_name']
+    backing = None
+    if network_ref and network_ref['type'] == 'OpaqueNetwork':
+        backing = client_factory.create(
+            'ns0:VirtualEthernetCardOpaqueNetworkBackingInfo')
+        backing.opaqueNetworkId = network_ref['network-id']
+        backing.opaqueNetworkType = network_ref['network-type']
+        # Configure externalId
+        if network_ref['use-external-id']:
+            # externalId is only supported from vCenter 6.0 onwards
+            if hasattr(net_device, 'externalId'):
+                net_device.externalId = vif_info['iface_id']
+            else:
+                dp = client_factory.create('ns0:DynamicProperty')
+                dp.name = "__externalId__"
+                dp.val = vif_info['iface_id']
+                net_device.dynamicProperty = [dp]
+    elif (network_ref and
+          network_ref['type'] == "DistributedVirtualPortgroup"):
+        backing = client_factory.create(
+            'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
+        portgroup = client_factory.create(
+            'ns0:DistributedVirtualSwitchPortConnection')
+        portgroup.switchUuid = network_ref['dvsw']
+        portgroup.portgroupKey = network_ref['dvpg']
+        if 'dvs_port_key' in network_ref:
+            portgroup.portKey = network_ref['dvs_port_key']
+        backing.port = portgroup
+    else:
+        backing = client_factory.create(
+            'ns0:VirtualEthernetCardNetworkBackingInfo')
+        backing.deviceName = network_name
+    net_device.backing = backing
 
 
 def get_network_attach_config_spec(client_factory, vif_info, index,

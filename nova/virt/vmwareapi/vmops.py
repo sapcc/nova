@@ -72,8 +72,6 @@ CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
 
 RESIZE_TOTAL_STEPS = 6
-HOST_IP_SEPARATOR = "$cluster$"
-
 
 class VirtualMachineInstanceConfigInfo(object):
     """Parameters needed to create and configure a new instance."""
@@ -132,25 +130,17 @@ def retry_if_task_in_progress(f, *args, **kwargs):
             pass
 
 
-def get_cluster_name_from_dest_host(dest_host):
-    parts = dest_host.split(HOST_IP_SEPARATOR)
-    if len(parts) == 2:
-        return parts[1]
-    return None
-
-
 class VMwareVMOps(object):
     """Management class for VM-related tasks."""
 
     def __init__(self, session, virtapi, volumeops, cluster=None,
-                 datastore_regex=None, vcenter_host=None, cluster_name=None):
+                 datastore_regex=None):
         """Initializer."""
         self.compute_api = compute.API()
         self._session = session
         self._virtapi = virtapi
         self._volumeops = volumeops
         self._cluster = cluster
-        self._cluster_name = cluster_name
         self._property_collector = None
         self._property_collector_version = ''
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
@@ -162,7 +152,6 @@ class VMwareVMOps(object):
         self._imagecache = imagecache.ImageCacheManager(self._session,
                                                         self._base_folder)
         self._network_api = network.API()
-        self._vcenter_host = vcenter_host
 
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
@@ -177,9 +166,6 @@ class VMwareVMOps(object):
             # Aging disable ensures backward compatibility
             base_folder = CONF.image_cache_subdirectory_name
         return base_folder
-
-    def get_host_ip_addr(self):
-        return self._vcenter_host + HOST_IP_SEPARATOR + self._cluster_name
 
     def _extend_virtual_disk(self, instance, requested_size, name, dc_ref):
         service_content = self._session.vim.service_content
@@ -398,14 +384,19 @@ class VMwareVMOps(object):
         if video_ram and video_ram:
             extra_specs.hw_video_ram = video_ram * units.Mi / units.Ki
 
-        if CONF.vmware.pbm_enabled:
-            storage_policy = flavor.extra_specs.get('vmware:storage_policy',
-                    CONF.vmware.pbm_default_policy)
+        storage_policy = self._get_storage_policy(flavor)
+        if storage_policy:
             extra_specs.storage_policy = storage_policy
         topology = hardware.get_best_cpu_topology(flavor, image_meta,
                                                   allow_threads=False)
         extra_specs.cores_per_socket = topology.cores
         return extra_specs
+
+    def _get_storage_policy(self, flavor):
+        if CONF.vmware.pbm_enabled:
+            return flavor.extra_specs.get('vmware:storage_policy',
+                                          CONF.vmware.pbm_default_policy)
+        return None
 
     def _get_esx_host_and_cookies(self, datastore, dc_path, file_path):
         hosts = datastore.get_connected_hosts(self._session)
@@ -1846,29 +1837,24 @@ class VMwareVMOps(object):
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
     def _resize_disk(self, instance, vm_ref, vmdk, flavor):
-        if (flavor.root_gb > instance.flavor.root_gb and
-            flavor.root_gb > vmdk.capacity_in_bytes / units.Gi):
-            root_disk_in_kb = flavor.root_gb * units.Mi
-            ds_ref = vmdk.device.backing.datastore
-            dc_info = self.get_datacenter_ref_and_name(ds_ref)
-            folder = ds_obj.DatastorePath.parse(vmdk.path).dirname
-            datastore = ds_obj.DatastorePath.parse(vmdk.path).datastore
-            resized_disk = str(ds_obj.DatastorePath(datastore, folder,
-                               'resized.vmdk'))
-            ds_util.disk_copy(self._session, dc_info.ref, vmdk.path,
-                              str(resized_disk))
-            self._extend_virtual_disk(instance, root_disk_in_kb, resized_disk,
-                                      dc_info.ref)
-            self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
-            original_disk = str(ds_obj.DatastorePath(datastore, folder,
-                                'original.vmdk'))
-            ds_util.disk_move(self._session, dc_info.ref, vmdk.path,
-                              original_disk)
-            ds_util.disk_move(self._session, dc_info.ref, resized_disk,
-                              vmdk.path)
-            self._volumeops.attach_disk_to_vm(vm_ref, instance,
-                                              vmdk.adapter_type,
-                                              vmdk.disk_type, vmdk.path)
+        root_disk_in_kb = flavor.root_gb * units.Mi
+        ds_ref = vmdk.device.backing.datastore
+        dc_info = self.get_datacenter_ref_and_name(ds_ref)
+        folder = ds_obj.DatastorePath.parse(vmdk.path).dirname
+        datastore = ds_obj.DatastorePath.parse(vmdk.path).datastore
+        resized_disk = str(ds_obj.DatastorePath(datastore, folder,
+                           'resized.vmdk'))
+        ds_util.disk_copy(self._session, dc_info.ref, vmdk.path,
+                          str(resized_disk))
+        self._extend_virtual_disk(instance, root_disk_in_kb, resized_disk,
+                                  dc_info.ref)
+        self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
+        original_disk = str(ds_obj.DatastorePath(datastore, folder,
+                            'original.vmdk'))
+        ds_util.disk_move(self._session, dc_info.ref, vmdk.path, original_disk)
+        ds_util.disk_move(self._session, dc_info.ref, resized_disk, vmdk.path)
+        self._volumeops.attach_disk_to_vm(vm_ref, instance, vmdk.adapter_type,
+                                          vmdk.disk_type, vmdk.path)
 
     def _remove_ephemerals_and_swap(self, vm_ref):
         devices = vm_util.get_ephemerals(self._session, vm_ref)
@@ -1998,6 +1984,8 @@ class VMwareVMOps(object):
         # Relocate the instance back, if needed
         if instance.uuid not in self.list_instances():
             self._detach_volumes(instance, block_device_info)
+            LOG.debug("Relocating VM for reverting migration",
+                      instance=instance)
             self._relocate_vm(vm_ref, context, instance, network_info)
             # refresh vm_ref
             vm_ref = vm_util.get_vm_ref(self._session, instance)
@@ -2019,10 +2007,13 @@ class VMwareVMOps(object):
                                                                    instance)
         reattach_volumes = False
         # 2. Relocate the VM if necessary
-        if self._cluster_name != get_cluster_name_from_dest_host(
-                migration.dest_host):
+        # If the dest_compute is different from the source_compute, it means we
+        # need to relocate the VM here since we are running on the dest_compute
+        if migration.source_compute != migration.dest_compute:
             self._detach_volumes(instance, block_device_info)
             reattach_volumes = True
+            LOG.debug("Relocating VM for migration to %s",
+                      migration.dest_compute, instance=instance)
             self._relocate_vm(vm_ref, context, instance, network_info,
                               image_meta)
             # Refresh vm_ref
@@ -2034,7 +2025,7 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
         # 3.Reconfigure the VM and disk
         self._resize_vm(context, instance, vm_ref, flavor, image_meta)
-        if not boot_from_volume:
+        if not boot_from_volume and resize_instance:
             vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                          uuid=instance.uuid)
             self._resize_disk(instance, vm_ref, vmdk, flavor)
@@ -2066,35 +2057,53 @@ class VMwareVMOps(object):
     def _relocate_vm(self, vm_ref, context, instance, network_info,
                      image_meta=None):
         image_meta = image_meta or instance.image_meta
-        image_info = images.VMwareImage.from_image(context, instance.image_ref,
-                                                   image_meta)
-        extra_specs = self._get_extra_specs(instance.flavor, image_meta)
+        storage_policy = self._get_storage_policy(instance.flavor)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
-            image_info.disk_type)
+            image_meta.properties.hw_disk_type)
         datastore = ds_util.get_datastore(self._session, self._cluster,
                                           self._datastore_regex,
-                                          extra_specs.storage_policy,
+                                          storage_policy,
                                           allowed_ds_types)
         dc_info = self.get_datacenter_ref_and_name(datastore.ref)
         folder = self._get_project_folder(dc_info, instance.project_id,
                                           'Instances')
 
         spec = vm_util.relocate_vm_spec(self._session.vim.client.factory,
-                                            res_pool=self._root_resource_pool,
-                                            folder=folder, datastore=datastore)
+                                        res_pool=self._root_resource_pool,
+                                        folder=folder, datastore=datastore.ref)
+
+        # Iterate over the network adapters and update the backing
         if network_info:
-            image_info = images.VMwareImage.from_image(context,
-                                                       instance.image_ref,
-                                                       image_meta)
+            spec.deviceChange = []
+            vif_model = image_meta.properties.hw_vif_model
+            hardware_devices = self._session._call_method(
+                                                    vutil,
+                                                    "get_object_property",
+                                                    vm_ref,
+                                                    "config.hardware.device")
             vif_infos = vmwarevif.get_vif_info(self._session,
                                                self._cluster,
                                                utils.is_neutron(),
-                                               image_info.vif_model,
+                                               vif_model,
                                                network_info)
-            vm_util.append_vif_infos_to_config_spec(
-                self._session.vim.client.factory, spec, vif_infos)
+            for vif_info in vif_infos:
+                device = vmwarevif.get_network_device(hardware_devices,
+                                                      vif_info['mac_address'])
+                if not device:
+                    LOG.warning("Network device with MAC %s was not found in "
+                                "the VM while building the Relocate spec.",
+                                vif_info["mac_address"], instance=instance)
+                    continue
+                # Update the network device backing
+                config_spec = self._session.vim.client.factory.create(
+                    'ns0:VirtualDeviceConfigSpec')
+                vm_util.set_net_device_backing(self._session.vim.client.factory,
+                                               device, vif_info)
+                config_spec.operation = "edit"
+                config_spec.device = device
+                spec.deviceChange.append(config_spec)
 
-        vm_util.relocate_vm(self._session, vm_ref, spec)
+        vm_util.relocate_vm(self._session, vm_ref, spec=spec)
 
     def _detach_volumes(self, instance, block_device_info):
         block_devices = driver.block_device_info_get_mapping(block_device_info)

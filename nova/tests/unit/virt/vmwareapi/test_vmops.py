@@ -107,9 +107,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._instance.flavor = self._flavor
 
         self._vmops = vmops.VMwareVMOps(self._session, self._virtapi, None,
-                                        cluster=cluster.obj,
-                                        cluster_name=self._cluster_name,
-                                        vcenter_host=self._host)
+                                        cluster=cluster.obj)
         self._cluster = cluster
         self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id,
                                                         'owner': ''})
@@ -632,8 +630,8 @@ class VMwareVMOpsTestCase(test.TestCase):
               fake_remove_ephemerals_and_swap, fake_get_vmdk_info,
               fake_resize_vm, fake_resize_disk, fake_relocate_vm,
               fake_detach_volumes, fake_attach_volumes):
-            migration = migration or objects.Migration(
-                dest_host=self._vmops.get_host_ip_addr())
+            migration = migration or objects.Migration(dest_compute="nova",
+                                                       source_compute="nova")
             vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
                                     'fake-adapter',
                                     'fake-disk',
@@ -664,10 +662,11 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                    self._instance, 'fake-ref',
                                                    self._instance.flavor,
                                                    mock.ANY)
-            fake_resize_disk.assert_called_once_with(self._instance, 'fake-ref',
-                                                     vmdk,
-                                                     self._instance.flavor)
-            if self._vmops.get_host_ip_addr() != migration.dest_host:
+            if resize_instance:
+                fake_resize_disk.assert_called_once_with(self._instance,
+                                                         'fake-ref', vmdk,
+                                                         self._instance.flavor)
+            if migration.dest_compute != migration.source_compute:
                 fake_relocate_vm.\
                     assert_called_once_with('fake-ref', self._context,
                                             self._instance, None, None)
@@ -693,10 +692,10 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._test_finish_migration(power_on=True, resize_instance=True)
 
     def test_finish_migration_another_cluster(self):
-        dest_host = self._vmops.get_host_ip_addr() + "-2"
         self._test_finish_migration(power_on=True, resize_instance=False,
                                     migration=objects.Migration(
-                                        dest_host=dest_host))
+                                        dest_compute="dest",
+                                        source_compute="source"))
 
     @mock.patch.object(vmops.VMwareVMOps, '_create_swap')
     @mock.patch.object(vmops.VMwareVMOps, '_create_ephemeral')
@@ -1128,7 +1127,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         )
         fake_bdm_get_by_instance_uuid.return_value = bdms
 
-        migration = objects.Migration(dest_host=self._vmops.get_host_ip_addr())
+        migration = objects.Migration(source_compute="nova",
+                                      dest_compute="nova")
         self._vmops.finish_migration(context=self._context,
                                      migration=migration,
                                      instance=self._instance,
