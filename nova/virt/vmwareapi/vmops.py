@@ -1837,24 +1837,29 @@ class VMwareVMOps(object):
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
     def _resize_disk(self, instance, vm_ref, vmdk, flavor):
-        root_disk_in_kb = flavor.root_gb * units.Mi
-        ds_ref = vmdk.device.backing.datastore
-        dc_info = self.get_datacenter_ref_and_name(ds_ref)
-        folder = ds_obj.DatastorePath.parse(vmdk.path).dirname
-        datastore = ds_obj.DatastorePath.parse(vmdk.path).datastore
-        resized_disk = str(ds_obj.DatastorePath(datastore, folder,
-                           'resized.vmdk'))
-        ds_util.disk_copy(self._session, dc_info.ref, vmdk.path,
-                          str(resized_disk))
-        self._extend_virtual_disk(instance, root_disk_in_kb, resized_disk,
-                                  dc_info.ref)
-        self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
-        original_disk = str(ds_obj.DatastorePath(datastore, folder,
-                            'original.vmdk'))
-        ds_util.disk_move(self._session, dc_info.ref, vmdk.path, original_disk)
-        ds_util.disk_move(self._session, dc_info.ref, resized_disk, vmdk.path)
-        self._volumeops.attach_disk_to_vm(vm_ref, instance, vmdk.adapter_type,
-                                          vmdk.disk_type, vmdk.path)
+        if (flavor.root_gb > instance.old_flavor.root_gb and flavor.root_gb >
+                vmdk.capacity_in_bytes / units.Gi):
+            root_disk_in_kb = flavor.root_gb * units.Mi
+            ds_ref = vmdk.device.backing.datastore
+            dc_info = self.get_datacenter_ref_and_name(ds_ref)
+            folder = ds_obj.DatastorePath.parse(vmdk.path).dirname
+            datastore = ds_obj.DatastorePath.parse(vmdk.path).datastore
+            resized_disk = str(ds_obj.DatastorePath(datastore, folder,
+                               'resized.vmdk'))
+            ds_util.disk_copy(self._session, dc_info.ref, vmdk.path,
+                              str(resized_disk))
+            self._extend_virtual_disk(instance, root_disk_in_kb, resized_disk,
+                                      dc_info.ref)
+            self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
+            original_disk = str(ds_obj.DatastorePath(datastore, folder,
+                                'original.vmdk'))
+            ds_util.disk_move(self._session, dc_info.ref, vmdk.path,
+                              original_disk)
+            ds_util.disk_move(self._session, dc_info.ref, resized_disk,
+                              vmdk.path)
+            self._volumeops.attach_disk_to_vm(vm_ref, instance,
+                                              vmdk.adapter_type,
+                                              vmdk.disk_type, vmdk.path)
 
     def _remove_ephemerals_and_swap(self, vm_ref):
         devices = vm_util.get_ephemerals(self._session, vm_ref)

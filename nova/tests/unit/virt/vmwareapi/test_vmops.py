@@ -936,19 +936,20 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._vmops._volumeops = mock.Mock()
             mock_attach_disk = self._vmops._volumeops.attach_disk_to_vm
             mock_detach_disk = self._vmops._volumeops.detach_disk_from_vm
-
+            instance = self._instance.obj_clone()
+            instance.old_flavor = instance.flavor.obj_clone()
             flavor = fake_flavor.fake_flavor_obj(self._context,
                          root_gb=self._instance.flavor.root_gb + 1)
-            self._vmops._resize_disk(self._instance, 'fake-ref', vmdk, flavor)
+            self._vmops._resize_disk(instance, 'fake-ref', vmdk, flavor)
             fake_get_dc_ref_and_name.assert_called_once_with(datastore.ref)
             fake_disk_copy.assert_called_once_with(
                 self._session, dc_info.ref, '[fake] uuid/root.vmdk',
                 '[fake] uuid/resized.vmdk')
             mock_detach_disk.assert_called_once_with('fake-ref',
-                                                     self._instance,
+                                                     instance,
                                                      device)
             fake_extend.assert_called_once_with(
-                self._instance, flavor['root_gb'] * units.Mi,
+                instance, flavor['root_gb'] * units.Mi,
                 '[fake] uuid/resized.vmdk', dc_info.ref)
             calls = [
                     mock.call(self._session, dc_info.ref,
@@ -960,7 +961,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             fake_disk_move.assert_has_calls(calls)
 
             mock_attach_disk.assert_called_once_with(
-                    'fake-ref', self._instance, 'fake-adapter', 'fake-disk',
+                    'fake-ref', instance, 'fake-adapter', 'fake-disk',
                     '[fake] uuid/root.vmdk')
 
     @mock.patch.object(vm_util, 'detach_devices_from_vm')
