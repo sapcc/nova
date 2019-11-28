@@ -12,6 +12,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from contextlib import contextmanager
 import datetime
 
 import mock
@@ -1869,19 +1870,25 @@ class _TestInstanceListObject(object):
         mock_fault_get.assert_called_once_with(self.context,
             [x['uuid'] for x in fake_insts])
 
+    @mock.patch('nova.context.target_cell')
     @mock.patch('nova.objects.InstanceMappingList.get_by_instance_uuids')
     @mock.patch.object(db, 'instance_fault_get_by_instance_uuids')
     def test_fill_faults(self,
                          mock_fault_get,
-                         mock_get_inst_map_list):
+                         mock_get_inst_map_list,
+                         mock_ctxt_target_cell):
         inst1 = objects.Instance(uuid=uuids.db_fault_1)
         inst2 = objects.Instance(uuid=uuids.db_fault_2)
         insts = [inst1, inst2]
         for inst in insts:
             inst.obj_reset_changes()
 
+        fake_cm_1 = mock.Mock(
+            uuid=uuids.cell_mapping_1,
+            database_connection=objects.CellMapping.CELL0_UUID)
+
         mock_get_inst_map_list.return_value = [
-            mock.Mock(cell_mapping=None,
+            mock.Mock(cell_mapping=fake_cm_1,
                       instance_uuid=uuids.db_fault_1),
             mock.Mock(cell_mapping=None,
                       instance_uuid=uuids.db_fault_2)
@@ -1902,6 +1909,11 @@ class _TestInstanceListObject(object):
                       ]}
         mock_fault_get.return_value = db_faults
 
+        @contextmanager
+        def _mock_ctxt_target_cell(context, cell_mapping):
+            yield 'fake-ctxt-1' if cell_mapping == fake_cm_1 else 'fake-ctxt-2'
+        mock_ctxt_target_cell.side_effect = _mock_ctxt_target_cell
+
         inst_list = objects.InstanceList()
         inst_list._context = self.context
         inst_list.objects = insts
@@ -1913,9 +1925,12 @@ class _TestInstanceListObject(object):
         for inst in inst_list:
             self.assertEqual(set(), inst.obj_what_changed())
 
-        mock_fault_get.assert_called_once_with(mock.ANY,
-                                               [x.uuid for x in insts],
-                                               latest=True)
+        mock_fault_get.assert_has_calls(
+            [
+                mock.call('fake-ctxt-1', [uuids.db_fault_1], latest=True),
+                mock.call('fake-ctxt-2', [uuids.db_fault_2], latest=True)
+            ],
+            any_order=True)
 
     @mock.patch('nova.objects.instance.Instance.obj_make_compatible')
     def test_get_by_security_group(self, mock_compat):
