@@ -1652,8 +1652,8 @@ class VMwareAPIVMTestCase(test.TestCase,
                                            mock_update_placement,
                                            mock_get_sg,
                                            mock_delete_group):
-        """ Test deletion of a vm group when the deleted vm is the last in
-            the vm group
+        """Test deletion of a vm group when the deleted vm is the last in
+        the vm group
         """
         self._create_vm()
         fake_server_group = collections.namedtuple('GroupInfo', ['uuid',

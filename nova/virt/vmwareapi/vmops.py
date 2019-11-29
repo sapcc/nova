@@ -1574,18 +1574,27 @@ class VMwareVMOps(object):
                                            "UnregisterVM", vm_ref)
                 LOG.debug("Unregistered the VM", instance=instance)
 
-                with lockutils.lock(server_group_infos[0].uuid,
-                                lock_file_prefix='nova-vmware-server-group'):
+                with lockutils.lock('vmware-vm-group-policy'):
                     cluster_config = cluster_util.get_cluster_property(
                         self._session, "configurationEx", self._cluster)
-                    # Check if the unregistered vm is the last vm in its group
+                    # Check if the unregistered vm is the last vm in its
+                    # group
                     for group in cluster_config.group:
                         for group_info in server_group_infos:
                             if group.name == group_info.uuid:
                                 if not hasattr(group, 'vm'):
-                                    cluster_util.delete_vm_group(
-                                        self._session, self._cluster,
-                                        group)
+                                    try:
+                                        LOG.debug("Deleting VM group %s" %
+                                                  group_info.uuid)
+                                        cluster_util.delete_vm_group(
+                                            self._session, self._cluster,
+                                            group)
+                                        LOG.debug("VM group %s deleted"
+                                                  " successfully" % group.name)
+                                    except Exception as e:
+                                        LOG.warning("Deleting VM group %s "
+                                                "failed with the following"
+                                                " error: %s", group.name, e)
                                 break
 
             except Exception as excep:
