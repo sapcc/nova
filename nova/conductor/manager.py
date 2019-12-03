@@ -51,6 +51,7 @@ from nova.objects.aggregate import AggregateList
 from nova.objects import base as nova_object
 from nova.objects.compute_node import ComputeNodeList
 from nova.objects import fields
+from nova.objects.host_mapping import HostMappingList
 from nova import profiler
 from nova import rpc
 from nova.scheduler import client as scheduler_client
@@ -217,6 +218,9 @@ class ConductorManager(manager.Manager):
                 host_azs[host] = agg.name
         availability_zones = set(host_azs.values())
 
+        host_mappings = {hm.host: hm.cell_mapping
+                         for hm in HostMappingList.get_all(context)}
+
         # find all resource-providers that we added and also a list of vmware
         # resource-providers
         bigvm_providers = {}
@@ -224,9 +228,11 @@ class ConductorManager(manager.Manager):
         for rp in client.get('/resource_providers').json():
             if rp['name'].startswith(CONF.bigvm_deployment_rp_name_prefix):
                 host = vmware_hvs[rp['parent_provider_uuid']]
+                cell_mapping = host_mappings[host]
                 bigvm_providers[rp['uuid']] = {'rp': rp,
                                                'host': host,
-                                               'az': host_azs[host]}
+                                               'az': host_azs[host],
+                                               'cell_mapping': cell_mapping}
             elif rp['uuid'] not in vmware_hvs:  # ignore baremetal
                 continue
             else:
@@ -240,9 +246,11 @@ class ConductorManager(manager.Manager):
                     continue
                 hv_size = resp.json()['max_unit']
                 host = vmware_hvs[rp['uuid']]
+                cell_mapping = host_mappings[host]
                 vmware_providers[rp['uuid']] = {'hv_size': hv_size,
                                                 'host': host,
-                                                'az': host_azs[host]}
+                                                'az': host_azs[host],
+                                                'cell_mapping': cell_mapping}
 
         # retrieve all bigvm provider's inventories
         for rp_uuid, rp in bigvm_providers.items():
@@ -290,9 +298,11 @@ class ConductorManager(manager.Manager):
                 continue
 
             # remove the hostgroup from the host
-            if not special_spawn_rpc.remove_host_from_hostgroup(context,
+            cm = rp['cell_mapping']
+            with nova_context.target_cell(context, cm) as cctxt:
+                if not special_spawn_rpc.remove_host_from_hostgroup(cctxt,
                                                                 rp['host']):
-                continue
+                    continue
 
             # delete the resource-provider
             client._delete_provider(context, rp_uuid)
@@ -312,7 +322,9 @@ class ConductorManager(manager.Manager):
             # that we started freeing up a host. We have to check the process
             # state and add the resources once it's done.
             if not rp['inventory'].get(BIGVM_RESOURCE):
-                state = special_spawn_rpc.free_host(context, rp['host'])
+                cm = rp['cell_mapping']
+                with nova_context.target_cell(context, cm) as cctxt:
+                    state = special_spawn_rpc.free_host(cctxt, rp['host'])
                 if state == special_spawning.FREE_HOST_STATE_DONE:
                     self._add_resources_to_provider(context, client, rp_uuid,
                                                     rp)
@@ -382,9 +394,12 @@ class ConductorManager(manager.Manager):
 
                 for rp_uuid in provider_uuids:
                     host = vmware_providers[rp_uuid]['host']
-                    if self._free_host_for_provider(context, client, rp_uuid,
-                                                    special_spawn_rpc, host):
-                        break
+                    cm = host_mappings[host]
+                    with nova_context.target_cell(context, cm) as cctxt:
+                        if self._free_host_for_provider(cctxt, client, rp_uuid,
+                                                        special_spawn_rpc,
+                                                        host):
+                            break
 
     def _add_resources_to_provider(self, context, client, rp_uuid, rp):
         """Add our custom resources to the provider so they can be consumed.
