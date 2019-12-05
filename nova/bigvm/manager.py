@@ -25,6 +25,7 @@ from nova import context as nova_context
 from nova import exception
 from nova import manager
 from nova.objects.aggregate import AggregateList
+from nova.objects.cell_mapping import CellMappingList
 from nova.objects.compute_node import ComputeNodeList
 from nova.objects import fields
 from nova.objects.host_mapping import HostMappingList
@@ -164,8 +165,12 @@ class BigVmManager(manager.Manager):
         """
         client = self.placement_client
 
-        vmware_hvs = {cn.uuid: cn.host for cn in
-            ComputeNodeList.get_by_hypervisor_type(context, VMWARE_HV_TYPE)}
+        vmware_hvs = {}
+        for cm in CellMappingList.get_all(context):
+            with nova_context.target_cell(context, cm) as cctxt:
+                vmware_hvs.update({cn.uuid: cn.host for cn in
+                    ComputeNodeList.get_by_hypervisor_type(cctxt,
+                                                           VMWARE_HV_TYPE)})
 
         host_azs = {}
         for agg in AggregateList.get_all(context):
