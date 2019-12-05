@@ -63,14 +63,14 @@ from nova import safe_utils
 
 profiler = importutils.try_import('osprofiler.profiler')
 
-
+SYNCHRONIZED_NOVA_PREFIX = 'nova-'
 CONF = nova.conf.CONF
 
 LOG = logging.getLogger(__name__)
 
 _IS_NEUTRON = None
 
-synchronized = lockutils.synchronized_with_prefix('nova-')
+synchronized = lockutils.synchronized_with_prefix(SYNCHRONIZED_NOVA_PREFIX)
 
 SM_IMAGE_PROP_PREFIX = "image_"
 SM_INHERITABLE_KEYS = (

@@ -1574,7 +1574,9 @@ class VMwareVMOps(object):
                                            "UnregisterVM", vm_ref)
                 LOG.debug("Unregistered the VM", instance=instance)
 
-                with lockutils.lock('vmware-vm-group-policy'):
+
+                with lockutils.lock('vmware-vm-group-policy',
+                        lock_file_prefix=utils.SYNCHRONIZED_NOVA_PREFIX):
                     cluster_config = cluster_util.get_cluster_property(
                         self._session, "configurationEx", self._cluster)
                     # Check if the unregistered vm is the last vm in its
