@@ -32,6 +32,7 @@ from nova.objects.host_mapping import HostMappingList
 from nova.scheduler import client as scheduler_client
 from nova.scheduler.client.report import get_placement_request_id
 from nova.scheduler.client.report import NESTED_PROVIDER_API_VERSION
+from nova.scheduler.utils import ResourceRequest
 from nova.virt.vmwareapi import special_spawning
 
 LOG = logging.getLogger(__name__)
@@ -111,7 +112,8 @@ class BigVmManager(manager.Manager):
         # filter them by AZ, because our placement doesn't know about AZs.
         candidates = {}
         for hv_size in set(_flatten(missing_hv_sizes_per_az.values())):
-            resources = {MEMORY_MB: hv_size}
+            resources = ResourceRequest()
+            resources._add_resource(None, MEMORY_MB, hv_size)
             res = client.get_allocation_candidates(context, resources)
             if res is None:
                 continue
