@@ -652,9 +652,15 @@ class SchedulerReportClient(object):
         if self._provider_tree.exists(uuid):
             # If we had the requested provider locally, refresh it and its
             # descendants, but only if stale.
-            for u in self._provider_tree.get_provider_uuids(uuid):
-                self._refresh_associations(context, u, force=False)
-            return uuid
+            try:
+                for u in self._provider_tree.get_provider_uuids(uuid):
+                    self._refresh_associations(context, u, force=False)
+                return uuid
+            except exception.ResourceProviderAggregateRetrievalFailed:
+                # this is the first step in _refresh_associations. if it fails
+                # for one of the child-providers, it might have been deleted.
+                # pass to update the local cache with a new list from placement
+                pass
 
         # We don't have it locally; check placement or create it.
         created_rp = None
