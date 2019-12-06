@@ -24,6 +24,7 @@ from nova import exception
 from nova import profiler
 from nova import rpc
 from nova.virt.vmwareapi import cluster_util
+from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi.vm_util import propset_dict
 
 LOG = logging.getLogger(__name__)
@@ -159,10 +160,16 @@ class _SpecialVmSpawningServer(object):
         # get the group
         group = self._get_group(cluster_config)
 
+        failover_hosts = []
+        policy = cluster_config.dasConfig.admissionControlPolicy
+        if policy and hasattr(policy, 'failoverHosts'):
+            failover_hosts = set(h.value for h in policy.failoverHosts)
+
         if group is None or not getattr(group, 'host', None):
             # find a host to free
+
             # get all the vms in a cluster, because we need to find a host
-            # without big VMs. Take the one with least memory used.
+            # without big VMs.
             props = ['config.hardware.memoryMB', 'runtime.host',
                      'runtime.powerState',
                      'summary.quickStats.hostMemoryUsage']
@@ -182,15 +189,45 @@ class _SpecialVmSpawningServer(object):
                         append(props)
 
             # filter for hosts without big VMs
-            # FIXME ask david if we use big VMs here or the smaller special
-            # spawning vms
+            # TODO(jkulik) Filter for hosts having no VM with DRS
+            # partiallyAutomated
             vms_per_host = {h: vms for h, vms in vms_per_host.items()
                             if all(mem < CONF.bigvm_mb
                                    for mem, state, used_mem in vms)}
 
             if not vms_per_host:
                 LOG.warning('No suitable host found for freeing a host for '
-                            'spawning.')
+                            'spawning (bigvm filter).')
+                return FREE_HOST_STATE_ERROR
+
+            # filter hosts which are failover hosts
+            vms_per_host = {h: vms for h, vms in vms_per_host.items()
+                            if h.value not in failover_hosts}
+
+            if not vms_per_host:
+                LOG.warning('No suitable host found for freeing a host for '
+                            'spawning (failover host filter).')
+                return FREE_HOST_STATE_ERROR
+
+            # filter hosts which are in a wrong state
+            result = self._session._call_method(vim_util,
+                         "get_properties_for_a_collection_of_objects",
+                         "HostSystem", vms_per_host.keys(),
+                         ['summary.runtime'])
+            host_states = {}
+            for obj in result.objects:
+                host_props = propset_dict(obj.propSet)
+                runtime_summary = host_props['summary.runtime']
+                host_states[obj.obj.value] = (
+                    runtime_summary.inMaintenanceMode is False and
+                    runtime_summary.connectionState == "connected")
+
+            vms_per_host = {h: vms for h, vms in vms_per_host.items()
+                            if host_states[h.value]}
+
+            if not vms_per_host:
+                LOG.warning('No suitable host found for freeing a host for '
+                            'spawning (host state filter).')
                 return FREE_HOST_STATE_ERROR
 
             mem_per_host = {h: sum(used_mem for mem, state, used_mem in vms)
@@ -228,6 +265,20 @@ class _SpecialVmSpawningServer(object):
             if len(group.host) > 1:
                 LOG.warning('Found more than 1 host in spawning hostgroup.')
             host_ref = group.host[0]
+
+            # check if the host is still suitable
+            if host_ref.value in failover_hosts:
+                LOG.warning('Host destined for spawning became a failover '
+                            'host.')
+                return FREE_HOST_STATE_ERROR
+
+            runtime_summary = self._session._call_method(
+                vutil, "get_object_property", host_ref, 'summary.runtime')
+            if (runtime_summary.inMaintenanceMode is True or
+                    runtime_summary.connectionState != "connected"):
+                LOG.warning('Host destined for spawning was set to '
+                            'maintenance or became disconnected.')
+                return FREE_HOST_STATE_ERROR
 
         # check if there are running VMs on that host
         running_vms = [u for u, h, state in self._get_vms_on_host(host_ref)
