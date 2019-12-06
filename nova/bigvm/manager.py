@@ -315,6 +315,7 @@ class BigVmManager(manager.Manager):
                                 {'host': rp['host']})
                     # do some cleanup, so another compute-node is used
                     found_hv_sizes_per_az[rp['az']].remove(hv_size)
+                    self._clean_up_consumed_provider(context, rp_uuid, rp)
 
         hv_sizes_per_az = {
             az: set(rp['hv_size'] for rp in vmware_providers.values()
