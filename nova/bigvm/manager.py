@@ -219,9 +219,13 @@ class BigVmManager(manager.Manager):
                                                 'az': host_azs[host],
                                                 'cell_mapping': cell_mapping}
 
+        # make sure the placement cache is filled
+        client.get_provider_tree_and_ensure_root(context, rp['uuid'],
+            rp['name'], rp['parent_provider_uuid'])
+
         # retrieve all bigvm provider's inventories
         for rp_uuid, rp in bigvm_providers.items():
-            inventory = client._refresh_and_get_inventory(context, rp_uuid)
+            inventory = client._get_inventory(context, rp_uuid)
             rp['inventory'] = inventory['inventories']
 
         return (availability_zones, bigvm_providers, vmware_providers)
@@ -272,14 +276,14 @@ class BigVmManager(manager.Manager):
         with nova_context.target_cell(context, cm) as cctxt:
             if not self.special_spawn_rpc.remove_host_from_hostgroup(cctxt,
                                                             rp['host']):
-                LOG.warning('Skippping removal of resource-provider '
+                LOG.warning('Skipping removal of resource-provider '
                             '%(rp_uuid)s as we could not remove the hostgroup '
                             'from the vCenter.',
                             {'rp_uuid': rp_uuid})
                 return
 
         # delete the resource-provider
-        client._delete_provider(context, rp_uuid)
+        client._delete_provider(rp_uuid)
 
     def _get_missing_hv_sizes(self, context, availability_zones,
                               bigvm_providers, vmware_providers):
@@ -333,16 +337,26 @@ class BigVmManager(manager.Manager):
             # we use 2 here so we can reserve 1 later. in queens we can't
             # reserve $total
             'max_unit': 2, 'min_unit': 2, 'total': 2}}
-        res = client.set_inventory_for_provider(context, rp_uuid,
-            rp['rp']['name'], inv_data,
-            rp['rp']['parent_provider_uuid'])
-        if res.status_code == 200:
-            LOG.info('Freed up a host for spawning on %(host)s.',
+
+        # we can't use `set_inventory_for_provider` here, because that doesn't
+        # tell us if we succeeded ... so we copy everything over.
+        client._ensure_resource_provider(
+            context, rp_uuid, rp['rp']['name'],
+            parent_provider_uuid=rp['rp']['parent_provider_uuid'])
+
+        # Auto-create custom resource classes coming from a virt driver
+        for rc_name in inv_data:
+            if rc_name not in fields.ResourceClass.STANDARD:
+                client._ensure_resource_class(context, rc_name)
+
+        if client._update_inventory(context, rp_uuid, inv_data):
+            LOG.info('Added inventory to the resource-provider for spawning '
+                     'on %(host)s.',
                      {'host': rp['host']})
         else:
             LOG.error('Adding inventory to the resource-provider for '
-                      'spawning on %(host)s failed: %(error)s',
-                      {'host': rp['host'], 'error': res.content})
+                      'spawning on %(host)s failed.',
+                      {'host': rp['host']})
 
     def _free_host_for_provider(self, context, rp_uuid, host):
         """Takes care of creating a child resource provider in placement to
@@ -371,15 +385,16 @@ class BigVmManager(manager.Manager):
                                global_request_id=context.global_id)
             placement_req_id = get_placement_request_id(resp)
             if resp.status_code == 201:
+                new_rp_uuid = resp.headers['Location'].split('/')[-1]
                 msg = ("[%(placement_req_id)s] Created resource provider "
                        "record via placement API for host %(host)s for "
-                       "special spawning")
+                       "special spawning: %(rp_uuid)s")
                 args = {
                     'host': host,
                     'placement_req_id': placement_req_id,
+                    'rp_uuid': new_rp_uuid
                 }
                 LOG.info(msg, args)
-                new_rp_uuid = resp.headers['Location'].split('/')[-1]
             else:
                 msg = ("[%(placement_req_id)s] Failed to create resource "
                        "provider record in placement API for %(host)s for "
@@ -411,6 +426,6 @@ class BigVmManager(manager.Manager):
         finally:
             # clean up placement, if something went wrong
             if needs_cleanup and new_rp_uuid is not None:
-                client._delete_provider(context, new_rp_uuid)
+                client._delete_provider(new_rp_uuid)
 
         return not needs_cleanup
