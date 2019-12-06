@@ -190,7 +190,9 @@ class BigVmManager(manager.Manager):
         # resource-providers
         bigvm_providers = {}
         vmware_providers = {}
-        for rp in client.get('/resource_providers').json():
+        resp = client.get('/resource_providers',
+                         version=NESTED_PROVIDER_API_VERSION)
+        for rp in resp.json()['resource_providers']:
             if rp['name'].startswith(CONF.bigvm_deployment_rp_name_prefix):
                 host = vmware_hvs[rp['parent_provider_uuid']]
                 cell_mapping = host_mappings[host]
