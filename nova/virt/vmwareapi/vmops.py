@@ -63,6 +63,7 @@ from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import imagecache
 from nova.virt.vmwareapi import images
+from nova.virt.vmwareapi import special_spawning
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
@@ -1167,6 +1168,28 @@ class VMwareVMOps(object):
 
         vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 
+        # clean up after special spawning behavior
+        if utils.vm_needs_special_spawning(int(instance.memory_mb),
+                                           instance.flavor):
+            # we're using a child resource provider, so we don't have to change
+            # the drivers' report-code to keep the CUSTOM_BIGVM resource, but
+            # instead can independently add it or remove it on a cluster
+            placement_client = self._virtapi._compute.reportclient
+            cn = self._virtapi._compute._get_compute_info(context, CONF.host)
+            parent_rp_uuid = cn.uuid
+            parent_tree = placement_client.get_provider_tree_and_ensure_root(
+                                                    context, parent_rp_uuid)
+            rp_name = '{}-{}'.format(CONF.bigvm_deployment_rp_name_prefix,
+                                     cn.host)
+            rp = parent_tree.data(rp_name)
+            # reserve the bigvm resource. this prohibits any further
+            # deployment on that host.
+            inv_data = rp.inventory
+            rp.inventory[special_spawning.BIGVM_RESOURCE]['reserved'] = 1
+            placement_client.set_inventory_for_provider(context,
+                                        rp.uuid, rp_name, inv_data,
+                                        parent_provider_uuid=parent_rp_uuid)
+
     def _is_bdm_valid(self, block_device_mapping):
         """Checks if the block device mapping is valid."""
         valid_bus = (constants.DEFAULT_ADAPTER_TYPE,
@@ -1501,8 +1524,8 @@ class VMwareVMOps(object):
         try:
             vm_ref = vm_util.get_vm_ref(self._session, instance)
 
-            server_group_info = vm_util._get_server_group(context, instance)
-            if server_group_info:
+            server_group_infos = vm_util._get_server_groups(context, instance)
+            if server_group_infos:
                 cluster = cluster_util.fetch_cluster_properties(self._session,
                                                                        vm_ref)
                 config_info_ex = cluster.propSet[0].val
@@ -2247,29 +2270,41 @@ class VMwareVMOps(object):
             datastores_info.append((ds, dc_info))
         self._imagecache.update(context, instances, datastores_info)
 
-    def _get_valid_vms_from_retrieve_result(self, retrieve_result):
-        """Returns list of valid vms from RetrieveResult object."""
-        lst_vm_names = []
+    def _get_valid_vms_from_retrieve_result(self, retrieve_result,
+                                            return_properties=False):
+        """Returns list of valid vms from RetrieveResult object.
+
+        If `return_properties` is True, it will also return the properties of
+        these VMs, thus returning a tuple (vm_uuid, properties).
+        """
+        lst_vms = []
 
         while retrieve_result:
             for vm in retrieve_result.objects:
                 vm_uuid = None
                 conn_state = None
+                props = {}
                 for prop in vm.propSet:
                     if prop.name == "runtime.connectionState":
                         conn_state = prop.val
                     elif prop.name == 'config.extraConfig["nvp.vm-uuid"]':
                         vm_uuid = prop.val.value
+                    props[prop.name] = prop.val
                 # Ignore VM's that do not have nvp.vm-uuid defined
                 if not vm_uuid:
                     continue
                 # Ignoring the orphaned or inaccessible VMs
-                if conn_state not in ["orphaned", "inaccessible"]:
-                    lst_vm_names.append(vm_uuid)
+                if conn_state in ["orphaned", "inaccessible"]:
+                    continue
+
+                if return_properties:
+                    lst_vms.append((vm_uuid, props))
+                else:
+                    lst_vms.append(vm_uuid)
             retrieve_result = self._session._call_method(vutil,
                                                          'continue_retrieval',
                                                          retrieve_result)
-        return lst_vm_names
+        return lst_vms
 
     def instance_exists(self, instance):
         try:
@@ -2502,10 +2537,12 @@ class VMwareVMOps(object):
 
         return lst_vm_names
 
-    def _list_instances_in_cluster(self):
+    def _list_instances_in_cluster(self, additional_properties=None):
         """Lists the VM instances that are registered with vCenter cluster."""
         properties = ['runtime.connectionState',
                       'config.extraConfig["nvp.vm-uuid"]']
+        if additional_properties is not None:
+            properties.extend(additional_properties)
         LOG.debug("Getting list of instances from cluster %s",
                   self._cluster)
         vms = []
@@ -2513,7 +2550,9 @@ class VMwareVMOps(object):
             vms = self._session._call_method(
                 vim_util, 'get_inner_objects', self._root_resource_pool, 'vm',
                 'VirtualMachine', properties)
-        lst_vm_names = self._get_valid_vms_from_retrieve_result(vms)
+        return_properties = additional_properties is not None
+        lst_vm_names = self._get_valid_vms_from_retrieve_result(vms,
+                                        return_properties=return_properties)
 
         return lst_vm_names
 

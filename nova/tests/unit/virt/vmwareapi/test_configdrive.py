@@ -51,7 +51,8 @@ class ConfigDriveTestCase(test.TestCase):
         vmwareapi_fake.reset()
         stubs.set_stubs(self)
         nova.tests.unit.image.fake.stub_out_image_service(self)
-        self.conn = driver.VMwareVCDriver(fake.FakeVirtAPI)
+        virtapi = fake.FakeComputeVirtAPI(mock.MagicMock())
+        self.conn = driver.VMwareVCDriver(virtapi)
         self.network_info = utils.get_test_network_info()
         self.node_name = self.conn._nodename
         image_ref = nova.tests.unit.image.fake.get_valid_image_id()

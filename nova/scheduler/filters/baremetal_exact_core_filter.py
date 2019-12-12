@@ -15,6 +15,7 @@
 #    under the License.
 
 from nova.scheduler.filters import exact_core_filter
+from nova.utils import is_baremetal_flavor
 from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -24,8 +25,7 @@ class BaremetalExactCoreFilter(exact_core_filter.ExactCoreFilter):
     """Exact Core Filter."""
 
     def host_passes(self, host_state, spec_obj):
-        extra_specs = spec_obj.flavor.extra_specs
-        if 'capabilities:cpu_arch' not in extra_specs:
+        if not is_baremetal_flavor(spec_obj.flavor):
             return True
 
         return super(BaremetalExactCoreFilter, self).host_passes(host_state,
