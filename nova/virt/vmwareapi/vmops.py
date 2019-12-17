@@ -1181,12 +1181,18 @@ class VMwareVMOps(object):
                                                     context, parent_rp_uuid)
             rp_name = '{}-{}'.format(CONF.bigvm_deployment_rp_name_prefix,
                                      cn.host)
-            rp = parent_tree.data(rp_name)
-            # reserve the bigvm resource. this prohibits any further
-            # deployment on that host.
-            inv_data = rp.inventory
-            rp.inventory[special_spawning.BIGVM_RESOURCE]['reserved'] = 1
-            placement_client.set_inventory_for_provider(context,
+            try:
+                rp = parent_tree.data(rp_name)
+            except ValueError:
+                LOG.warning('Could not find resource-provider %(rp)s for '
+                            'reserving resources after spawning a big VM.',
+                            {'rp': rp_name})
+            else:
+                # reserve the bigvm resource. this prohibits any further
+                # deployment needing a free host on that compute-node.
+                inv_data = rp.inventory
+                inv_data[special_spawning.BIGVM_RESOURCE]['reserved'] = 1
+                placement_client.set_inventory_for_provider(context,
                                         rp.uuid, rp_name, inv_data,
                                         parent_provider_uuid=parent_rp_uuid)
 
