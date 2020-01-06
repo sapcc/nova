@@ -18,6 +18,7 @@ BigVM service
 import itertools
 
 from oslo_log import log as logging
+from oslo_messaging import exceptions as oslo_exceptions
 from oslo_service import periodic_task
 
 import nova.conf
@@ -149,12 +150,24 @@ class BigVmManager(manager.Manager):
                 provider_uuids = sorted((p for p in providers),
                                         key=_free_memory)
 
-                for rp_uuid in provider_uuids:
-                    host = vmware_providers[rp_uuid]['host']
-                    cm = vmware_providers[rp_uuid]['cell_mapping']
-                    with nova_context.target_cell(context, cm) as cctxt:
-                        if self._free_host_for_provider(cctxt, rp_uuid, host):
-                            break
+                try:
+                    for rp_uuid in provider_uuids:
+                        host = vmware_providers[rp_uuid]['host']
+                        cm = vmware_providers[rp_uuid]['cell_mapping']
+                        with nova_context.target_cell(context, cm) as cctxt:
+                            if self._free_host_for_provider(cctxt, rp_uuid,
+                                                            host):
+                                break
+                except oslo_exceptions.MessagingTimeout as e:
+                    # we don't know if the timeout happened after we started
+                    # freeing a host already or because we couldn't reach the
+                    # nova-compute node. Therefore, we move on to the next HV
+                    # size for that AZ and hope the timeout resolves for the
+                    # next run.
+                    LOG.exception(e)
+                    LOG.warning('Skipping HV size %(hv_size)s in AZ %(az)s '
+                                'because of error',
+                                {'hv_size': hv_size, 'az': az})
 
     def _get_providers(self, context):
         """Return our special and the basic vmware resource-providers
