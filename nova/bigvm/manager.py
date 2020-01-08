@@ -433,6 +433,18 @@ class BigVmManager(manager.Manager):
             client.get_provider_tree_and_ensure_root(context, new_rp_uuid,
                 new_rp_name, rp_uuid)
 
+            # ensure the parent resource-provider has its uuid as aggregate set
+            client.set_aggregates_for_provider(context, rp_uuid, [rp_uuid])
+
+            # add the newly-created resource-provider to the parent uuid's
+            # aggregate
+            client.set_aggregates_for_provider(context, new_rp_uuid, [rp_uuid])
+
+            # make the newly-created resource-provider share its resources with
+            # its aggregates
+            client.set_traits_for_provider(context, new_rp_uuid,
+                                           ['MISC_SHARES_VIA_AGGREGATE'])
+
             # find a host and let DRS free it up
             state = self.special_spawn_rpc.free_host(context, host)
 
