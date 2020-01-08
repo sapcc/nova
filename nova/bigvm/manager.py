@@ -239,9 +239,9 @@ class BigVmManager(manager.Manager):
                                                 'az': host_azs[host],
                                                 'cell_mapping': cell_mapping}
 
-        # make sure the placement cache is filled
-        client.get_provider_tree_and_ensure_root(context, rp['uuid'],
-            rp['name'], rp['parent_provider_uuid'])
+            # make sure the placement cache is filled
+            client.get_provider_tree_and_ensure_root(context, rp['uuid'],
+                rp['name'], rp['parent_provider_uuid'])
 
         # retrieve all bigvm provider's inventories
         for rp_uuid, rp in bigvm_providers.items():
@@ -429,6 +429,9 @@ class BigVmManager(manager.Manager):
                 LOG.error(msg, args)
                 raise exception.ResourceProviderCreationFailed(
                                                               name=new_rp_name)
+            # make sure the placement cache is filled
+            client.get_provider_tree_and_ensure_root(context, new_rp_uuid,
+                new_rp_name, rp_uuid)
 
             # find a host and let DRS free it up
             state = self.special_spawn_rpc.free_host(context, host)
