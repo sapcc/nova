@@ -250,6 +250,63 @@ class BigVmManager(manager.Manager):
 
         return (availability_zones, bigvm_providers, vmware_providers)
 
+    def _get_allocations_for_consumer(self, context, consumer_uuid):
+        """Same as SchedulerReportClient.get_allocations_for_consumer() but
+        includes user_id and project_id in the returned values, by doing the
+        request with a newer version.
+        """
+        client = self.placement_client
+        url = '/allocations/%s' % consumer_uuid
+        resp = client.get(url, global_request_id=context.global_id,
+                          version=1.17)
+        if not resp:
+            return {}
+        else:
+            return resp.json()
+
+    def _remove_provider_from_consumer_allocations(self, context,
+                                                   consumer_uuid, rp_uuid):
+        """This is basically the same as
+        SchedulerClient.remove_provider_from_instance_allocation, but without
+        the resize-on-same-host detection - it simply removes the provider from
+        the allocations of the consumer.
+        """
+        client = self.placement_client
+
+        # get the allocation details, because we need user_id and
+        # project_id to call the delete function
+        current_allocs = \
+            self._get_allocations_for_consumer(context, consumer_uuid)
+
+        LOG.debug('Found the following allocations for consumer '
+                  '%(consumer_uuid)s: %(allocations)s',
+                  {'consumer_uuid': consumer_uuid,
+                   'allocations': current_allocs})
+
+        new_allocs = [
+            {
+                'resource_provider': {
+                    'uuid': alloc_rp_uuid,
+                },
+                'resources': alloc['resources'],
+            }
+            for alloc_rp_uuid, alloc in current_allocs['allocations'].items()
+            if alloc_rp_uuid != rp_uuid
+        ]
+        payload = {'allocations': new_allocs,
+                   'project_id': current_allocs['project_id'],
+                   'user_id': current_allocs['user_id']}
+        LOG.debug("Sending updated allocation %s for instance %s after "
+                  "removing resources for %s.",
+                  new_allocs, consumer_uuid, rp_uuid)
+        url = '/allocations/%s' % consumer_uuid
+        r = client.put(url, payload, version='1.10',
+                     global_request_id=context.global_id)
+        if r.status_code != 204:
+            LOG.warning("Failed to save allocation for %s. Got HTTP %s: %s",
+                        consumer_uuid, r.status_code, r.text)
+        return r.status_code == 204
+
     def _clean_up_consumed_provider(self, context, rp_uuid, rp):
         """Clean up after a resource-provider was consumed
 
@@ -266,14 +323,13 @@ class BigVmManager(manager.Manager):
         failures = 0
         for consumer_uuid, resources in allocations.items():
             # delete the allocations
-            consumer_allocations = \
-                client.get_allocations_for_consumer(context,
-                                                    consumer_uuid)
-            user_id = consumer_allocations['user_id']
-            project_id = consumer_allocations['project_id']
-            if client.remove_provider_from_instance_allocation(context,
-                    consumer_uuid, rp_uuid, user_id, project_id,
-                    resources['resources']):
+            # we can't use
+            # SchedulerClient.remove_provider_from_instance_allocation here, as
+            # this would detect a resize and try to remove the resources, but
+            # keep an allocation. We need the specific allocation for our
+            # resource-provider removed.
+            if self._remove_provider_from_consumer_allocations(context,
+                                                    consumer_uuid, rp_uuid):
                 LOG.info('Removed bigvm allocations for %(consumer_uuid)s '
                          'from RP', {'consumer_uuid': consumer_uuid})
             else:
