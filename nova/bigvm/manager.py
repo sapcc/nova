@@ -225,6 +225,7 @@ class BigVmManager(manager.Manager):
                               {'rp': rp['uuid']})
                     continue
                 hv_size = resp.json()['max_unit']
+                host = vmware_hvs[rp['uuid']]
                 # ignore hypervisors we would never use anyways
                 if hv_size < CONF.bigvm_mb:
                     LOG.debug('Ignoring %(host)s (%(hv_size)s < %(bigvm_mb)s)',
@@ -232,7 +233,6 @@ class BigVmManager(manager.Manager):
                                'bigvm_mb': CONF.bigvm_mb})
                     continue
 
-                host = vmware_hvs[rp['uuid']]
                 cell_mapping = host_mappings[host]
                 vmware_providers[rp['uuid']] = {'hv_size': hv_size,
                                                 'host': host,
