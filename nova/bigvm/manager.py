@@ -148,7 +148,7 @@ class BigVmManager(manager.Manager):
                     return memory['capacity'] - memory['used']
 
                 provider_uuids = sorted((p for p in providers),
-                                        key=_free_memory)
+                                        key=_free_memory, reverse=True)
 
                 try:
                     for rp_uuid in provider_uuids:
