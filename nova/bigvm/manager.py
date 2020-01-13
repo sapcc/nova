@@ -78,6 +78,12 @@ class BigVmManager(manager.Manager):
            child rp. Reserving a resource happens after consumption, so we know
            the host is not longer free and have to clean up the child rp and
            the vmware part.
+
+        We only want to fill up clusters to a certain point, configurable via
+        bigvm_cluster_max_usage_percent. resource-providers having more RAM
+        usage than this, will not be used for a hv_size. Additionally, we check
+        in every iteration, if we have to give up a freed-up host, because the
+        cluster reached the limit.
         """
         client = self.placement_client
 
@@ -91,11 +97,27 @@ class BigVmManager(manager.Manager):
                               if rp['inventory'].get(BIGVM_RESOURCE, {})
                                                 .get('reserved')}
 
-        for rp_uuid, rp in reserved_providers.items():
+        # check for resource-providers having more than
+        # bigvm_cluster_max_usage_percent usage
+        overused_providers = {}
+        for rp_uuid, rp in bigvm_providers.items():
+            parent_rp = vmware_providers[rp['rp']['parent_provider_uuid']]
+            used_percent = parent_rp['memory_mb_used_percent']
+            if used_percent > CONF.bigvm_cluster_max_usage_percent:
+                overused_providers[rp_uuid] = rp
+                LOG.info('Resource-provider %(parent_rp_uuid)s with free host '
+                         'is overused. Marking %(rp_uuid)s for deletion.',
+                         {'parent_provider_uuid':
+                            rp['rp']['parent_provider_uuid'],
+                          'rp_uuid': rp_uuid})
+
+        for rp_uuid, rp in itertools.chain(reserved_providers.items(),
+                                           overused_providers.items()):
             self._clean_up_consumed_provider(context, rp_uuid, rp)
 
-        # clean up our list of resource-providers from consumed hosts
-        for rp_uuid in reserved_providers:
+        # clean up our list of resource-providers from consumed or overused
+        # hosts
+        for rp_uuid in itertools.chain(reserved_providers, overused_providers):
             del bigvm_providers[rp_uuid]
 
         missing_hv_sizes_per_az = self._get_missing_hv_sizes(context,
@@ -131,7 +153,23 @@ class BigVmManager(manager.Manager):
                             {'hv_size': hv_size})
                 continue
 
-            candidates[hv_size] = (alloc_reqs, provider_summaries)
+            # filter out providers that are too full already
+            filtered_provider_summaries = {}
+            for p, d in provider_summaries.items():
+                used = vmware_providers.get(p, {})\
+                        .get('memory_mb_used_percent', 100)
+                if used > CONF.bigvm_cluster_max_usage_percent:
+                    continue
+                filtered_provider_summaries[p] = d
+
+            if not filtered_provider_summaries:
+                LOG.warning('Could not find a resource-provider to free up a '
+                            'host for hypervisor size %(hv_size)d, because '
+                            'all clusters are used more than %(max_used)d.',
+                            {'hv_size': hv_size,
+                             'max_used': CONF.bigvm_cluster_max_usage_percent})
+
+            candidates[hv_size] = (alloc_reqs, filtered_provider_summaries)
 
         for az in availability_zones:
             for hv_size in missing_hv_sizes_per_az[az]:
@@ -174,7 +212,7 @@ class BigVmManager(manager.Manager):
 
         This returns a list of availability zones and two dicts, where the
         resource-provider uuid is the key.  The value contains a dict with the
-        important information for each resourc-provider, like host, az and
+        important information for each resource-provider, like host, az and
         cell_mapping + either the hypervisor size (vmware provider) or the
         resource-provider dict (special provider).
         """
@@ -216,7 +254,7 @@ class BigVmManager(manager.Manager):
             elif rp['uuid'] not in vmware_hvs:  # ignore baremetal
                 continue
             else:
-                # retrieve the HV size
+                # retrieve the MEMORY_MB resource
                 url = '/resource_providers/{}/inventories/{}'.format(
                         rp['uuid'], MEMORY_MB)
                 resp = client.get(url)
@@ -224,7 +262,23 @@ class BigVmManager(manager.Manager):
                     LOG.error('Could not retrieve inventory for RP %(rp)s.',
                               {'rp': rp['uuid']})
                     continue
-                hv_size = resp.json()['max_unit']
+                memory_mb_inventory = resp.json()
+
+                # retrieve the usage
+                url = '/resource_providers/{}/usages'
+                resp = client.get(url.format(rp['uuid']))
+                if resp.status_code != 200:
+                    LOG.error('Could not retrieve usages for RP %(rp)s.',
+                              {'rp': rp['uuid']})
+                    continue
+                usages = resp.json()['usages']
+
+                hv_size = memory_mb_inventory['max_unit']
+                memory_mb_total = (memory_mb_inventory['total']
+                                   - memory_mb_inventory['reserved'])
+                memory_mb_used_percent = (usages[MEMORY_MB]
+                                          / float(memory_mb_total) * 100)
+
                 host = vmware_hvs[rp['uuid']]
                 # ignore hypervisors we would never use anyways
                 if hv_size < CONF.bigvm_mb:
@@ -237,7 +291,9 @@ class BigVmManager(manager.Manager):
                 vmware_providers[rp['uuid']] = {'hv_size': hv_size,
                                                 'host': host,
                                                 'az': host_azs[host],
-                                                'cell_mapping': cell_mapping}
+                                                'cell_mapping': cell_mapping,
+                                                'memory_mb_used_percent':
+                                                    memory_mb_used_percent}
 
             # make sure the placement cache is filled
             client.get_provider_tree_and_ensure_root(context, rp['uuid'],
@@ -360,6 +416,8 @@ class BigVmManager(manager.Manager):
 
         # delete the resource-provider
         client._delete_provider(rp_uuid)
+        LOG.info('Removed resource-provider %(rp_uuid)s.',
+                 {'rp_uuid': rp_uuid})
 
     def _get_missing_hv_sizes(self, context, availability_zones,
                               bigvm_providers, vmware_providers):

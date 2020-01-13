@@ -131,6 +131,14 @@ spawning VMs with special needs like big VMs.
 
 This is disabled by default, because it only makes sense for some setups.
 """),
+    cfg.IntOpt(
+        'bigvm_cluster_max_usage_percent',
+        default=80,
+        help="""
+Clusters/resource-provider with this much usage are not used for freeing up a
+host for spawning (a big VM). Clusters found to reach that amount, that already
+have a host freed, get their free host removed.
+"""),
 ]
 
 
