@@ -107,8 +107,7 @@ class BigVmManager(manager.Manager):
                 overused_providers[rp_uuid] = rp
                 LOG.info('Resource-provider %(parent_rp_uuid)s with free host '
                          'is overused. Marking %(rp_uuid)s for deletion.',
-                         {'parent_provider_uuid':
-                            rp['rp']['parent_provider_uuid'],
+                         {'parent_rp_uuid': rp['rp']['parent_provider_uuid'],
                           'rp_uuid': rp_uuid})
 
         for rp_uuid, rp in itertools.chain(reserved_providers.items(),
