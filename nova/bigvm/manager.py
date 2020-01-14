@@ -123,7 +123,7 @@ class BigVmManager(manager.Manager):
             availability_zones, bigvm_providers, vmware_providers)
 
         if not any(missing_hv_sizes_per_az.values()):
-            LOG.info('Free host for spawning available for every '
+            LOG.info('Free host for spawning defined for every '
                      'availability-zone and hypervisor-size.')
             return
 
@@ -449,6 +449,9 @@ class BigVmManager(manager.Manager):
                     # do some cleanup, so another compute-node is used
                     found_hv_sizes_per_az[rp['az']].remove(hv_size)
                     self._clean_up_consumed_provider(context, rp_uuid, rp)
+                else:
+                    LOG.info('Waiting for host on %(host)s to free up.',
+                             {'host': rp['host']})
 
         hv_sizes_per_az = {
             az: set(rp['hv_size'] for rp in vmware_providers.values()
