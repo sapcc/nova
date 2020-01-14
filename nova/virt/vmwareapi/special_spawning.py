@@ -180,12 +180,21 @@ class _SpecialVmSpawningServer(object):
                           'empty cluster is unlikely.')
                 return FREE_HOST_STATE_ERROR
 
+            host_objs = {}
             vms_per_host = {}
             for vm_uuid, vm_props in cluster_vms:
                 props = (vm_props.get('config.hardware.memoryMB', 0),
                          vm_props.get('runtime.powerState', 'poweredOff'),
                          vm_props.get('summary.quickStats.hostMemoryUsage', 0))
-                vms_per_host.setdefault(vm_props.get('runtime.host'), []). \
+                # every host_obj is differnt, even though the value, which
+                # really matters, is the same
+                host_obj = vm_props.get('runtime.host')
+                if not host_obj:
+                    continue
+
+                host = host_obj.value
+                host_objs.setdefault(host, host_obj)
+                vms_per_host.setdefault(host, []). \
                         append(props)
 
             # filter for hosts without big VMs
@@ -202,7 +211,7 @@ class _SpecialVmSpawningServer(object):
 
             # filter hosts which are failover hosts
             vms_per_host = {h: vms for h, vms in vms_per_host.items()
-                            if h.value not in failover_hosts}
+                            if h not in failover_hosts}
 
             if not vms_per_host:
                 LOG.warning('No suitable host found for freeing a host for '
@@ -212,7 +221,8 @@ class _SpecialVmSpawningServer(object):
             # filter hosts which are in a wrong state
             result = self._session._call_method(vim_util,
                          "get_properties_for_a_collection_of_objects",
-                         "HostSystem", vms_per_host.keys(),
+                         "HostSystem",
+                         [host_objs[h] for h in vms_per_host],
                          ['summary.runtime'])
             host_states = {}
             for obj in result.objects:
@@ -223,7 +233,7 @@ class _SpecialVmSpawningServer(object):
                     runtime_summary.connectionState == "connected")
 
             vms_per_host = {h: vms for h, vms in vms_per_host.items()
-                            if host_states[h.value]}
+                            if host_states[h]}
 
             if not vms_per_host:
                 LOG.warning('No suitable host found for freeing a host for '
@@ -234,7 +244,8 @@ class _SpecialVmSpawningServer(object):
                             for h, vms in vms_per_host.items()}
 
             # take the one with least memory used
-            host_ref, _ = sorted(mem_per_host.items(), key=lambda (x, y): y)[0]
+            host, _ = sorted(mem_per_host.items(), key=lambda (x, y): y)[0]
+            host_ref = host_objs[host]
 
             client_factory = self._session.vim.client.factory
             config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
