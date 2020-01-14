@@ -1762,7 +1762,6 @@ class VMwareVMOps(object):
             return
 
         vm_util.power_off_instance(self._session, instance)
-        #self.update_cached_instances()
 
     def _clean_shutdown(self, instance, timeout, retry_interval):
         """Perform a soft shutdown on the VM.
@@ -1821,7 +1820,6 @@ class VMwareVMOps(object):
                           "summary.guest.toolsRunningStatus",
                          ]
 
-        #self.update_cached_instances()
         vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
 
         if set(vm_props.keys()).issuperset(lst_properties):
@@ -1833,7 +1831,6 @@ class VMwareVMOps(object):
 
     def power_on(self, instance):
         vm_util.power_on_instance(self._session, instance)
-        #self.update_cached_instances()
 
     def _update_instance_progress(self, context, instance, step, total_steps):
         """Update instance progress percent to reflect current step number
@@ -2081,9 +2078,6 @@ class VMwareVMOps(object):
     def get_info(self, instance):
         """Return data about the VM instance."""
         lst_properties = ["runtime.powerState"]
-
-        # if not vm_util._VM_VALUE_CACHE:
-        #     self.update_cached_instances()
 
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
@@ -2538,7 +2532,6 @@ class VMwareVMOps(object):
         if not CONF.vmware.use_property_collector:
             lst_vm_names = self._list_instances_in_cluster()
         else:
-            #self.update_cached_instances()
             lst_vm_names = [item["config.instanceUuid"]
                             for item in vm_util._VM_VALUE_CACHE.values()
                             if "config.instanceUuid" in item and item.get(
@@ -2638,7 +2631,6 @@ class VMwareVMOps(object):
                 version = update_set.version
 
             except Exception as e:
-                LOG.debug("TEST ================================================>")
                 LOG.error(e)
 
 
