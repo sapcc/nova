@@ -20,7 +20,6 @@ from oslo_log import log as logging
 
 import nova.conf
 from nova.scheduler import filters
-from nova.scheduler.filters import utils
 from nova import utils as nova_utils
 
 LOG = logging.getLogger(__name__)
@@ -39,7 +38,6 @@ class ShardFilter(filters.BaseHostFilter):
     _PROJECT_SHARD_CACHE = {}
     _PROJECT_SHARD_CACHE_RETENTION_TIME = 10 * 60
     _SHARD_PREFIX = 'vc-'
-    _AGGREGATE_SHARD_KEY = 'vcenter-shard'
 
     def _update_cache(self):
         """Ask keystone for the list of projects to save the interesting tags
@@ -128,21 +126,13 @@ class ShardFilter(filters.BaseHostFilter):
                       {'project_id': project_id})
             return False
 
-        metadata = utils.aggregate_metadata_get_by_host(host_state,
-                                                key=self._AGGREGATE_SHARD_KEY)
-        if metadata == {}:
-            LOG.error('%(host_state)s is not in an aggregate having '
-                      '%(shard_key)s assigned.',
-                      {'host_state': host_state,
-                       'shard_key': self._AGGREGATE_SHARD_KEY})
-            return False
-
-        configured_shards_set = metadata.get(self._AGGREGATE_SHARD_KEY)
+        configured_shards_set = set(aggr.name for aggr in host_state.aggregates
+                                if aggr.name.startswith(self._SHARD_PREFIX))
         if not configured_shards_set:
-            LOG.error('%(host_state)s is in an aggregate with empty '
-                      '%(shard_key)s.',
+            LOG.error('%(host_state)s is not in an aggregate starting with '
+                      '%(shard_prefix)s.',
                       {'host_state': host_state,
-                       'shard_key': self._AGGREGATE_SHARD_KEY})
+                       'shard_prefix': self._SHARD_PREFIX})
             return False
 
         if configured_shards_set & set(shards):

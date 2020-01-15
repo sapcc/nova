@@ -102,35 +102,31 @@ class TestShardFilter(test.NoDBTestCase):
         agg_mock.return_value = {}
         self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
 
-    @mock.patch('nova.scheduler.filters.utils.aggregate_metadata_get_by_host')
-    def test_shard_host_no_shards_in_aggregate(self, agg_mock):
-        host = fakes.FakeHostState('host1', 'compute', {})
+    def test_shard_host_no_shards_in_aggregate(self):
+        aggs = [objects.Aggregate(id=1, name='some-az-a')]
+        host = fakes.FakeHostState('host1', 'compute', {'aggregates': aggs})
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             flavor=objects.Flavor(extra_specs={}))
 
-        agg_mock.return_value = {self.filt_cls._AGGREGATE_SHARD_KEY:
-                                 set([])}
         self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
 
-    @mock.patch('nova.scheduler.filters.utils.aggregate_metadata_get_by_host')
-    def test_shard_project_shard_match_host_shard(self, agg_mock):
-        host = fakes.FakeHostState('host1', 'compute', {})
+    def test_shard_project_shard_match_host_shard(self):
+        aggs = [objects.Aggregate(id=1, name='some-az-a'),
+                objects.Aggregate(id=1, name='vc-a-0')]
+        host = fakes.FakeHostState('host1', 'compute', {'aggregates': aggs})
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             flavor=objects.Flavor(extra_specs={}))
 
-        agg_mock.return_value = {self.filt_cls._AGGREGATE_SHARD_KEY:
-                                 set(['vc-a-0'])}
         self.assertTrue(self.filt_cls.host_passes(host, spec_obj))
 
-    @mock.patch('nova.scheduler.filters.utils.aggregate_metadata_get_by_host')
-    def test_shard_project_shard_do_not_match_host_shard(self, agg_mock):
-        host = fakes.FakeHostState('host1', 'compute', {})
+    def test_shard_project_shard_do_not_match_host_shard(self):
+        aggs = [objects.Aggregate(id=1, name='some-az-a'),
+                objects.Aggregate(id=1, name='vc-a-1')]
+        host = fakes.FakeHostState('host1', 'compute', {'aggregates': aggs})
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             flavor=objects.Flavor(extra_specs={}))
 
-        agg_mock.return_value = {self.filt_cls._AGGREGATE_SHARD_KEY:
-                                 set(['vc-a-1'])}
         self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
