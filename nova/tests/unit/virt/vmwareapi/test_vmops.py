@@ -84,9 +84,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 vmFolder=vmwareapi_fake.ManagedObjectReference
                                                         (name='fake_vm_folder',
                                                         value='Folder'))
-        self._cluster_name = 'fake_cluster'
-        self._host = 'testhostname'
-        cluster = vmwareapi_fake.create_cluster(self._cluster_name, fake_ds_ref)
+        cluster = vmwareapi_fake.create_cluster('fake_cluster', fake_ds_ref)
         self._uuid = uuidsentinel.foo
         self._instance_values = {
             'name': 'fake_name',
@@ -1084,8 +1082,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                 fake_resize_create_eph_swap,
                                                 fake_bdm_get_by_instance_uuid):
         # shrinking the root-disk should be ignored
-        flavor_root_gb = self._instance.flavor.root_gb - 1
-
         bdms = objects.block_device.block_device_make_list_from_dicts(
             self._context, [
                 fake_block_device.FakeDbBlockDeviceDict(
@@ -1154,7 +1150,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         fake_resize_disk.assert_not_called()
         calls = [mock.call(self._context, self._instance, step=i,
                            total_steps=vmops.RESIZE_TOTAL_STEPS)
-                 for i in range(2,7)]
+                 for i in range(2, 7)]
         fake_progress.assert_has_calls(calls)
 
     @mock.patch.object(vutil, 'get_inventory_path', return_value='fake_path')

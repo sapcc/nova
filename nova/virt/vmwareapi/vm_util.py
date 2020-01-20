@@ -230,7 +230,7 @@ def _get_allocation_info(client_factory, limits, allocation_type):
 def append_vif_infos_to_config_spec(client_factory,
                                     config_spec,
                                     vif_infos,
-                                    vif_limits=None,
+                                    vif_limits,
                                     index=0):
     if not hasattr(config_spec, 'deviceChange') or \
             not config_spec.deviceChange:
@@ -539,7 +539,7 @@ def set_net_device_backing(client_factory, net_device, vif_info):
     backing = None
     if network_ref and network_ref['type'] == 'OpaqueNetwork':
         backing = client_factory.create(
-            'ns0:VirtualEthernetCardOpaqueNetworkBackingInfo')
+                'ns0:VirtualEthernetCardOpaqueNetworkBackingInfo')
         backing.opaqueNetworkId = network_ref['network-id']
         backing.opaqueNetworkType = network_ref['network-type']
         # Configure externalId
@@ -553,11 +553,11 @@ def set_net_device_backing(client_factory, net_device, vif_info):
                 dp.val = vif_info['iface_id']
                 net_device.dynamicProperty = [dp]
     elif (network_ref and
-          network_ref['type'] == "DistributedVirtualPortgroup"):
+            network_ref['type'] == "DistributedVirtualPortgroup"):
         backing = client_factory.create(
-            'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
+                'ns0:VirtualEthernetCardDistributedVirtualPortBackingInfo')
         portgroup = client_factory.create(
-            'ns0:DistributedVirtualSwitchPortConnection')
+                    'ns0:DistributedVirtualSwitchPortConnection')
         portgroup.switchUuid = network_ref['dvsw']
         portgroup.portgroupKey = network_ref['dvpg']
         if 'dvs_port_key' in network_ref:
@@ -565,7 +565,7 @@ def set_net_device_backing(client_factory, net_device, vif_info):
         backing.port = portgroup
     else:
         backing = client_factory.create(
-            'ns0:VirtualEthernetCardNetworkBackingInfo')
+                  'ns0:VirtualEthernetCardNetworkBackingInfo')
         backing.deviceName = network_name
     net_device.backing = backing
 
@@ -1027,7 +1027,8 @@ def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
 
 
 def relocate_vm(session, vm_ref, res_pool=None, datastore=None, host=None,
-                disk_move_type="moveAllDiskBackingsAndAllowSharing", spec=None):
+                disk_move_type="moveAllDiskBackingsAndAllowSharing",
+                spec=None):
     client_factory = session.vim.client.factory
     rel_spec = spec or relocate_vm_spec(client_factory, res_pool, datastore,
                                         host, disk_move_type)
@@ -1872,8 +1873,3 @@ def rename_vm(session, vm_ref, instance):
 def is_vim_instance(o, vim_type_name):
     return isinstance(o, sudsobject.Factory.subclass(vim_type_name,
                                                      sudsobject.Object))
-
-
-def get_mor_name(session, mor):
-    return session._call_method(vutil, "get_object_property",
-                                mor, "name")

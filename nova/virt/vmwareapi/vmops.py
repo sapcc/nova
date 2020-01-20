@@ -73,6 +73,7 @@ LOG = logging.getLogger(__name__)
 
 RESIZE_TOTAL_STEPS = 6
 
+
 class VirtualMachineInstanceConfigInfo(object):
     """Parameters needed to create and configure a new instance."""
 
@@ -1837,8 +1838,8 @@ class VMwareVMOps(object):
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
     def _resize_disk(self, instance, vm_ref, vmdk, flavor):
-        if (flavor.root_gb > instance.old_flavor.root_gb and flavor.root_gb >
-                vmdk.capacity_in_bytes / units.Gi):
+        if (flavor.root_gb > instance.old_flavor.root_gb
+                and flavor.root_gb > vmdk.capacity_in_bytes / units.Gi):
             root_disk_in_kb = flavor.root_gb * units.Mi
             ds_ref = vmdk.device.backing.datastore
             dc_info = self.get_datacenter_ref_and_name(ds_ref)
@@ -2102,8 +2103,8 @@ class VMwareVMOps(object):
                 # Update the network device backing
                 config_spec = self._session.vim.client.factory.create(
                     'ns0:VirtualDeviceConfigSpec')
-                vm_util.set_net_device_backing(self._session.vim.client.factory,
-                                               device, vif_info)
+                vm_util.set_net_device_backing(
+                    self._session.vim.client.factory, device, vif_info)
                 config_spec.operation = "edit"
                 config_spec.device = device
                 spec.deviceChange.append(config_spec)
