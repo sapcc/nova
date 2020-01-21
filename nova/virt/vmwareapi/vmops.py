@@ -1529,6 +1529,7 @@ class VMwareVMOps(object):
     def _destroy_instance(self, context, instance, destroy_disks=True):
         # Destroy a VM instance
         try:
+            config_info_ex = None
             vm_ref = vm_util.get_vm_ref(self._session, instance)
 
             server_group_infos = vm_util._get_server_groups(context, instance)

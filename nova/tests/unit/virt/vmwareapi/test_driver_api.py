@@ -1644,14 +1644,16 @@ class VMwareAPIVMTestCase(test.TestCase,
         instances = self.conn.list_instances()
         self.assertEqual(0, len(instances))
 
+    @mock.patch('nova.virt.vmwareapi.cluster_util.fetch_cluster_properties')
     @mock.patch('nova.virt.vmwareapi.cluster_util.delete_vm_group')
-    @mock.patch('nova.virt.vmwareapi.vm_util._get_server_group')
+    @mock.patch('nova.virt.vmwareapi.vm_util._get_server_groups')
     @mock.patch('nova.virt.vmwareapi.vm_util.update_cluster_placement')
     @mock.patch('nova.virt.vmwareapi.cluster_util.get_cluster_property')
     def test_destroy_with_vm_group(self, mock_get_cluster_prop,
                                            mock_update_placement,
                                            mock_get_sg,
-                                           mock_delete_group):
+                                           mock_delete_group,
+                                           mock_fetch_cluster_props):
         """Test deletion of a vm group when the deleted vm is the last in
         the vm group
         """
@@ -1659,7 +1661,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         fake_server_group = collections.namedtuple('GroupInfo', ['uuid',
                                                                 'policies'])
         fake_server_group.uuid = 'test_group'
-        mock_get_sg.return_value = fake_server_group
+        mock_get_sg.return_value = [fake_server_group]
         fake_factory = vmwareapi_fake.FakeFactory()
 
         fake_cluster_config_info = fake_factory.create(

@@ -1428,11 +1428,9 @@ def update_cluster_placement(session, context, instance, cluster, vm_ref):
     if not server_group_infos:
         return
 
-    with lockutils.lock(server_group_infos[0].uuid,
-                        lock_file_prefix='nova-vmware-server-group'):
-        cluster_util.update_placement(session,
-                                      cluster,
-                                      vm_ref, server_group_infos)
+    cluster_util.update_placement(session,
+                                  cluster,
+                                  vm_ref, server_group_infos)
 
 
 def get_host_ref(session, cluster=None):
