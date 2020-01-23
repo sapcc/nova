@@ -2684,9 +2684,10 @@ class VMwareVMOps(object):
                     self.set_val_cache(update.obj.value,
                                        change.name,
                                        change.val)
-            if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
-                vm_util.vm_ref_cache_update(update.changeSet[0].val,
-                                            update.obj)
+            if len(update.changeSet) > 1:
+                if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
+                    vm_util.vm_ref_cache_update(update.changeSet[0].val,
+                                                update.obj)
         else:
             for change in update.changeSet:
                 if change['op'] == 'assign':
