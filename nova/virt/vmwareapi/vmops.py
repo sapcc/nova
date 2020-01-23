@@ -2623,7 +2623,6 @@ class VMwareVMOps(object):
                 update_set = vim.WaitForUpdatesEx(self._property_collector,
                                                   version=version,
                                                   options=options)
-                LOG.debug('Update set: %s' % update_set)
                 if update_set is None:
                     continue
 
