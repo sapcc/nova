@@ -2657,8 +2657,6 @@ class VMwareVMOps(object):
         vm_util.vm_value_cache_delete(update.obj.value)
 
     def handle_enter_event(self, update):
-        LOG.debug('Handle Enter event: %s' % update.changeSet)
-
         for change in update.changeSet:
             if change.op == 'assign':
                 if hasattr(update.changeSet[0], 'val') and \
@@ -2674,7 +2672,6 @@ class VMwareVMOps(object):
                                             update.obj)
 
     def handle_modify_event(self, update):
-        LOG.debug('Handle Modify event %s' % update.changeSet)
         if update.changeSet[0].name == "config.instanceUuid":
             for change in update.changeSet:
                 LOG.debug('Value found: %s' % change)
@@ -2684,9 +2681,12 @@ class VMwareVMOps(object):
                                        change.name,
                                        change.val)
             if len(update.changeSet) > 1:
-                if update.changeSet[1].val.extensionKey == constants.EXTENSION_KEY:
-                    vm_util.vm_ref_cache_update(update.changeSet[0].val,
-                                                update.obj)
+                if hasattr(update.changeSet[0], 'val') and \
+                        hasattr(update.changeSet[1], 'val'):
+                    if update.changeSet[1].val.extensionKey ==\
+                            constants.EXTENSION_KEY:
+                        vm_util.vm_ref_cache_update(update.changeSet[0].val,
+                                                    update.obj)
         else:
             for change in update.changeSet:
                 if change['op'] == 'assign':
