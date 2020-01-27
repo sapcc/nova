@@ -1573,6 +1573,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         recorded_methods = [c[1][1] for c in mock_call_method.mock_calls]
         self.assertEqual(expected_methods, recorded_methods)
 
+    @mock.patch('nova.virt.vmwareapi.vm_util.vm_needs_special_spawning')
     @mock.patch.object(vmops.VMwareVMOps, '_create_folders',
                        return_value='fake_vm_folder')
     @mock.patch(
@@ -1615,10 +1616,10 @@ class VMwareVMOpsTestCase(test.TestCase):
                    mock_configure_config_drive,
                    mock_update_vnic_index,
                    mock_create_folders,
+                   mock_special_spawning,
                    block_device_info=None,
                    extra_specs=None,
                    config_drive=False):
-
         if extra_specs is None:
             extra_specs = vm_util.ExtraSpecs()
 
@@ -2051,9 +2052,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     def test_create_swap_with_no_bdi(self):
         self._test_create_swap_from_instance(None)
 
+    @mock.patch('nova.virt.vmwareapi.vm_util.vm_needs_special_spawning')
     @mock.patch.object(vmops.VMwareVMOps, '_create_folders',
                        return_value='fake_vm_folder')
-    def test_build_virtual_machine(self, mock_create_folder):
+    def test_build_virtual_machine(self, mock_create_folder,
+                                   mock_special_spawning):
         image_id = nova.tests.unit.image.fake.get_valid_image_id()
         image = images.VMwareImage(image_id=image_id)
 
