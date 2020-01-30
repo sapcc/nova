@@ -2289,8 +2289,10 @@ class VMwareVMOps(object):
             if ti.descriptionId in ["ResourcePool.ImportVAppLRO",
                                     "VirtualMachine.clone"]:
                 templ_vm_ref = ti.entity
-                if not timeutils.is_older_than(ti.queueTime,
+                if timeutils.is_older_than(ti.queueTime,
                         CONF.remove_unused_original_minimum_age_seconds):
+                    break
+                else:
                     expired_templ_vms.pop(templ_vm_ref.value, None)
                     if not expired_templ_vms:
                         break
