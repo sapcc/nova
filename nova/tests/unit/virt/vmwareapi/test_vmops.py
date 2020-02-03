@@ -1141,8 +1141,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         fake_instances = [self._instance]
         with test.nested(
                 mock.patch.object(self._vmops, '_imagecache'),
-                mock.patch.object(self._vmops, '_get_project_folder',
-                                  return_value='fake-folder'),
+                mock.patch.object(self._vmops, '_get_all_images_folders',
+                                  return_value=['fake-folder']),
                 mock.patch.object(self._session, '_call_method'),
                 mock.patch.object(self._session, '_wait_for_task')):
             self._vmops.manage_image_cache(self._context, fake_instances)
