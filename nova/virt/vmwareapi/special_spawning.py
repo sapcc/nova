@@ -118,6 +118,13 @@ class _SpecialVmSpawningServer(object):
                              "config.hardware.memoryMB"])
         for obj in result.objects:
             vm_props = propset_dict(obj.propSet)
+            if 'config.instanceUuid' not in vm_props:
+                # sometimes, the vCenter finds a file it thinks is a VM and it
+                # doesn't even have a config attribute ... instead of crashing
+                # with a KeyError, we assume this VM is not running and totally
+                # doesn't matter as nova also will not be able to handle it
+                continue
+
             vm_data.append((
                 vm_props['config.instanceUuid'],
                 vm_props['config.hardware.memoryMB'],
