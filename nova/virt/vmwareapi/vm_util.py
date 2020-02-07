@@ -29,6 +29,7 @@ from oslo_utils import units
 from oslo_vmware import exceptions as vexc
 from oslo_vmware import pbm
 from oslo_vmware import vim_util as vutil
+import six
 from suds import sudsobject
 
 import nova.conf
@@ -121,7 +122,7 @@ class ExtraSpecs(object):
         self.hw_video_ram = hw_video_ram
 
 
-class HistoryCollectorItems(object):
+class HistoryCollectorItems(six.Iterator):
 
     def __init__(self, session, history_collector, read_page_method,
                  reverse_page_order=False, max_page_size=10,
@@ -148,7 +149,7 @@ class HistoryCollectorItems(object):
 
         return self
 
-    def next(self):
+    def __next__(self):
         if not self._page_items:
             self._load_page()
 
