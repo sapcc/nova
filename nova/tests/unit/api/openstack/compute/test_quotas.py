@@ -563,7 +563,7 @@ class QuotaSetsPolicyEnforcementV21(test.NoDBTestCase):
             exc.format_message())
 
 
-class QuotaSetsTestV236(test.NoDBTestCase):
+class QuotaSetsTestV236(test.TestCase):
     microversion = '2.36'
 
     def setUp(self):
