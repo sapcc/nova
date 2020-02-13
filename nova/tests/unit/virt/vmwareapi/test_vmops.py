@@ -1115,7 +1115,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             _ffr(prj_1, 'Project (1)', os_ref),
             _ffr(prj_c, 'Project (c)', os_ref),
             _ffr(bad_os_parent, 'OpenStack', missing_parent_ref),
-            _ffr(bad_prj_name, 'Project (x)', os_ref), # non-hex ID
+            _ffr(bad_prj_name, 'Project (x)', os_ref),  # non-hex ID
             _ffr(bad_prj_parent, 'Project (a)', bad_os_parent),
             _ffr('bad-img-name', 'ImagesX', prj_1),
             _ffr('bad-img-parent1', 'Images', bad_prj_name),
@@ -1127,6 +1127,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         ]
 
         mock_get_obj.return_value = results_to_filter_out + in_scope_results
+
         def _mock_with_ret(vim, ret_res):
             return mock.Mock(__enter__=mock.Mock(return_value=ret_res),
                              __exit__=mock.Mock(return_value=None))
