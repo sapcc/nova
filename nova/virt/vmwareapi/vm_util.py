@@ -22,7 +22,6 @@ import collections
 import copy
 import functools
 
-from oslo_concurrency import lockutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
@@ -708,13 +707,6 @@ def _get_device_disk_type(device):
         else:
             return constants.DEFAULT_DISK_TYPE
 
-
-def get_cluster_property(session, prop_list, cluster):
-    cluster_config = session._call_method(
-        vutil, "get_object_property", cluster,
-        prop_list)
-
-    return cluster_config
 
 def get_vmdk_info(session, vm_ref, uuid=None):
     """Returns information for the primary VMDK attached to the given VM."""

@@ -1549,7 +1549,6 @@ class VMwareVMOps(object):
                             vm_groups.append(group.name)
                             break
 
-
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vutil,
@@ -1575,7 +1574,6 @@ class VMwareVMOps(object):
                                            "UnregisterVM", vm_ref)
                 LOG.debug("Unregistered the VM", instance=instance)
 
-
                 with lockutils.lock('vmware-vm-group-policy',
                         lock_file_prefix=utils.SYNCHRONIZED_NOVA_PREFIX):
                     cluster_config = cluster_util.get_cluster_property(
@@ -1587,13 +1585,13 @@ class VMwareVMOps(object):
                             if group.name == group_info.uuid:
                                 if not hasattr(group, 'vm'):
                                     try:
-                                        LOG.debug("Deleting VM group %s" %
+                                        LOG.debug("Deleting VM group %s",
                                                   group_info.uuid)
                                         cluster_util.delete_vm_group(
                                             self._session, self._cluster,
                                             group)
                                         LOG.debug("VM group %s deleted"
-                                                  " successfully" % group.name)
+                                                  " successfully", group.name)
                                     except Exception as e:
                                         LOG.warning("Deleting VM group %s "
                                                 "failed with the following"
