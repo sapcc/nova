@@ -140,6 +140,13 @@ ones.
 
 NOTE: Percentage values will be rounded down to the next full vcpu/MB.
 """),
+    cfg.StrOpt('special_spawning_vm_group',
+        default='bigvm_free_host_antiaffinity_vmgroup',
+        help="""
+For spawning a VM on a prepared empty host, we need all other VMs to be in a
+DRS VM group that prohibits them from running on the prepared host. This
+setting configures the name of that VM group.
+"""),
 ]
 
 vmwareapi_opts = [
@@ -363,6 +370,15 @@ the cloud-platform they're running on. E.g. Amazon sets this to "Amazon EC2".
 Possible values:
 
 * Any string or empty to keep VMware default
+"""),
+    cfg.StrOpt('bigvm_deployment_free_host_hostgroup_name',
+        default='',
+        help="""
+Name of the hostgroup used to free up a host for special spawning.
+
+All VMs in the cluster have to be in a VM group that has a rule specifying a
+must-not-run-on-hostgroup rule for this hostgroup. Putting a host in this
+hostgroup will then result in the host getting freed up by DRS.
 """),
 ]
 

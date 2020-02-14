@@ -1127,6 +1127,13 @@ class API(base.Base):
         instance_group = self._get_requested_instance_group(context,
                                    filter_properties)
 
+        if instance_group and utils.vm_needs_special_spawning(
+                                                    base_options['memory_mb'],
+                                                    instance_type):
+            msg = 'This type of VM cannot be assigned to server groups ' \
+                  'because of its scheduling requirements.'
+            raise exception.InvalidRequest(msg)
+
         tags = self._create_tag_list_obj(context, tags)
 
         instances_to_build = self._provision_instances(
@@ -2504,8 +2511,6 @@ class API(base.Base):
 
         build_req_instances = objects.InstanceList(
             objects=[build_req.instance for build_req in build_requests])
-        # Only subtract from limit if it is not None
-        limit = (limit - len(build_req_instances)) if limit else limit
 
         # We could arguably avoid joining on security_groups if we're using
         # neutron (which is the default) but if you're using neutron then the
@@ -2535,21 +2540,12 @@ class API(base.Base):
             return _filter
 
         filter_method = _get_unique_filter_method()
-        # Only subtract from limit if it is not None
-        limit = (limit - len(insts)) if limit else limit
         # TODO(alaski): Clean up the objects concatenation when List objects
         # support it natively.
         instances = objects.InstanceList(
             objects=list(filter(filter_method,
                            build_req_instances.objects +
-                           insts.objects)))
-
-        if limit is not None and len(instances) != len(build_req_instances) +\
-                len(insts):
-            raise exception.NovaException(
-                _('Duplicate instances found, '
-                  'database inconsistentency between cells and api,'
-                  ' breaks pagination'))
+                           insts.objects))[:limit])
 
         if filter_ip:
             instances = self._ip_filter(instances, filters, orig_limit)

@@ -560,8 +560,8 @@ class IronicDriverTestCase(test.NoDBTestCase):
 
         response = self.driver.list_instances()
         mock_call.assert_called_with("node.list", associated=True, limit=0)
-        expected_calls = [mock.call(mock.ANY, {"uuid":[instances[0].uuid,
-                                                       instances[1].uuid]},
+        expected_calls = [mock.call(mock.ANY, {"uuid": [instances[0].uuid,
+                                                        instances[1].uuid]},
                                     expected_attrs=['name', 'host'],
                                     use_slave=True)]
         mock_get_by_filters.assert_has_calls(expected_calls)

@@ -52,6 +52,22 @@ def _create_vm_group_spec(client_factory, group_info, vm_refs,
     return [group_spec]
 
 
+def _create_host_group_spec(client_factory, name, host_refs, operation="add",
+                            group=None):
+    group = group or client_factory.create('ns0:ClusterHostGroup')
+    group.name = name
+
+    if hasattr(group, 'host'):
+        group.host += host_refs
+    else:
+        group.host = host_refs
+
+    group_spec = client_factory.create('ns0:ClusterGroupSpec')
+    group_spec.operation = operation
+    group_spec.info = group
+    return group_spec
+
+
 def _get_vm_group(cluster_config, group_info):
     if not hasattr(cluster_config, 'group'):
         return
@@ -127,29 +143,32 @@ def delete_vm_group(session, cluster, vm_group):
 
 
 @utils.synchronized('vmware-vm-group-policy')
-def update_placement(session, cluster, vm_ref, group_info):
+def update_placement(session, cluster, vm_ref, group_infos):
     """Updates cluster for vm placement using DRS"""
     cluster_config = session._call_method(
         vutil, "get_object_property", cluster, "configurationEx")
 
-    if cluster_config:
+    client_factory = session.vim.client.factory
+    config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+    config_spec.groupSpec = []
+    for group_info in group_infos:
         group = _get_vm_group(cluster_config, group_info)
-        client_factory = session.vim.client.factory
-        config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
 
         if not group:
             """Creating group"""
-            config_spec.groupSpec = _create_vm_group_spec(
+            group_spec = _create_vm_group_spec(
                 client_factory, group_info, [vm_ref], operation="add",
                 group=group)
+            config_spec.groupSpec.append(group_spec)
 
         if group:
             # VM group exists on the cluster which is assumed to be
             # created by VC admin. Add instance to this vm group and let
             # the placement policy defined by the VC admin take over
-            config_spec.groupSpec = _create_vm_group_spec(
+            group_spec = _create_vm_group_spec(
                 client_factory, group_info, [vm_ref], operation="edit",
                 group=group)
+            config_spec.groupSpec.append(group_spec)
 
         # If server group policies are defined (by tenants), then
         # create/edit affinity/anti-affinity rules on cluster.
@@ -165,9 +184,13 @@ def update_placement(session, cluster, vm_ref, group_info):
                 rule_name = "%s-%s" % (group_info.uuid, policy)
                 rule = _get_rule(cluster_config, rule_name)
                 operation = "edit" if rule else "add"
-                config_spec.rulesSpec = _create_cluster_rules_spec(
+                rules_spec = _create_cluster_rules_spec(
                     client_factory, rule_name, [vm_ref], policy=policy,
                     operation=operation, rule=rule)
+                if config_spec.rulesSpec is None:
+                    config_spec.rulesSpec = [rules_spec]
+                else:
+                    config_spec.rulesSpec.append(rules_spec)
 
     reconfigure_cluster(session, cluster, config_spec)
 
@@ -196,6 +219,35 @@ def _create_cluster_rules_spec(client_factory, name, vm_refs,
         rules_info.ruleUuid = rule.ruleUuid
     else:
         rules_info.vm = vm_refs
+
+    rules_spec.info = rules_info
+    return rules_spec
+
+
+def _create_cluster_group_rules_spec(client_factory, name, vm_group_name,
+                                     host_group_name, policy='affinity',
+                                     rule=None):
+    operation = 'add' if rule is None else 'edit'
+
+    rules_spec = client_factory.create('ns0:ClusterRuleSpec')
+    rules_spec.operation = operation
+
+    rules_info = client_factory.create('ns0:ClusterVmHostRuleInfo')
+    rules_info.name = name
+    rules_info.enabled = True
+    rules_info.mandatory = True
+    rules_info.vmGroupName = vm_group_name
+    if policy == 'affinity':
+        rules_info.affineHostGroupName = host_group_name
+    elif policy == 'anti-affinity':
+        rules_info.antiAffineHostGroupName = host_group_name
+    else:
+        msg = _('%s policy is not supported.') % policy
+        raise exception.ValidationError(msg)
+
+    if rule is not None:
+        rules_info.key = rule.key
+        rules_info.ruleUuid = rule.ruleUuid
 
     rules_spec.info = rules_info
     return rules_spec

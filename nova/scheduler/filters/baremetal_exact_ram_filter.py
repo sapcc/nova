@@ -14,6 +14,7 @@
 #    under the License.
 
 from nova.scheduler.filters import exact_ram_filter
+from nova.utils import is_baremetal_flavor
 from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -23,8 +24,7 @@ class BaremetalExactRamFilter(exact_ram_filter.ExactRamFilter):
     """Exact RAM Filter."""
 
     def host_passes(self, host_state, spec_obj):
-        extra_specs = spec_obj.flavor.extra_specs
-        if 'capabilities:cpu_arch' not in extra_specs:
+        if not is_baremetal_flavor(spec_obj.flavor):
             return True
 
         return super(BaremetalExactRamFilter, self).host_passes(host_state,

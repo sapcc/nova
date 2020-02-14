@@ -1516,7 +1516,8 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                             models.InstanceExtra.flavor
                         ).join(models.Instance). \
                         filter(
-                            models.Instance.instance_type_id.in_(missing_itypes)
+                            models.Instance.instance_type_id.
+                            in_(missing_itypes)
                         ).distinct(models.Instance.instance_type_id)
                     for db_flavor in db_flavors:
                         flavor_info = jsonutils.loads(db_flavor[0])

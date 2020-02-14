@@ -118,13 +118,15 @@ class BigVmFlavorHostSizeFilter(BigVmBaseFilter):
         config_fractions = CONF.filter_scheduler.\
                                         bigvm_host_size_filter_host_fractions
         for name, ratio in config_fractions.items():
+            ratio = float(ratio)
             if ratio > 1:
                 LOG.error('Amount of memory cannot exceed hypervisor memory. '
                           'Wrong configuration in filter_scheduler.'
                           'bigvm_host_size_filter_host_fractions: '
-                          '%(config_dict).',
+                          '%(config_dict)s.',
                           {'config_dict': config_fractions})
-                return False
+                raise TypeError('bigvm_host_size_filter_host_fractions '
+                                'contains invalid values.')
             supported_fractions[name] = hypervisor_ram_mb * ratio
 
         return supported_fractions
@@ -150,18 +152,35 @@ class BigVmFlavorHostSizeFilter(BigVmBaseFilter):
                        'flavor_name': flavor.name})
             return False
 
-        host_fraction = extra_specs[self._EXTRA_SPECS_KEY]
-        if host_fraction not in supported_fractions:
+        host_fractions = set(
+            x.strip() for x in extra_specs[self._EXTRA_SPECS_KEY].split(','))
+        known_host_fractions = set(supported_fractions) & host_fractions
+        if not known_host_fractions:
             LOG.warning('Flavor attribute %(specs_key)s does not have a '
-                        'supported value (%(specs_value)s). Cannot schedule '
+                        'supported value (%(specs_values)s). Cannot schedule '
                         'on %(host_state)s.',
                         {'host_state': host_state,
                          'specs_key': self._EXTRA_SPECS_KEY,
-                         'specs_value': host_fraction})
+                         'specs_values': host_fractions})
             return False
 
-        memory_mb = supported_fractions[host_fraction]
-        return self._memory_match_with_tolerance(memory_mb, requested_ram_mb)
+        if known_host_fractions != host_fractions:
+            LOG.warning('Flavor attribute %(specs_key)s has unsupported '
+                        'fractions defined in its values %(specs_values)s.',
+                        {'specs_key': self._EXTRA_SPECS_KEY,
+                         'specs_values': host_fractions})
+
+        for host_fraction in known_host_fractions:
+            memory_mb = supported_fractions[host_fraction]
+            if self._memory_match_with_tolerance(memory_mb, requested_ram_mb):
+                return True
+
+        LOG.info('%(host_state)s does not match %(requested_ram_mb)s for any '
+                 'of the requested fractions %(known_host_fractions)s.',
+                 {'host_state': host_state,
+                  'requested_ram_mb': requested_ram_mb,
+                  'known_host_fractions': known_host_fractions})
+        return False
 
     def _check_no_flavor_extra_specs(self, host_state, supported_fractions,
                                      requested_ram_mb):
