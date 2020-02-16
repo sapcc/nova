@@ -1529,26 +1529,8 @@ class VMwareVMOps(object):
     def _destroy_instance(self, context, instance, destroy_disks=True):
         # Destroy a VM instance
         try:
-            config_info_ex = None
             vm_ref = vm_util.get_vm_ref(self._session, instance)
-
             server_group_infos = vm_util._get_server_groups(context, instance)
-            if server_group_infos:
-                cluster = cluster_util.fetch_cluster_properties(self._session,
-                                                                       vm_ref)
-                config_info_ex = cluster.propSet[0].val
-
-            vm_groups = []
-
-            if hasattr(config_info_ex, 'group'):
-                for group in config_info_ex.group:
-                    if not hasattr(group, 'vm'):
-                        continue
-                    for vm in group.vm:
-                        if vm.value == vm_ref.value:
-                            vm_groups.append(group.name)
-                            break
-
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vutil,
