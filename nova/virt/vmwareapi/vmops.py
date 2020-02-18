@@ -71,7 +71,7 @@ CONF = nova.conf.CONF
 
 LOG = logging.getLogger(__name__)
 
-RESIZE_TOTAL_STEPS = 6
+RESIZE_TOTAL_STEPS = 7
 
 
 class VirtualMachineInstanceConfigInfo(object):
@@ -2049,14 +2049,17 @@ class VMwareVMOps(object):
                                        step=5,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
-        # 6. Attach the volumes (if necessary) and start the VM
+        # 6. Attach the volumes (if necessary)
         if reattach_volumes:
             self._attach_volumes(instance, block_device_info)
-        if power_on:
-            vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
-
         self._update_instance_progress(context, instance,
                                        step=6,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+        # 7. Start VM
+        if power_on:
+            vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
+        self._update_instance_progress(context, instance,
+                                       step=7,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
     def _relocate_vm(self, vm_ref, context, instance, network_info,
