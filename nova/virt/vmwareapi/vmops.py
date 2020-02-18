@@ -2095,10 +2095,10 @@ class VMwareVMOps(object):
                 device = vmwarevif.get_network_device(hardware_devices,
                                                       vif_info['mac_address'])
                 if not device:
-                    LOG.warning("Network device with MAC %s was not found in "
-                                "the VM while building the Relocate spec.",
-                                vif_info["mac_address"], instance=instance)
-                    continue
+                    msg = _("No device with MAC address %s exists on the "
+                            "VM") % vif_info['mac_address']
+                    raise exception.NotFound(msg)
+
                 # Update the network device backing
                 config_spec = self._session.vim.client.factory.create(
                     'ns0:VirtualDeviceConfigSpec')
