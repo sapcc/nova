@@ -1993,8 +1993,6 @@ class VMwareVMOps(object):
             LOG.debug("Relocating VM for reverting migration",
                       instance=instance)
             self._relocate_vm(vm_ref, context, instance, network_info)
-            # refresh vm_ref
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
             vm_util.update_cluster_placement(self._session, context,
                                              instance, self._cluster, vm_ref)
             self._attach_volumes(instance, block_device_info)
@@ -2022,8 +2020,8 @@ class VMwareVMOps(object):
                       migration.dest_compute, instance=instance)
             self._relocate_vm(vm_ref, context, instance, network_info,
                               image_meta)
-            # Refresh vm_ref
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            LOG.debug("Relocated VM to %s", migration.dest_compute,
+                      instance=instance)
             vm_util.update_cluster_placement(self._session, context,
                                              instance, self._cluster, vm_ref)
         self._update_instance_progress(context, instance,
@@ -2044,15 +2042,16 @@ class VMwareVMOps(object):
         self._update_instance_progress(context, instance,
                                        step=4,
                                        total_steps=RESIZE_TOTAL_STEPS)
-        # 5. Update ephemerals and attach volumes if necessary
+        # 5. Update ephemerals
         self._resize_create_ephemerals_and_swap(vm_ref, instance,
                                                 block_device_info)
-        if reattach_volumes:
-            self._attach_volumes(instance, block_device_info)
         self._update_instance_progress(context, instance,
                                        step=5,
                                        total_steps=RESIZE_TOTAL_STEPS)
-        # 6. Start VM
+
+        # 6. Attach the volumes (if necessary) and start the VM
+        if reattach_volumes:
+            self._attach_volumes(instance, block_device_info)
         if power_on:
             vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 

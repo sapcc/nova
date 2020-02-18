@@ -672,7 +672,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                             None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
                                                             None)
-                vm_ref_calls.append(mock.call(self._session, self._instance))
 
             calls = [mock.call(self._context, self._instance, step=i,
                                total_steps=vmops.RESIZE_TOTAL_STEPS) for i in
@@ -869,7 +868,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                                             self._instance, None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
                                                             None)
-                vm_ref_calls.append(mock.call(self._session, self._instance))
         fake_get_vm_ref.assert_has_calls(vm_ref_calls)
         if power_on:
             fake_power_on.assert_called_once_with(self._session,
