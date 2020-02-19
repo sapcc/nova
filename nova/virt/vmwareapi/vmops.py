@@ -1993,6 +1993,8 @@ class VMwareVMOps(object):
             LOG.debug("Relocating VM for reverting migration",
                       instance=instance)
             self._relocate_vm(vm_ref, context, instance, network_info)
+            LOG.debug("Relocated VM for reverting migration",
+                      instance=instance)
             vm_util.update_cluster_placement(self._session, context,
                                              instance, self._cluster, vm_ref)
             self._attach_volumes(instance, block_device_info)
