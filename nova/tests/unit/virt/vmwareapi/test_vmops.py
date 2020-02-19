@@ -622,12 +622,14 @@ class VMwareVMOpsTestCase(test.TestCase):
                 mock.patch.object(vmops.VMwareVMOps, "_resize_disk"),
                 mock.patch.object(vmops.VMwareVMOps, "_relocate_vm"),
                 mock.patch.object(vmops.VMwareVMOps, "_detach_volumes"),
-                mock.patch.object(vmops.VMwareVMOps, "_attach_volumes")
+                mock.patch.object(vmops.VMwareVMOps, "_attach_volumes"),
+                mock.patch.object(vm_util, "update_cluster_placement")
         ) as (fake_resize_create_ephemerals_and_swap,
               fake_update_instance_progress, fake_power_on, fake_get_vm_ref,
               fake_remove_ephemerals_and_swap, fake_get_vmdk_info,
               fake_resize_vm, fake_resize_disk, fake_relocate_vm,
-              fake_detach_volumes, fake_attach_volumes):
+              fake_detach_volumes, fake_attach_volumes,
+              fake_update_cluster_placement):
             migration = migration or objects.Migration(dest_compute="nova",
                                                        source_compute="nova")
             vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
@@ -672,7 +674,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                             None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
                                                             None)
-
+                fake_update_cluster_placement.assert_called_once_with(
+                    self._session, self._context, self._instance,
+                    self._cluster.obj, 'fake-ref')
             calls = [mock.call(self._context, self._instance, step=i,
                                total_steps=vmops.RESIZE_TOTAL_STEPS) for i in
                      range(2, 7)]
@@ -745,6 +749,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         vmdk = vm_util.VmdkInfo(None, None, None, 0, None)
         self._test_resize_create_ephemerals(vmdk, None)
 
+    @mock.patch.object(vm_util, 'update_cluster_placement')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
     @mock.patch.object(vmops.VMwareVMOps, '_resize_create_ephemerals_and_swap')
     @mock.patch.object(vmops.VMwareVMOps, '_remove_ephemerals_and_swap')
@@ -775,6 +780,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                       fake_remove_ephemerals_and_swap,
                                       fake_resize_create_ephemerals_and_swap,
                                       fake_get_extra_specs,
+                                      fake_update_cluster_placement,
                                       power_on, instances_list=None):
         """Tests the finish_revert_migration method on vmops."""
         datastore = ds_obj.Datastore(ref='fake-ref', name='fake')
@@ -868,6 +874,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                                             self._instance, None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
                                                             None)
+                fake_update_cluster_placement.assert_called_once_with(
+                    self._session, self._context, self._instance,
+                    self._cluster.obj, 'fake-ref')
         fake_get_vm_ref.assert_has_calls(vm_ref_calls)
         if power_on:
             fake_power_on.assert_called_once_with(self._session,
