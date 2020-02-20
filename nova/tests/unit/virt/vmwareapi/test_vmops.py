@@ -48,6 +48,7 @@ from nova.virt.vmwareapi import vif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
+from nova.virt.vmwareapi import volumeops
 
 
 class DsPathMatcher(object):
@@ -103,8 +104,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                                       root_gb=10, ephemeral_gb=0, swap=0,
                                       extra_specs={})
         self._instance.flavor = self._flavor
-
-        self._vmops = vmops.VMwareVMOps(self._session, self._virtapi, None,
+        self._volumeops = volumeops.VMwareVolumeOps(self._session)
+        self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
+                                        self._volumeops,
                                         cluster=cluster.obj)
         self._cluster = cluster
         self._image_meta = objects.ImageMeta.from_dict({'id': self._image_id,
@@ -894,6 +896,22 @@ class VMwareVMOpsTestCase(test.TestCase):
         instances_list = ["fake_uuid_foo_bar"]
         self._test_finish_revert_migration(power_on=True,
                                            instances_list=instances_list)
+
+    @mock.patch.object(volumeops.VMwareVolumeOps, 'attach_volume')
+    def test_attach_volumes(self, fake_attach_volume):
+        block_device_info = {
+            'block_device_mapping': [
+                {'boot_index': -1, 'connection_info': {'id': 'c'}},
+                {'boot_index': 1, 'connection_info': {'id': 'b'}},
+                {'boot_index': 0, 'connection_info': {'id': 'a'}},
+            ]
+        }
+        self._vmops._attach_volumes(self._instance, block_device_info)
+        fake_attach_volume.assert_has_calls([
+            mock.call({'id': 'a'}, self._instance),
+            mock.call({'id': 'b'}, self._instance),
+            mock.call({'id': 'c'}, self._instance),
+        ])
 
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')

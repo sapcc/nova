@@ -2152,7 +2152,11 @@ class VMwareVMOps(object):
 
     def _attach_volumes(self, instance, block_device_info):
         disks = driver.block_device_info_get_mapping(block_device_info)
-        for disk in disks:
+        # make sure the disks are attached by the boot_index order (if any)
+        for disk in sorted(disks,
+                           key=lambda d: d['boot_index']
+                           if 'boot_index' in d and d['boot_index'] > -1
+                           else len(disks)):
             self._volumeops.attach_volume(disk['connection_info'], instance)
 
     def poll_rebooting_instances(self, timeout, instances):
