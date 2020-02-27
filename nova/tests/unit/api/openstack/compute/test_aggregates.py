@@ -390,10 +390,11 @@ class AggregateTestCaseV21(test.NoDBTestCase):
 
     @mock.patch('nova.compute.api.AggregateAPI.update_aggregate')
     def test_update_with_none_availability_zone(self, mock_update_agg):
-        agg_id = uuidsentinel.aggregate
+        agg_id = 173
         mock_update_agg.return_value = objects.Aggregate(self.context,
                                                          name='test',
-                                                         uuid=agg_id,
+                                                         uuid=uuidsentinel.agg,
+                                                         id=agg_id,
                                                          hosts=[],
                                                          metadata={})
         body = {"aggregate": {"name": "test",
@@ -433,7 +434,7 @@ class AggregateTestCaseV21(test.NoDBTestCase):
     def test_update_with_invalid_action(self):
         with mock.patch.object(self.controller.api, "update_aggregate",
             side_effect=exception.InvalidAggregateAction(
-                action='invalid', aggregate_id='agg1', reason= "not empty")):
+                action='invalid', aggregate_id='1', reason= "not empty")):
             body = {"aggregate": {"availability_zone": "nova"}}
             self.assertRaises(exc.HTTPBadRequest, self.controller.update,
                               self.req, "1", body=body)
@@ -467,13 +468,13 @@ class AggregateTestCaseV21(test.NoDBTestCase):
 
     def test_add_host_with_bad_aggregate(self):
         side_effect = exception.AggregateNotFound(
-            aggregate_id="bogus_aggregate")
+            aggregate_id="2")
         with mock.patch.object(self.controller.api, 'add_host_to_aggregate',
                                side_effect=side_effect) as mock_add:
             self.assertRaises(exc.HTTPNotFound, eval(self.add_host),
-                              self.req, "bogus_aggregate",
+                              self.req, "2",
                               body={"add_host": {"host": "host1"}})
-            mock_add.assert_called_once_with(self.context, "bogus_aggregate",
+            mock_add.assert_called_once_with(self.context, "2",
                                              "host1")
 
     def test_add_host_with_bad_host(self):
@@ -534,14 +535,14 @@ class AggregateTestCaseV21(test.NoDBTestCase):
 
     def test_remove_host_with_bad_aggregate(self):
         side_effect = exception.AggregateNotFound(
-            aggregate_id="bogus_aggregate")
+            aggregate_id="2")
         with mock.patch.object(self.controller.api,
                                'remove_host_from_aggregate',
                                side_effect=side_effect) as mock_rem:
             self.assertRaises(exc.HTTPNotFound, eval(self.remove_host),
-                              self.req, "bogus_aggregate",
+                              self.req, "2",
                               body={"remove_host": {"host": "host1"}})
-            mock_rem.assert_called_once_with(self.context, "bogus_aggregate",
+            mock_rem.assert_called_once_with(self.context, "2",
                                              "host1")
 
     def test_remove_host_with_host_not_in_aggregate(self):
@@ -621,14 +622,14 @@ class AggregateTestCaseV21(test.NoDBTestCase):
 
     def test_set_metadata_with_bad_aggregate(self):
         body = {"set_metadata": {"metadata": {"foo": "bar"}}}
-        side_effect = exception.AggregateNotFound(aggregate_id="bad_aggregate")
+        side_effect = exception.AggregateNotFound(aggregate_id="2")
 
         with mock.patch.object(self.controller.api,
                                'update_aggregate_metadata',
                                side_effect=side_effect) as mock_update:
             self.assertRaises(exc.HTTPNotFound, eval(self.set_metadata),
-                self.req, "bad_aggregate", body=body)
-            mock_update.assert_called_once_with(self.context, "bad_aggregate",
+                self.req, "2", body=body)
+            mock_update.assert_called_once_with(self.context, "2",
                 body["set_metadata"]['metadata'])
 
     def test_set_metadata_with_missing_metadata(self):
@@ -679,21 +680,21 @@ class AggregateTestCaseV21(test.NoDBTestCase):
 
     def test_delete_aggregate_with_bad_aggregate(self):
         side_effect = exception.AggregateNotFound(
-            aggregate_id="bogus_aggregate")
+            aggregate_id="2")
         with mock.patch.object(self.controller.api, 'delete_aggregate',
                                side_effect=side_effect) as mock_del:
             self.assertRaises(exc.HTTPNotFound, self.controller.delete,
-                self.req, "bogus_aggregate")
-            mock_del.assert_called_once_with(self.context, "bogus_aggregate")
+                self.req, "2")
+            mock_del.assert_called_once_with(self.context, "2")
 
     def test_delete_aggregate_with_host(self):
         with mock.patch.object(self.controller.api, "delete_aggregate",
                                side_effect=exception.InvalidAggregateAction(
-                               action="delete", aggregate_id="agg1",
+                               action="delete", aggregate_id="2",
                                reason="not empty")):
             self.assertRaises(exc.HTTPBadRequest,
                               self.controller.delete,
-                              self.req, "agg1")
+                              self.req, "2")
 
     def test_marshall_aggregate(self):
         # _marshall_aggregate() just basically turns the aggregate returned
