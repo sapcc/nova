@@ -85,7 +85,7 @@ class AggregateController(wsgi.Controller):
 
         return agg
 
-    @wsgi.expected_errors(404)
+    @wsgi.expected_errors((400, 404))
     def show(self, req, id):
         """Shows the details of an aggregate, hosts and metadata included."""
         context = _get_context(req)
