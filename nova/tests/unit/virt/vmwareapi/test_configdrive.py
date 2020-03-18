@@ -125,9 +125,10 @@ class ConfigDriveTestCase(test.TestCase):
         vmwareapi_fake.cleanup()
         nova.tests.unit.image.fake.FakeImageService_reset()
 
+    @mock.patch('nova.virt.vmwareapi.vm_util.vm_needs_special_spawning')
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata',
                        return_value='fake_metadata')
-    def _spawn_vm(self, fake_get_instance_meta,
+    def _spawn_vm(self, fake_get_instance_meta, mock_vm_special_spawning,
                   injected_files=None, admin_password=None,
                   block_device_info=None):
 

@@ -100,9 +100,8 @@ class ConsoleAuthManager(manager.Manager):
 
         self.mc_instance.set(instance_uuid.encode('UTF-8'),
                              jsonutils.dumps(tokens))
-
-        LOG.info("Received Token: %(token)s, %(token_dict)s",
-                 {'token': token, 'token_dict': token_dict})
+        token_dict['token'] = '***'
+        LOG.info("Received Token: %(token_dict)s", {'token_dict': token_dict})
 
     def _validate_token(self, context, token):
         instance_uuid = token['instance_uuid']
@@ -130,8 +129,8 @@ class ConsoleAuthManager(manager.Manager):
     def check_token(self, context, token):
         token_str = self.mc.get(token.encode('UTF-8'))
         token_valid = (token_str is not None)
-        LOG.info("Checking Token: %(token)s, %(token_valid)s",
-                 {'token': token, 'token_valid': token_valid})
+        LOG.info("Checking that token is known: %(token_valid)s",
+                 {'token_valid': token_valid})
         if token_valid:
             token = jsonutils.loads(token_str)
             if self._validate_token(context, token):
@@ -139,6 +138,7 @@ class ConsoleAuthManager(manager.Manager):
 
     def delete_tokens_for_instance(self, context, instance_uuid):
         tokens = self._get_tokens_for_instance(instance_uuid)
-        self.mc.delete_multi(
+        if tokens:
+            self.mc.delete_multi(
                 [tok.encode('UTF-8') for tok in tokens])
         self.mc_instance.delete(instance_uuid.encode('UTF-8'))
