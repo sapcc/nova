@@ -2069,12 +2069,10 @@ class VMwareVMOps(object):
                     LOG.error("Relocating the VM failed with error: %s", e,
                               instance=instance)
                     self._attach_volumes(instance, block_device_info)
-            else:
-                vm_util.update_cluster_placement(self._session,
-                                                 context,
-                                                 instance,
-                                                 self._cluster,
-                                                 vm_ref)
+
+            vm_util.update_cluster_placement(self._session, context,
+                                             instance, self._cluster, vm_ref)
+
         self._update_instance_progress(context, instance,
                                        step=2,
                                        total_steps=RESIZE_TOTAL_STEPS)
