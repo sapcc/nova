@@ -609,7 +609,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                   succeeds=False)
 
     def _test_finish_migration(self, power_on=True,
-                               resize_instance=False, migration=None):
+                               resize_instance=False, migration=None,
+                               relocate_fails=False):
         with test.nested(
                 mock.patch.object(self._vmops,
                                   '_resize_create_ephemerals_and_swap'),
@@ -634,6 +635,8 @@ class VMwareVMOpsTestCase(test.TestCase):
               fake_update_cluster_placement):
             migration = migration or objects.Migration(dest_compute="nova",
                                                        source_compute="nova")
+            if relocate_fails:
+                fake_relocate_vm.side_effect = test.TestingException
             vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
                                     'fake-adapter',
                                     'fake-disk',
@@ -641,33 +644,19 @@ class VMwareVMOpsTestCase(test.TestCase):
                                     'fake-device')
             fake_get_vmdk_info.return_value = vmdk
             vm_ref_calls = [mock.call(self._session, self._instance)]
-            self._vmops.finish_migration(context=self._context,
-                                         migration=migration,
-                                         instance=self._instance,
-                                         disk_info=None,
-                                         network_info=None,
-                                         block_device_info=None,
-                                         resize_instance=resize_instance,
-                                         image_meta=None,
-                                         power_on=power_on)
-            fake_resize_create_ephemerals_and_swap.assert_called_once_with(
-                'fake-ref', self._instance, None)
-            fake_remove_ephemerals_and_swap.assert_called_once_with('fake-ref')
-            if power_on:
-                fake_power_on.assert_called_once_with(self._session,
-                                                      self._instance,
-                                                      vm_ref='fake-ref')
-            else:
-                self.assertFalse(fake_power_on.called)
-
-            fake_resize_vm.assert_called_once_with(self._context,
-                                                   self._instance, 'fake-ref',
-                                                   self._instance.flavor,
-                                                   mock.ANY)
-            if resize_instance:
-                fake_resize_disk.assert_called_once_with(self._instance,
-                                                         'fake-ref', vmdk,
-                                                         self._instance.flavor)
+            try:
+                self._vmops.finish_migration(context=self._context,
+                                             migration=migration,
+                                             instance=self._instance,
+                                             disk_info=None,
+                                             network_info=None,
+                                             block_device_info=None,
+                                             resize_instance=resize_instance,
+                                             image_meta=None,
+                                             power_on=power_on)
+            except test.TestingException:
+                pass
+            relocate_failed = False
             if migration.dest_compute != migration.source_compute:
                 fake_relocate_vm.\
                     assert_called_once_with('fake-ref', self._context,
@@ -676,13 +665,49 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                             None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
                                                             None)
-                fake_update_cluster_placement.assert_called_once_with(
-                    self._session, self._context, self._instance,
-                    self._cluster.obj, 'fake-ref')
-            calls = [mock.call(self._context, self._instance, step=i,
-                               total_steps=vmops.RESIZE_TOTAL_STEPS) for i in
-                     range(2, 7)]
-            fake_update_instance_progress.assert_has_calls(calls)
+                if not relocate_fails:
+                    fake_update_cluster_placement.assert_called_once_with(
+                        self._session, self._context, self._instance,
+                        self._cluster.obj, 'fake-ref')
+                else:
+                    fake_update_cluster_placement.assert_not_called()
+                    relocate_failed = True
+
+            if not relocate_failed:
+                fake_resize_create_ephemerals_and_swap.assert_called_once_with(
+                    'fake-ref', self._instance, None)
+                fake_remove_ephemerals_and_swap.assert_called_once_with(
+                    'fake-ref')
+                if power_on:
+                    fake_power_on.assert_called_once_with(self._session,
+                                                          self._instance,
+                                                          vm_ref='fake-ref')
+                else:
+                    self.assertFalse(fake_power_on.called)
+
+                fake_resize_vm.assert_called_once_with(self._context,
+                                                       self._instance,
+                                                       'fake-ref',
+                                                       self._instance.flavor,
+                                                       mock.ANY)
+                if resize_instance:
+                    fake_resize_disk.\
+                        assert_called_once_with(self._instance,
+                                                'fake-ref',
+                                                vmdk,
+                                                self._instance.flavor)
+
+                calls = [mock.call(self._context, self._instance, step=i,
+                                   total_steps=vmops.RESIZE_TOTAL_STEPS)
+                         for i in range(2, 7)]
+                fake_update_instance_progress.assert_has_calls(calls)
+            else:
+                fake_resize_create_ephemerals_and_swap.assert_not_called()
+                fake_remove_ephemerals_and_swap.assert_not_called()
+                fake_power_on.assert_not_called()
+                fake_resize_vm.assert_not_called()
+                fake_resize_disk.assert_not_called()
+                fake_update_instance_progress.assert_not_called()
             fake_get_vm_ref.assert_has_calls(vm_ref_calls)
 
     def test_finish_migration_power_on(self):
@@ -694,11 +719,16 @@ class VMwareVMOpsTestCase(test.TestCase):
     def test_finish_migration_power_on_resize(self):
         self._test_finish_migration(power_on=True, resize_instance=True)
 
-    def test_finish_migration_another_cluster(self):
-        self._test_finish_migration(power_on=True, resize_instance=False,
+    def test_finish_migration_another_cluster(self, relocate_fails=False):
+        self._test_finish_migration(power_on=True,
+                                    resize_instance=False,
+                                    relocate_fails=relocate_fails,
                                     migration=objects.Migration(
                                         dest_compute="dest",
                                         source_compute="source"))
+
+    def test_finish_migration_relocate_fails(self):
+        self.test_finish_migration_another_cluster(relocate_fails=True)
 
     @mock.patch.object(vmops.VMwareVMOps, '_create_swap')
     @mock.patch.object(vmops.VMwareVMOps, '_create_ephemeral')
@@ -783,7 +813,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                       fake_resize_create_ephemerals_and_swap,
                                       fake_get_extra_specs,
                                       fake_update_cluster_placement,
-                                      power_on, instances_list=None):
+                                      power_on, instances_list=None,
+                                      relocate_fails=False):
         """Tests the finish_revert_migration method on vmops."""
         datastore = ds_obj.Datastore(ref='fake-ref', name='fake')
         device = vmwareapi_fake.DataObject()
@@ -811,12 +842,17 @@ class VMwareVMOpsTestCase(test.TestCase):
             instances_list = instances_list or [self._instance.uuid]
             fake_list_instances.return_value = instances_list
             same_cluster = self._instance.uuid in instances_list
+            if relocate_fails:
+                fake_relocate_vm.side_effect = test.TestingException()
+            try:
+                self._vmops.finish_revert_migration(self._context,
+                                                    instance=self._instance,
+                                                    network_info=None,
+                                                    block_device_info=None,
+                                                    power_on=power_on)
+            except test.TestingException:
+                pass
 
-            self._vmops.finish_revert_migration(self._context,
-                                                instance=self._instance,
-                                                network_info=None,
-                                                block_device_info=None,
-                                                power_on=power_on)
             vm_ref_calls = [mock.call(self._session, self._instance)]
             fake_power_off.assert_called_once_with(self._session,
                                                    self._instance,
@@ -876,11 +912,14 @@ class VMwareVMOpsTestCase(test.TestCase):
                                             self._instance, None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
                                                             None)
-                fake_update_cluster_placement.assert_called_once_with(
-                    self._session, self._context, self._instance,
-                    self._cluster.obj, 'fake-ref')
+                if not relocate_fails:
+                    fake_update_cluster_placement.assert_called_once_with(
+                        self._session, self._context, self._instance,
+                        self._cluster.obj, 'fake-ref')
+                else:
+                    fake_update_cluster_placement.assert_not_called()
         fake_get_vm_ref.assert_has_calls(vm_ref_calls)
-        if power_on:
+        if power_on and not relocate_fails:
             fake_power_on.assert_called_once_with(self._session,
                                                   self._instance)
         else:
@@ -892,10 +931,15 @@ class VMwareVMOpsTestCase(test.TestCase):
     def test_finish_revert_migration_power_off(self):
         self._test_finish_revert_migration(power_on=False)
 
-    def test_finish_revert_migration_another_cluster(self):
+    def test_finish_revert_migration_another_cluster(self,
+                                                     relocate_fails=False):
         instances_list = ["fake_uuid_foo_bar"]
         self._test_finish_revert_migration(power_on=True,
-                                           instances_list=instances_list)
+                                           instances_list=instances_list,
+                                           relocate_fails=relocate_fails)
+
+    def test_finish_revert_migration_relocate_fails(self):
+        self.test_finish_revert_migration_another_cluster(relocate_fails=True)
 
     @mock.patch.object(volumeops.VMwareVolumeOps, 'attach_volume')
     def test_attach_volumes(self, fake_attach_volume):

@@ -2022,12 +2022,21 @@ class VMwareVMOps(object):
             self._detach_volumes(instance, block_device_info)
             LOG.debug("Relocating VM for reverting migration",
                       instance=instance)
-            self._relocate_vm(vm_ref, context, instance, network_info)
-            LOG.debug("Relocated VM for reverting migration",
-                      instance=instance)
-            vm_util.update_cluster_placement(self._session, context,
-                                             instance, self._cluster, vm_ref)
-            self._attach_volumes(instance, block_device_info)
+            try:
+                self._relocate_vm(vm_ref, context, instance, network_info)
+                LOG.debug("Relocated VM for reverting migration",
+                          instance=instance)
+            except Exception as e:
+                with excutils.save_and_reraise_exception():
+                    LOG.error("Relocating the VM failed: %s", e,
+                              instance=instance)
+            else:
+                vm_util.update_cluster_placement(self._session,
+                                                 context, instance,
+                                                 self._cluster,
+                                                 vm_ref)
+            finally:
+                self._attach_volumes(instance, block_device_info)
 
         if power_on:
             vm_util.power_on_instance(self._session, instance)
@@ -2050,12 +2059,20 @@ class VMwareVMOps(object):
             reattach_volumes = True
             LOG.debug("Relocating VM for migration to %s",
                       migration.dest_compute, instance=instance)
-            self._relocate_vm(vm_ref, context, instance, network_info,
-                              image_meta)
-            LOG.debug("Relocated VM to %s", migration.dest_compute,
-                      instance=instance)
+            try:
+                self._relocate_vm(vm_ref, context, instance, network_info,
+                                  image_meta)
+                LOG.debug("Relocated VM to %s", migration.dest_compute,
+                          instance=instance)
+            except Exception as e:
+                with excutils.save_and_reraise_exception():
+                    LOG.error("Relocating the VM failed with error: %s", e,
+                              instance=instance)
+                    self._attach_volumes(instance, block_device_info)
+
             vm_util.update_cluster_placement(self._session, context,
                                              instance, self._cluster, vm_ref)
+
         self._update_instance_progress(context, instance,
                                        step=2,
                                        total_steps=RESIZE_TOTAL_STEPS)
