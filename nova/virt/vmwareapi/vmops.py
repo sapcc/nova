@@ -1876,6 +1876,37 @@ class VMwareVMOps(object):
                                                     metadata=metadata)
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
+        old_flavor = instance.old_flavor
+        new_is_big = utils.is_big_vm(int(old_flavor.memory_mb), old_flavor)
+        old_is_big = utils.is_big_vm(int(flavor.memory_mb), flavor)
+
+        if not old_is_big and new_is_big:
+            # Make sure we don't automatically move around "big" VMs
+            behavior = constants.DRS_BEHAVIOR_PARTIALLY_AUTOMATED
+            LOG.debug("Adding DRS override '%s' for big VM.", behavior,
+                      instance=instance)
+            cluster_util.update_cluster_drs_vm_override(self._session,
+                                                        self._cluster,
+                                                        vm_ref,
+                                                        operation='add',
+                                                        behavior=behavior)
+        elif old_is_big and not new_is_big:
+            # remove the old override, if we had one before. make sure we don't
+            # error out if it was already deleted another way
+            LOG.debug("Removing DRS override for former big VM.",
+                      instance=instance)
+            try:
+                cluster_util.update_cluster_drs_vm_override(self._session,
+                                                            self._cluster,
+                                                            vm_ref,
+                                                            operation='remove')
+            except vexc.VimFaultException as e:
+                with excutils.save_and_reraise_exception() as ctx:
+                    if 'InvalidArgument' in e.fault_list:
+                        LOG.debug('DRS override was already deleted.',
+                                  instance=instance)
+                        ctx.reraise = False
+
     def _resize_disk(self, instance, vm_ref, vmdk, flavor):
         if (flavor.root_gb > instance.old_flavor.root_gb
                 and flavor.root_gb > vmdk.capacity_in_bytes / units.Gi):

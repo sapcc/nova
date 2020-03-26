@@ -41,6 +41,7 @@ from nova.tests import uuidsentinel
 from nova import utils
 from nova import version
 from nova.virt import hardware
+from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import driver
 from nova.virt.vmwareapi import ds_util
@@ -975,15 +976,75 @@ class VMwareVMOpsTestCase(test.TestCase):
                                 memory_mb=1024,
                                 vcpus=2,
                                 extra_specs={})
-        self._vmops._resize_vm(self._context, self._instance, 'vm-ref', flavor,
+        instance = self._instance.obj_clone()
+        instance.old_flavor = instance.flavor.obj_clone()
+        self._vmops._resize_vm(self._context, instance, 'vm-ref', flavor,
                                None)
         fake_get_metadata.assert_called_once_with(self._context,
-                                                  self._instance, flavor)
+                                                  instance, flavor)
         fake_resize_spec.assert_called_once_with(
             self._session.vim.client.factory, 2, 1024, extra_specs,
                 CONF.vmware.reserve_all_memory, metadata=self._metadata)
         fake_reconfigure.assert_called_once_with(self._session,
                                                  'vm-ref', 'fake-spec')
+
+    @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
+    @mock.patch.object(vm_util, 'reconfigure_vm')
+    @mock.patch.object(vm_util, 'get_vm_resize_spec',
+                       return_value='fake-spec')
+    @mock.patch.object(utils, 'is_big_vm')
+    @mock.patch.object(cluster_util, 'update_cluster_drs_vm_override')
+    def test_resize_vm_bigvm_upsize(self, fake_drs_override, fake_is_big_vm,
+                                    fake_resize_spec, fake_reconfigure,
+                                    fake_get_extra_specs, fake_get_metadata):
+        # new is big, new is big, old is not
+        fake_is_big_vm.side_effect = [True, True, False]
+        extra_specs = vm_util.ExtraSpecs()
+        fake_get_extra_specs.return_value = extra_specs
+        fake_get_metadata.return_value = self._metadata
+        flavor = objects.Flavor(name='m1.small',
+                                memory_mb=1024,
+                                vcpus=2,
+                                extra_specs={})
+        instance = self._instance.obj_clone()
+        instance.old_flavor = instance.flavor.obj_clone()
+        self._vmops._resize_vm(self._context, instance, 'vm-ref', flavor,
+                               None)
+        behavior = constants.DRS_BEHAVIOR_PARTIALLY_AUTOMATED
+        fake_drs_override.assert_called_once_with(self._session,
+                                                  self._cluster.obj,
+                                                  'vm-ref',
+                                                  operation='add',
+                                                  behavior=behavior)
+
+    @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
+    @mock.patch.object(vm_util, 'reconfigure_vm')
+    @mock.patch.object(vm_util, 'get_vm_resize_spec',
+                       return_value='fake-spec')
+    @mock.patch.object(utils, 'is_big_vm')
+    @mock.patch.object(cluster_util, 'update_cluster_drs_vm_override')
+    def test_resize_vm_bigvm_downsize(self, fake_drs_override, fake_is_big_vm,
+                                      fake_resize_spec, fake_reconfigure,
+                                      fake_get_extra_specs, fake_get_metadata):
+        # new is not big, new is not big, old is big
+        fake_is_big_vm.side_effect = [False, False, True]
+        extra_specs = vm_util.ExtraSpecs()
+        fake_get_extra_specs.return_value = extra_specs
+        fake_get_metadata.return_value = self._metadata
+        flavor = objects.Flavor(name='m1.small',
+                                memory_mb=1024,
+                                vcpus=2,
+                                extra_specs={})
+        instance = self._instance.obj_clone()
+        instance.old_flavor = instance.flavor.obj_clone()
+        self._vmops._resize_vm(self._context, instance, 'vm-ref', flavor,
+                               None)
+        fake_drs_override.assert_called_once_with(self._session,
+                                                  self._cluster.obj,
+                                                  'vm-ref',
+                                                  operation='remove')
 
     @mock.patch.object(vmops.VMwareVMOps, '_extend_virtual_disk')
     @mock.patch.object(ds_util, 'disk_move')
