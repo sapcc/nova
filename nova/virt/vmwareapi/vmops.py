@@ -1174,7 +1174,8 @@ class VMwareVMOps(object):
             cluster_util.update_cluster_drs_vm_override(self._session,
                                                         self._cluster,
                                                         vm_ref,
-                                                        behavior)
+                                                        operation='add',
+                                                        behavior=behavior)
 
         vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 
