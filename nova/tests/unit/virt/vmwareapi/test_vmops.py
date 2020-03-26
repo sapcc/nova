@@ -25,6 +25,7 @@ from oslo_vmware import vim_util as vutil
 import six
 
 from nova.compute import power_state
+import nova.conf
 from nova import context
 from nova import exception
 from nova.network import model as network_model
@@ -49,6 +50,8 @@ from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
+
+CONF = nova.conf.CONF
 
 
 class DsPathMatcher(object):
@@ -876,6 +879,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 int(self._instance.vcpus),
                 int(self._instance.memory_mb),
                 extra_specs,
+                CONF.vmware.reserve_all_memory,
                 metadata=metadata)
             fake_reconfigure_vm.assert_called_once_with(self._session,
                                                         'fake-ref',
@@ -977,7 +981,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                   self._instance, flavor)
         fake_resize_spec.assert_called_once_with(
             self._session.vim.client.factory, 2, 1024, extra_specs,
-                metadata=self._metadata)
+                CONF.vmware.reserve_all_memory, metadata=self._metadata)
         fake_reconfigure.assert_called_once_with(self._session,
                                                  'vm-ref', 'fake-spec')
 

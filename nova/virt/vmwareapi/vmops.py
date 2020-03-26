@@ -996,11 +996,15 @@ class VMwareVMOps(object):
                                  vi.instance,
                                  root_vmdk_info.path)
 
+        reservation_locked = CONF.vmware.reserve_all_memory \
+                                or utils.is_big_vm(int(vi.instance.memory_mb),
+                                                   vi.instance.flavor)
         metadata = self._get_instance_metadata(context, vi.instance)
         reconfig_spec = vm_util.get_vm_resize_spec(client_factory,
                                                    int(vi.instance.vcpus),
                                                    int(vi.instance.memory_mb),
                                                    extra_specs,
+                                                   reservation_locked,
                                                    metadata=metadata)
         reconfig_spec.instanceUuid = vi.instance.uuid
         vif_infos = vmwarevif.get_vif_info(self._session,
@@ -1859,11 +1863,15 @@ class VMwareVMOps(object):
         """Resizes the VM according to the flavor."""
         client_factory = self._session.vim.client.factory
         extra_specs = self._get_extra_specs(flavor, image_meta)
+        reservation_locked = CONF.vmware.reserve_all_memory \
+                                or utils.is_big_vm(int(flavor.memory_mb),
+                                                   flavor)
         metadata = self._get_instance_metadata(context, instance, flavor)
         vm_resize_spec = vm_util.get_vm_resize_spec(client_factory,
                                                     int(flavor.vcpus),
                                                     int(flavor.memory_mb),
                                                     extra_specs,
+                                                    reservation_locked,
                                                     metadata=metadata)
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
@@ -2003,12 +2011,16 @@ class VMwareVMOps(object):
         # Reconfigure the VM properties
         extra_specs = self._get_extra_specs(instance.flavor,
                                             instance.image_meta)
+        reservation_locked = CONF.vmware.reserve_all_memory \
+                             or utils.is_big_vm(int(instance.flavor.memory_mb),
+                                                instance.flavor)
         metadata = self._get_instance_metadata(context, instance)
         vm_resize_spec = vm_util.get_vm_resize_spec(
             client_factory,
             int(instance.flavor.vcpus),
             int(instance.flavor.memory_mb),
             extra_specs,
+            reservation_locked,
             metadata=metadata)
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
