@@ -632,6 +632,11 @@ class ServersController(wsgi.Controller):
                 exception.NoUniqueMatch,
                 exception.MultiattachSupportNotYetAvailable) as error:
             raise exc.HTTPConflict(explanation=error.format_message())
+        except exception.InvalidQuotaMethodUsage as error:
+            if ' instances_' in error.message:
+                msg = "Invalid baremetal flavor for this region."
+                raise exc.HTTPBadRequest(explanation=msg)
+            raise
 
         # If the caller wanted a reservation_id, return it
         if return_reservation_id:
