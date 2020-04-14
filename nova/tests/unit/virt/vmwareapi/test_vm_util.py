@@ -2018,7 +2018,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
             child_name = 'child_folder'
             ret = vm_util.create_folder(session, parent_folder, child_name)
 
-            self.assertEqual('Folder', ret._type)
+            self.assertEqual('Folder', vutil.get_moref_type(ret))
             self.assertEqual('folder-1', vutil.get_moref_value(ret))
             session._call_method.assert_called_once_with(session.vim,
                                                          'CreateFolder',

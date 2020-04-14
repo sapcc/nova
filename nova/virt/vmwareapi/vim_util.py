@@ -85,7 +85,7 @@ def get_inner_objects(vim, base_obj, path, inner_type,
                       properties_to_collect=None, all=False):
     """Gets the list of inner objects of the type specified."""
     client_factory = vim.client.factory
-    base_type = base_obj._type
+    base_type = vutil.get_moref_type(base_obj)
     traversal_spec = vutil.build_traversal_spec(client_factory, 'inner',
                                                 base_type, path, False, [])
     object_spec = vutil.build_object_spec(client_factory,

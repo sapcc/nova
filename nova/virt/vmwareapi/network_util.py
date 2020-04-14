@@ -73,7 +73,8 @@ def _get_network_obj(session, network_objects, network_name):
             network_refs = network_refs.ManagedObjectReference
             for network in network_refs:
                 # Get network properties
-                if network._type == 'DistributedVirtualPortgroup':
+                moref_type = vutil.get_moref_type(network)
+                if moref_type == 'DistributedVirtualPortgroup':
                     props = session._call_method(vutil,
                                                  "get_object_property",
                                                  network,

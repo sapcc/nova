@@ -1833,7 +1833,7 @@ def _get_folder(session, parent_folder_ref, name):
 
         # Return if the child folder with input name is already present
         for child_entity in child_entities:
-            if child_entity._type != 'Folder':
+            if vutil.get_moref_type(child_entity) != 'Folder':
                 continue
             child_entity_name = vim_util.get_entity_name(session, child_entity)
             if child_entity_name == name:
