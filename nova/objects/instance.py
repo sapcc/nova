@@ -1442,6 +1442,8 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
 
         faults_by_uuid = {}
         for cell_id, ims in _group_inst_mappings_by_cell_id(inst_mappings):
+            if cell_id is None:
+                continue
             cm, inst_uuids = None, []
             for im in ims:
                 inst_uuids.append(im.instance_uuid)

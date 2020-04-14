@@ -1879,10 +1879,11 @@ class _TestInstanceListObject(object):
         for inst in insts:
             inst.obj_reset_changes()
 
+        cm = mock.Mock(database_connection=objects.CellMapping.CELL0_UUID)
         mock_get_inst_map_list.return_value = [
-            mock.Mock(cell_mapping=None,
+            mock.Mock(cell_mapping=cm,
                       instance_uuid=uuids.db_fault_1),
-            mock.Mock(cell_mapping=None,
+            mock.Mock(cell_mapping=cm,
                       instance_uuid=uuids.db_fault_2)
         ]
 
