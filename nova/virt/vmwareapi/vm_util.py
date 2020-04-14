@@ -1267,7 +1267,8 @@ def _get_host_reservations(host_reservations_map, host_moref, host_vcpus,
 
     default_key = _HOST_RESERVATIONS_DEFAULT_KEY
     host_reservations = host_reservations_map.get(default_key, {})
-    group_reservations = host_reservations_map.get(host_moref.value, {})
+    group_reservations = \
+        host_reservations_map.get(vutil.get_moref_value(host_moref), {})
     for key in ['vcpus', 'vcpus_percent', 'memory_mb', 'memory_percent']:
         if key in group_reservations:
             host_reservations[key] = group_reservations[key]
@@ -1327,7 +1328,7 @@ def _get_host_reservations_map(groups=None):
 
         for host_moref in group.host:
             reservation = reservations[group.name]
-            hrm[host_moref.value] = reservation
+            hrm[vutil.get_moref_value(host_moref)] = reservation
     return hrm
 
 
@@ -1354,7 +1355,8 @@ def get_stats_from_cluster(session, cluster):
         key = 'configuration.dasConfig.admissionControlPolicy'
         policy = prop_dict.get(key)
         if policy and hasattr(policy, 'failoverHosts'):
-            failover_hosts = set(h.value for h in policy.failoverHosts)
+            failover_hosts = set(vutil.get_moref_value(h)
+                                 for h in policy.failoverHosts)
 
         group_ret = getattr(prop_dict.get('configurationEx'), 'group', None)
         host_reservations_map = _get_host_reservations_map(group_ret)
@@ -1362,7 +1364,7 @@ def get_stats_from_cluster(session, cluster):
         host_ret = prop_dict.get('host')
         if host_ret:
             host_mors = [m for m in host_ret.ManagedObjectReference
-                            if m.value not in failover_hosts]
+                         if vutil.get_moref_value(m) not in failover_hosts]
             result = session._call_method(vim_util,
                          "get_properties_for_a_collection_of_objects",
                          "HostSystem", host_mors,
@@ -1846,15 +1848,18 @@ def create_folder(session, parent_folder_ref, name):
     """
 
     LOG.debug("Creating folder: %(name)s. Parent ref: %(parent)s.",
-              {'name': name, 'parent': parent_folder_ref.value})
+              {'name': name,
+               'parent': vutil.get_moref_value(parent_folder_ref)})
     try:
         folder = session._call_method(session.vim, "CreateFolder",
                                       parent_folder_ref, name=name)
         LOG.info("Created folder: %(name)s in parent %(parent)s.",
-                 {'name': name, 'parent': parent_folder_ref.value})
+                 {'name': name,
+                  'parent': vutil.get_moref_value(parent_folder_ref)})
     except vexc.DuplicateName as e:
         LOG.debug("Folder already exists: %(name)s. Parent ref: %(parent)s.",
-                  {'name': name, 'parent': parent_folder_ref.value})
+                  {'name': name,
+                   'parent': vutil.get_moref_value(parent_folder_ref)})
         val = e.details['object']
         folder = vutil.get_moref(val, 'Folder')
     return folder

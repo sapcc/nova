@@ -65,15 +65,17 @@ class VMwareVolumeOps(object):
         LOG.debug("Reconfiguring VM instance %(vm_ref)s to attach "
                   "disk %(vmdk_path)s or device %(device_name)s with type "
                   "%(disk_type)s",
-                  {'vm_ref': vm_ref.value, 'vmdk_path': vmdk_path,
-                   'device_name': device_name, 'disk_type': disk_type},
+                  {'vm_ref': vutil.get_moref_value(vm_ref),
+                   'vmdk_path': vmdk_path, 'device_name': device_name,
+                   'disk_type': disk_type},
                   instance=instance)
         vm_util.reconfigure_vm(self._session, vm_ref, vmdk_attach_config_spec)
         LOG.debug("Reconfigured VM instance %(vm_ref)s to attach "
                   "disk %(vmdk_path)s or device %(device_name)s with type "
                   "%(disk_type)s",
-                  {'vm_ref': vm_ref.value, 'vmdk_path': vmdk_path,
-                   'device_name': device_name, 'disk_type': disk_type},
+                  {'vm_ref': vutil.get_moref_value(vm_ref),
+                   'vmdk_path': vmdk_path, 'device_name': device_name,
+                   'disk_type': disk_type},
                   instance=instance)
 
     def _update_volume_details(self, vm_ref, volume_uuid, device_uuid):
@@ -104,12 +106,14 @@ class VMwareVolumeOps(object):
         disk_key = device.key
         LOG.debug("Reconfiguring VM instance %(vm_ref)s to detach "
                   "disk %(disk_key)s",
-                  {'vm_ref': vm_ref.value, 'disk_key': disk_key},
+                  {'vm_ref': vutil.get_moref_value(vm_ref),
+                   'disk_key': disk_key},
                   instance=instance)
         vm_util.reconfigure_vm(self._session, vm_ref, vmdk_detach_config_spec)
         LOG.debug("Reconfigured VM instance %(vm_ref)s to detach "
                   "disk %(disk_key)s",
-                  {'vm_ref': vm_ref.value, 'disk_key': disk_key},
+                  {'vm_ref': vutil.get_moref_value(vm_ref),
+                   'disk_key': disk_key},
                   instance=instance)
 
     def _iscsi_get_target(self, data):
@@ -302,7 +306,7 @@ class VMwareVolumeOps(object):
                      'initiator': iqn,
                      'host': CONF.vmware.host_ip}
         if vm_ref:
-            connector['instance'] = vm_ref.value
+            connector['instance'] = vutil.get_moref_value(vm_ref)
 
         connector['connection_capabilities'] = \
             self._get_connection_capabilities()
@@ -465,9 +469,10 @@ class VMwareVolumeOps(object):
         detached = False
         LOG.debug("Relocating volume's backing: %(backing)s to resource "
                   "pool: %(rp)s, datastore: %(ds)s, host: %(host)s.",
-                  {'backing': volume_ref.value, 'rp': res_pool.value,
-                   'ds': datastore.value,
-                   'host': host.value})
+                  {'backing': vutil.get_moref_value(volume_ref),
+                   'rp': vutil.get_moref_value(res_pool),
+                   'ds': vutil.get_moref_value(datastore),
+                   'host': vutil.get_moref_value(host)})
         try:
             vm_util.relocate_vm(self._session, volume_ref, res_pool, datastore,
                                 host)

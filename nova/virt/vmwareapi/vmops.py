@@ -1820,7 +1820,8 @@ class VMwareVMOps(object):
                          ]
 
         self.update_cached_instances()
-        vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
+        vm_props = \
+            vm_util._VM_VALUE_CACHE.get(vutil.get_moref_value(vm_ref), {})
 
         if set(vm_props.keys()).issuperset(lst_properties):
             return vm_props
@@ -2239,7 +2240,8 @@ class VMwareVMOps(object):
             self.update_cached_instances()
 
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
+        vm_props = \
+            vm_util._VM_VALUE_CACHE.get(vutil.get_moref_value(vm_ref), {})
         if not vm_props or "runtime.powerState" not in vm_props:
             try:
                 if not CONF.vmware.use_property_collector:
@@ -2373,13 +2375,15 @@ class VMwareVMOps(object):
                   instance=instance)
 
     def _get_ds_browser(self, ds_ref):
-        ds_browser = self._datastore_browser_mapping.get(ds_ref.value)
+        ds_browser = \
+            self._datastore_browser_mapping.get(vutil.get_moref_value(ds_ref))
         if not ds_browser:
             ds_browser = self._session._call_method(vutil,
                                                     "get_object_property",
                                                     ds_ref,
                                                     "browser")
-            self._datastore_browser_mapping[ds_ref.value] = ds_browser
+            ds_ref_value = vutil.get_moref_value(ds_ref)
+            self._datastore_browser_mapping[ds_ref_value] = ds_browser
         return ds_browser
 
     def _create_folder_if_missing(self, ds_name, ds_ref, folder):
@@ -2795,22 +2799,24 @@ class VMwareVMOps(object):
                     vm_ref = update.obj
                     if vm_ref["_type"] != "VirtualMachine":
                         continue
-                    values = vm_util._VM_VALUE_CACHE[vm_ref.value]
+                    values = \
+                        vm_util._VM_VALUE_CACHE[vutil.get_moref_value(vm_ref)]
 
                     if update.kind == "leave":
                         instance_uuid = values.get("config.instanceUuid")
                         vm_util.vm_ref_cache_delete(instance_uuid)
                         vm_util.vm_value_cache_delete(vm_ref)
                         LOG.debug("Removed instance %s (%s) from cache...",
-                                  instance_uuid, vm_ref.value)
+                                  instance_uuid, vutil.get_moref_value(vm_ref))
                     else:
                         changes = dict(self._parse_change_set(
                                                 update.changeSet))
                         LOG.debug("%s.%s.%s: %s", vm_ref["_type"], update.kind,
-                                  vm_ref.value, changes)
+                                  vutil.get_moref_value(vm_ref), changes)
                         if not (changes.get("config.managedBy") or
                                 values.get("config.managedBy")):
-                            LOG.debug("%s Not managed by nova", vm_ref.value)
+                            LOG.debug("%s Not managed by nova",
+                                      vutil.get_moref_value(vm_ref))
                             continue
 
                         instance_uuid = changes.get("config.instanceUuid")
@@ -2831,7 +2837,8 @@ class VMwareVMOps(object):
 
                         values.update(changes)
                         LOG.debug("%s.%s.%s -> %s", vm_ref["_type"],
-                                  update.kind, vm_ref.value, values)
+                                  update.kind, vutil.get_moref_value(vm_ref),
+                                  values)
 
             update_set = vim.WaitForUpdatesEx(self._property_collector,
                 version=self._property_collector_version,
