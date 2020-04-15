@@ -1875,7 +1875,9 @@ class _TestInstanceListObject(object):
     def test_fill_faults(self, mock_fault_get, mock_get_inst_map_list):
         inst1 = objects.Instance(uuid=uuids.db_fault_1)
         inst2 = objects.Instance(uuid=uuids.db_fault_2)
-        insts = [inst1, inst2]
+        inst_no_cm = objects.Instance(uuid=uuids.db_fault_no_cm)
+        insts_with_cm = [inst1, inst2]
+        insts = insts_with_cm + [inst_no_cm]
         for inst in insts:
             inst.obj_reset_changes()
 
@@ -1884,7 +1886,9 @@ class _TestInstanceListObject(object):
             mock.Mock(cell_mapping=cm,
                       instance_uuid=uuids.db_fault_1),
             mock.Mock(cell_mapping=cm,
-                      instance_uuid=uuids.db_fault_2)
+                      instance_uuid=uuids.db_fault_2),
+            mock.Mock(cell_mapping=None,
+                      instance_uuid=uuids.db_fault_no_cm)
         ]
 
         db_faults = {
@@ -1914,7 +1918,7 @@ class _TestInstanceListObject(object):
             self.assertEqual(set(), inst.obj_what_changed())
 
         mock_fault_get.assert_called_once_with(mock.ANY,
-                                               [x.uuid for x in insts],
+                                               [x.uuid for x in insts_with_cm],
                                                latest=True)
 
     @mock.patch('nova.context.target_cell')
