@@ -2269,7 +2269,7 @@ class VMwareVMOps(object):
         data = {}
         # All of values received are objects. Convert them to dictionaries
         for value in vm_props.values():
-            prop_dict = vim_util.object_to_dict(value, list_depth=1)
+            prop_dict = vutil.serialize_object(value)
             data.update(prop_dict)
         return data
 

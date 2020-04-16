@@ -25,32 +25,6 @@ import nova.conf
 CONF = nova.conf.CONF
 
 
-def object_to_dict(obj, list_depth=1):
-    """Convert Suds object into serializable format.
-
-    The calling function can limit the amount of list entries that
-    are converted.
-    """
-    d = {}
-    for k, v in dict(obj).items():
-        if hasattr(v, '__keylist__'):
-            d[k] = object_to_dict(v, list_depth=list_depth)
-        elif isinstance(v, list):
-            d[k] = []
-            used = 0
-            for item in v:
-                used = used + 1
-                if used > list_depth:
-                    break
-                if hasattr(item, '__keylist__'):
-                    d[k].append(object_to_dict(item, list_depth=list_depth))
-                else:
-                    d[k].append(item)
-        else:
-            d[k] = v
-    return d
-
-
 def get_object_properties(vim, collector, mobj, type, properties):
     """Gets the properties of the Managed object specified."""
     client_factory = vim.client.factory
