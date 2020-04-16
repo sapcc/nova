@@ -1434,7 +1434,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
         def _group_inst_mappings_by_cell_id(instance_mappings):
             def _im_cell_id(instance_mapping):
                 cm = instance_mapping.cell_mapping
-                cell_id = getattr(cm, 'id', None) if cm else None
+                cell_id = getattr(cm, 'id', -1) if cm else -1
                 return cell_id
 
             instance_mappings = sorted(instance_mappings, key=_im_cell_id)
@@ -1442,7 +1442,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
 
         faults_by_uuid = {}
         for cell_id, ims in _group_inst_mappings_by_cell_id(inst_mappings):
-            if cell_id is None:
+            if cell_id == -1:
                 continue
             cm, inst_uuids = None, []
             for im in ims:

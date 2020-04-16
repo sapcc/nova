@@ -1881,7 +1881,8 @@ class _TestInstanceListObject(object):
         for inst in insts:
             inst.obj_reset_changes()
 
-        cm = mock.Mock(database_connection=objects.CellMapping.CELL0_UUID)
+        cm = mock.Mock(database_connection=objects.CellMapping.CELL0_UUID,
+                       id=1)
         mock_get_inst_map_list.return_value = [
             mock.Mock(cell_mapping=cm,
                       instance_uuid=uuids.db_fault_1),
@@ -1941,8 +1942,10 @@ class _TestInstanceListObject(object):
         # Define different cell mappings for the 2 instances
         im1 = mock.Mock(instance_uuid=uuids.inst_1,
                         cell_mapping=mock.Mock(
-                            database_connection=self.context.db_connection))
-        im2 = mock.Mock(instance_uuid=uuids.inst_2)
+                            database_connection=self.context.db_connection,
+                            id=1))
+        im2 = mock.Mock(instance_uuid=uuids.inst_2,
+                        cell_mapping=mock.Mock(id=2))
         mock_get_inst_map_list.return_value = [im1, im2]
 
         # Define faults for the instances in different cell DBs (mocked)
