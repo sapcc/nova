@@ -121,18 +121,6 @@ class ServerVirtualInterfaceTestV21(test.NoDBTestCase):
                                          'fake_uuid',
                                          expected_attrs=None)
 
-    def test_list_vifs_neutron_notimplemented(self):
-        """Tests that a 400 is returned when using neutron as the backend"""
-        # unset the get_vifs_by_instance stub from setUp
-        self.get_vifs_by_instance_patcher.stop()
-        self.flags(use_neutron=True)
-        # reset the controller to use the neutron network API
-        self._set_controller()
-        req = fakes.HTTPRequest.blank('', version=self.wsgi_api_version)
-        self.assertRaises(webob.exc.HTTPBadRequest,
-                          self.controller.index, req, FAKE_UUID)
-        self.get_vifs_by_instance_patcher.start()
-
 
 class ServerVirtualInterfaceTestV212(ServerVirtualInterfaceTestV21):
     wsgi_api_version = '2.12'
