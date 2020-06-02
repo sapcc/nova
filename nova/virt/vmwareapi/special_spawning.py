@@ -91,11 +91,7 @@ class _SpecialVmSpawningServer(object):
                 '"bigvm_deployment_free_host_hostgroup_name" is unconfigured.')
 
         for group in group_ret:
-            # we only look for hostgroups
-            if not hasattr(group, 'host'):
-                continue
-
-            # we are only instered in one special group
+            # we are only interested in one special group
             if group.name == hg_name:
                 return group
 
