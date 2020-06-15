@@ -12,11 +12,16 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import datetime
+
 from oslo_serialization import jsonutils
+from oslo_utils import timeutils
 from oslo_utils import versionutils
 
 
 from nova.db.sqlalchemy import api as db
+from nova.db.sqlalchemy.api import and_
+from nova.db.sqlalchemy.api import or_
 from nova.db.sqlalchemy import api_models
 from nova import exception
 from nova import objects
@@ -649,6 +654,47 @@ class RequestSpec(base.NovaObject):
     @classmethod
     def destroy_bulk(cls, context, instance_uuids):
         return cls._destroy_bulk_in_db(context, instance_uuids)
+
+    @staticmethod
+    @db.api_context_manager.writer
+    def _destroy_bulk_without_instance_in_db(context, extant_instance_uuids,
+                                             dry_run=False, older_than=90,
+                                             max_number=0):
+        age_filter = True
+        if older_than is not None and older_than > 0:
+            destroy_before = timeutils.utcnow() \
+                - datetime.timedelta(days=older_than)
+            age_filter = or_(
+                api_models.RequestSpec.updated_at < destroy_before,
+                and_(api_models.RequestSpec.updated_at.is_(None),
+                    api_models.RequestSpec.created_at < destroy_before))
+        query = context.session.query(api_models.RequestSpec).filter(
+                    and_(~api_models.RequestSpec.instance_uuid.in_(
+                        extant_instance_uuids), age_filter))
+        if max_number > 0:
+            query = query.order_by(api_models.RequestSpec.created_at.asc())\
+                .limit(max_number)
+        to_delete_ids = query.values('id')
+        if dry_run:
+            return to_delete_ids
+        else:
+            # NOTE(gc): SQLAlchemy prohibits query.limit().delete() for obscure
+            # reasons. So we need to pass the list of all ids to be deleted to
+            # a new delete query.
+            return context.session.query(api_models.RequestSpec)\
+                    .filter(api_models.RequestSpec.id.in_(
+                        [r[0] for r in to_delete_ids]))\
+                    .delete(synchronize_session=False)
+
+    @classmethod
+    def destroy_bulk_without_instance(cls, context, extant_instance_uuids,
+                                      dry_run=False, older_than=90,
+                                      max_number=0):
+        return cls._destroy_bulk_without_instance_in_db(context,
+                                                   extant_instance_uuids,
+                                                   dry_run=dry_run,
+                                                   older_than=older_than,
+                                                   max_number=max_number)
 
     def reset_forced_destinations(self):
         """Clears the forced destination fields from the RequestSpec object.
