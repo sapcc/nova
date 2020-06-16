@@ -1400,7 +1400,7 @@ class VMwareVMOps(object):
                     removal.operation = 'remove'
                     device_change.append(removal)
 
-            rel_spec.deviceChange = device_change
+            config_spec.deviceChange = device_change
 
         clone_spec = vm_util.clone_vm_spec(client_factory,
                                            rel_spec,
