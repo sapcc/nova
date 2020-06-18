@@ -679,7 +679,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
 
     def test_get_volume_connector(self):
         vm_id = 'fake-vm'
-        vm_ref = mock.MagicMock(value=vm_id)
+        vm_ref = vmwareapi_fake.ManagedObjectReference('VirtualMachine', vm_id)
         iqn = 'iscsi-name'
         host_ip = 'testhostname'
         self.flags(host_ip=host_ip, group='vmware')

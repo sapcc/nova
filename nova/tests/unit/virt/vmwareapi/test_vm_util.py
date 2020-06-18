@@ -1995,8 +1995,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         session = fake.FakeSession()
         with mock.patch.object(session, '_call_method',
                                side_effect=[child_folder]):
-            parent_folder = mock.sentinel.parent_folder
-            parent_folder.value = 'parent-ref'
+            parent_folder = fake.ManagedObjectReference('Folder', 'parent-ref')
             child_name = 'child_folder'
             ret = vm_util.create_folder(session, parent_folder, child_name)
 
@@ -2013,8 +2012,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         duplicate_exception = vexc.DuplicateName(details=details)
         with mock.patch.object(session, '_call_method',
                                side_effect=[duplicate_exception]):
-            parent_folder = mock.sentinel.parent_folder
-            parent_folder.value = 'parent-ref'
+            parent_folder = fake.ManagedObjectReference('Folder', 'parent-ref')
             child_name = 'child_folder'
             ret = vm_util.create_folder(session, parent_folder, child_name)
 
@@ -2054,8 +2052,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                              session._call_method.mock_calls)
 
     def test_get_folder_child_entry_not_matched(self):
-        child_entity = mock.Mock()
-        child_entity._type = 'Folder'
+        child_entity = fake.ManagedObjectReference('Folder')
         prop_val = mock.Mock()
         prop_val.ManagedObjectReference = [child_entity]
         session = fake.FakeSession()
@@ -2072,8 +2069,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                              session._call_method.mock_calls)
 
     def test_get_folder_child_entry_matched(self):
-        child_entity = mock.Mock()
-        child_entity._type = 'Folder'
+        child_entity = fake.ManagedObjectReference('Folder')
         prop_val = mock.Mock()
         prop_val.ManagedObjectReference = [child_entity]
         session = fake.FakeSession()
