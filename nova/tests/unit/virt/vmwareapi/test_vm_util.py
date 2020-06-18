@@ -158,8 +158,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         policy = fake.DataObject('ClusterFailoverHostAdmissionControlPolicy')
         # it looks like a moref, but it's called a FailoverHosts object
         host = fake.DataObject('failoverHosts')
-        host.value = 'host1'
-        host._type = 'HostSystem'
+        host.value = host._value_1 = 'host1'
+        host.type = host._type = 'HostSystem'
         policy.failoverHosts = [host]
         self._test_get_stats_from_cluster(failover_policy=policy,
                                           failover_hosts_filtered=1)
@@ -168,8 +168,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         policy = fake.DataObject('ClusterFailoverHostAdmissionControlPolicy')
         # it looks like a moref, but it's called a FailoverHosts object
         host = fake.DataObject('failoverHosts')
-        host.value = 'host3'
-        host._type = 'HostSystem'
+        host.value = host._value_1 = 'host3'
+        host.type = host._type = 'HostSystem'
         policy.failoverHosts = [host]
         self._test_get_stats_from_cluster(failover_policy=policy,
                                           failover_hosts_filtered=0)
