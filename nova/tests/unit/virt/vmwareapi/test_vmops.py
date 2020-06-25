@@ -668,7 +668,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                 fake_detach_volumes.assert_called_once_with(self._instance,
                                                             None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
-                                                            None)
+                                                            None,
+                                                            vmdk.adapter_type)
                 if not relocate_fails:
                     fake_update_cluster_placement.assert_called_once_with(
                         self._session, self._context, self._instance,
@@ -826,7 +827,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         backing.datastore = datastore.ref
         device.backing = backing
         vmdk = vm_util.VmdkInfo('[fake] uuid/root.vmdk',
-                                'fake-adapter',
+                                mock.sentinel.adapter_type,
                                 'fake-disk',
                                 'fake-capacity',
                                 device)
@@ -904,7 +905,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 '[fake] uuid/original.vmdk',
                 '[fake] uuid/root.vmdk')
             mock_attach_disk.assert_called_once_with(
-                    'fake-ref', self._instance, 'fake-adapter', 'fake-disk',
+                    'fake-ref', self._instance, vmdk.adapter_type, 'fake-disk',
                     '[fake] uuid/root.vmdk')
             fake_remove_ephemerals_and_swap.assert_called_once_with('fake-ref')
             fake_resize_create_ephemerals_and_swap.assert_called_once_with(
@@ -916,7 +917,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                     assert_called_once_with('fake-ref', self._context,
                                             self._instance, None)
                 fake_attach_volumes.assert_called_once_with(self._instance,
-                                                            None)
+                                                            None,
+                                                            vmdk.adapter_type)
                 if not relocate_fails:
                     fake_update_cluster_placement.assert_called_once_with(
                         self._session, self._context, self._instance,
@@ -955,11 +957,12 @@ class VMwareVMOpsTestCase(test.TestCase):
                 {'boot_index': 0, 'connection_info': {'id': 'a'}},
             ]
         }
-        self._vmops._attach_volumes(self._instance, block_device_info)
+        self._vmops._attach_volumes(self._instance, block_device_info,
+                                    mock.sentinel.adapter_type)
         fake_attach_volume.assert_has_calls([
-            mock.call({'id': 'a'}, self._instance),
-            mock.call({'id': 'b'}, self._instance),
-            mock.call({'id': 'c'}, self._instance),
+            mock.call({'id': 'a'}, self._instance, mock.sentinel.adapter_type),
+            mock.call({'id': 'b'}, self._instance, mock.sentinel.adapter_type),
+            mock.call({'id': 'c'}, self._instance, mock.sentinel.adapter_type),
         ])
 
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata')
