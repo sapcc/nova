@@ -812,6 +812,72 @@ class ApiDbCommands(object):
         """Print the current database version."""
         print(migration.db_version(database='api'))
 
+    @args('--dry-run', action='store_true', dest='dry_run', default=False,
+          help='Show number of candidate request specs')
+    @args('--older-than', dest='older_than', default=90,
+          help='Days from today to begin purging')
+    @args('--max-number', dest='max_number', default=0,
+          help='Maximum number of request spec rows to consider')
+    @args('--until-complete', action='store_true', dest='until_complete',
+          default=False,
+          help=('Run continuously until all rows are purged. Use --max-number '
+                'as a batch size for each iteration.'))
+    def purge_request_specs(self, dry_run=False, older_than=90, max_number=0,
+                            until_complete=False):
+        """Removes old request specs for deleted instances"""
+        older_than = int(older_than)
+        max_number = int(max_number)
+
+        admin_context = context.get_admin_context()
+        # There's no need to join the default security_groups and
+        # instance_info_caches tables, hence explicit empty 'columns_to_join'.
+        extant_instance_uuids = [i.get('uuid') for i in db.instance_get_all(
+            admin_context, columns_to_join=[]) if i.get('uuid') is not None]
+        finished = False
+        while not finished:
+            finished = self._purge_request_specs_and_instance_mappings(
+                admin_context, extant_instance_uuids, dry_run, older_than,
+                max_number)
+            if not until_complete:
+                finished = True
+
+    def _purge_request_specs_and_instance_mappings(self, context,
+                                                   extant_instance_uuids,
+                                                   dry_run=False,
+                                                   older_than=90,
+                                                   max_number=0):
+        request_spec_count = objects.RequestSpec.destroy_bulk_without_instance(
+            context, extant_instance_uuids, dry_run, older_than,
+            max_number)
+        if not dry_run:
+            print(_("Purged %d request specs from the DB")
+                    % request_spec_count)
+        else:
+            print(_("There are at least %(count)d records in the DB for "
+                    "deleted instances' request specs. Run this command again "
+                    "without the dry-run option to purge these records.\n"
+                    "From %(first_id)d to %(last_id)d")
+                    % {'count': request_spec_count[0],
+                       'first_id': request_spec_count[1],
+                       'last_id': request_spec_count[2]})
+        instance_mapping_count = objects.InstanceMappingList.\
+            destroy_bulk_without_instance(context, extant_instance_uuids,
+                                          dry_run, older_than, max_number)
+        if not dry_run:
+            print(_("Purged %d instance mappings from the DB")
+                    % instance_mapping_count)
+        else:
+            print(_("There are at least %(count)d records in the DB for "
+                    "deleted instance mappings. Run this command again "
+                    "without the dry-run option to purge these records.\n"
+                    "From %(first_id)d to %(last_id)d")
+                    % {'count': instance_mapping_count[0],
+                        'first_id': instance_mapping_count[1],
+                        'last_id': instance_mapping_count[2]})
+        finished = True if dry_run else max(request_spec_count,
+                                            instance_mapping_count) == 0
+        return finished
+
 
 class CellCommands(object):
     """Commands for managing cells v1 functionality."""

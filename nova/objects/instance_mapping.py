@@ -10,9 +10,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import datetime
+
 from sqlalchemy.orm import joinedload
 
+from oslo_utils import timeutils
+
 from nova.db.sqlalchemy import api as db_api
+from nova.db.sqlalchemy.api import and_
+from nova.db.sqlalchemy.api import or_
 from nova.db.sqlalchemy import api_models
 from nova import exception
 from nova import objects
@@ -195,3 +201,45 @@ class InstanceMappingList(base.ObjectListBase, base.NovaObject):
     @classmethod
     def destroy_bulk(cls, context, instance_uuids):
         return cls._destroy_bulk_in_db(context, instance_uuids)
+
+    @staticmethod
+    @db_api.api_context_manager.writer
+    def _destroy_bulk_without_instance_in_db(context, extant_instance_uuids,
+                                             dry_run=False, older_than=90,
+                                             max_number=0):
+        age_filter = True
+        if older_than is not None and older_than > 0:
+            destroy_before = timeutils.utcnow() \
+                - datetime.timedelta(days=older_than)
+            age_filter = or_(
+                api_models.InstanceMapping.updated_at < destroy_before,
+                and_(api_models.InstanceMapping.updated_at.is_(None),
+                    api_models.InstanceMapping.created_at < destroy_before))
+        query = context.session.query(api_models.InstanceMapping).filter(
+                    and_(~api_models.InstanceMapping.instance_uuid.in_(
+                        extant_instance_uuids), age_filter))
+        if max_number > 0:
+            query = query.order_by(
+                api_models.InstanceMapping.created_at.asc()).limit(max_number)
+        to_delete_ids = query.values('id')
+        if dry_run:
+            return (len(to_delete_ids), to_delete_ids[0][0],
+                    to_delete_ids[-1][0])
+        else:
+            # NOTE(gc): SQLAlchemy prohibits query.limit().delete() for obscure
+            # reasons. So we need to pass the list of all ids to be deleted to
+            # a new delete query.
+            return context.session.query(api_models.InstanceMapping)\
+                    .filter(api_models.InstanceMapping.id.in_(
+                        [r[0] for r in to_delete_ids]))\
+                    .delete(synchronize_session=False)
+
+    @classmethod
+    def destroy_bulk_without_instance(cls, context, extant_instance_uuids,
+                                      dry_run=False, older_than=90,
+                                      max_number=0):
+        return cls._destroy_bulk_without_instance_in_db(context,
+                                                    extant_instance_uuids,
+                                                    dry_run=dry_run,
+                                                    older_than=older_than,
+                                                    max_number=max_number)
