@@ -853,13 +853,13 @@ class ApiDbCommands(object):
             print(_("Purged %d request specs from the DB")
                     % request_spec_count)
         else:
+            request_spec_ids = [r[0] for r in request_spec_ids]
             print(_("There are at least %(count)d records in the DB for "
                     "deleted instances' request specs. Run this command again "
                     "without the dry-run option to purge these records.\n"
-                    "From %(first_id)d to %(last_id)d")
-                    % {'count': request_spec_count[0],
-                       'first_id': request_spec_count[1],
-                       'last_id': request_spec_count[2]})
+                    "Records with these ids would be deleted:\n%(id_list)s")
+                    % {'count': len(request_spec_ids),
+                       'id_list': request_spec_ids})
         instance_mapping_count = objects.InstanceMappingList.\
             destroy_bulk_without_instance(context, extant_instance_uuids,
                                           dry_run, older_than, max_number)
@@ -867,13 +867,13 @@ class ApiDbCommands(object):
             print(_("Purged %d instance mappings from the DB")
                     % instance_mapping_count)
         else:
+            instance_mapping_ids = [i[0] for i in instance_mapping_ids]
             print(_("There are at least %(count)d records in the DB for "
                     "deleted instance mappings. Run this command again "
                     "without the dry-run option to purge these records.\n"
-                    "From %(first_id)d to %(last_id)d")
-                    % {'count': instance_mapping_count[0],
-                        'first_id': instance_mapping_count[1],
-                        'last_id': instance_mapping_count[2]})
+                    "Records with these ids would be deleted:\n%(id_list)s")
+                    % {'count': len(instance_mapping_ids),
+                       'id_list': instance_mapping_ids})
         finished = True if dry_run else max(request_spec_count,
                                             instance_mapping_count) == 0
         return finished

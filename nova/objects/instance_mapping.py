@@ -223,8 +223,7 @@ class InstanceMappingList(base.ObjectListBase, base.NovaObject):
                 api_models.InstanceMapping.created_at.asc()).limit(max_number)
         to_delete_ids = query.values('id')
         if dry_run:
-            return (len(to_delete_ids), to_delete_ids[0][0],
-                    to_delete_ids[-1][0])
+            return to_delete_ids
         else:
             # NOTE(gc): SQLAlchemy prohibits query.limit().delete() for obscure
             # reasons. So we need to pass the list of all ids to be deleted to
