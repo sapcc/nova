@@ -853,7 +853,7 @@ class ApiDbCommands(object):
             print(_("Purged %d request specs from the DB")
                     % request_spec_count)
         else:
-            request_spec_ids = [r[0] for r in request_spec_ids]
+            request_spec_ids = [r[0] for r in request_spec_count]
             print(_("There are at least %(count)d records in the DB for "
                     "deleted instances' request specs. Run this command again "
                     "without the dry-run option to purge these records.\n"
@@ -867,7 +867,7 @@ class ApiDbCommands(object):
             print(_("Purged %d instance mappings from the DB")
                     % instance_mapping_count)
         else:
-            instance_mapping_ids = [i[0] for i in instance_mapping_ids]
+            instance_mapping_ids = [i[0] for i in instance_mapping_count]
             print(_("There are at least %(count)d records in the DB for "
                     "deleted instance mappings. Run this command again "
                     "without the dry-run option to purge these records.\n"
