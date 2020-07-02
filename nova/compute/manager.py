@@ -7285,7 +7285,7 @@ class ComputeManager(manager.Manager):
                                  'db_power_state': orig_db_power_state,
                                  'vm_power_state': vm_power_state},
                                 instance=db_instance)
-                    db_instance.vm_state = vm_state.STOPPED
+                    db_instance.vm_state = vm_states.STOPPED
                     db_instance.save()
                 elif vm_power_state == power_state.RUNNING:
                     LOG.warning("Instance started running by itself. "
@@ -7298,7 +7298,7 @@ class ComputeManager(manager.Manager):
                                  'db_power_state': orig_db_power_state,
                                  'vm_power_state': vm_power_state},
                                 instance=db_instance)
-                    db_instance.vm_state = vm_state.ACTIVE
+                    db_instance.vm_state = vm_states.ACTIVE
                     db_instance.save()
         elif vm_state == vm_states.ACTIVE:
             # The only rational power state should be RUNNING
