@@ -304,6 +304,12 @@ class ComputeTaskManager(base.Base):
         image = utils.get_image_from_system_metadata(
             instance.system_metadata)
 
+        # NOTE(jkulik): We need the instance's current host in at least one
+        # filter to make sure we don't pass vCenter boundaries, i.e. shards
+        scheduler_hints = {'source_host': [instance.host]}
+        sh = filter_properties.setdefault('scheduler_hints', {})
+        sh.update(scheduler_hints)
+
         # NOTE(sbauza): If a reschedule occurs when prep_resize(), then
         # it only provides filter_properties legacy dict back to the
         # conductor with no RequestSpec part of the payload.
@@ -320,6 +326,12 @@ class ComputeTaskManager(base.Base):
             # original RequestSpec object for make sure the scheduler verifies
             # the right one and not the original flavor
             request_spec.flavor = flavor
+
+            if (not request_spec.obj_attr_is_set('scheduler_hints')
+                    or request_spec.scheduler_hints is None):
+                request_spec._from_hints(scheduler_hints)
+            else:
+                request_spec.scheduler_hints.update(scheduler_hints)
 
         task = self._build_cold_migrate_task(context, instance, flavor,
                 request_spec, clean_shutdown, host_list)

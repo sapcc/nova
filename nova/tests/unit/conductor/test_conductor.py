@@ -2383,7 +2383,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             availability_zone=None,
             pci_requests=None,
             numa_topology=None,
-            project_id=self.context.project_id)
+            project_id=self.context.project_id,
+            host='host1')
         image = 'fake-image'
         fake_spec = objects.RequestSpec(image=objects.ImageMeta())
         spec_fc_mock.return_value = fake_spec
@@ -2433,7 +2434,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             numa_topology=None,
             pci_requests=None,
             availability_zone=None,
-            project_id=self.context.project_id)
+            project_id=self.context.project_id,
+            host='host1')
         image = 'fake-image'
 
         fake_spec = objects.RequestSpec(image=objects.ImageMeta())
@@ -2469,7 +2471,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             instance_type_id=flavor['id'],
             system_metadata={},
             uuid=uuids.instance,
-            user_id=fakes.FAKE_USER_ID)
+            user_id=fakes.FAKE_USER_ID,
+            host='host1')
         fake_spec = fake_request_spec.fake_spec_obj()
         image = 'fake-image'
 
@@ -2513,7 +2516,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             flavor=flavor,
             numa_topology=None,
             pci_requests=None,
-            availability_zone=None)
+            availability_zone=None,
+            host='host1')
         image = 'fake-image'
         exception = exc.UnsupportedPolicyException(reason='')
         fake_spec = fake_request_spec.fake_spec_obj()
@@ -2530,10 +2534,12 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         set_vm_mock.assert_called_once_with(self.context, inst_obj.uuid,
                                             'migrate_server', updates,
                                             exception, fake_spec)
+        filter_properties = {'scheduler_hints': {'source_host': ['host1']}}
         spec_fc_mock.assert_called_once_with(
             self.context, inst_obj.uuid, image, flavor, inst_obj.numa_topology,
-            inst_obj.pci_requests, {}, None, inst_obj.availability_zone,
-            project_id=inst_obj.project_id, user_id=inst_obj.user_id)
+            inst_obj.pci_requests, filter_properties, None,
+            inst_obj.availability_zone, project_id=inst_obj.project_id,
+            user_id=inst_obj.user_id)
 
     @mock.patch.object(objects.InstanceMapping, 'get_by_instance_uuid')
     @mock.patch.object(scheduler_utils, 'setup_instance_group')
@@ -2560,7 +2566,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             availability_zone=None,
             pci_requests=None,
             numa_topology=None,
-            project_id=self.context.project_id)
+            project_id=self.context.project_id,
+            host='host1')
         image = 'fake-image'
         fake_spec = objects.RequestSpec(image=objects.ImageMeta())
         legacy_request_spec = fake_spec.to_legacy_request_spec_dict()
@@ -2622,7 +2629,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             flavor=flavor,
             availability_zone=None,
             pci_requests=None,
-            numa_topology=None)
+            numa_topology=None,
+            host='host1')
         image = 'fake-image'
         fake_spec = fake_request_spec.fake_spec_obj()
 
@@ -2647,7 +2655,8 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             instance_type_id=flavor['id'],
             system_metadata={},
             uuid=uuids.instance,
-            user_id=fakes.FAKE_USER_ID)
+            user_id=fakes.FAKE_USER_ID,
+            host='host1')
 
         fake_spec = fake_request_spec.fake_spec_obj()
         image = 'fake-image'
