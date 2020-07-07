@@ -481,6 +481,8 @@ class LiveMigrationTask(base.TaskBase):
             This is generally at least seeded with the source host.
         :returns: nova.objects.RequestSpec object
         """
+        scheduler_hints = {'source_host': [self.source],
+                           'source_node': [self.instance.node]}
         request_spec = self.request_spec
         # NOTE(sbauza): Force_hosts/nodes needs to be reset
         # if we want to make sure that the next destination
@@ -503,6 +505,13 @@ class LiveMigrationTask(base.TaskBase):
         # request_spec.requested_resources list if needed
         request_spec.generate_request_groups_from_pci_requests()
 
+        # NOTE(jkulik): We need the instance's current host in at least one
+        # filter to make sure we don't pass vCenter boundaries, i.e. shards
+        if (not request_spec.obj_attr_is_set('scheduler_hints') or
+            request_spec.scheduler_hints is None):
+            request_spec._from_hints(scheduler_hints)
+        else:
+            request_spec.scheduler_hints.update(scheduler_hints)
         scheduler_utils.setup_instance_group(self.context, request_spec)
 
         # We currently only support live migrating to hosts in the same
