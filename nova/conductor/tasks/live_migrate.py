@@ -268,7 +268,9 @@ class LiveMigrationTask(base.TaskBase):
         """
         image = utils.get_image_from_system_metadata(
             self.instance.system_metadata)
-        filter_properties = {'ignore_hosts': attempted_hosts}
+        scheduler_hints = {'source_host': [self.source]}
+        filter_properties = {'ignore_hosts': attempted_hosts,
+                             'scheduler_hints': scheduler_hints}
         if not self.request_spec:
             # NOTE(sbauza): We were unable to find an original RequestSpec
             # object - probably because the instance is old.
@@ -285,6 +287,13 @@ class LiveMigrationTask(base.TaskBase):
             # if we want to make sure that the next destination
             # is not forced to be the original host
             request_spec.reset_forced_destinations()
+            # NOTE(jkulik): We need the instance's current host in at least one
+            # filter to make sure we don't pass vCenter boundaries, i.e. shards
+            if (not request_spec.obj_attr_is_set('scheduler_hints')
+                    or request_spec.scheduler_hints is None):
+                request_spec._from_hints(scheduler_hints)
+            else:
+                request_spec.scheduler_hints.update(scheduler_hints)
         scheduler_utils.setup_instance_group(self.context, request_spec)
 
         # We currently only support live migrating to hosts in the same
