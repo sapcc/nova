@@ -881,7 +881,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                 int(self._instance.vcpus),
                 int(self._instance.memory_mb),
                 extra_specs,
-                CONF.vmware.reserve_all_memory,
                 metadata=metadata)
             fake_reconfigure_vm.assert_called_once_with(self._session,
                                                         'fake-ref',
@@ -987,7 +986,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                   instance, flavor)
         fake_resize_spec.assert_called_once_with(
             self._session.vim.client.factory, 2, 1024, extra_specs,
-                CONF.vmware.reserve_all_memory, metadata=self._metadata)
+            metadata=self._metadata)
         fake_reconfigure.assert_called_once_with(self._session,
                                                  'vm-ref', 'fake-spec')
 
@@ -1004,7 +1003,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                     fake_cleanup_after_special_spawning,
                                     fake_get_extra_specs, fake_get_metadata):
         # new is big, new is big, old is not
-        fake_is_big_vm.side_effect = [True, True, False]
+        fake_is_big_vm.side_effect = [True, False]
         extra_specs = vm_util.ExtraSpecs()
         fake_get_extra_specs.return_value = extra_specs
         fake_get_metadata.return_value = self._metadata
@@ -1038,7 +1037,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                       fake_cleanup_after_special_spawning,
                                       fake_get_extra_specs, fake_get_metadata):
         # new is not big, new is not big, old is big
-        fake_is_big_vm.side_effect = [False, False, True]
+        fake_is_big_vm.side_effect = [False, True]
         extra_specs = vm_util.ExtraSpecs()
         fake_get_extra_specs.return_value = extra_specs
         fake_get_metadata.return_value = self._metadata
