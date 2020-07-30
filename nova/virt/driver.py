@@ -942,7 +942,7 @@ class ComputeDriver(object):
         raise NotImplementedError()
 
     def get_cluster_metrics(self):
-        """ Retrieve cluster metrics information.
+        """Retrieve cluster metrics information.
         :return: Dictionary describing the cluster information.
         """
         raise NotImplementedError()

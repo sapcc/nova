@@ -41,7 +41,7 @@ def main():
     gmr.TextGuruMeditation.setup_autorun(version, conf=CONF)
 
     server = service.Service.create(binary='nova-vspc',
-                                    topic=driver.RPC_TOPIC,
-                                    manager='nova.virt.vmwareapi.driver.VSPCManager')
+                            topic=driver.RPC_TOPIC,
+                            manager='nova.virt.vmwareapi.driver.VSPCManager')
     service.serve(server)
     service.wait()

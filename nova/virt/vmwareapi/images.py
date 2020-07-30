@@ -18,8 +18,9 @@ Utility functions for Image transfer and manipulation.
 """
 
 import os
-import tarfile
 import six
+import tarfile
+
 from lxml import etree
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -27,8 +28,8 @@ from oslo_service import loopingcall
 from oslo_utils import encodeutils
 from oslo_utils import strutils
 from oslo_utils import units
-from oslo_vmware import rw_handles
 from oslo_vmware import exceptions as vexc
+from oslo_vmware import rw_handles
 
 from nova import exception
 from nova.i18n import _
@@ -353,10 +354,10 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     read_iter = IMAGE_API.download(context, image_ref)
     read_handle = rw_handles.ImageReadHandle(read_iter)
 
-    # retry in order to handle conflicts in case of parallel execution (multiple agents)
-    # or previously failed import of the same image
+    # retry in order to handle conflicts in case of parallel execution
+    # (multiple agents) or previously failed import of the same image
     max_attempts = 3
-    for i in six.moves.xrange(max_attempts):
+    for i in six.moves.range(max_attempts):
         try:
             write_handle = rw_handles.VmdkWriteHandle(session,
                                                       session._host,
@@ -372,7 +373,8 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
         except vexc.VimException as e:
             if 'DuplicateName' not in e.msg:
                 raise e
-            LOG.debug("Handling name duplication during import of VM %s", vm_name)
+            LOG.debug("Handling name duplication during import of VM %s",
+                                                                    vm_name)
             vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
             waited_for_ongoing_import = _wait_for_import_task(session, vm_ref)
             if waited_for_ongoing_import:
@@ -380,7 +382,9 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
                 break
             else:
                 try:
-                    destroy_task = session._call_method(session.vim, "Destroy_Task", vm_ref)
+                    destroy_task = session._call_method(session.vim,
+                                                        "Destroy_Task",
+                                                        vm_ref)
                     session._wait_for_task(destroy_task)
                     vm_util.vm_ref_cache_delete(vm_name)
                 except vexc.ManagedObjectNotFoundException:
@@ -388,7 +392,9 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
                     pass
 
     if not imported_vm_ref:
-        raise vexc.VMwareDriverException("Could not import image %s within %d attempts." % (vm_name, max_attempts))
+        raise vexc.VMwareDriverException("Could not import image"
+                                         " %s within %d attempts." % (vm_name,
+                                                                max_attempts))
 
     LOG.info("Downloaded image file data %(image_ref)s",
              {'image_ref': instance.image_ref}, instance=instance)
@@ -400,7 +406,8 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
 def _wait_for_import_task(session, vm_ref):
     client_factory = session.vim.client.factory
     task_filter_spec = client_factory.create('ns0:TaskFilterSpec')
-    task_filter_spec.entity = client_factory.create('ns0:TaskFilterSpecByEntity')
+    task_filter_spec.entity = client_factory.create(
+                                    'ns0:TaskFilterSpecByEntity')
     task_filter_spec.entity.entity = vm_ref
     task_filter_spec.entity.recursion = "self"
     task_filter_spec.state = ["queued", "running"]
@@ -408,11 +415,16 @@ def _wait_for_import_task(session, vm_ref):
     waited = False
 
     try:
-        task_collector = session._call_method(session.vim, "CreateCollectorForTasks",
-                                              session.vim.service_content.taskManager, filter=task_filter_spec)
+        task_collector = session._call_method(session.vim,
+                                      "CreateCollectorForTasks",
+                                      session.vim.service_content.taskManager,
+                                      filter=task_filter_spec)
 
         while True:
-            page_tasks = session._call_method(session.vim, "ReadNextTasks", task_collector, maxCount=10)
+            page_tasks = session._call_method(session.vim,
+                                              "ReadNextTasks",
+                                              task_collector,
+                                              maxCount=10)
             if len(page_tasks) == 0:
                 break
 
@@ -422,14 +434,20 @@ def _wait_for_import_task(session, vm_ref):
                         session._wait_for_task(ti.task)
                         waited = True
                     except vexc.VimException as e:
-                        LOG.debug("Awaiting previous import on VM %s failed with %s", vm_ref, e)
+                        LOG.debug("Awaiting previous import on VM %s "
+                                  "failed with %s",
+                                  vm_ref,
+                                  e)
 
                     return waited
     finally:
         if task_collector:
-            session._call_method(session.vim, "DestroyCollector", task_collector)
+            session._call_method(session.vim,
+                                 "DestroyCollector",
+                                 task_collector)
 
     return waited
+
 
 def get_vmdk_name_from_ovf(xmlstr):
     """Parse the OVA descriptor to extract the vmdk name."""
@@ -496,7 +514,8 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
                     return vmdk.capacity_in_bytes, vmdk.path.parent
                 except AttributeError:
                     from oslo_vmware.objects.datastore import DatastorePath
-                    return vmdk.capacity_in_bytes, DatastorePath.parse(vmdk.path).parent
+                    return vmdk.capacity_in_bytes, DatastorePath.parse(
+                        vmdk.path).parent
         raise exception.ImageUnacceptable(
             reason=_("Extracting vmdk from OVA failed."),
             image_id=image_ref)

@@ -14,29 +14,23 @@
 #    under the License.
 
 from nova import config
-from nova import context
 from nova.consoleauth import rpcapi as consoleauth_rpcapi
+from nova import context
 
 STATIC_FILES_EXT = ('.js', '.css', '.html', '.ico', '.png', '.gif')
 
 
 class NovaShellInaBoxProxy(object):
-    """
-    Class that injects token validation routine into proxy logic.
-    """
+    """Class that injects token validation routine into proxy logic."""
 
     def path_includes_static_files(self):
-        """
-        Returns True if requested path includes static files.
-        """
+        """Returns True if requested path includes static files."""
         for extension in STATIC_FILES_EXT:
             if extension in self.path:
                 return True
 
     def response(self, flow):
-        """
-        Validate the token and give 403 if not found or not valid.
-        """
+        """Validate the token and give 403 if not found or not valid."""
         if self.method == "GET" and not self.path_includes_static_files():
 
             if not self.token:
@@ -55,17 +49,13 @@ class NovaShellInaBoxProxy(object):
                                              "or invalid.")
 
     def request(self, flow):
-        """
-        Save the token, method and path that came with request.
-        """
+        """Save the token, method and path that came with request."""
         self.token = flow.request.query.get("token", "")
         self.method = flow.request.method
         self.path = flow.request.path
 
 
 def start():
-    """
-    Entrypoint. Configures rpc first, otherwise cannot validate token.
-    """
+    """Entrypoint. Configures rpc first, otherwise cannot validate token."""
     config.parse_args([])  # we need this to configure rpc
     return NovaShellInaBoxProxy()

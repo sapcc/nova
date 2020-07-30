@@ -78,6 +78,6 @@ class ViewBuilder(object):
         for name, value in absolute_limits.items():
             if name.startswith('instances_'):
                 flavorname = name[10:]
-                limits[flavorname] = { 'maxTotalInstances': value }
+                limits[flavorname] = {'maxTotalInstances': value}
 
         return limits

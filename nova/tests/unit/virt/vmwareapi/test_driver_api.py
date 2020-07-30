@@ -201,7 +201,6 @@ class VMwareAPIVMTestCase(test.TestCase,
     @mock.patch.object(driver.VMwareVCDriver, '_register_openstack_extension')
     def setUp(self, mock_register):
         super(VMwareAPIVMTestCase, self).setUp()
-        CONF.vmware.use_property_collector = False
         ds_util.dc_cache_reset()
         vm_util.vm_refs_cache_reset()
         self.context = context.RequestContext('fake', 'fake', is_admin=False)
@@ -210,6 +209,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                    host_username='test_username',
                    host_password='test_pass',
                    api_retry_count=1,
+                   use_property_collector=False,
                    use_linked_clone=False, group='vmware')
         self.flags(enabled=False, group='vnc')
         self.flags(image_cache_subdirectory_name='vmware_base',
@@ -401,7 +401,6 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     def _get_vm_record(self):
         # Get record for VM
-        CONF.vmware.use_property_collector = False
         vms = vmwareapi_fake._get_objects("VirtualMachine")
         for vm in vms.objects:
             if vm.get('name') == vm_util._get_vm_name(self._display_name,
@@ -423,7 +422,6 @@ class VMwareAPIVMTestCase(test.TestCase,
         """Check if the spawned VM's properties correspond to the instance in
         the db.
         """
-        CONF.vmware.use_property_collector = False
         instances = self.conn.list_instances()
         if uuidutils.is_uuid_like(uuid):
             self.assertEqual(num_instances, len(instances))
@@ -484,7 +482,6 @@ class VMwareAPIVMTestCase(test.TestCase,
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
     def test_list_instances_1(self,
                               mock_update_cached_instances):
-        CONF.vmware.use_property_collector = False
         self._create_vm()
         instances = self.conn.list_instances()
         self.assertEqual(1, len(instances))
@@ -755,7 +752,6 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
     def test_spawn_vm_ref_cached(self, mock_update_cached_instances):
-        CONF.vmware.use_property_collector = False
         uuid = uuidutils.generate_uuid()
         self.assertIsNone(vm_util.vm_ref_cache_get(uuid))
         self._create_vm(uuid=uuid)
@@ -1065,7 +1061,7 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
     def test_spawn_with_move_file_exists_exception(self,
-                                                   mock_update_cached_instances):
+                                                mock_update_cached_instances):
         # The test will validate that the spawn completes
         # successfully. The "MoveDatastoreFile_Task" will
         # raise an file exists exception. The flag
@@ -1840,7 +1836,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         self._create_instance()
         with mock.patch('six.moves.urllib.request.urlopen') as fake_urlopen:
             fake_urlopen.return_value = mock.Mock()
-            fake_urlopen.return_value.read = mock.Mock( return_value=b'fira' )
+            fake_urlopen.return_value.read = mock.Mock(return_value=b'fira')
             output = self.conn.get_console_output(self.context, self.instance)
         self.assertEqual(b'fira', output)
 
@@ -2118,7 +2114,6 @@ class VMwareAPIVMTestCase(test.TestCase,
         self._image_aging_image_marked_for_deletion()
 
     def _timestamp_file_removed(self):
-        CONF.vmware.use_property_collector = False
         self._override_time()
         self._image_aging_image_marked_for_deletion()
         self._create_vm(num_instances=2,
@@ -2137,7 +2132,6 @@ class VMwareAPIVMTestCase(test.TestCase,
                        'get_by_instance_uuids')
     def test_timestamp_file_removed_aging(self, mock_get_by_inst,
                                           mock_update_cached_instanses):
-        CONF.vmware.use_property_collector = False
         self._timestamp_file_removed()
         ts = self._get_timestamp_filename()
         ts_path = ds_obj.DatastorePath(self.ds, 'vmware_base',

@@ -18,18 +18,16 @@ from os import path
 from subprocess import check_output
 
 import nova.conf
-from nova.console import shellinaboxproxy
 from nova.conf import shellinabox
 from nova import config
+from nova.console import shellinaboxproxy
 
 CONF = nova.conf.CONF
 shellinabox.register_cli_opts(CONF)
 
 
 def main():
-    """
-    Parses cli arguments and starts mitmproxy with token validation.
-    """
+    """Parses cli arguments and starts mitmproxy with token validation."""
 
     if shellinaboxproxy.__file__.endswith('c'):
         script = shellinaboxproxy.__file__[:-1]

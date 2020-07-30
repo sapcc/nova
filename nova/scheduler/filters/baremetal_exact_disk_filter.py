@@ -13,18 +13,19 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from nova.scheduler.filters import exact_disk_filter
 from oslo_log import log as logging
-from .exact_disk_filter import ExactDiskFilter
 
 LOG = logging.getLogger(__name__)
 
 
-class BaremetalExactDiskFilter(ExactDiskFilter):
+class BaremetalExactDiskFilter(exact_disk_filter.ExactDiskFilter):
     """Exact Disk Filter."""
 
     def host_passes(self, host_state, spec_obj):
         extra_specs = spec_obj.flavor.extra_specs
-        if not 'capabilities:cpu_arch' in extra_specs:
+        if 'capabilities:cpu_arch' not in extra_specs:
             return True
 
-        return super(BaremetalExactDiskFilter, self).host_passes(host_state, spec_obj)
+        return super(BaremetalExactDiskFilter, self).host_passes(host_state,
+                                                                 spec_obj)
