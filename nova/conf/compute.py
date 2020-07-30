@@ -592,7 +592,9 @@ Possible values:
 """),
     cfg.IntOpt('max_concurrent_builds_per_project',
                default=0,
-               help='Maximum number of instance builds to run concurrently per project'),
+               help="""
+Maximum number of instance builds to run concurrently
+per project"""),
     cfg.IntOpt('block_device_allocate_retries',
         default=60,
         help="""
@@ -620,7 +622,7 @@ for performance reasons, for example, with Ironic.
 Possible values:
 
 * Any positive integer representing greenthreads count.
-"""),cfg.IntOpt('instance_running_pool_size',
+"""), cfg.IntOpt('instance_running_pool_size',
         default=1000,
         help="""
 Number of greenthreads available for spawning virtual machines.

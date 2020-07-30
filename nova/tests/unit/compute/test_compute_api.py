@@ -5852,7 +5852,8 @@ class _ComputeAPIUnitTestMixIn(object):
                 self.context, objects=build_req_instances[:1] + cell_instances)
 
             self.assertRaises(exception.NovaException,
-                self.compute_api.get_all, self.context, search_opts={'foo': 'bar'},
+                self.compute_api.get_all, self.context,
+                              search_opts={'foo': 'bar'},
                 limit=10, marker='fake-marker', sort_keys=['baz'],
                 sort_dirs=['desc'])
 
@@ -6526,7 +6527,8 @@ class Cellsv1DeprecatedTestMixIn(object):
                 self.context, objects=build_req_instances[:1] + cell_instances)
 
             self.assertRaises(exception.NovaException,
-                self.compute_api.get_all, self.context, search_opts={'foo': 'bar'},
+                self.compute_api.get_all, self.context,
+                              search_opts={'foo': 'bar'},
                 limit=10, marker='fake-marker', sort_keys=['baz'],
                 sort_dirs=['desc'])
 

@@ -112,7 +112,8 @@ class DbQuotaDriver(object):
             quotas[resource_key] = flavor_quotas.get(resource_key, 0)
 
         for resource in resources.values():
-            if (defaults and quota_class == 'default') or resource.name in class_quotas:
+            if (defaults and quota_class == 'default') or\
+                    resource.name in class_quotas:
                 quotas[resource.name] = class_quotas.get(resource.name,
                                                          resource.default)
 
@@ -1006,7 +1007,8 @@ class CountableResource(AbsoluteResource):
                      for this resource.
         """
 
-        super(CountableResource, self).__init__(name, flag=flag, default=default)
+        super(CountableResource, self).__init__(name, flag=flag,
+                                                default=default)
         self.count_as_dict = count_as_dict
 
 
@@ -1030,7 +1032,9 @@ class QuotaEngine(object):
         # construct resources for each flavor that has a separate quota
         # (also for deleted flavors that still have running instances)
         ctxt = nova_context.get_admin_context()
-        for flavor in objects.FlavorList.get_all(ctxt, filters={'disabled': False, 'is_public': True}):
+        for flavor in objects.FlavorList.get_all(ctxt,
+                                                 filters={'disabled': False,
+                                                          'is_public': True}):
             if flavor['extra_specs'].get('quota:separate', 'false') == 'true':
                 self.register_resource(CountableResource(
                     'instances_' + flavor.name,
@@ -1158,9 +1162,9 @@ class QuotaEngine(object):
         :param user_id: The ID of the user to return quotas for.
         """
         settable_quotas = self._driver.get_settable_quotas(context,
-                                                           self.combined_resources(context),
-                                                           project_id,
-                                                           user_id=user_id)
+                                           self.combined_resources(context),
+                                           project_id,
+                                           user_id=user_id)
         return settable_quotas
 
     def count_as_dict(self, context, resource, *args, **kwargs):
@@ -1218,8 +1222,10 @@ class QuotaEngine(object):
                         common user.
         """
 
-        return self._driver.limit_check(context, self.combined_resources(context),
-                                        values, project_id=project_id, user_id=user_id)
+        return self._driver.limit_check(context,
+                                        self.combined_resources(context),
+                                        values, project_id=project_id,
+                                        user_id=user_id)
 
     def limit_check_project_and_user(self, context, project_values=None,
                                      user_values=None, project_id=None,
@@ -1251,7 +1257,8 @@ class QuotaEngine(object):
                         different user than in the context
         """
         return self._driver.limit_check_project_and_user(
-            context, self.combined_resources(context), project_values=project_values,
+            context, self.combined_resources(context),
+            project_values=project_values,
             user_values=user_values, project_id=project_id, user_id=user_id)
 
     def destroy_all_by_project_and_user(self, context, project_id, user_id):
@@ -1283,8 +1290,11 @@ class QuotaEngine(object):
     def class_resources(self, context, quota_class):
         if quota_class not in self._class_resources:
             resources = {}
-            for key, val in six.iteritems(self._driver.get_class_quotas(context, {}, quota_class)):
-                resources[key] = CountableResource(key, _instances_cores_ram_count, default=val)
+            for key, val in six.iteritems(self._driver.get_class_quotas(
+                                                    context, {}, quota_class)):
+                resources[key] = CountableResource(key,
+                                                   _instances_cores_ram_count,
+                                                   default=val)
 
             self._class_resources[quota_class] = resources
         return self._class_resources[quota_class]

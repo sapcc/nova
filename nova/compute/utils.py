@@ -928,14 +928,17 @@ def resize_quota_delta(new_flavor, old_flavor, sense, compare):
                     -1 indicates negative deltas
     """
     def _quota_delta(resource):
-        old_reserve = old_flavor.get('extra_specs', {}).get('quota:instance_only', 'false') != 'true'
-        new_reserve = new_flavor.get('extra_specs', {}).get('quota:instance_only', 'false') != 'true'
+        old_reserve = old_flavor.get(
+            'extra_specs', {}).get('quota:instance_only', 'false') != 'true'
+        new_reserve = new_flavor.get(
+            'extra_specs', {}).get('quota:instance_only', 'false') != 'true'
         old_factor = 1 if old_reserve else 0
         new_factor = 1 if new_reserve else 0
-        return sense * (new_flavor[resource] * new_factor - old_flavor[resource] * old_factor)
-
+        return sense * (new_flavor[resource] *
+                        new_factor - old_flavor[resource] * old_factor)
 
     deltas = {}
+
     def add_delta(resource, delta):
         if compare * delta > 0:
             deltas[resource] = delta
@@ -943,8 +946,10 @@ def resize_quota_delta(new_flavor, old_flavor, sense, compare):
     add_delta('cores', _quota_delta('vcpus'))
     add_delta('ram', _quota_delta('memory_mb'))
 
-    old_separate = old_flavor.get('extra_specs', {}).get('quota:separate', 'false') == 'true'
-    new_separate = new_flavor.get('extra_specs', {}).get('quota:separate', 'false') == 'true'
+    old_separate = old_flavor.get('extra_specs', {}).get(
+        'quota:separate', 'false') == 'true'
+    new_separate = new_flavor.get('extra_specs', {}).get(
+        'quota:separate', 'false') == 'true'
     if old_separate and not new_separate:
         add_delta('instances_' + old_flavor['name'], -1 * sense)
         add_delta('instances', +1 * sense)
@@ -1023,7 +1028,8 @@ def check_num_instances_quota(context, instance_type, min_count,
         deltas['instances'] = 0
         deltas['cores'] = 0
         deltas['ram'] = 0
-    reserve_cpu_ram = instance_type.extra_specs.get('quota:instance_only', 'false') != 'true'
+    reserve_cpu_ram = instance_type.extra_specs.get(
+        'quota:instance_only', 'false') != 'true'
     if reserve_cpu_ram:
         deltas.update(cores=req_cores, ram=req_ram)
 
@@ -1040,7 +1046,7 @@ def check_num_instances_quota(context, instance_type, min_count,
         if min_count == max_count == 0:
             # orig_num_req is the original number of instances requested in the
             # case of a recheck quota, for use in the over quota exception.
-            requested = { quota_key_instances: orig_num_req }
+            requested = {quota_key_instances: orig_num_req}
             if reserve_cpu_ram:
                 requested['cores'] = orig_num_req * instance_type.vcpus
                 requested['ram'] = orig_num_req * instance_type.memory_mb
@@ -1079,7 +1085,7 @@ def check_num_instances_quota(context, instance_type, min_count,
 
         num_instances = (str(min_count) if min_count == max_count else
             "%s-%s" % (min_count, max_count))
-        requested = { quota_key_instances: num_instances }
+        requested = {quota_key_instances: num_instances}
         if reserve_cpu_ram:
             requested.update(cores=req_cores, ram=req_ram)
         (overs, reqs, total_alloweds, useds) = get_over_quota_detail(

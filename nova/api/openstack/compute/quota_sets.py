@@ -47,7 +47,8 @@ FILTERED_QUOTAS_2_57.extend(['injected_files', 'injected_file_content_bytes',
 
 class QuotaSetsController(wsgi.Controller):
 
-    def _format_quota_set(self, context, project_id, quota_set, filtered_quotas):
+    def _format_quota_set(self, context, project_id, quota_set,
+                            filtered_quotas):
         """Convert the quota object to a result dict."""
         if project_id:
             result = dict(id=str(project_id))
@@ -81,7 +82,7 @@ class QuotaSetsController(wsgi.Controller):
             values = QUOTAS.get_user_quotas(context, id, user_id,
                                             usages=usages)
             values.update(QUOTAS.get_user_quotas(context, id, user_id,
-                                            usages=usages, quota_class='flavors'))
+                                        usages=usages, quota_class='flavors'))
         else:
             values = QUOTAS.get_project_quotas(context, id, usages=usages)
 
@@ -221,7 +222,7 @@ class QuotaSetsController(wsgi.Controller):
             if key not in settable_quotas:
                 raise webob.exc.HTTPBadRequest(
                     explanation=_('The quota {} is not available, please '
-                        'restart nova-api if recently seeded flavor').format(key))
+                    'restart nova-api if recently seeded flavor').format(key))
 
             if not force_update:
                 minimum = settable_quotas[key]['minimum']

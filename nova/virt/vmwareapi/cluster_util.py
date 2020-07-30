@@ -1,15 +1,33 @@
-from oslo_vmware import vim_util as vutil
+# Copyright (c) 2013 VMware, Inc.
+# All Rights Reserved.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
+
 from nova import exception
 from nova.i18n import _
 from nova import utils
-from nova.virt.vmwareapi import constants
-from oslo_vmware import vim_util
 from oslo_log import log as logging
+from oslo_vmware import vim_util
+from oslo_vmware import vim_util as vutil
 
 LOG = logging.getLogger(__name__)
 
+
 def reconfigure_cluster(session, cluster, config_spec):
-    reconfig_task = session._call_method(session.vim, "ReconfigureComputeResource_Task", cluster, spec=config_spec,
+    reconfig_task = session._call_method(session.vim,
+                                         "ReconfigureComputeResource_Task",
+                                         cluster, spec=config_spec,
                                          modify=True)
     session.wait_for_task(reconfig_task)
 
@@ -40,6 +58,7 @@ def _get_vm_group(cluster_config, group_info):
     for group in cluster_config.group:
         if group.name == group_info.uuid:
             return group
+
 
 def validate_vm_group(session, vm_ref):
     max_objects = 1
@@ -75,7 +94,9 @@ def validate_vm_group(session, vm_ref):
     options = vim.client.factory.create('ns0:RetrieveOptions')
     options.maxObjects = max_objects
 
-    pc_result = vim.RetrievePropertiesEx(property_collector, specSet=[property_filter_spec], options=options)
+    pc_result = vim.RetrievePropertiesEx(property_collector,
+                                         specSet=[property_filter_spec],
+                                         options=options)
     result = None
     """ Retrieving needed hardware properties from ESX hosts """
     with vutil.WithRetrieval(vim, pc_result) as pc_objects:
@@ -88,7 +109,9 @@ def validate_vm_group(session, vm_ref):
 
 
 def delete_vm_group(session, cluster, vm_group):
-    """ Add delete impl fro removing group if deleted vm is the last vm in a vm group"""
+    """Add delete impl fro removing group if deleted vm is the last vm in a
+     vm group
+     """
     client_factory = session.vim.client.factory
     group_spec = client_factory.create('ns0:ClusterGroupSpec')
     groups = []
@@ -101,6 +124,7 @@ def delete_vm_group(session, cluster, vm_group):
     config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
     config_spec.groupSpec = groups
     reconfigure_cluster(session, cluster, config_spec)
+
 
 @utils.synchronized('vmware-vm-group-policy')
 def update_placement(session, cluster, vm_ref, group_info):
@@ -183,6 +207,7 @@ def _get_rule(cluster_config, rule_name):
     for rule in cluster_config.rule:
         if rule.name == rule_name:
             return rule
+
 
 def _is_drs_enabled(session, cluster):
     """Check if DRS is enabled on a given cluster"""
