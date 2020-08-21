@@ -66,9 +66,13 @@ class VCState(object):
         self._stats = {}
         self._cpu_model = None
         ctx = context.get_admin_context()
-        service = objects.Service.get_by_compute_host(ctx, CONF.host)
-        self._auto_service_disabled = service.disabled \
+        try:
+            service = objects.Service.get_by_compute_host(ctx, CONF.host)
+            self._auto_service_disabled = service.disabled \
                         and service.disabled_reason == SERVICE_DISABLED_REASON
+        except exception.ComputeHostNotFound:
+            # this can happend on newly-added hosts
+            self._auto_service_disabled = False
         self.update_status()
 
     def get_host_stats(self, refresh=False):
