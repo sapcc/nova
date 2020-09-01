@@ -145,6 +145,7 @@ class BigVmManager(manager.Manager):
                             'all clusters are used more than %(max_used)d.',
                             {'hv_size': hv_size,
                              'max_used': CONF.bigvm_cluster_max_usage_percent})
+                continue
 
             candidates[hv_size] = (alloc_reqs, filtered_provider_summaries)
 
