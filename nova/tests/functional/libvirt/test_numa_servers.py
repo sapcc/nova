@@ -13,10 +13,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import six
-
 import fixtures
 import mock
+import six
+import testtools
+
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -27,10 +28,10 @@ from nova import test
 from nova.tests import fixtures as nova_fixtures
 from nova.tests.functional.api import client
 from nova.tests.functional.test_servers import ServersTestBase
+from nova.tests.unit import fake_notifier
 from nova.tests.unit.virt.libvirt import fake_imagebackend
 from nova.tests.unit.virt.libvirt import fake_libvirt_utils
 from nova.tests.unit.virt.libvirt import fakelibvirt
-
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
@@ -457,7 +458,17 @@ class NUMAServersWithNetworksTest(NUMAServersTestBase):
         self.assertTrue(filter_mock.called)
         self.assertEqual('ACTIVE', status)
 
-    def test_rebuild_server_with_network_affinity(self):
+    # FIXME(sean-k-mooney): The logic of this test is incorrect.
+    # The test was written to assert that we failed to rebuild
+    # because the NUMA constraints were violated due to the attachment
+    # of an interface from a second host NUMA node to an instance with
+    # a NUMA topology of 1 that is affined to a different NUMA node.
+    # Nova should reject the interface attachment if the NUMA constraints
+    # would be violated and it should fail at that point not when the
+    # instance is rebuilt. This is a latent bug which will be addressed
+    # in a separate patch.
+    @testtools.skip("bug 1855332")
+    def test_attach_interface_with_network_affinity_violation(self):
         extra_spec = {'hw:numa_nodes': '1'}
         flavor_id = self._create_flavor(extra_spec=extra_spec)
         networks = [
@@ -492,10 +503,15 @@ class NUMAServersWithNetworksTest(NUMAServersTestBase):
                 'net_id': NUMAAffinityNeutronFixture.network_2['id'],
             }
         }
+        # FIXME(sean-k-mooney): This should raise an exception as this
+        # interface attachment would violate the NUMA constraints.
         self.api.attach_interface(server['id'], post)
         post = {'rebuild': {
             'imageRef': 'a2459075-d96c-40d5-893e-577ff92e721c',
         }}
+        # NOTE(sean-k-mooney): the rest of the test is incorrect but
+        # is left to show the currently broken behavior.
+
         # Now this should fail because we've violated the NUMA requirements
         # with the latest attachment
         ex = self.assertRaises(client.OpenStackApiException,
@@ -569,59 +585,131 @@ class NUMAServersWithNetworksTest(NUMAServersTestBase):
         self.assertIsNotNone(network_metadata)
         self.assertEqual(set(['foo']), network_metadata.physnets)
 
-    def test_cold_migrate_with_physnet_fails(self):
-        host_infos = [
-            # host 1 has room on both nodes
-            fakelibvirt.NUMAHostInfo(cpu_nodes=2, cpu_sockets=1,
-                                     cpu_cores=2, cpu_threads=2,
-                                     kB_mem=15740000),
-            # host 2 has no second node, where the desired physnet is
-            # reported to be attached
-            fakelibvirt.NUMAHostInfo(cpu_nodes=1, cpu_sockets=1,
-                                     cpu_cores=1, cpu_threads=1,
-                                     kB_mem=15740000),
-        ]
 
-        # Start services
-        self.computes = {}
-        for host in ['test_compute0', 'test_compute1']:
-            host_info = host_infos.pop(0)
-            fake_connection = self._get_connection(host_info=host_info)
-            fake_connection.getHostname = lambda: host
+class NUMAServersRebuildTests(NUMAServersTestBase):
 
-            # This is fun. Firstly we need to do a global'ish mock so we can
-            # actually start the service.
-            with mock.patch('nova.virt.libvirt.host.Host.get_connection',
-                            return_value=fake_connection):
-                compute = self.start_service('compute', host=host)
+    def setUp(self):
+        super(NUMAServersRebuildTests, self).setUp()
+        images = self.api.get_images()
+        # save references to first two images for server create and rebuild
+        self.image_ref_0 = images[0]['id']
+        self.image_ref_1 = images[1]['id']
 
-            # Once that's done, we need to do some tweaks to each individual
-            # compute "service" to make sure they return unique objects
-            compute.driver._host.get_connection = lambda: fake_connection
-            self.computes[host] = compute
+        fake_notifier.stub_notifier(self)
+        self.addCleanup(fake_notifier.reset)
 
-        # Create server
-        extra_spec = {'hw:numa_nodes': '1'}
+        # NOTE(sean-k-mooney): I3b4c1153bebdeab2eb8bc2108aa177732f5c6a97
+        # moved mocking of the libvirt connection to the setup of
+        # NUMAServersTestBase but that is not backported so we just add back
+        # the mocking to enable backporting of
+        # I0322d872bdff68936033a6f5a54e8296a6fb3434
+        _p = mock.patch('nova.virt.libvirt.host.Host.get_connection')
+        self.mock_conn = _p.start()
+        self.addCleanup(_p.stop)
+
+    def _create_active_server(self, server_args=None):
+        basic_server = {
+            'flavorRef': 1,
+            'name': 'numa_server',
+            'networks': [{
+                'uuid': nova_fixtures.NeutronFixture.network_1['id']
+            }],
+            'imageRef': self.image_ref_0
+        }
+        if server_args:
+            basic_server.update(server_args)
+        server = self.api.post_server({'server': basic_server})
+        return self._wait_for_state_change(server, 'BUILD')
+
+    def _rebuild_server(self, active_server, image_ref):
+        args = {"rebuild": {"imageRef": image_ref}}
+        self.api.api_post(
+            'servers/%s/action' % active_server['id'], args)
+        fake_notifier.wait_for_versioned_notifications('instance.rebuild.end')
+        return self._wait_for_state_change(active_server, 'REBUILD')
+
+    def test_rebuild_server_with_numa(self):
+        """Create a NUMA instance and ensure it can be rebuilt.
+        """
+
+        # Create a flavor consuming 2 pinned cpus with an implicit
+        # numa topology of 1 virtual numa node.
+        extra_spec = {'hw:cpu_policy': 'dedicated'}
         flavor_id = self._create_flavor(extra_spec=extra_spec)
-        networks = [
-            {'uuid': NUMAAffinityNeutronFixture.network_1['id']},
-        ]
 
-        good_server = self._build_server(flavor_id)
-        good_server['networks'] = networks
-        post = {'server': good_server}
+        # Create a host with 4 physical cpus to allow rebuild leveraging
+        # the free space to ensure the numa topology filter does not
+        # eliminate the host.
+        host_info = fakelibvirt.NUMAHostInfo(cpu_nodes=1, cpu_sockets=1,
+                                         cpu_cores=4, kB_mem=15740000)
+        fake_connection = self._get_connection(host_info=host_info)
+        self.mock_conn.return_value = fake_connection
+        self.compute = self.start_service('compute', host='compute1')
 
-        created_server = self.api.post_server(post)
-        server = self._wait_for_state_change(created_server, 'BUILD')
+        server = self._create_active_server(
+            server_args={"flavorRef": flavor_id})
 
-        self.assertEqual('ACTIVE', server['status'])
+        # this should succeed as the NUMA topology has not changed
+        # and we have enough resources on the host. We rebuild with
+        # a different image to force the rebuild to query the scheduler
+        # to validate the host.
+        self._rebuild_server(server, self.image_ref_1)
 
-        # TODO(stephenfin): The mock of 'migrate_disk_and_power_off' should
-        # probably be less...dumb
-        with mock.patch('nova.virt.libvirt.driver.LibvirtDriver'
-                        '.migrate_disk_and_power_off', return_value='{}'):
-            ex = self.assertRaises(client.OpenStackApiException,
-                                   self.api.post_server_action,
-                                   server['id'], {'migrate': None})
-            self.assertEqual(400, ex.response.status_code)
-            self.assertIn('No valid host', six.text_type(ex))
+    def test_rebuild_server_with_numa_inplace_fails(self):
+        """Create a NUMA instance and ensure in place rebuild fails.
+        """
+
+        # Create a flavor consuming 2 pinned cpus with an implicit
+        # numa topology of 1 virtual numa node.
+        extra_spec = {'hw:cpu_policy': 'dedicated'}
+        flavor_id = self._create_flavor(extra_spec=extra_spec)
+
+        # cpu_cores is set to 2 to ensure that we have enough space
+        # to boot the vm but not enough space to rebuild
+        # by doubling the resource use during scheduling.
+        host_info = fakelibvirt.NUMAHostInfo(
+            cpu_nodes=1, cpu_sockets=1, cpu_cores=2, kB_mem=15740000)
+        fake_connection = self._get_connection(host_info=host_info)
+        self.mock_conn.return_value = fake_connection
+        self.compute = self.start_service('compute', host='compute1')
+
+        server = self._create_active_server(
+            server_args={"flavorRef": flavor_id})
+
+        # This should succeed as the numa constraints do not change.
+        self._rebuild_server(server, self.image_ref_1)
+
+    def test_rebuild_server_with_different_numa_topology_fails(self):
+        """Create a NUMA instance and ensure inplace rebuild fails.
+        """
+
+        # Create a flavor consuming 2 pinned cpus with an implicit
+        # numa topology of 1 virtual numa node.
+        extra_spec = {'hw:cpu_policy': 'dedicated'}
+        flavor_id = self._create_flavor(extra_spec=extra_spec)
+
+        host_info = fakelibvirt.NUMAHostInfo(
+            cpu_nodes=2, cpu_sockets=1, cpu_cores=4, kB_mem=15740000)
+        fake_connection = self._get_connection(host_info=host_info)
+        self.mock_conn.return_value = fake_connection
+        self.compute = self.start_service('compute', host='compute1')
+
+        server = self._create_active_server(
+            server_args={"flavorRef": flavor_id})
+
+        # The original vm had an implicit numa topology of 1 virtual numa node
+        # so we alter the requested numa topology in image_ref_1 to request
+        # 2 virtual numa nodes.
+        ctx = nova_context.get_admin_context()
+        image_meta = {'properties': {'hw_numa_nodes': 2}}
+        self.fake_image_service.update(ctx, self.image_ref_1, image_meta)
+
+        # NOTE(sean-k-mooney): this should fail because rebuild uses noop
+        # claims therefore it is not allowed for the NUMA topology or resource
+        # usage to change during a rebuild.
+        ex = self.assertRaises(
+            client.OpenStackApiException, self._rebuild_server,
+            server, self.image_ref_1)
+        self.assertEqual(400, ex.response.status_code)
+        self.assertIn("An instance's NUMA topology cannot be changed",
+                      six.text_type(ex))

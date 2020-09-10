@@ -301,6 +301,11 @@ MIN_LIBVIRT_BETTER_SIGKILL_HANDLING = (4, 7, 0)
 
 VGPU_RESOURCE_SEMAPHORE = "vgpu_resources"
 
+# libvirt >= v1.3.4 introduced VIR_MIGRATE_PARAM_PERSIST_XML that needs to be
+# provided when the VIR_MIGRATE_PERSIST_DEST flag is used to ensure the updated
+# domain XML is persisted on the destination.
+MIN_LIBVIRT_MIGRATE_PARAM_PERSIST_XML = (1, 3, 4)
+
 
 class LibvirtDriver(driver.ComputeDriver):
     capabilities = {
@@ -1206,16 +1211,16 @@ class LibvirtDriver(driver.ComputeDriver):
         for source in tcp_devices:
             yield (source.get("host"), int(source.get("service")))
 
-    def _get_scsi_controller_max_unit(self, guest):
+    def _get_scsi_controller_next_unit(self, guest):
         """Returns the max disk unit used by scsi controller"""
         xml = guest.get_xml_desc()
         tree = etree.fromstring(xml)
-        addrs = "./devices/disk[@device='disk']/address[@type='drive']"
+        addrs = "./devices/disk[target/@bus='scsi']/address[@type='drive']"
 
         ret = []
-        for obj in tree.findall(addrs):
+        for obj in tree.xpath(addrs):
             ret.append(int(obj.get('unit', 0)))
-        return max(ret)
+        return max(ret) + 1 if ret else 0
 
     @staticmethod
     def _get_rbd_driver():
@@ -1536,7 +1541,7 @@ class LibvirtDriver(driver.ComputeDriver):
         disk_info = blockinfo.get_info_from_bdm(
             instance, CONF.libvirt.virt_type, instance.image_meta, bdm)
         if disk_info['bus'] == 'scsi':
-            disk_info['unit'] = self._get_scsi_controller_max_unit(guest) + 1
+            disk_info['unit'] = self._get_scsi_controller_next_unit(guest)
 
         conf = self._get_volume_config(connection_info, disk_info)
 
@@ -7280,13 +7285,18 @@ class LibvirtDriver(driver.ComputeDriver):
             if CONF.serial_console.enabled:
                 serial_ports = list(self._get_serial_ports_from_guest(guest))
 
+            # NOTE(lyarwood): Only available from v1.3.4
+            persistent_xml_param = self._host.has_min_version(
+                MIN_LIBVIRT_MIGRATE_PARAM_PERSIST_XML)
+
             LOG.debug("About to invoke the migrate API", instance=instance)
             guest.migrate(self._live_migration_uri(dest),
                           migrate_uri=migrate_uri,
                           flags=migration_flags,
                           migrate_disks=device_names,
                           destination_xml=new_xml_str,
-                          bandwidth=CONF.libvirt.live_migration_bandwidth)
+                          bandwidth=CONF.libvirt.live_migration_bandwidth,
+                          persistent_xml_param=persistent_xml_param)
             LOG.debug("Migrate API has completed", instance=instance)
 
             for hostname, port in serial_ports:
