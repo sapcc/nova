@@ -38,3 +38,4 @@ wsgi-intercept>=1.4.1 # MIT License
 
 # redirect tests in docs
 whereto>=0.3.0 # Apache-2.0
+setuptools<45.0.0
