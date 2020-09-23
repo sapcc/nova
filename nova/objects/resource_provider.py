@@ -1832,6 +1832,28 @@ def _check_capacity_exceeded(ctx, allocs):
         raise exception.InvalidInventory(resource_class=class_str,
                 resource_provider=provider_str)
 
+    # check if this a replacement of one consumer with another one
+    # TODO(jkulik): Make this only work if it's replacing to same or less.
+    consumer_resources = collections.defaultdict(list)
+    for alloc in allocs:
+        d = (alloc.resource_class, alloc.used)
+        consumer_resources[alloc.consumer_id].append(d)
+    is_replacement = len(consumer_resources) == 2
+    if is_replacement:
+        # sort the resources so we get matching resource pairs (if possible) in
+        # the next step
+        for k in consumer_resources:
+            consumer_resources[k].sort()
+        # check that every resource change has a matching second change
+        # removing it from another consumer so the whole process is a
+        # replacement
+        for items in six.moves.zip_longest(*consumer_resources.values(),
+                                           fillvalue=(None, None)):
+            (cls1, used1), (cls2, used2) = items
+            if cls1 != cls2 or 0 not in (used1, used2):
+                is_replacement = False
+                break
+
     res_providers = {}
     for alloc in allocs:
         rc_id = _RC_CACHE.id_from_string(alloc.resource_class)
@@ -1845,6 +1867,9 @@ def _check_capacity_exceeded(ctx, allocs):
                     resource_class=alloc.resource_class,
                     resource_provider=rp_uuid)
         amount_needed = alloc.used
+        # No use checking usage if we're not asking for anything
+        if amount_needed == 0:
+            continue
         allocation_ratio = usage['allocation_ratio']
         min_unit = usage['min_unit']
         max_unit = usage['max_unit']
@@ -1871,7 +1896,8 @@ def _check_capacity_exceeded(ctx, allocs):
         # usage["used"] can be returned as None
         used = usage['used'] or 0
         capacity = (usage['total'] - usage['reserved']) * allocation_ratio
-        if capacity < (used + amount_needed):
+        if (capacity < (used + amount_needed) and
+                not is_replacement):
             LOG.warning(
                 "Over capacity for %(rc)s on resource provider %(rp)s. "
                 "Needed: %(needed)s, Used: %(used)s, Capacity: %(cap)s",
@@ -2050,9 +2076,7 @@ class AllocationList(base.ObjectListBase, base.NovaObject):
         # removing different allocations in the same request.
         # _check_capacity_exceeded will raise a ResourceClassNotFound # if any
         # allocation is using a resource class that does not exist.
-        visited_rps = _check_capacity_exceeded(context,
-                                               [alloc for alloc in
-                                                allocs if alloc.used > 0])
+        visited_rps = _check_capacity_exceeded(context, allocs)
         seen_consumers = set()
         for alloc in allocs:
             # If alloc.used is set to zero that is a signal that we don't want
