@@ -1793,6 +1793,149 @@ class TestAllocationListCreateDelete(tb.PlacementDbBaseTestCase):
         self.assertEqual(original_generation, rp1.generation)
         self.assertEqual(original_generation + 1, new_rp.generation)
 
+    def test_switch_allocations_overbooked(self):
+        """A resource-provider which is already overbooked gets an allocation
+        switched from one consumer to another one. This is necessary to migrate
+        away resources to make the resource-provider less full.
+        """
+        rp = rp_obj.ResourceProvider(
+            self.ctx, name='full_rp', uuid=uuidsentinel.rp)
+        rp.create()
+
+        cpu_inv = tb.add_inventory(rp, fields.ResourceClass.VCPU, 24,
+                                allocation_ratio=16.0)
+        mem_inv = tb.add_inventory(rp, fields.ResourceClass.MEMORY_MB, 1024,
+                                   min_unit=64,
+                                   max_unit=1024,
+                                   step_size=64)
+
+        # Create a consumer already filling half the provider
+        filling_consumer = consumer_obj.Consumer(
+            self.ctx, uuid=uuidsentinel.filler, user=self.user_obj,
+            project=self.project_obj)
+        filling_consumer.create()
+
+        alloc_list = rp_obj.AllocationList(context=self.ctx,
+            objects=[
+                rp_obj.Allocation(
+                    context=self.ctx,
+                    consumer=filling_consumer,
+                    resource_provider=rp,
+                    resource_class=fields.ResourceClass.VCPU,
+                    used=12),
+                rp_obj.Allocation(
+                    context=self.ctx,
+                    consumer=filling_consumer,
+                    resource_provider=rp,
+                    resource_class=fields.ResourceClass.MEMORY_MB,
+                    used=512)
+            ])
+        alloc_list.replace_all()
+
+        # Create a consumer representing the instance, filling the other half
+        inst_consumer = consumer_obj.Consumer(
+            self.ctx, uuid=uuidsentinel.instance, user=self.user_obj,
+            project=self.project_obj)
+        inst_consumer.create()
+
+        alloc_list = rp_obj.AllocationList(context=self.ctx,
+            objects=[
+                rp_obj.Allocation(
+                    context=self.ctx,
+                    consumer=inst_consumer,
+                    resource_provider=rp,
+                    resource_class=fields.ResourceClass.VCPU,
+                    used=12),
+                rp_obj.Allocation(
+                    context=self.ctx,
+                    consumer=inst_consumer,
+                    resource_provider=rp,
+                    resource_class=fields.ResourceClass.MEMORY_MB,
+                    used=512)
+            ])
+        alloc_list.replace_all()
+
+        # inventory of the provider changes (because a host in the cluster it
+        # represents goes down or a memory-module fails
+        mem_inv.total = 768
+        rp.set_inventory(rp_obj.InventoryList(objects=[cpu_inv, mem_inv]))
+
+        # Create a consumer representing the migration
+        mig_consumer = consumer_obj.Consumer(
+            self.ctx, uuid=uuidsentinel.migration, user=self.user_obj,
+            project=self.project_obj)
+        mig_consumer.create()
+
+        # requesting additional resources fails
+        alloc_list = rp_obj.AllocationList(context=self.ctx,
+            objects=[
+                rp_obj.Allocation(
+                    context=self.ctx,
+                    consumer=mig_consumer,
+                    resource_provider=rp,
+                    resource_class=fields.ResourceClass.VCPU,
+                    used=12),
+                rp_obj.Allocation(
+                    context=self.ctx,
+                    consumer=mig_consumer,
+                    resource_provider=rp,
+                    resource_class=fields.ResourceClass.MEMORY_MB,
+                    used=512)
+            ])
+        self.assertRaises(exception.InvalidAllocationCapacityExceeded,
+                          alloc_list.replace_all)
+
+        # switching over some resources from one consumer to another fails
+        alloc_list.objects.append(
+            rp_obj.Allocation(
+                context=self.ctx,
+                consumer=inst_consumer,
+                resource_provider=rp,
+                resource_class=fields.ResourceClass.MEMORY_MB,
+                used=0)
+        )
+        self.assertRaises(exception.InvalidAllocationCapacityExceeded,
+                          alloc_list.replace_all)
+
+        # switch over all resources works
+        alloc_list.objects.append(
+            rp_obj.Allocation(
+                context=self.ctx,
+                consumer=inst_consumer,
+                resource_provider=rp,
+                resource_class=fields.ResourceClass.VCPU,
+                used=0)
+        )
+        alloc_list.replace_all()
+
+        # check that we still have the same number of resources allocations
+        allocations = rp_obj.AllocationList.get_all_by_resource_provider(
+            self.ctx, rp)
+        self.assertEqual(4, len(allocations))
+
+        # instance now has no allocations
+        allocations = rp_obj.AllocationList.get_all_by_consumer_id(
+            self.ctx, inst_consumer.uuid)
+        self.assertEqual(0, len(allocations))
+
+        # migration has the resources of the instance
+        allocations = rp_obj.AllocationList.get_all_by_consumer_id(
+            self.ctx, mig_consumer.uuid)
+        self.assertEqual(2, len(allocations))
+        expected = sorted([(fields.ResourceClass.VCPU, 12),
+                           (fields.ResourceClass.MEMORY_MB, 512)])
+        actual = sorted([(a.resource_class, a.used) for a in allocations])
+        self.assertEqual(expected, actual)
+
+        # filling consumer stayed the same
+        allocations = rp_obj.AllocationList.get_all_by_consumer_id(
+            self.ctx, filling_consumer.uuid)
+        self.assertEqual(2, len(allocations))
+        expected = sorted([(fields.ResourceClass.VCPU, 12),
+                           (fields.ResourceClass.MEMORY_MB, 512)])
+        actual = sorted([(a.resource_class, a.used) for a in allocations])
+        self.assertEqual(expected, actual)
+
 
 class UsageListTestCase(tb.PlacementDbBaseTestCase):
 

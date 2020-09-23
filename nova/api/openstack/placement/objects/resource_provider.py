@@ -1756,6 +1756,28 @@ def _check_capacity_exceeded(ctx, allocs):
         raise exception.InvalidInventory(resource_class=class_str,
                 resource_provider=provider_str)
 
+    # check if this a replacement of one consumer with another one
+    # TODO(jkulik): Make this only work if it's replacing to same or less.
+    consumer_resources = collections.defaultdict(list)
+    for alloc in allocs:
+        d = (alloc.resource_class, alloc.used)
+        consumer_resources[alloc.consumer.id].append(d)
+    is_replacement = len(consumer_resources) == 2
+    if is_replacement:
+        # sort the resources so we get matching resource pairs (if possible) in
+        # the next step
+        for k in consumer_resources:
+            consumer_resources[k].sort()
+        # check that every resource change has a matching second change
+        # removing it from another consumer so the whole process is a
+        # replacement
+        for items in six.moves.zip_longest(*consumer_resources.values(),
+                                           fillvalue=(None, None)):
+            (cls1, used1), (cls2, used2) = items
+            if cls1 != cls2 or 0 not in (used1, used2):
+                is_replacement = False
+                break
+
     res_providers = {}
     rp_resource_class_sum = collections.defaultdict(
         lambda: collections.defaultdict(int))
@@ -1803,8 +1825,9 @@ def _check_capacity_exceeded(ctx, allocs):
         # usage["used"] can be returned as None
         used = usage['used'] or 0
         capacity = (usage['total'] - usage['reserved']) * allocation_ratio
-        if (capacity < (used + amount_needed) or
-            capacity < (used + rp_resource_class_sum[rp_uuid][rc_id])):
+        if ((capacity < (used + amount_needed) or
+                capacity < (used + rp_resource_class_sum[rp_uuid][rc_id])) and
+                not is_replacement):
             LOG.warning(
                 "Over capacity for %(rc)s on resource provider %(rp)s. "
                 "Needed: %(needed)s, Used: %(used)s, Capacity: %(cap)s",
