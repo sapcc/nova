@@ -74,15 +74,9 @@ class _TestConsoleAuthToken(object):
         self.compare_obj(obj, expected)
 
         url = obj.access_url
-        if console_type != 'novnc':
-            expected_url = '%s?token=%s' % (
-                fakes.fake_token_dict['access_url_base'],
-                fakes.fake_token)
-        else:
-            path = urlparse.urlencode({'path': '?token=%s' % fakes.fake_token})
-            expected_url = '%s?%s' % (
-                fakes.fake_token_dict['access_url_base'],
-                path)
+        expected_url = '%s?token=%s' % (
+            fakes.fake_token_dict['access_url_base'],
+            fakes.fake_token)
         self.assertEqual(expected_url, url)
 
     def test_authorize(self):
