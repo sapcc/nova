@@ -1437,3 +1437,14 @@ def vm_needs_special_spawning(memory_mb, flavor):
         return True
 
     return False
+
+
+def vm_special_spawning_boot_only(flavor):
+    special_spawning_trait_key = 'trait:' + SPECIAL_SPAWNING_TRAIT
+    # NOTE(jakobk): 'required' is the only valid value for 'trait:' extra specs
+    # until nova 18.0.0 (rocky), when 'forbidden' is added.
+    special_trait = flavor.extra_specs.get(special_spawning_trait_key, '')
+    if special_trait.lower() == 'required':
+        return True
+
+    return False

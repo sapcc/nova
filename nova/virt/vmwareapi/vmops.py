@@ -347,6 +347,10 @@ class VMwareVMOps(object):
                                          instance,
                                          self._cluster,
                                          vm_ref)
+        if utils.vm_special_spawning_boot_only(instance.flavor):
+            vm_util.update_vm_special_spawning_group(self._session, instance,
+                                                     self._cluster, vm_ref,
+                                                     operation="remove")
         return vm_ref
 
     def _get_extra_specs(self, flavor, image_meta=None):
@@ -1264,7 +1268,8 @@ class VMwareVMOps(object):
                                                         operation='add',
                                                         behavior=behavior)
 
-        vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
+        vm_util.power_on_instance(self._session, instance, self._cluster,
+                                  vm_ref=vm_ref)
 
         self._clean_up_after_special_spawning(context, instance.memory_mb,
                                               instance.flavor)
@@ -1653,7 +1658,8 @@ class VMwareVMOps(object):
 
             # Power off the VM if it is in PoweredOn state.
             if pwr_state == "poweredOn":
-                vm_util.power_off_instance(self._session, instance, vm_ref)
+                vm_util.power_off_instance(self._session, instance,
+                                           self._cluster, vm_ref)
 
             # Un-register the VM
             try:
@@ -1795,7 +1801,8 @@ class VMwareVMOps(object):
                                               datastore,
                                               dc_info,
                                               self._imagecache)
-        vm_util.power_off_instance(self._session, instance, vm_ref)
+        vm_util.power_off_instance(self._session, instance, self._cluster,
+                                   vm_ref)
 
         # Fetch the image if it does not exist in the cache
         self._fetch_image_if_missing(context, vi)
@@ -1818,7 +1825,8 @@ class VMwareVMOps(object):
         boot_spec = vm_util.get_vm_boot_spec(factory, rescue_device)
         # Update the VM with the new boot order and power on
         vm_util.reconfigure_vm(self._session, vm_ref, boot_spec)
-        vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
+        vm_util.power_on_instance(self._session, instance, self._cluster,
+                                  vm_ref=vm_ref)
 
     def unrescue(self, instance, power_on=True):
         """Unrescue the specified instance."""
@@ -1831,11 +1839,13 @@ class VMwareVMOps(object):
             with excutils.save_and_reraise_exception():
                 LOG.error('Unable to access the rescue disk',
                           instance=instance)
-        vm_util.power_off_instance(self._session, instance, vm_ref)
+        vm_util.power_off_instance(self._session, instance, self._cluster,
+                                   vm_ref)
         self._volumeops.detach_disk_from_vm(vm_ref, instance, rescue_device,
                                             destroy_disk=True)
         if power_on:
-            vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
+            vm_util.power_on_instance(self._session, instance, self._cluster,
+                                      vm_ref=vm_ref)
 
     def power_off(self, instance, timeout=0, retry_interval=0):
         """Power off the specified instance.
@@ -1851,7 +1861,7 @@ class VMwareVMOps(object):
                                             retry_interval):
             return
 
-        vm_util.power_off_instance(self._session, instance)
+        vm_util.power_off_instance(self._session, instance, self._cluster)
         self.update_cached_instances()
 
     def _clean_shutdown(self, instance, timeout, retry_interval):
@@ -1892,6 +1902,10 @@ class VMwareVMOps(object):
                 if props.get("runtime.powerState") == "poweredOff":
                     LOG.info("Soft shutdown succeeded.",
                              instance=instance)
+                    if utils.vm_special_spawning_boot_only(instance.flavor):
+                        vm_util.update_vm_special_spawning_group(
+                            self._session, instance, self._cluster, vm_ref,
+                            operation="remove")
                     return True
 
                 time.sleep(wait_time)
@@ -1922,7 +1936,7 @@ class VMwareVMOps(object):
                 vm_ref, lst_properties)
 
     def power_on(self, instance):
-        vm_util.power_on_instance(self._session, instance)
+        vm_util.power_on_instance(self._session, instance, self._cluster)
         self.update_cached_instances()
 
     def _update_instance_progress(self, context, instance, step, total_steps):
@@ -2071,7 +2085,8 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
 
         # 1. Power off the instance
-        vm_util.power_off_instance(self._session, instance, vm_ref)
+        vm_util.power_off_instance(self._session, instance, self._cluster,
+                                   vm_ref)
         self._update_instance_progress(context, instance,
                                        step=1,
                                        total_steps=RESIZE_TOTAL_STEPS)
@@ -2126,7 +2141,8 @@ class VMwareVMOps(object):
         """Finish reverting a resize."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         # Ensure that the VM is off
-        vm_util.power_off_instance(self._session, instance, vm_ref)
+        vm_util.power_off_instance(self._session, instance, self._cluster,
+                                   vm_ref)
         client_factory = self._session.vim.client.factory
         # Reconfigure the VM properties
         extra_specs = self._get_extra_specs(instance.flavor,
@@ -2170,7 +2186,7 @@ class VMwareVMOps(object):
                 self._attach_volumes(instance, block_device_info, adapter_type)
 
         if power_on:
-            vm_util.power_on_instance(self._session, instance)
+            vm_util.power_on_instance(self._session, instance, self._cluster)
 
     def finish_migration(self, context, migration, instance, disk_info,
                          network_info, image_meta, resize_instance=False,
@@ -2243,7 +2259,8 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
         # 7. Start VM
         if power_on:
-            vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
+            vm_util.power_on_instance(self._session, instance, self._cluster,
+                                      vm_ref=vm_ref)
         self._update_instance_progress(context, instance,
                                        step=7,
                                        total_steps=RESIZE_TOTAL_STEPS)

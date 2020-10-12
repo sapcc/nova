@@ -39,6 +39,7 @@ from nova.i18n import _
 from nova.network import model as network_model
 from nova import objects
 from nova.utils import vm_needs_special_spawning
+from nova.utils import vm_special_spawning_boot_only
 from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
@@ -1592,6 +1593,15 @@ def update_cluster_placement(session, context, instance, cluster, vm_ref):
     cluster_util.update_placement(session, cluster, vm_ref, server_group_infos)
 
 
+def update_vm_special_spawning_group(session, instance, cluster, vm_ref,
+                                     operation="add"):
+    group_info = GroupInfo(CONF.vmware.special_spawning_vm_group, None)
+    if operation == "add":
+        cluster_util.update_placement(session, cluster, vm_ref, group_info)
+    if operation == "remove":
+        cluster_util.clean_empty_vm_groups(session, cluster, [group_info.uuid])
+
+
 def get_host_ref(session, cluster=None):
     """Get reference to a host within the cluster specified."""
     if cluster is None:
@@ -1833,7 +1843,7 @@ def reconfigure_vm(session, vm_ref, config_spec):
     session._wait_for_task(reconfig_task)
 
 
-def power_on_instance(session, instance, vm_ref=None):
+def power_on_instance(session, instance, cluster, vm_ref=None):
     """Power on the specified instance."""
 
     if vm_ref is None:
@@ -1848,6 +1858,10 @@ def power_on_instance(session, instance, vm_ref=None):
         LOG.debug("Powered on the VM", instance=instance)
     except vexc.InvalidPowerStateException:
         LOG.debug("VM already powered on", instance=instance)
+
+    if vm_special_spawning_boot_only(instance.flavor):
+        update_vm_special_spawning_group(session, instance, cluster, vm_ref,
+                                         operation="add")
 
 
 def _get_vm_port_indices(session, vm_ref):
@@ -1893,7 +1907,7 @@ def get_vm_detach_port_index(session, vm_ref, iface_id):
                 return int(option.key.split('.')[2])
 
 
-def power_off_instance(session, instance, vm_ref=None):
+def power_off_instance(session, instance, cluster, vm_ref=None):
     """Power off the specified instance."""
 
     if vm_ref is None:
@@ -1907,6 +1921,10 @@ def power_off_instance(session, instance, vm_ref=None):
         LOG.debug("Powered off the VM", instance=instance)
     except vexc.InvalidPowerStateException:
         LOG.debug("VM already powered off", instance=instance)
+
+    if vm_special_spawning_boot_only(instance.flavor):
+        update_vm_special_spawning_group(session, instance, cluster, vm_ref,
+                                         operation="remove")
 
 
 def find_rescue_device(hardware_devices, instance):

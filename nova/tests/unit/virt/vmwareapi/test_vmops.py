@@ -458,6 +458,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 self._context, self._instance, None, self._image_meta)
             mock_power_off.assert_called_once_with(self._session,
                                                    self._instance,
+                                                   self._cluster.obj,
                                                    vm_ref)
 
             uuid = self._instance.image_ref
@@ -475,6 +476,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                      'fake-boot-spec')
             mock_power_on.assert_called_once_with(self._session,
                                                   self._instance,
+                                                  self._cluster.obj,
                                                   vm_ref=vm_ref)
 
     def test_unrescue_power_on(self):
@@ -506,13 +508,13 @@ class VMwareVMOpsTestCase(test.TestCase):
 
             if power_on:
                 _power_on_instance.assert_called_once_with(self._session,
-                        self._instance, vm_ref=vm_ref)
+                        self._instance, self._cluster.obj, vm_ref=vm_ref)
             else:
                 self.assertFalse(_power_on_instance.called)
             _get_vm_ref.assert_called_once_with(self._session,
                                                 self._instance)
             _power_off.assert_called_once_with(self._session, self._instance,
-                                               vm_ref)
+                                               self._cluster.obj, vm_ref)
             _volumeops.detach_disk_from_vm.assert_called_once_with(
                 vm_ref, self._instance, mock.ANY, destroy_disk=True)
 
@@ -694,6 +696,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 if power_on:
                     fake_power_on.assert_called_once_with(self._session,
                                                           self._instance,
+                                                          self._cluster.obj,
                                                           vm_ref='fake-ref')
                 else:
                     self.assertFalse(fake_power_on.called)
@@ -869,6 +872,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             vm_ref_calls = [mock.call(self._session, self._instance)]
             fake_power_off.assert_called_once_with(self._session,
                                                    self._instance,
+                                                   self._cluster.obj,
                                                    'fake-ref')
             # Validate VM reconfiguration
             metadata = ('name:fake_display_name\n'
@@ -935,7 +939,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         fake_get_vm_ref.assert_has_calls(vm_ref_calls)
         if power_on and not relocate_fails:
             fake_power_on.assert_called_once_with(self._session,
-                                                  self._instance)
+                                                  self._instance,
+                                                  self._cluster.obj)
         else:
             self.assertFalse(fake_power_on.called)
 
@@ -1223,6 +1228,7 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         fake_power_off.assert_called_once_with(self._session,
                                                self._instance,
+                                               self._cluster.obj,
                                                'fake-ref')
         calls = [mock.call(self._context, self._instance, step=i,
                            total_steps=vmops.RESIZE_TOTAL_STEPS)
@@ -1306,6 +1312,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             'fake-ref', self._instance, None)
         fake_remove_eph_and_swap.assert_called_once_with('fake-ref')
         fake_power_on.assert_called_once_with(self._session, self._instance,
+                                              self._cluster.obj,
                                               vm_ref='fake-ref')
         fake_resize_vm.assert_called_once_with(self._context, self._instance,
                                                'fake-ref',
@@ -2087,7 +2094,10 @@ class VMwareVMOpsTestCase(test.TestCase):
                 network_info,
                 vm_ref='fake_vm_ref')
             mock_power_on_instance.assert_called_once_with(
-                self._session, self._instance, vm_ref='fake_vm_ref')
+                self._session,
+                self._instance,
+                self._cluster.obj,
+                vm_ref='fake_vm_ref')
 
             if (block_device_info and
                 'block_device_mapping' in block_device_info):
@@ -2335,7 +2345,124 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         power_on_instance.assert_called_once_with(self._session,
                                                   self._instance,
+                                                  self._cluster.obj,
                                                   vm_ref='fake-vm-ref')
+
+    @mock.patch.object(nova.virt.vmwareapi.images.VMwareImage, 'from_image')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_spec')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_project_folder')
+    @mock.patch.object(vm_util, 'rename_vm')
+    @mock.patch.object(vm_util, 'create_vm')
+    @mock.patch.object(driver.VMwareAPISession, '_call_method')
+    @mock.patch.object(driver.VMwareAPISession, '_wait_for_task')
+    @mock.patch.object(cluster_util, 'update_placement')
+    @mock.patch.object(vm_util, 'update_vm_special_spawning_group')
+    def _test_spawn_memreserved_vm(self,
+        fake_update_vm_special_spawning_group,
+        fake_update_placement,
+        fake_wait_for_task,
+        fake_call_method,
+        fake_create_vm,
+        fake_rename_vm,
+        fake_get_project_folder,
+        fake_get_vm_config_spec,
+        fake_get_vm_config_info,
+        fake_from_image,
+        memory_reserved_mb=0,
+    ):
+        self.flags(group='vnc', enabled=False)
+        self.flags(flat_injected=False)
+        extra_specs = self._instance.flavor.extra_specs
+        if memory_reserved_mb > 0:
+            extra_specs.update({
+                utils.MEMORY_RESERVABLE_MB_RESOURCE_SPEC_KEY:
+                    memory_reserved_mb,
+                'trait:' + utils.SPECIAL_SPAWNING_TRAIT: 'required'})
+        else:
+            extra_specs.pop(utils.MEMORY_RESERVABLE_MB_RESOURCE_SPEC_KEY, None)
+            extra_specs.pop('trait:' + utils.SPECIAL_SPAWNING_TRAIT, None)
+        self._instance.image_ref = None
+        fake_create_vm.return_value = 'vm-ref'
+        self._vmops.spawn(self._context, self._instance, self._image_meta,
+                injected_files=None, admin_password=None, network_info=[])
+        return fake_update_vm_special_spawning_group
+
+    def test_antiaffinity_not_set_when_spawning_memreserved_vm(self):
+        fake_update_vm_special_spawning_group = \
+            self._test_spawn_memreserved_vm(
+                memory_reserved_mb=self._instance.flavor.memory_mb)
+        # bigvm antiaffinity group removed before and re-added after power-on
+        fake_update_vm_special_spawning_group.assert_has_calls([
+            mock.call(self._session, self._instance, self._cluster.obj,
+                      'vm-ref', operation="remove"),
+            mock.call(self._session, self._instance, self._cluster.obj,
+                      'vm-ref', operation="add")
+        ])
+
+    def test_antiaffinity_set_when_spawning_non_memreserved_vm(self):
+        fake_update_vm_special_spawning_group = \
+            self._test_spawn_memreserved_vm(memory_reserved_mb=0)
+        fake_update_vm_special_spawning_group.assert_not_called()
+
+    @mock.patch.object(driver.VMwareAPISession, '_call_method')
+    @mock.patch.object(driver.VMwareAPISession, '_wait_for_task')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_instance_props')
+    @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    @mock.patch.object(vm_util, 'update_vm_special_spawning_group')
+    def _test_stop_memreserved_vm(self,
+            fake_update_vm_special_spawning_group,
+            fake_get_vm_ref,
+            fake_update_cached_instances,
+            fake_get_instance_props,
+            fake_wait_for_task,
+            fake_call_method,
+            memory_reserved_mb=0,
+            soft_shutdown=False
+    ):
+        fake_get_instance_props.side_effect = [
+            {'runtime.powerState': 'poweredOn',
+             'summary.guest.toolsStatus': 'toolsOk',
+             'summary.guest.toolsRunningStatus': 'guestToolsRunning'},
+            {'runtime.powerState': 'poweredOff'}]
+        fake_get_vm_ref.return_value = 'vm-ref'
+        extra_specs = self._instance.flavor.extra_specs
+        if memory_reserved_mb > 0:
+            extra_specs.update({
+                utils.MEMORY_RESERVABLE_MB_RESOURCE_SPEC_KEY:
+                    memory_reserved_mb,
+                'trait:' + utils.SPECIAL_SPAWNING_TRAIT: 'required'})
+        else:
+            extra_specs.pop(utils.MEMORY_RESERVABLE_MB_RESOURCE_SPEC_KEY, None)
+            extra_specs.pop('trait:' + utils.SPECIAL_SPAWNING_TRAIT, None)
+        self._vmops.power_off(self._instance,
+            timeout=0.001 if soft_shutdown else 0)
+        return fake_update_vm_special_spawning_group
+
+    def test_antiaffinity_removed_when_stopping_memreserved_vm(self):
+        fake_update_vm_special_spawning_group = self._test_stop_memreserved_vm(
+            memory_reserved_mb=self._instance.flavor.memory_mb)
+        fake_update_vm_special_spawning_group.assert_called_once_with(
+            self._session, self._instance, self._cluster.obj, 'vm-ref',
+            operation="remove")
+
+        fake_update_vm_special_spawning_group = self._test_stop_memreserved_vm(
+            memory_reserved_mb=self._instance.flavor.memory_mb,
+            soft_shutdown=True)
+        fake_update_vm_special_spawning_group.assert_called_once_with(
+            self._session, self._instance, self._cluster.obj, 'vm-ref',
+            operation="remove")
+
+    def test_antiaffinity_not_removed_when_stopping_nonmemreserved_vm(self):
+        fake_update_vm_special_spawning_group = \
+            self._test_stop_memreserved_vm(memory_reserved_mb=0)
+        fake_update_vm_special_spawning_group.assert_not_called()
+
+        fake_update_vm_special_spawning_group = \
+            self._test_stop_memreserved_vm(memory_reserved_mb=0,
+                                           soft_shutdown=True)
+        fake_update_vm_special_spawning_group.assert_not_called()
 
     def _get_fake_vi(self):
         image_info = images.VMwareImage(
