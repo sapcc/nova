@@ -155,7 +155,7 @@ def update_placement(session, cluster, vm_ref, group_infos):
         group = _get_vm_group(cluster_config, group_info)
 
         if not group:
-            """Creating group"""
+            # Create group
             group_spec = _create_vm_group_spec(
                 client_factory, group_info, [vm_ref], operation="add",
                 group=group)
@@ -193,6 +193,36 @@ def update_placement(session, cluster, vm_ref, group_infos):
                     config_spec.rulesSpec.append(rules_spec)
 
     reconfigure_cluster(session, cluster, config_spec)
+
+
+@utils.synchronized('vmware-vm-group-policy')
+def remove_vm_from_groups(session, cluster, vm_ref, group_infos):
+    cluster_config = session._call_method(
+        vutil, "get_object_property", cluster, "configurationEx")
+
+    client_factory = session.vim.client.factory
+    config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+    config_spec.groupSpec = []
+    empty_groups_to_remove = []
+    for group_info in group_infos:
+        group = _get_vm_group(cluster_config, group_info)
+        if not group:
+            continue
+        if not group.vm or vm_ref not in group.vm:
+            continue
+
+        group.vm.remove(vm_ref)
+        if len(group.vm) == 0:
+            empty_groups_to_remove.append(group_info.uuid)
+        group_spec = client_factory.create('ns0:ClusterGroupSpec')
+        group_spec.operation = "edit"
+        group_spec.info = group
+        config_spec.groupSpec.append(group_spec)
+
+    if config_spec.groupSpec:
+        reconfigure_cluster(session, cluster, config_spec)
+    if empty_groups_to_remove:
+        _clean_empty_vm_groups(session, cluster, empty_groups_to_remove)
 
 
 def _create_cluster_rules_spec(client_factory, name, vm_refs,
@@ -314,6 +344,10 @@ def clean_empty_vm_groups(session, cluster, group_names=None):
 
     Optionally filter the server groups to delete by `group_names`.
     """
+    _clean_empty_vm_groups(session, cluster, group_names)
+
+
+def _clean_empty_vm_groups(session, cluster, group_names):
     cluster_config = session._call_method(vutil,
         "get_object_property", cluster, "configurationEx")
 

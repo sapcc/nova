@@ -146,6 +146,10 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                           'vm_reservable_memory_ratio': 1.0}}
             self.assertEqual(expected_stats, result)
 
+    def _fake_cluster(self):
+        fake_ds_ref = fake.ManagedObjectReference(value='fake-ds')
+        return fake.create_cluster('fake_cluster', fake_ds_ref)
+
     def test_get_stats_from_cluster_hosts_connected_and_active(self):
         self._test_get_stats_from_cluster()
 
@@ -1232,12 +1236,13 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
 
     def test_power_on_instance_with_vm_ref(self):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, "_call_method",
                               return_value='fake-task'),
             mock.patch.object(session, "_wait_for_task"),
         ) as (fake_call_method, fake_wait_for_task):
-            vm_util.power_on_instance(session, self._instance,
+            vm_util.power_on_instance(session, self._instance, cluster,
                                       vm_ref='fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOnVM_Task",
@@ -1246,6 +1251,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
 
     def test_power_on_instance_without_vm_ref(self):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(vm_util, "get_vm_ref",
                               return_value='fake-vm-ref'),
@@ -1253,7 +1259,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                               return_value='fake-task'),
             mock.patch.object(session, "_wait_for_task"),
         ) as (fake_get_vm_ref, fake_call_method, fake_wait_for_task):
-            vm_util.power_on_instance(session, self._instance)
+            vm_util.power_on_instance(session, self._instance, cluster)
             fake_get_vm_ref.assert_called_once_with(session, self._instance)
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOnVM_Task",
@@ -1262,6 +1268,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
 
     def test_power_on_instance_with_exception(self):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, "_call_method",
                               return_value='fake-task'),
@@ -1270,7 +1277,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         ) as (fake_call_method, fake_wait_for_task):
             self.assertRaises(exception.NovaException,
                               vm_util.power_on_instance,
-                              session, self._instance,
+                              session, self._instance, cluster,
                               vm_ref='fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOnVM_Task",
@@ -1279,6 +1286,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
 
     def test_power_on_instance_with_power_state_exception(self):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, "_call_method",
                               return_value='fake-task'),
@@ -1286,7 +1294,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                     session, "_wait_for_task",
                     side_effect=vexc.InvalidPowerStateException),
         ) as (fake_call_method, fake_wait_for_task):
-            vm_util.power_on_instance(session, self._instance,
+            vm_util.power_on_instance(session, self._instance, cluster,
                                       vm_ref='fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOnVM_Task",
@@ -1644,12 +1652,14 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, "get_vm_ref")
     def test_power_off_instance(self, fake_get_ref):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, '_call_method',
                               return_value='fake-task'),
             mock.patch.object(session, '_wait_for_task')
         ) as (fake_call_method, fake_wait_for_task):
-            vm_util.power_off_instance(session, self._instance, 'fake-vm-ref')
+            vm_util.power_off_instance(session, self._instance, cluster,
+                                       'fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOffVM_Task",
                                                      'fake-vm-ref')
@@ -1659,12 +1669,13 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, "get_vm_ref", return_value="fake-vm-ref")
     def test_power_off_instance_no_vm_ref(self, fake_get_ref):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, '_call_method',
                               return_value='fake-task'),
             mock.patch.object(session, '_wait_for_task')
         ) as (fake_call_method, fake_wait_for_task):
-            vm_util.power_off_instance(session, self._instance)
+            vm_util.power_off_instance(session, self._instance, cluster)
             fake_get_ref.assert_called_once_with(session, self._instance)
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOffVM_Task",
@@ -1674,6 +1685,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, "get_vm_ref")
     def test_power_off_instance_with_exception(self, fake_get_ref):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, '_call_method',
                               return_value='fake-task'),
@@ -1682,7 +1694,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         ) as (fake_call_method, fake_wait_for_task):
             self.assertRaises(exception.NovaException,
                               vm_util.power_off_instance,
-                              session, self._instance, 'fake-vm-ref')
+                              session, self._instance, cluster, 'fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOffVM_Task",
                                                      'fake-vm-ref')
@@ -1692,6 +1704,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, "get_vm_ref")
     def test_power_off_instance_power_state_exception(self, fake_get_ref):
         session = fake.FakeSession()
+        cluster = self._fake_cluster().obj
         with test.nested(
             mock.patch.object(session, '_call_method',
                               return_value='fake-task'),
@@ -1699,7 +1712,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                     session, '_wait_for_task',
                     side_effect=vexc.InvalidPowerStateException)
         ) as (fake_call_method, fake_wait_for_task):
-            vm_util.power_off_instance(session, self._instance, 'fake-vm-ref')
+            vm_util.power_off_instance(session, self._instance, cluster,
+                                       'fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
                                                      "PowerOffVM_Task",
                                                      'fake-vm-ref')
