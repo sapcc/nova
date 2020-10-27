@@ -41,6 +41,7 @@ from nova import exception
 from nova.i18n import _
 import nova.privsep.path
 from nova import rc_fields as fields
+from nova import utils
 from nova.virt import driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
@@ -493,6 +494,16 @@ class VMwareVCDriver(driver.ComputeDriver):
                 'min_unit': 1,
                 'max_unit': stats['mem']['max_mem_mb_per_host'],
                 'step_size': 1,
+            }})
+            available_memory_mb = stats['mem']['total'] - reserved_memory_mb
+            result.update({
+                utils.MEMORY_RESERVABLE_MB_RESOURCE: {
+                    'total': available_memory_mb,
+                    'reserved': int(available_memory_mb
+                        * (1 - stats['mem']['vm_reservable_memory_ratio'])),
+                    'min_unit': 1,
+                    'max_unit': stats['mem']['max_mem_mb_per_host'],
+                    'step_size': 1,
             }})
         return result
 
