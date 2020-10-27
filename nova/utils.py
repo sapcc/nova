@@ -88,7 +88,8 @@ VIM_IMAGE_ATTRIBUTES = (
     'container_format', 'disk_format', 'min_ram', 'min_disk',
 )
 
-# Custom resource for reservable memory
+# Custom resource and trait for reservable memory
+SPECIAL_SPAWNING_TRAIT = 'CUSTOM_SPECIAL_SPAWNING'
 MEMORY_RESERVABLE_MB_RESOURCE = 'CUSTOM_MEMORY_RESERVABLE_MB'
 MEMORY_RESERVABLE_MB_RESOURCE_SPEC_KEY = \
     'resources:' + MEMORY_RESERVABLE_MB_RESOURCE

@@ -44,6 +44,7 @@ CONF = nova.conf.CONF
 MEMORY_MB = rc_fields.ResourceClass.MEMORY_MB
 BIGVM_RESOURCE = special_spawning.BIGVM_RESOURCE
 BIGVM_DISABLED_TRAIT = 'CUSTOM_BIGVM_DISABLED'
+SPECIAL_SPAWNING_TRAIT = utils.SPECIAL_SPAWNING_TRAIT
 MEMORY_RESERVABLE_MB_RESOURCE = utils.MEMORY_RESERVABLE_MB_RESOURCE
 VMWARE_HV_TYPE = 'VMware vCenter Server'
 SHARD_PREFIX = 'vc-'
@@ -600,6 +601,26 @@ class BigVmManager(manager.Manager):
                             {'rp_uuid': rp_uuid})
                 return
 
+        # Remove special-spawning trait from the parent provider (the cluster),
+        # because large VMs should also use the next BigVM spawn host.
+        # NOTE(jakobk): Will there be a time-gap where large VMs can't spawn?
+        if 'host_rp_uuid' in rp:
+            try:
+                client.remove_traits_for_provider(context, rp['host_rp_uuid'],
+                                                  [SPECIAL_SPAWNING_TRAIT])
+            except (exception.ResourceProviderUpdateConflict,
+                    exception.ResourceProviderUpdateFailed,
+                    exception.TraitRetrievalFailed,
+                    exception.TraitCreationFailed) as err:
+                LOG.warning('Failed to unset special-spawning trait on'
+                            ' resource provider %(host_rp_uuid)s: %(err)s',
+                            {'host_rp_uuid': rp['host_rp_uuid'],
+                             'err': err})
+        else:
+            LOG.warning('BigVM resource provider %(rp_uuid)s has no parent'
+                        ' provider. Cannot unset special-spawning trait.',
+                        {'rp_uuid': rp_uuid})
+
         # delete the resource-provider
         client._delete_provider(rp_uuid)
         LOG.info('Removed resource-provider %(rp_uuid)s.',
@@ -745,6 +766,11 @@ class BigVmManager(manager.Manager):
             # its aggregates
             client.set_traits_for_provider(context, new_rp_uuid,
                                            ['MISC_SHARES_VIA_AGGREGATE'])
+
+            # make memory reservable on the parent provider (for other memory-
+            # reserved flavors)
+            client.add_traits_for_provider(context, rp_uuid,
+                                           [SPECIAL_SPAWNING_TRAIT])
 
             # find a host and let DRS free it up
             state = self.special_spawn_rpc.free_host(context, host)
