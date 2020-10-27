@@ -39,6 +39,7 @@ from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import vm_states
 import nova.conf
+import nova.utils
 
 from nova import context
 from nova import exception
@@ -2398,6 +2399,13 @@ class VMwareAPIVMTestCase(test.TestCase,
                 'max_unit': 25,
                 'step_size': 1,
             },
+            nova.utils.MEMORY_RESERVABLE_MB_RESOURCE: {
+                'total': 2048 - 512,  # 512 CONF.reserved_host_memory_mb
+                'reserved': 0,
+                'min_unit': 1,
+                'max_unit': 1024,
+                'step_size': 1,
+            }
         }
         self.assertEqual(expected, inv)
 
@@ -2420,7 +2428,8 @@ class VMwareAPIVMTestCase(test.TestCase,
             'mem': {'total': 2048,
                     'free': 2048,
                     'max_mem_mb_per_host': 1024,
-                    'reserved_memory_mb': 512}}
+                    'reserved_memory_mb': 512,
+                    'vm_reservable_memory_ratio': 1.0}}
         inv = self.conn.get_inventory(self.node_name)
         expected = {
             fields.ResourceClass.VCPU: {
@@ -2444,6 +2453,15 @@ class VMwareAPIVMTestCase(test.TestCase,
                 'max_unit': 25,
                 'step_size': 1,
             },
+            nova.utils.MEMORY_RESERVABLE_MB_RESOURCE: {
+                # 512 reported reserved from vmware stats (see above)
+                # + 512 CONF.reserved_host_memory_mb
+                'total': 2048 - 512 - 512,
+                'reserved': 0,
+                'min_unit': 1,
+                'max_unit': 1024,
+                'step_size': 1,
+            }
         }
         self.assertEqual(expected, inv)
 
