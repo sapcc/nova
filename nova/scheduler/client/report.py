@@ -1269,6 +1269,56 @@ class SchedulerReportClient(object):
         raise exception.ResourceProviderUpdateFailed(url=url, error=resp.text)
 
     @safe_connect
+    def add_traits_for_provider(self, context, rp_uuid, traits):
+        """Add traits to the existing traits of a provider.
+
+        :param context: The security context
+        :param rp_uuid: The UUID of the provider whose traits will be altered
+        :param traits: An iterable of trait strings to be added
+        :raises: ResourceProviderUpdateConflict if the provider's generation
+                 doesn't match the generation in the cache.  Callers may choose
+                 to retrieve the provider and its associations afresh and
+                 redrive this operation.
+        :raises: ResourceProviderUpdateFailed on any other placement API
+                 failure.
+        :raises: TraitCreationFailed if traits contains a trait that did not
+                 exist in placement, and couldn't be created.
+        :raises: TraitRetrievalFailed if the initial query of existing traits
+                 was unsuccessful.
+        """
+        prev_traits = self._get_provider_traits(context, rp_uuid)
+        # NOTE(jakobk): Remove this check in Rocky.
+        if not isinstance(prev_traits, set):
+            prev_traits = prev_traits.traits
+        self.set_traits_for_provider(context, rp_uuid,
+                                     prev_traits | set(traits))
+
+    @safe_connect
+    def remove_traits_for_provider(self, context, rp_uuid, traits):
+        """Remove certain traits from a provider, leaving the rest.
+
+        :param context: The security context
+        :param rp_uuid: The UUID of the provider whose traits will be altered
+        :param traits: An iterable of trait strings to be removed
+        :raises: ResourceProviderUpdateConflict if the provider's generation
+                 doesn't match the generation in the cache.  Callers may choose
+                 to retrieve the provider and its associations afresh and
+                 redrive this operation.
+        :raises: ResourceProviderUpdateFailed on any other placement API
+                 failure.
+        :raises: TraitCreationFailed if traits contains a trait that did not
+                 exist in placement, and couldn't be created.
+        :raises: TraitRetrievalFailed if the initial query of existing traits
+                 was unsuccessful.
+        """
+        prev_traits = self._get_provider_traits(context, rp_uuid)
+        # NOTE(jakobk): Remove this check in Rocky.
+        if not isinstance(prev_traits, set):
+            prev_traits = prev_traits.traits
+        self.set_traits_for_provider(context, rp_uuid,
+                                     prev_traits ^ set(traits))
+
+    @safe_connect
     def set_aggregates_for_provider(self, context, rp_uuid, aggregates,
             use_cache=True, generation=None):
         """Replace a provider's aggregates with those specified.
