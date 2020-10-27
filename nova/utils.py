@@ -88,6 +88,11 @@ VIM_IMAGE_ATTRIBUTES = (
     'container_format', 'disk_format', 'min_ram', 'min_disk',
 )
 
+# Custom resource for reservable memory
+MEMORY_RESERVABLE_MB_RESOURCE = 'CUSTOM_MEMORY_RESERVABLE_MB'
+MEMORY_RESERVABLE_MB_RESOURCE_SPEC_KEY = \
+    'resources:' + MEMORY_RESERVABLE_MB_RESOURCE
+
 _FILE_CACHE = {}
 
 _SERVICE_TYPES = service_types.ServiceTypes()
