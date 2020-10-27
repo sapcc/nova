@@ -34,6 +34,7 @@ from nova.scheduler import client as scheduler_client
 from nova.scheduler.client.report import get_placement_request_id
 from nova.scheduler.client.report import NESTED_PROVIDER_API_VERSION
 from nova.scheduler.utils import ResourceRequest
+from nova import utils
 from nova.virt.vmwareapi import special_spawning
 
 LOG = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ CONF = nova.conf.CONF
 MEMORY_MB = fields.ResourceClass.MEMORY_MB
 BIGVM_RESOURCE = special_spawning.BIGVM_RESOURCE
 BIGVM_DISABLED_TRAIT = 'CUSTOM_BIGVM_DISABLED'
+SPECIAL_SPAWNING_TRAIT = utils.SPECIAL_SPAWNING_TRAIT
 VMWARE_HV_TYPE = 'VMware vCenter Server'
 SHARD_PREFIX = 'vc-'
 HV_SIZE_BUCKET_THRESHOLD_PERCENT = 10
@@ -550,6 +552,26 @@ class BigVmManager(manager.Manager):
                             {'rp_uuid': rp_uuid})
                 return
 
+        # Remove special-spawning trait from the parent provider (the cluster),
+        # because large VMs should also use the next BigVM spawn host.
+        # NOTE(jakobk): Will there be a time-gap where large VMs can't spawn?
+        if rp_uuid.parent_uuid:
+            try:
+                client.remove_traits_for_provider(context, rp_uuid.parent_uuid,
+                                                  [SPECIAL_SPAWNING_TRAIT])
+            except (exception.ResourceProviderUpdateConflict,
+                    exception.ResourceProviderUpdateFailed,
+                    exception.TraitRetrievalFailed,
+                    exception.TraitCreationFailed) as err:
+                LOG.warning('Failed to unset special-spawning trait on'
+                            ' resource provider %(parent_rp_uuid)s: %(err)s',
+                            {'parent_rp_uuid': rp_uuid.parent_uuid,
+                             'err': err})
+        else:
+            LOG.warning('BigVM resource provider %(rp_uuid)s has no parent'
+                        ' provider. Cannot unset special-spawning trait.',
+                        {'rp_uuid': rp_uuid})
+
         # delete the resource-provider
         client._delete_provider(rp_uuid)
         LOG.info('Removed resource-provider %(rp_uuid)s.',
@@ -697,6 +719,11 @@ class BigVmManager(manager.Manager):
             # its aggregates
             client.set_traits_for_provider(context, new_rp_uuid,
                                            ['MISC_SHARES_VIA_AGGREGATE'])
+
+            # make memory reservable on the parent provider (for other memory-
+            # reserved flavors)
+            client.add_traits_for_provider(context, rp_uuid,
+                                           [SPECIAL_SPAWNING_TRAIT])
 
             # find a host and let DRS free it up
             state = self.special_spawn_rpc.free_host(context, host)
