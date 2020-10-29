@@ -57,6 +57,7 @@ from nova import objects
 from nova.objects import aggregate as aggregate_obj
 from nova.objects import block_device as block_device_obj
 from nova.objects import build_request as build_request_obj
+from nova.objects import cell_mapping as cell_mapping_obj
 from nova.objects import host_mapping as host_mapping_obj
 from nova.objects import instance as instance_obj
 from nova.objects import instance_group as instance_group_obj
@@ -829,10 +830,16 @@ class ApiDbCommands(object):
         max_number = int(max_number)
 
         admin_context = context.get_admin_context()
-        # There's no need to join the default security_groups and
-        # instance_info_caches tables, hence explicit empty 'columns_to_join'.
-        extant_instance_uuids = [i.get('uuid') for i in db.instance_get_all(
-            admin_context, columns_to_join=[]) if i.get('uuid') is not None]
+        extant_instance_uuids = set()
+        for cell in cell_mapping_obj.CellMappingList.get_all(admin_context):
+            with context.target_cell(admin_context, cell) as cell_context:
+                # There's no need to join the default security_groups and
+                # instance_info_caches tables, hence explicit empty
+                # 'columns_to_join'.
+                extant_instance_uuids |= \
+                    set(i.get('uuid') for i in db.instance_get_all(
+                        cell_context, columns_to_join=[])
+                     if i.get('uuid') is not None)
         finished = False
         while not finished:
             finished = self._purge_request_specs_and_instance_mappings(
