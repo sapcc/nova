@@ -107,6 +107,11 @@ class ConsoleAuthManager(manager.Manager):
         instance_uuid = token['instance_uuid']
         if instance_uuid is None:
             return False
+        # NOTE(mariusleu): Starting with Rocky, when this runs only under
+        # [workarounds]/enable_consoleauth, the port is expected to be a
+        # string by the validation.
+        if CONF.workarounds.enable_consoleauth:
+            token['port'] = str(token['port'])
 
         # NOTE(comstud): consoleauth was meant to run in API cells.  So,
         # if cells is enabled, we must call down to the child cell for
