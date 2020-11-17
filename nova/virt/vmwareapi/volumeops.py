@@ -323,9 +323,9 @@ class VMwareVolumeOps(object):
         return vm_util.get_vmdk_volume_disk(hardware_devices)
 
     def _attach_volume_vmdk(self, connection_info, instance,
-                            adapter_type=None):
+                            adapter_type=None, vm_ref=None):
         """Attach vmdk volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_ref or vm_util.get_vm_ref(self._session, instance)
         LOG.debug("_attach_volume_vmdk: %s", connection_info,
                   instance=instance)
         data = connection_info['data']
@@ -356,9 +356,9 @@ class VMwareVolumeOps(object):
         LOG.debug("Attached VMDK: %s", connection_info, instance=instance)
 
     def _attach_volume_iscsi(self, connection_info, instance,
-                             adapter_type=None):
+                             adapter_type=None, vm_ref=None):
         """Attach iscsi volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_ref or vm_util.get_vm_ref(self._session, instance)
         # Attach Volume to VM
         LOG.debug("_attach_volume_iscsi: %s", connection_info,
                   instance=instance)
@@ -381,15 +381,18 @@ class VMwareVolumeOps(object):
                                device_name=device_name)
         LOG.debug("Attached ISCSI: %s", connection_info, instance=instance)
 
-    def attach_volume(self, connection_info, instance, adapter_type=None):
+    def attach_volume(self, connection_info, instance, adapter_type=None,
+                      vm_ref=None):
         """Attach volume storage to VM instance."""
         driver_type = connection_info['driver_volume_type']
         LOG.debug("Volume attach. Driver type: %s", driver_type,
                   instance=instance)
         if driver_type == constants.DISK_FORMAT_VMDK:
-            self._attach_volume_vmdk(connection_info, instance, adapter_type)
+            self._attach_volume_vmdk(connection_info, instance, adapter_type,
+                                     vm_ref=vm_ref)
         elif driver_type == constants.DISK_FORMAT_ISCSI:
-            self._attach_volume_iscsi(connection_info, instance, adapter_type)
+            self._attach_volume_iscsi(connection_info, instance, adapter_type,
+                                      vm_ref=vm_ref)
         else:
             raise exception.VolumeDriverNotFound(driver_type=driver_type)
 
@@ -514,9 +517,9 @@ class VMwareVolumeOps(object):
             raise exception.DiskNotFound(message=_("Unable to find volume"))
         return device
 
-    def _detach_volume_vmdk(self, connection_info, instance):
+    def _detach_volume_vmdk(self, connection_info, instance, vm_ref=None):
         """Detach volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_ref or vm_util.get_vm_ref(self._session, instance)
         # Detach Volume from VM
         LOG.debug("_detach_volume_vmdk: %s", connection_info,
                   instance=instance)
@@ -559,9 +562,9 @@ class VMwareVolumeOps(object):
 
         LOG.debug("Detached VMDK: %s", connection_info, instance=instance)
 
-    def _detach_volume_iscsi(self, connection_info, instance):
+    def _detach_volume_iscsi(self, connection_info, instance, vm_ref=None):
         """Detach volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_ref or vm_util.get_vm_ref(self._session, instance)
         # Detach Volume from VM
         LOG.debug("_detach_volume_iscsi: %s", connection_info,
                   instance=instance)
@@ -584,15 +587,15 @@ class VMwareVolumeOps(object):
         self.detach_disk_from_vm(vm_ref, instance, device, destroy_disk=True)
         LOG.debug("Detached ISCSI: %s", connection_info, instance=instance)
 
-    def detach_volume(self, connection_info, instance):
+    def detach_volume(self, connection_info, instance, vm_ref=None):
         """Detach volume storage to VM instance."""
         driver_type = connection_info['driver_volume_type']
         LOG.debug("Volume detach. Driver type: %s", driver_type,
                   instance=instance)
         if driver_type == constants.DISK_FORMAT_VMDK:
-            self._detach_volume_vmdk(connection_info, instance)
+            self._detach_volume_vmdk(connection_info, instance, vm_ref=vm_ref)
         elif driver_type == constants.DISK_FORMAT_ISCSI:
-            self._detach_volume_iscsi(connection_info, instance)
+            self._detach_volume_iscsi(connection_info, instance, vm_ref=vm_ref)
         else:
             raise exception.VolumeDriverNotFound(driver_type=driver_type)
 

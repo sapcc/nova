@@ -363,6 +363,18 @@ def append_vif_infos_to_config_spec(client_factory,
             port_index += 1
 
 
+def get_instance_uuid_change_spec(client_factory, uuid):
+    config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
+    config_spec.instanceUuid = uuid
+    return config_spec
+
+
+def change_vm_instance_uuid(session, vm_ref, uuid):
+    config_spec = get_instance_uuid_change_spec(session.vim.client.factory,
+                                                uuid)
+    reconfigure_vm(session, vm_ref, config_spec)
+
+
 def get_vm_create_spec(client_factory, instance, data_store_name,
                        vif_infos, extra_specs,
                        os_type=constants.DEFAULT_OS_TYPE,
@@ -1153,13 +1165,14 @@ def clone_vm_spec(client_factory, location,
 
 def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
                      disk_move_type="moveAllDiskBackingsAndAllowSharing",
-                     folder=None):
+                     folder=None, service=None):
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
     rel_spec.datastore = datastore
     rel_spec.host = host
     rel_spec.folder = folder
     rel_spec.pool = res_pool
     rel_spec.diskMoveType = disk_move_type
+    rel_spec.service = service
     return rel_spec
 
 
@@ -2028,3 +2041,10 @@ def rename_vm(session, vm_ref, instance):
 def is_vim_instance(o, vim_type_name):
     return isinstance(o, sudsobject.Factory.subclass(vim_type_name,
                                                      sudsobject.Object))
+
+
+def vm_device_change(session, vm_ref, device_change):
+    client_factory = session.vim.client.factory
+    config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
+    config_spec.deviceChange = device_change
+    reconfigure_vm(session, vm_ref, config_spec)
