@@ -138,7 +138,8 @@ class VMwareVCDriver(driver.ComputeDriver):
                                         virtapi,
                                         self._volumeops,
                                         self._cluster_ref,
-                                        datastore_regex=self._datastore_regex)
+                                        datastore_regex=self._datastore_regex,
+                                        session_cls=VMwareAPISession)
         self._vc_state = host.VCState(self._session,
                                       self._nodename,
                                       self._cluster_ref,
@@ -201,6 +202,15 @@ class VMwareVCDriver(driver.ComputeDriver):
         if vim is None:
             self._session._create_session()
 
+        # Check the length of the host_ip to be maximum 255 characters
+        if len(self._vmops.get_host_ip_addr()) > 255:
+            raise exception.NovaException(
+                message="The combination of configuration values for cluster, "
+                        "datastore_regex, host_ip, host_port, username, "
+                        "password computed by VMwareVMOps.get_host_ip_addr() "
+                        "is too long. It has to be at most 255 characters, "
+                        "otherwise migrations will fail to work.")
+
     def cleanup_host(self, host):
         self._session.logout()
 
@@ -260,12 +270,13 @@ class VMwareVCDriver(driver.ComputeDriver):
         off the instance before the end.
         """
         # TODO(PhilDay): Add support for timeout (clean shutdown)
-        return self._vmops.migrate_disk_and_power_off(context, instance,
-                                                      dest, flavor)
+        return self._vmops.migrate_disk_and_power_off(
+            context, instance, dest, flavor, network_info, block_device_info)
 
     def confirm_migration(self, context, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
-        self._vmops.confirm_migration(migration, instance, network_info)
+        self._vmops.confirm_migration(context, migration, instance,
+                                      network_info)
 
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
@@ -522,8 +533,6 @@ class VMwareVCDriver(driver.ComputeDriver):
     def detach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
         """Detach volume storage to VM instance."""
-        # NOTE(claudiub): if context parameter is to be used in the future,
-        # the _detach_instance_volumes method will have to be updated as well.
         return self._volumeops.detach_volume(connection_info, instance)
 
     def get_volume_connector(self, instance):
@@ -532,7 +541,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def get_host_ip_addr(self):
         """Returns the IP address of the vCenter host."""
-        return CONF.vmware.host_ip
+        return self._vmops.get_host_ip_addr()
 
     def snapshot(self, context, instance, image_id, update_task_state):
         """Create snapshot from a running VM instance."""
@@ -543,7 +552,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Reboot VM instance."""
         self._vmops.reboot(instance, network_info, reboot_type)
 
-    def _detach_instance_volumes(self, instance, block_device_info):
+    def _detach_instance_volumes(self, instance, block_device_info,
+                                 vm_ref=None):
         # We need to detach attached volumes
         block_device_mapping = driver.block_device_info_get_mapping(
             block_device_info)
@@ -551,14 +561,12 @@ class VMwareVCDriver(driver.ComputeDriver):
             # Certain disk types, for example 'IDE' do not support hot
             # plugging. Hence we need to power off the instance and update
             # the instance state.
-            self._vmops.power_off(instance)
+            self._vmops.power_off(instance, vm_ref=vm_ref)
             for disk in block_device_mapping:
                 connection_info = disk['connection_info']
                 try:
-                    # NOTE(claudiub): Passing None as the context, as it is
-                    # not currently used.
-                    self.detach_volume(None, connection_info, instance,
-                                       disk.get('device_name'))
+                    self._volumeops.detach_volume(connection_info, instance,
+                                                  vm_ref=vm_ref)
                 except exception.DiskNotFound:
                     LOG.warning('The volume %s does not exist!',
                                 disk.get('device_name'),
@@ -581,21 +589,28 @@ class VMwareVCDriver(driver.ComputeDriver):
         if not instance.node:
             return
 
-        # A resize uses the same instance on the VC. We do not delete that
-        # VM in the event of a revert
+        # While resize_reverting, we use the special vm name to identify the
+        # temporary vm, so we need to use the correct vm_ref for destroying it.
+        vm_ref = None
         if instance.task_state == task_states.RESIZE_REVERTING:
-            return
+            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_name = vm_util.get_vm_name(self._session, vm_ref)
+            if vm_name != self._vmops._get_migration_vm_name(instance):
+                # This is an older migration that doesn't have a clone.
+                # By reverting it, we shouldn't destroy the VM.
+                return
 
         # We need to detach attached volumes
         if block_device_info is not None:
             try:
-                self._detach_instance_volumes(instance, block_device_info)
+                self._detach_instance_volumes(instance, block_device_info,
+                                              vm_ref=vm_ref)
             except (vexc.ManagedObjectNotFoundException,
                     exception.InstanceNotFound):
                 LOG.warning('Instance does not exists. Proceeding to '
                             'delete instance properties on datastore',
                             instance=instance)
-        self._vmops.destroy(context, instance, destroy_disks)
+        self._vmops.destroy(context, instance, destroy_disks, vm_ref=vm_ref)
 
     def pause(self, instance):
         """Pause VM instance."""

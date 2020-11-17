@@ -363,6 +363,21 @@ def append_vif_infos_to_config_spec(client_factory,
             port_index += 1
 
 
+def get_instance_uuid_change_spec(client_factory, uuid):
+    config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
+    config_spec.instanceUuid = uuid
+    return config_spec
+
+
+def change_vm_instance_uuid(session, vm_ref, uuid):
+    # NOTE: the caller must take care that it is safe to assign the UUID
+    # to the VM. Calling this with an UUID that's already assigned to another
+    # VM will break NSX-T.
+    config_spec = get_instance_uuid_change_spec(session.vim.client.factory,
+                                                uuid)
+    reconfigure_vm(session, vm_ref, config_spec)
+
+
 def get_vm_create_spec(client_factory, instance, data_store_name,
                        vif_infos, extra_specs,
                        os_type=constants.DEFAULT_OS_TYPE,
@@ -1159,13 +1174,14 @@ def clone_vm_spec(client_factory, location,
 
 def relocate_vm_spec(client_factory, res_pool=None, datastore=None, host=None,
                      disk_move_type="moveAllDiskBackingsAndAllowSharing",
-                     folder=None):
+                     folder=None, service=None):
     rel_spec = client_factory.create('ns0:VirtualMachineRelocateSpec')
     rel_spec.datastore = datastore
     rel_spec.host = host
     rel_spec.folder = folder
     rel_spec.pool = res_pool
     rel_spec.diskMoveType = disk_move_type
+    rel_spec.service = service
     return rel_spec
 
 
@@ -1392,6 +1408,15 @@ def get_vm_state(session, instance):
     vm_state = session._call_method(vutil, "get_object_property",
                                     vm_ref, "runtime.powerState")
     return constants.POWER_STATES[vm_state]
+
+
+def get_vm_name(session, vm_ref):
+    return get_object_property(session, vm_ref, "config.name")
+
+
+def get_object_property(session, mo_ref, property):
+    return session._call_method(vutil, "get_object_property",
+                                mo_ref, property)
 
 
 def _get_host_reservations(host_reservations_map, host_moref, host_vcpus,
@@ -1894,7 +1919,11 @@ def get_vm_detach_port_index(session, vm_ref, iface_id):
 
 
 def power_off_instance(session, instance, vm_ref=None):
-    """Power off the specified instance."""
+    """Power off the specified instance.
+
+    Returns True if the VM was powered off by this call, or False
+    of the VM was already powered off.
+    """
 
     if vm_ref is None:
         vm_ref = get_vm_ref(session, instance)
@@ -1905,8 +1934,10 @@ def power_off_instance(session, instance, vm_ref=None):
                                          "PowerOffVM_Task", vm_ref)
         session._wait_for_task(poweroff_task)
         LOG.debug("Powered off the VM", instance=instance)
+        return True
     except vexc.InvalidPowerStateException:
         LOG.debug("VM already powered off", instance=instance)
+        return False
 
 
 def find_rescue_device(hardware_devices, instance):
@@ -2043,8 +2074,8 @@ def _get_vm_name(display_name, id):
         return id[:36]
 
 
-def rename_vm(session, vm_ref, instance):
-    vm_name = _get_vm_name(instance.display_name, instance.uuid)
+def rename_vm(session, vm_ref, instance, vm_name=None):
+    vm_name = vm_name or _get_vm_name(instance.display_name, instance.uuid)
     rename_task = session._call_method(session.vim, "Rename_Task", vm_ref,
                                        newName=vm_name)
     session._wait_for_task(rename_task)
@@ -2053,3 +2084,14 @@ def rename_vm(session, vm_ref, instance):
 def is_vim_instance(o, vim_type_name):
     return isinstance(o, sudsobject.Factory.subclass(vim_type_name,
                                                      sudsobject.Object))
+
+
+def reconfigure_vm_device_change(session, vm_ref, device_change):
+    """Reconfigure a VM to add/edit/remove devices.
+
+    The device_change should be a VirtualDeviceConfigSpec.
+    """
+    client_factory = session.vim.client.factory
+    config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
+    config_spec.deviceChange = device_change
+    reconfigure_vm(session, vm_ref, config_spec)
