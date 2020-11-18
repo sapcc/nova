@@ -14,6 +14,8 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+from operator import itemgetter
+
 from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_vmware import vim_util as vutil
@@ -257,7 +259,7 @@ class _SpecialVmSpawningServer(object):
                             for h, vms in vms_per_host.items()}
 
             # take the one with least memory used
-            host, _ = sorted(mem_per_host.items(), key=lambda (x, y): y)[0]
+            host, _ = sorted(mem_per_host.items(), key=itemgetter(1))[0]
             host_ref = host_objs[host]
 
             client_factory = self._session.vim.client.factory
