@@ -27,7 +27,6 @@ import re
 import six
 import time
 
-import cluster_util
 import decorator
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
@@ -59,6 +58,7 @@ from nova import version
 from nova.virt import configdrive
 from nova.virt import driver
 from nova.virt import hardware
+from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
