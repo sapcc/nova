@@ -2635,6 +2635,12 @@ class VMwareVMOpsTestCase(test.TestCase):
         extra_specs = vm_util.ExtraSpecs(hw_version='vmx-14')
         self._validate_flavor_extra_specs(flavor_extra_specs, extra_specs)
 
+    def test_extra_specs_hw_version_override_empty(self):
+        CONF.set_override('default_hw_version', 'vmx-13',
+                          'vmware')
+        extra_specs = vm_util.ExtraSpecs(hw_version='vmx-13')
+        self._validate_flavor_extra_specs({}, extra_specs)
+
     def _make_vm_config_info(self, is_iso=False, is_sparse_disk=False,
                              vsphere_location=None):
         disk_type = (constants.DISK_TYPE_SPARSE if is_sparse_disk
