@@ -3692,6 +3692,7 @@ class API(base.Base):
                 request_spec.requested_destination = objects.Destination(
                     host=node.host, node=node.hypervisor_hostname)
 
+        scheduler_hint['_nova_check_type'] = ['resize']
         self.compute_task_api.resize_instance(context, instance,
                 extra_instance_updates, scheduler_hint=scheduler_hint,
                 flavor=new_instance_type,
