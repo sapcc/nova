@@ -416,6 +416,24 @@ Possible values:
 * An integer or float value, where the value corresponds to the multipler
   ratio for this weigher.
 """),
+    cfg.FloatOpt("resize_threshold_reserved_ram_percent",
+        default=10.0,
+        help="""
+The reserved memory threshold for resize.
+
+When resizing an instance a minimum of RAM should still be free before
+even considering a target host. This value specifies the minimum free
+percentage of total RAM on a host to be considered as a target host
+when resizing an instance.
+
+This option is only used by the FilterScheduler and its subclasses;
+if you use a different scheduler, this option has no effect.
+
+Possible values:
+
+* An integer or float value, where the value corresponds to the percent of RAM
+  to be unallocated.
+"""),
     cfg.FloatOpt("prefer_same_host_resize_weight_multiplier",
         default=1.0,
         help="""

@@ -2056,7 +2056,10 @@ class _ComputeAPIUnitTestMixIn(object):
                     exception.RequestSpecNotFound(instance_uuid=fake_inst.id))
                 fake_spec = None
 
-            scheduler_hint = {'filter_properties': filter_properties}
+            scheduler_hint = {
+                'filter_properties': filter_properties,
+                '_nova_check_type': ['resize'],
+            }
 
             self.compute_api.compute_task_api.resize_instance(
                     self.context, fake_inst, extra_kwargs,
