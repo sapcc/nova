@@ -2027,7 +2027,10 @@ class _ComputeAPIUnitTestMixIn(object):
                     exception.RequestSpecNotFound(instance_uuid=fake_inst.id))
                 fake_spec = None
 
-            scheduler_hint = {'filter_properties': filter_properties}
+            scheduler_hint = {
+                'filter_properties': filter_properties,
+                '_nova_check_type': ['resize'],
+            }
 
         if flavor_id_passed:
             self.compute_api.resize(self.context, fake_inst,
