@@ -336,7 +336,8 @@ class TestUtils(test.NoDBTestCase):
             'RequestGroup(use_same_provider=False, '
             'resources={DISK_GB:1, MEMORY_MB:1024, VCPU:1}, '
             'traits=[], '
-            'aggregates=[[baz], [foo, bar]])',
+            'aggregates=[[baz], [foo, bar]], '
+            'ignore_consumers=[])',
             str(req))
 
     def test_resources_from_request_spec_no_aggregates(self):
@@ -660,19 +661,23 @@ class TestUtils(test.NoDBTestCase):
             'RequestGroup(use_same_provider=False, '
             'resources={MEMORY_MB:2048, VCPU:2}, '
             'traits=[CUSTOM_MAGIC, HW_CPU_X86_AVX, !CUSTOM_BRONZE], '
-            'aggregates=[]), '
+            'aggregates=[], '
+            'ignore_consumers=[]), '
             'RequestGroup(use_same_provider=True, '
             'resources={DISK_GB:5}, '
             'traits=[], '
-            'aggregates=[]), '
+            'aggregates=[], '
+            'ignore_consumers=[]), '
             'RequestGroup(use_same_provider=True, '
             'resources={IPV4_ADDRESS:1, SRIOV_NET_VF:1}, '
             'traits=[CUSTOM_PHYSNET_NET1, !CUSTOM_PHYSNET_NET2], '
-            'aggregates=[]), '
+            'aggregates=[], '
+            'ignore_consumers=[]), '
             'RequestGroup(use_same_provider=True, '
             'resources={IPV4_ADDRESS:2, SRIOV_NET_VF:1}, '
             'traits=[CUSTOM_PHYSNET_NET2, HW_NIC_ACCEL_SSL], '
-            'aggregates=[])',
+            'aggregates=[], '
+            'ignore_consumers=[])',
             str(rr))
 
     def test_resource_request_from_extra_specs_append_request(self):

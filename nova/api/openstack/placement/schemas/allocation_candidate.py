@@ -41,9 +41,12 @@ GET_SCHEMA_1_16['properties']['limit'] = {
     "minLength": 1
 }
 
-# Add required parameter.
+# Add required parameter and ignore_consumer parameter
 GET_SCHEMA_1_17 = copy.deepcopy(GET_SCHEMA_1_16)
 GET_SCHEMA_1_17['properties']['required'] = {
+    "type": ["string"]
+}
+GET_SCHEMA_1_17['properties']['ignore_consumer'] = {
     "type": ["string"]
 }
 

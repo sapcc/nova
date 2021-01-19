@@ -2705,9 +2705,11 @@ class ProviderSummary(base.VersionedObject):
 
 
 @db_api.placement_context_manager.reader
-def _get_usages_by_provider_tree(ctx, root_ids):
+def _get_usages_by_provider_tree(ctx, root_ids, ignore_consumers=None):
     """Returns a row iterator of usage records grouped by provider ID
     for all resource providers in all trees indicated in the ``root_ids``.
+
+    :param ignore_consumers: List of UUIDs of consumers to ignore.
     """
     # We build up a SQL expression that looks like this:
     # SELECT
@@ -2729,6 +2731,7 @@ def _get_usages_by_provider_tree(ctx, root_ids):
     #     ON allocations.resource_provider_id = resource_providers.id
     #     AND (resource_providers.root_provider_id IN($root_ids)
     #          OR resource_providers.id IN($root_ids))
+    #   WHERE consumer_id NOT IN ($ignore_consumers)
     #   GROUP BY resource_provider_id, resource_class_id
     # )
     # AS usage
@@ -2749,16 +2752,19 @@ def _get_usages_by_provider_tree(ctx, root_ids):
                        _RP_TBL.c.id.in_(root_ids))
                 )
     )
-    usage = sa.alias(
-        sa.select([
-            _ALLOC_TBL.c.resource_provider_id,
-            _ALLOC_TBL.c.resource_class_id,
-            sql.func.sum(_ALLOC_TBL.c.used).label('used'),
-        ]).select_from(derived_alloc_to_rp).group_by(
-            _ALLOC_TBL.c.resource_provider_id,
-            _ALLOC_TBL.c.resource_class_id
-        ),
-        name='usage')
+    usage_sel = sa.select([
+        _ALLOC_TBL.c.resource_provider_id,
+        _ALLOC_TBL.c.resource_class_id,
+        sql.func.sum(_ALLOC_TBL.c.used).label('used'),
+    ]).select_from(derived_alloc_to_rp)
+    if ignore_consumers:
+        usage_sel = usage_sel.where(
+            sa.not_(_ALLOC_TBL.c.consumer_id.in_(ignore_consumers)))
+    usage_sel = usage_sel.group_by(
+        _ALLOC_TBL.c.resource_provider_id,
+        _ALLOC_TBL.c.resource_class_id
+    )
+    usage = sa.alias(usage_sel, name='usage')
     # Build a join between the resource providers and inventories table
     rpt_inv_join = sa.outerjoin(rpt, inv,
                                 rpt.c.id == inv.c.resource_provider_id)
@@ -2860,7 +2866,7 @@ def _has_provider_trees(ctx):
 
 @db_api.placement_context_manager.reader
 def _get_provider_ids_matching(ctx, resources, required_traits,
-        forbidden_traits, member_of=None):
+        forbidden_traits, member_of=None, ignore_consumers=None):
     """Returns a list of tuples of (internal provider ID, root provider ID)
     that have available inventory to satisfy all the supplied requests for
     resources.
@@ -2881,6 +2887,7 @@ def _get_provider_ids_matching(ctx, resources, required_traits,
                       the allocation_candidates returned will only be for
                       resource providers that are members of one or more of the
                       supplied aggregates of each aggregate UUID list.
+    :param ignore_consumers: List of UUIDs of consumers to ignore.
     """
     # The iteratively filtered set of resource provider internal IDs that match
     # all the constraints in the request
@@ -2936,7 +2943,8 @@ def _get_provider_ids_matching(ctx, resources, required_traits,
     first = True
     for rc_id, amount in resources.items():
         rc_name = _RC_CACHE.string_from_id(rc_id)
-        provs_with_resource = _get_providers_with_resource(ctx, rc_id, amount)
+        provs_with_resource = _get_providers_with_resource(ctx, rc_id, amount,
+                                                           ignore_consumers)
         LOG.debug("found %d providers with available %d %s",
                   len(provs_with_resource), amount, rc_name)
         if not provs_with_resource:
@@ -3006,13 +3014,14 @@ def _provider_aggregates(ctx, rp_ids):
 
 
 @db_api.placement_context_manager.reader
-def _get_providers_with_resource(ctx, rc_id, amount):
+def _get_providers_with_resource(ctx, rc_id, amount, ignore_consumers=None):
     """Returns a set of tuples of (provider ID, root provider ID) of providers
     that satisfy the request for a single resource class.
 
     :param ctx: Session context to use
     :param rc_id: Internal ID of resource class to check inventory for
     :param amount: Amount of resource being requested
+    :param ignore_consumers: List of UUIDs of consumers to ignore.
     """
     # SELECT rp.id, rp.root_provider_id
     # FROM resource_providers AS rp
@@ -3024,7 +3033,9 @@ def _get_providers_with_resource(ctx, rc_id, amount):
     #    alloc.resource_provider_id,
     #    SUM(allocs.used) AS used
     #  FROM allocations AS alloc
-    #  WHERE allocs.resource_class_id = $RC_ID
+    #  WHERE
+    #   allocs.resource_class_id = $RC_ID
+    #   AND NOT allocs.consumer_id IN ($IGNORE_CONSUMERS)
     #  GROUP BY allocs.resource_provider_id
     # ) AS usage
     #  ON inv.resource_provider_id = usage.resource_provider_id
@@ -3040,6 +3051,9 @@ def _get_providers_with_resource(ctx, rc_id, amount):
             allocs.c.resource_provider_id,
             sql.func.sum(allocs.c.used).label('used')])
     usage = usage.where(allocs.c.resource_class_id == rc_id)
+    if ignore_consumers:
+        usage = usage.where(
+            sa.not_(allocs.c.consumer_id.in_(ignore_consumers)))
     usage = usage.group_by(allocs.c.resource_provider_id)
     usage = sa.alias(usage, name="usage")
     where_conds = [
@@ -3164,7 +3178,7 @@ def _get_trees_with_traits(ctx, rp_ids, required_traits, forbidden_traits):
 
 @db_api.placement_context_manager.reader
 def _get_trees_matching_all(ctx, resources, required_traits, forbidden_traits,
-                            sharing, member_of):
+                            sharing, member_of, ignore_consumers=None):
     """Returns a list of two-tuples (provider internal ID, root provider
     internal ID) for providers that satisfy the request for resources.
 
@@ -3206,6 +3220,7 @@ def _get_trees_matching_all(ctx, resources, required_traits, forbidden_traits,
                       provided, the allocation_candidates returned will only be
                       for resource providers that are members of one or more of
                       the supplied aggregates in each aggregate UUID list.
+    :param ignore_consumers: List of UUIDs of consumers to ignore.
     """
     # We first grab the provider trees that have nodes that meet the request
     # for each resource class.  Once we have this information, we'll then do a
@@ -3219,7 +3234,8 @@ def _get_trees_matching_all(ctx, resources, required_traits, forbidden_traits,
     trees_with_inv = set()
 
     for rc_id, amount in resources.items():
-        rc_provs_with_inv = _get_providers_with_resource(ctx, rc_id, amount)
+        rc_provs_with_inv = _get_providers_with_resource(ctx, rc_id, amount,
+                                                         ignore_consumers)
         if not rc_provs_with_inv:
             # If there's no providers that have one of the resource classes,
             # then we can short-circuit
@@ -3499,7 +3515,8 @@ def _check_traits_for_alloc_request(res_requests, summaries, prov_traits,
     return all_prov_ids
 
 
-def _alloc_candidates_single_provider(ctx, requested_resources, rp_tuples):
+def _alloc_candidates_single_provider(ctx, requested_resources, rp_tuples,
+                                      ignore_consumers=None):
     """Returns a tuple of (allocation requests, provider summaries) for a
     supplied set of requested resource amounts and resource providers. The
     supplied resource providers have capacity to satisfy ALL of the resources
@@ -3519,6 +3536,7 @@ def _alloc_candidates_single_provider(ctx, requested_resources, rp_tuples):
                                 being requested for that resource class
     :param rp_tuples: List of two-tuples of (provider ID, root provider ID)s
                       for providers that matched the requested resources
+    :param ignore_consumers: List of UUIDs of consumers to ignore.
     """
     if not rp_tuples:
         return [], []
@@ -3527,7 +3545,7 @@ def _alloc_candidates_single_provider(ctx, requested_resources, rp_tuples):
     root_ids = set(p[1] for p in rp_tuples)
 
     # Grab usage summaries for each provider
-    usages = _get_usages_by_provider_tree(ctx, root_ids)
+    usages = _get_usages_by_provider_tree(ctx, root_ids, ignore_consumers)
 
     # Get a dict, keyed by resource provider internal ID, of trait string names
     # that provider has associated with it
@@ -3563,7 +3581,7 @@ def _alloc_candidates_single_provider(ctx, requested_resources, rp_tuples):
 
 
 def _alloc_candidates_multiple_providers(ctx, requested_resources,
-        required_traits, forbidden_traits, rp_tuples):
+        required_traits, forbidden_traits, rp_tuples, ignore_consumers=None):
     """Returns a tuple of (allocation requests, provider summaries) for a
     supplied set of requested resource amounts and tuples of
     (rp_id, root_id, rc_id). The supplied resource provider trees have
@@ -3588,6 +3606,7 @@ def _alloc_candidates_multiple_providers(ctx, requested_resources,
     :param rp_tuples: List of tuples of (provider ID, anchor root provider ID,
                       resource class ID)s for providers that matched the
                       requested resources
+    :param ignore_consumers: List of UUIDs of consumers to ignore.
     """
     if not rp_tuples:
         return [], []
@@ -3598,7 +3617,7 @@ def _alloc_candidates_multiple_providers(ctx, requested_resources,
     root_ids = set(p[0] for p in rp_tuples) | set(p[1] for p in rp_tuples)
 
     # Grab usage summaries for each provider in the trees
-    usages = _get_usages_by_provider_tree(ctx, root_ids)
+    usages = _get_usages_by_provider_tree(ctx, root_ids, ignore_consumers)
 
     # Get a dict, keyed by resource provider internal ID, of trait string names
     # that provider has associated with it
@@ -4121,9 +4140,10 @@ class AllocationCandidates(base.VersionedObject):
                     return [], []
             rp_tuples = _get_trees_matching_all(context, resources,
                 required_trait_map, forbidden_trait_map,
-                sharing_providers, member_of)
+                sharing_providers, member_of, request.ignore_consumers)
             return _alloc_candidates_multiple_providers(context, resources,
-                required_trait_map, forbidden_trait_map, rp_tuples)
+                required_trait_map, forbidden_trait_map, rp_tuples,
+                request.ignore_consumers)
 
         # Either we are processing a single-RP request group, or there are no
         # sharing providers that (help) satisfy the request.  Get a list of
@@ -4135,8 +4155,10 @@ class AllocationCandidates(base.VersionedObject):
         # IDs.
         rp_ids = _get_provider_ids_matching(context, resources,
                                             required_trait_map,
-                                            forbidden_trait_map, member_of)
-        return _alloc_candidates_single_provider(context, resources, rp_ids)
+                                            forbidden_trait_map, member_of,
+                                            request.ignore_consumers)
+        return _alloc_candidates_single_provider(context, resources, rp_ids,
+                                                 request.ignore_consumers)
 
     @classmethod
     # TODO(efried): This is only a writer context because it accesses the
