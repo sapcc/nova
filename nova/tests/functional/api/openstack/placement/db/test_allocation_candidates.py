@@ -2764,3 +2764,125 @@ class AllocationCandidatesTestCase(tb.PlacementDbBaseTestCase):
         provider_names = ['cn1']
         expect_root_ids = self._get_rp_ids_matching_names(provider_names)
         self.assertEqual(expect_root_ids, tree_root_ids)
+
+    def test_ignore_consumers(self):
+        """Confirm that the resources used by all given consumers are ignored
+        when retrieving allocation candidates.
+        """
+        cn1 = self._create_provider('cn1', uuids.cn1)
+        tb.add_inventory(cn1, fields.ResourceClass.VCPU, 8)
+        tb.add_inventory(cn1, fields.ResourceClass.MEMORY_MB, 2048)
+        tb.add_inventory(cn1, fields.ResourceClass.DISK_GB, 2000)
+
+        cn2 = self._create_provider('cn2', uuids.cn2)
+        tb.add_inventory(cn2, fields.ResourceClass.VCPU, 8)
+        tb.add_inventory(cn2, fields.ResourceClass.MEMORY_MB, 2048)
+        tb.add_inventory(cn2, fields.ResourceClass.DISK_GB, 2000)
+
+        # allocate some resources on both compute nodes
+        self.allocate_from_provider(cn1, fields.ResourceClass.MEMORY_MB, 600,
+                                    consumer_id=uuids.consumer1)
+        self.allocate_from_provider(cn1, fields.ResourceClass.MEMORY_MB, 600,
+                                    consumer_id=uuids.consumer2)
+        self.allocate_from_provider(cn2, fields.ResourceClass.MEMORY_MB, 600,
+                                    consumer_id=uuids.consumer3)
+        self.allocate_from_provider(cn2, fields.ResourceClass.MEMORY_MB, 600,
+                                    consumer_id=uuids.consumer4)
+
+        # define requested resources
+        groups = {
+            '': placement_lib.RequestGroup(
+                use_same_provider=False,
+                resources={
+                    fields.ResourceClass.VCPU: 2,
+                    fields.ResourceClass.MEMORY_MB: 1200,
+                })
+        }
+
+        # get allocation candidates. expect no candidates as we don't have
+        # enough memory available
+        alloc_cands = self._get_allocation_candidates(groups)
+        self._validate_allocation_requests([], alloc_cands)
+
+        ignore_consumers = [uuids.consumer3]
+        # ignore consumer3 in request. we should now get back cn2 as there are
+        # enough resources without it
+        groups[''].ignore_consumers = ignore_consumers
+        alloc_cands = self._get_allocation_candidates(groups)
+        expected = [
+            [('cn2', fields.ResourceClass.VCPU, 2),
+             ('cn2', fields.ResourceClass.MEMORY_MB, 1200)]
+        ]
+        self._validate_allocation_requests(expected, alloc_cands)
+
+        # ignore consumer3 but request more than should be available given
+        # consumer4. this is to make sure we don't just ignore everything
+        groups = {
+            '': placement_lib.RequestGroup(
+                use_same_provider=False,
+                ignore_consumers=ignore_consumers,
+                resources={
+                    fields.ResourceClass.VCPU: 2,
+                    fields.ResourceClass.MEMORY_MB: 1500,
+                })
+        }
+        alloc_cands = self._get_allocation_candidates(groups)
+        self._validate_allocation_requests([], alloc_cands)
+
+    def test_ignore_consumers_sharing_providers(self):
+        """Confirm that all resources used by all given consumers are ignored
+        when retrieving allocation candidates.
+        This must be true if multiple providers are required to fulfill the
+        request like it is for bigVMs.
+        """
+        cn1 = self._create_provider('cn1', uuids.cn1)
+        tb.add_inventory(cn1, fields.ResourceClass.VCPU, 8)
+        tb.add_inventory(cn1, fields.ResourceClass.MEMORY_MB, 2048)
+        tb.add_inventory(cn1, fields.ResourceClass.DISK_GB, 2000)
+
+        # create a custom resource
+        bigvm_rc = rp_obj.ResourceClass(
+            self.ctx,
+            name='CUSTOM_BIGVM',
+        )
+        bigvm_rc.create()
+
+        # add a sharing child provider
+        bigvm = self._create_provider('bigvm', uuids.bigvm, parent=cn1.uuid)
+        tb.add_inventory(bigvm, bigvm_rc.name, 2)
+        tb.set_traits(bigvm, "MISC_SHARES_VIA_AGGREGATE")
+
+        # add some allocations
+        self.allocate_from_provider(cn1, fields.ResourceClass.MEMORY_MB, 600,
+                                    consumer_id=uuids.consumer1)
+        self.allocate_from_provider(cn1, fields.ResourceClass.MEMORY_MB, 600,
+                                    consumer_id=uuids.consumer2)
+        self.allocate_from_provider(bigvm, bigvm_rc.name, 2,
+                                    consumer_id=uuids.consumer3)
+
+        # request too many resources, get nothing
+        groups = {
+            '': placement_lib.RequestGroup(
+                use_same_provider=False,
+                resources={
+                    fields.ResourceClass.VCPU: 2,
+                    fields.ResourceClass.MEMORY_MB: 1200,
+                    'CUSTOM_BIGVM': 2
+                })
+        }
+
+        # get allocation candidates. expect no candidates as we don't have
+        # enough memory available
+        alloc_cands = self._get_allocation_candidates(groups)
+        self._validate_allocation_requests([], alloc_cands)
+
+        # request fitting resources if consumer2 and consumer3 are replaced
+        ignore_consumers = [uuids.consumer2, uuids.consumer3]
+        groups[''].ignore_consumers = ignore_consumers
+        alloc_cands = self._get_allocation_candidates(groups)
+        expected = [
+            [('cn1', fields.ResourceClass.VCPU, 2),
+             ('cn1', fields.ResourceClass.MEMORY_MB, 1200),
+             ('bigvm', bigvm_rc.name, 2)]
+        ]
+        self._validate_allocation_requests(expected, alloc_cands)

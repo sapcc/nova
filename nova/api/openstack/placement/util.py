@@ -45,6 +45,7 @@ ERROR_CODE_MICROVERSION = (1, 23)
 _QS_RESOURCES = 'resources'
 _QS_REQUIRED = 'required'
 _QS_MEMBER_OF = 'member_of'
+_QS_IGNORE_CONSUMER = 'ignore_consumer'
 _QS_KEY_PATTERN = re.compile(
         r"^(%s)([1-9][0-9]*)?$" % '|'.join(
         (_QS_RESOURCES, _QS_REQUIRED, _QS_MEMBER_OF)))
@@ -500,9 +501,20 @@ def parse_qs_request_groups(req):
     # Temporary dict of the form: { suffix: RequestGroup }
     by_suffix = {}
 
+    ignore_consumers = req.GET.getall(_QS_IGNORE_CONSUMER)
+    if ignore_consumers:
+        for val in ignore_consumers:
+            if not uuidutils.is_uuid_like(val):
+                msg = ("Invalid query string parameters: Expected "
+                       "'ignore_consumer' parameter to be a format of "
+                       "uuid. Got: %(val)s") % {'val': val}
+                raise webob.exc.HTTPBadRequest(msg)
+
     def get_request_group(suffix):
         if suffix not in by_suffix:
-            rq_grp = placement_lib.RequestGroup(use_same_provider=bool(suffix))
+            rq_grp = placement_lib.RequestGroup(
+                use_same_provider=bool(suffix),
+                ignore_consumers=ignore_consumers)
             by_suffix[suffix] = rq_grp
         return by_suffix[suffix]
 
