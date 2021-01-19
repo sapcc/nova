@@ -18,7 +18,8 @@ common library that both placement and its consumers can require."""
 
 class RequestGroup(object):
     def __init__(self, use_same_provider=True, resources=None,
-                 required_traits=None, forbidden_traits=None, member_of=None):
+                 required_traits=None, forbidden_traits=None, member_of=None,
+                 ignore_consumers=None):
         """Create a grouping of resource and trait requests.
 
         :param use_same_provider:
@@ -31,12 +32,15 @@ class RequestGroup(object):
         :param forbidden_traits: A set of { trait_name, ... }
         :param member_of: A list of [ [aggregate_UUID],
                                       [aggregate_UUID, aggregate_UUID] ... ]
+        :param ignore_consumers: A list of UUIDs of consumers that should be
+                ignored when finding allocation candidates.
         """
         self.use_same_provider = use_same_provider
         self.resources = resources or {}
         self.required_traits = required_traits or set()
         self.forbidden_traits = forbidden_traits or set()
         self.member_of = member_of or []
+        self.ignore_consumers = ignore_consumers or []
 
     def __str__(self):
         ret = 'RequestGroup(use_same_provider=%s' % str(self.use_same_provider)
@@ -49,5 +53,6 @@ class RequestGroup(object):
         ret += ', aggregates=[%s]' % ', '.join(
             sorted('[%s]' % ', '.join(agglist)
                    for agglist in sorted(self.member_of)))
+        ret += ', ignore_consumers=[%s]' % ', '.join(self.ignore_consumers)
         ret += ')'
         return ret
