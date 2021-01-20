@@ -1056,7 +1056,7 @@ class ComputeAPI(object):
                 kw.pop('tag')
 
         cctxt = client.prepare(server=_compute_host(None, instance),
-                               version=version)
+                               version=version, timeout=1800)
         return cctxt.call(ctxt, 'reserve_block_device_name', **kw)
 
     def backup_instance(self, ctxt, instance, image_id, backup_type,
