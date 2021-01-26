@@ -125,6 +125,8 @@ class ComputeRpcAPITestCase(test.NoDBTestCase):
         base_version = rpcapi.router.target.version
         expected_version = kwargs.pop('version', base_version)
 
+        prepare_timeout = kwargs.pop('prepare_timeout', None)
+
         expected_kwargs = kwargs.copy()
         if expected_args:
             expected_kwargs.update(expected_args)
@@ -172,8 +174,11 @@ class ComputeRpcAPITestCase(test.NoDBTestCase):
             retval = getattr(rpcapi, method)(ctxt, **kwargs)
             self.assertEqual(retval, rpc_mock.return_value)
 
-            prepare_mock.assert_called_once_with(version=expected_version,
-                                                 server=host)
+            expected_prepare_kwargs = {'version': expected_version,
+                                       'server': host}
+            if prepare_timeout is not None:
+                expected_prepare_kwargs['timeout'] = prepare_timeout
+            prepare_mock.assert_called_once_with(**expected_prepare_kwargs)
             rpc_mock.assert_called_once_with(ctxt, method, **expected_kwargs)
 
     def test_add_aggregate_host(self):
@@ -543,7 +548,8 @@ class ComputeRpcAPITestCase(test.NoDBTestCase):
                 instance=self.fake_instance_obj, device='device',
                 volume_id='id', disk_bus='ide', device_type='cdrom',
                 tag='foo', multiattach=True, version='5.0',
-                _return_value=objects_block_dev.BlockDeviceMapping())
+                _return_value=objects_block_dev.BlockDeviceMapping(),
+                prepare_timeout=1800)
 
     def test_reserve_block_device_name_raises(self):
         ctxt = context.RequestContext('fake_user', 'fake_project')
@@ -592,7 +598,7 @@ class ComputeRpcAPITestCase(test.NoDBTestCase):
                           mock.call('4.15')]
         can_send_mock.assert_has_calls(can_send_calls)
         prepare_mock.assert_called_once_with(server=instance['host'],
-                                             version='4.0')
+                                             timeout=1800, version='4.0')
         call_mock.assert_called_once_with(ctxt, 'reserve_block_device_name',
                                           instance=instance,
                                           device='fake_device',
@@ -652,7 +658,7 @@ class ComputeRpcAPITestCase(test.NoDBTestCase):
                           mock.call('4.15')]
         can_send_mock.assert_has_calls(can_send_calls)
         prepare_mock.assert_called_once_with(server=instance['host'],
-                                             version='4.15')
+                                             timeout=1800, version='4.15')
         call_mock.assert_called_once_with(
             ctxt, 'reserve_block_device_name', instance=instance,
             device='fake_device', volume_id='fake_volume_id', disk_bus=None,
