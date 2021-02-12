@@ -12,8 +12,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from copy import deepcopy
+from operator import itemgetter
+
 from oslo_db import exception as db_exc
-from oslo_db.sqlalchemy import utils as sqlalchemyutils
 from oslo_utils import versionutils
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
@@ -191,6 +193,20 @@ def _flavor_destroy(context, flavor_id=None, flavorid=None):
     return result
 
 
+def _aliased_flavor_dict(flavor_dict):
+    alias = deepcopy(flavor_dict)
+    alias['name'] = flavor_dict['extra_specs']['catalog:alias']
+    alias['flavorid'] = CONF.flavorid_alias_prefix + flavor_dict['flavorid']
+    del alias['extra_specs']['catalog:alias']
+    return alias
+
+
+def _unaliased_flavor_id(flavor_id):
+    if str(flavor_id).startswith(CONF.flavorid_alias_prefix):
+        flavor_id = flavor_id[len(CONF.flavorid_alias_prefix):]
+    return flavor_id
+
+
 # TODO(berrange): Remove NovaObjectDictCompat
 # TODO(mriedem): Remove NovaPersistentObject in version 2.0
 @base.NovaObjectRegistry.register
@@ -307,6 +323,7 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
     @require_context
     def _flavor_get_by_flavor_id_from_db(context, flavor_id):
         """Returns a dict describing specific flavor_id."""
+        flavor_id = _unaliased_flavor_id(flavor_id)
         result = Flavor._flavor_get_query_from_db(context).\
                         filter_by(flavorid=flavor_id).\
                         order_by(asc(api_models.Flavors.id)).\
@@ -612,20 +629,26 @@ def _flavor_get_all_from_db(context, inactive, filters, sort_key, sort_dir,
             query = query.filter(or_(*the_filter))
         else:
             query = query.filter(the_filter[0])
-    marker_row = None
-    if marker is not None:
-        marker_row = Flavor._flavor_get_query_from_db(context).\
-                    filter_by(flavorid=marker).\
-                    first()
-        if not marker_row:
-            raise exception.MarkerNotFound(marker=marker)
 
-    query = sqlalchemyutils.paginate_query(query, api_models.Flavors,
-                                           limit,
-                                           [sort_key, 'id'],
-                                           marker=marker_row,
-                                           sort_dir=sort_dir)
-    return [_dict_with_extra_specs(i) for i in query.all()]
+    all_flavors = [_dict_with_extra_specs(i) for i in query.all()]
+
+    aliased_flavors = [_aliased_flavor_dict(f)
+                       for f in all_flavors
+                       if f['extra_specs'].get('catalog:alias')
+                           and f['is_public']]
+    all_flavors += aliased_flavors
+    all_flavors.sort(key=itemgetter(sort_key, 'id'))
+
+    if marker:
+        for i, f in enumerate(all_flavors):
+            if f['flavorid'] == marker:
+                all_flavors = all_flavors[i + 1:]
+                break
+        else:
+            raise exception.MarkerNotFound(marker=marker)
+    if limit:
+        all_flavors = all_flavors[:limit]
+    return all_flavors
 
 
 @base.NovaObjectRegistry.register
