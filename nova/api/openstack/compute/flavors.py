@@ -110,6 +110,8 @@ class FlavorsController(wsgi.Controller):
         else:
             filters['is_public'] = True
             filters['disabled'] = False
+            # Normal users cannot list hidden flavors
+            filters['hidden'] = False
 
         if 'minRam' in req.params:
             try:

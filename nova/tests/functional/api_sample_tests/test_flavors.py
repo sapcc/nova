@@ -125,3 +125,36 @@ class FlavorsSampleJsonTest2_61(FlavorsSampleJsonTest):
         new_flavor.create()
         self.flavor_show_id = new_flavor_id
         self.subs = {'flavorid': new_flavor_id}
+
+
+class FlavorsHiddenTestBase(api_sample_base.ApiSampleTestBaseV21):
+    def setUp(self):
+        super(FlavorsHiddenTestBase, self).setUp()
+        ctxt = nova_context.get_admin_context()
+        flavors = objects.FlavorList.get_all(ctxt)
+        self.hidden_flavor_id = int(flavors[-1].flavorid) + 1
+        hidden_flavor = objects.Flavor(
+            ctxt, memory_mb=2048, vcpus=1, root_gb=20,
+            flavorid=self.hidden_flavor_id, name='m1.small.hidden',
+            extra_specs={'catalog:hidden': True})
+        hidden_flavor.create()
+
+    @staticmethod
+    def _response_flavor_ids(response):
+        return [int(f['id']) for f in response.json()['flavors']]
+
+
+class FlavorsHiddenUserTest(FlavorsHiddenTestBase):
+    def test_hidden_flavor_not_visible_in_list(self):
+        response = self._do_get('flavors')
+        self.assertNotIn(self.hidden_flavor_id,
+                         self._response_flavor_ids(response))
+
+
+class FlavorsHiddenAdminTest(FlavorsHiddenTestBase):
+    ADMIN_API = True
+
+    def test_hidden_flavor_visible_in_admin_list(self):
+        response = self._do_get('flavors')
+        self.assertIn(self.hidden_flavor_id,
+                      self._response_flavor_ids(response))

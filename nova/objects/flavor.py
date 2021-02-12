@@ -15,6 +15,8 @@
 from oslo_db import exception as db_exc
 from oslo_db.sqlalchemy import utils as sqlalchemyutils
 from oslo_utils import versionutils
+from sqlalchemy import func
+from sqlalchemy import not_
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 from sqlalchemy.sql.expression import asc
@@ -612,6 +614,22 @@ def _flavor_get_all_from_db(context, inactive, filters, sort_key, sort_dir,
             query = query.filter(or_(*the_filter))
         else:
             query = query.filter(the_filter[0])
+
+    if filters.get('hidden') is not None:
+        lowercase_extraspec_value_column = \
+            func.lower(api_models.FlavorExtraSpecs.value)
+        if not filters['hidden']:
+            no_hidden_extra_spec = not_(api_models.Flavors.extra_specs.any(
+                                                        key='catalog:hidden'))
+            explicitly_unhidden = api_models.Flavors.extra_specs.any(
+                    lowercase_extraspec_value_column == 'false',
+                    key='catalog:hidden')
+            query.filter(no_hidden_extra_spec | explicitly_unhidden)
+        else:
+            show_only_hidden = api_models.Flavors.extra_specs.any(
+                    lowercase_extraspec_value_column == 'true',
+                    key='catalog:hidden')
+            query = query.filter(show_only_hidden)
     marker_row = None
     if marker is not None:
         marker_row = Flavor._flavor_get_query_from_db(context).\
