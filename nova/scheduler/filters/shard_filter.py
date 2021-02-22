@@ -34,14 +34,14 @@ class ShardFilter(filters.BaseHostFilter):
     and the vcenter-shards configured in the project's tags in keystone. They
     have to overlap for a host to pass this filter.
 
-    Alternatively the project may have the "sharding_enabled" tag set, which
-    enables the project for hosts in all shards.
+    Alternatively the project may have the "resourcepools_enabled" tag set,
+    which enables the project for hosts in all shards.
     """
 
     _PROJECT_SHARD_CACHE = {}
     _PROJECT_SHARD_CACHE_RETENTION_TIME = 10 * 60
     _SHARD_PREFIX = 'vc-'
-    _ALL_SHARDS = "sharding_enabled"
+    _ALL_SHARDS = "resourcepools_enabled"
 
     def _update_cache(self):
         """Ask keystone for the list of projects to save the interesting tags
