@@ -2801,13 +2801,13 @@ class TestNovaManagePlacement(test.NoDBTestCase):
         """Tests the scenario that a resource provider is not found in the
         placement service for a compute node found in a nova host aggregate.
         """
-        with mock.patch.object(self.cli, '_get_rp_uuid_for_host',
-                               return_value=uuidsentinel.rp_uuid):
+        with mock.patch.object(self.cli, '_get_rp_uuids_for_host',
+                               return_value=[uuidsentinel.rp_uuid]):
             result = self.cli.sync_aggregates(verbose=True)
         self.assertEqual(6, result)
         self.assertIn('Unable to find matching resource provider record in '
                       'placement with uuid for the following hosts: '
-                      '(host1=%s)' % uuidsentinel.rp_uuid,
+                      '(host1=%s)' % [uuidsentinel.rp_uuid],
                       self.output.getvalue())
         mock_placement_get.assert_called_once_with(
             '/resource_providers/%s/aggregates' % uuidsentinel.rp_uuid,
@@ -2823,8 +2823,8 @@ class TestNovaManagePlacement(test.NoDBTestCase):
         """Tests the scenario that placement returns an unexpected server
         error when getting aggregates for a given resource provider.
         """
-        with mock.patch.object(self.cli, '_get_rp_uuid_for_host',
-                               return_value=uuidsentinel.rp_uuid):
+        with mock.patch.object(self.cli, '_get_rp_uuids_for_host',
+                               return_value=[uuidsentinel.rp_uuid]):
             result = self.cli.sync_aggregates(verbose=True)
         self.assertEqual(2, result)
         self.assertIn('An error occurred getting resource provider '
@@ -2850,13 +2850,13 @@ class TestNovaManagePlacement(test.NoDBTestCase):
             fake_requests.FakeResponse(200, content=jsonutils.dumps({
                 'aggregates': [],
                 'resource_provider_generation': 1})))
-        with mock.patch.object(self.cli, '_get_rp_uuid_for_host',
-                               return_value=uuidsentinel.rp_uuid):
+        with mock.patch.object(self.cli, '_get_rp_uuids_for_host',
+                               return_value=[uuidsentinel.rp_uuid]):
             result = self.cli.sync_aggregates(verbose=True)
         self.assertEqual(6, result)
         self.assertIn('Unable to find matching resource provider record in '
                       'placement with uuid for the following hosts: '
-                      '(host1=%s)' % uuidsentinel.rp_uuid,
+                      '(host1=%s)' % [uuidsentinel.rp_uuid],
                       self.output.getvalue())
         expected_body = {
             'aggregates': [uuidsentinel.aggregate],
@@ -2885,8 +2885,8 @@ class TestNovaManagePlacement(test.NoDBTestCase):
             fake_requests.FakeResponse(200, content=jsonutils.dumps({
                 'aggregates': [],
                 'resource_provider_generation': 1})))
-        with mock.patch.object(self.cli, '_get_rp_uuid_for_host',
-                               return_value=uuidsentinel.rp_uuid):
+        with mock.patch.object(self.cli, '_get_rp_uuids_for_host',
+                               return_value=[uuidsentinel.rp_uuid]):
             result = self.cli.sync_aggregates(verbose=True)
         self.assertEqual(3, result)
         self.assertIn("Failed updating provider aggregates for "
