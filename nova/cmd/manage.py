@@ -2218,8 +2218,11 @@ class PlacementCommands(object):
         return 0
 
     @staticmethod
-    def _get_rp_uuid_for_host(ctxt, host):
-        """Finds the resource provider (compute node) UUID for the given host.
+    def _get_rp_uuids_for_host(ctxt, host):
+        """Finds the resource provider UUID(s) for the given host.
+
+        This is usually a single value, but we return a list as we must support
+        Ironic nodes, that have the same host but different node uuids.
 
         :param ctxt: cell-targeted nova RequestContext
         :param host: name of the compute host
@@ -2249,12 +2252,13 @@ class PlacementCommands(object):
             nodes = objects.ComputeNodeList.get_all_by_host(
                 cctxt, host)
 
-            if len(nodes) > 1:
-                # This shouldn't happen, so we need to bail since we
-                # won't know which node to use.
+            if len(nodes) > 1 and 'ironic' not in host:
+                # Multiple nodes for non-ironic hosts shouldn't happen, so
+                # we need to bail since we won't know which node to use.
                 raise exception.TooManyComputesForHost(
                     num_computes=len(nodes), host=host)
-            return nodes[0].uuid
+
+            return [node.uuid for node in nodes]
 
     @action_description(
         _("Mirrors compute host aggregates to resource provider aggregates "
@@ -2307,7 +2311,7 @@ class PlacementCommands(object):
         # Since hosts can be in more than one aggregate, keep track of the host
         # to its corresponding resource provider uuid to avoid redundant
         # lookups.
-        host_to_rp_uuid = {}
+        host_to_rp_uuids = {}
         unmapped_hosts = set()  # keep track of any missing host mappings
         computes_not_found = set()  # keep track of missing nodes
         providers_not_found = {}  # map of hostname to missing provider uuid
@@ -2315,11 +2319,11 @@ class PlacementCommands(object):
             output(_('Processing aggregate: %s') % aggregate.name)
             for host in aggregate.hosts:
                 output(_('Processing host: %s') % host)
-                rp_uuid = host_to_rp_uuid.get(host)
-                if not rp_uuid:
+                rp_uuids = host_to_rp_uuids.get(host)
+                if not rp_uuids:
                     try:
-                        rp_uuid = self._get_rp_uuid_for_host(ctxt, host)
-                        host_to_rp_uuid[host] = rp_uuid
+                        rp_uuids = self._get_rp_uuids_for_host(ctxt, host)
+                        host_to_rp_uuids[host] = rp_uuids
                     except exception.HostMappingNotFound:
                         # Don't fail on this now, we can dump it at the end.
                         unmapped_hosts.add(host)
@@ -2341,58 +2345,62 @@ class PlacementCommands(object):
                 # NOTE(mriedem): We could re-use placement.aggregate_add_host
                 # here although that has to do the provider lookup by host as
                 # well, but it does handle generation conflicts.
-                resp = placement.get(  # use 1.19 to get the generation
-                    '/resource_providers/%s/aggregates' % rp_uuid,
-                    version='1.19')
-                if resp:
-                    body = resp.json()
-                    provider_aggregate_uuids = body['aggregates']
-                    # The moment of truth: is the provider in the same host
-                    # aggregate relationship?
-                    aggregate_uuid = aggregate.uuid
-                    if aggregate_uuid not in provider_aggregate_uuids:
-                        # Add the resource provider to this aggregate.
-                        provider_aggregate_uuids.append(aggregate_uuid)
-                        # Now update the provider aggregates using the
-                        # generation to ensure we're conflict-free.
-                        aggregate_update_body = {
-                            'aggregates': provider_aggregate_uuids,
-                            'resource_provider_generation':
-                                body['resource_provider_generation']
-                        }
-                        put_resp = placement.put(
-                            '/resource_providers/%s/aggregates' % rp_uuid,
-                            aggregate_update_body, version='1.19')
-                        if put_resp:
-                            output(_('Successfully added host (%(host)s) and '
-                                     'provider (%(provider)s) to aggregate '
-                                     '(%(aggregate)s).') %
-                                   {'host': host, 'provider': rp_uuid,
-                                    'aggregate': aggregate_uuid})
-                        elif put_resp.status_code == 404:
-                            # We must have raced with a delete on the resource
-                            # provider.
-                            providers_not_found[host] = rp_uuid
-                        else:
-                            # TODO(mriedem): Handle 409 conflicts by retrying
-                            # the operation.
-                            print(_('Failed updating provider aggregates for '
-                                    'host (%(host)s), provider (%(provider)s) '
-                                    'and aggregate (%(aggregate)s). Error: '
-                                    '%(error)s') %
-                                  {'host': host, 'provider': rp_uuid,
-                                   'aggregate': aggregate_uuid,
-                                   'error': put_resp.text})
-                            return 3
-                elif resp.status_code == 404:
-                    # The resource provider wasn't found. Store this for later.
-                    providers_not_found[host] = rp_uuid
-                else:
-                    print(_('An error occurred getting resource provider '
-                            'aggregates from placement for provider '
-                            '%(provider)s. Error: %(error)s') %
-                          {'provider': rp_uuid, 'error': resp.text})
-                    return 2
+                for rp_uuid in rp_uuids:
+                    resp = placement.get(  # use 1.19 to get the generation
+                        '/resource_providers/%s/aggregates' % rp_uuid,
+                        version='1.19')
+                    if resp:
+                        body = resp.json()
+                        provider_aggregate_uuids = body['aggregates']
+                        # The moment of truth: is the provider in the same host
+                        # aggregate relationship?
+                        aggregate_uuid = aggregate.uuid
+                        if aggregate_uuid not in provider_aggregate_uuids:
+                            # Add the resource provider to this aggregate.
+                            provider_aggregate_uuids.append(aggregate_uuid)
+                            # Now update the provider aggregates using the
+                            # generation to ensure we're conflict-free.
+                            aggregate_update_body = {
+                                'aggregates': provider_aggregate_uuids,
+                                'resource_provider_generation':
+                                    body['resource_provider_generation']
+                            }
+                            put_resp = placement.put(
+                                '/resource_providers/%s/aggregates' % rp_uuid,
+                                aggregate_update_body, version='1.19')
+                            if put_resp:
+                                output(_('Successfully added host (%(host)s) '
+                                         'and provider (%(provider)s) to '
+                                         'aggregate (%(aggregate)s).') %
+                                       {'host': host, 'provider': rp_uuid,
+                                        'aggregate': aggregate_uuid})
+                            elif put_resp.status_code == 404:
+                                # We must have raced with a delete on the
+                                # resource provider.
+                                providers_not_found.setdefault(host, []) \
+                                    .append(rp_uuid)
+                            else:
+                                # TODO(mriedem): Handle 409 conflicts by
+                                # retrying the operation.
+                                print(_('Failed updating provider aggregates '
+                                        'for host (%(host)s), provider '
+                                        '(%(provider)s) and aggregate '
+                                        '(%(aggregate)s). Error: %(error)s') %
+                                      {'host': host, 'provider': rp_uuid,
+                                       'aggregate': aggregate_uuid,
+                                       'error': put_resp.text})
+                                return 3
+                    elif resp.status_code == 404:
+                        # The resource provider wasn't found. Store this for
+                        # later.
+                        providers_not_found.setdefault(host, []) \
+                            .append(rp_uuid)
+                    else:
+                        print(_('An error occurred getting resource provider '
+                                'aggregates from placement for provider '
+                                '%(provider)s. Error: %(error)s') %
+                              {'provider': rp_uuid, 'error': resp.text})
+                        return 2
 
         # Now do our error handling. Note that there is no real priority on
         # the error code we return. We want to dump all of the issues we hit
