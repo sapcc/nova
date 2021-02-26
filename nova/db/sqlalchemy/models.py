@@ -1604,7 +1604,7 @@ class ConsoleAuthToken(BASE, NovaBase):
     console_type = Column(String(255), nullable=False)
     host = Column(String(255), nullable=False)
     port = Column(Integer, nullable=False)
-    internal_access_path = Column(String(255))
+    internal_access_path = Column(Text)
     instance_uuid = Column(String(36), nullable=False)
     expires = Column(Integer, nullable=False)
     access_url_base = Column(String(255))
