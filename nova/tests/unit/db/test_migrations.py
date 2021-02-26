@@ -166,6 +166,7 @@ class NovaMigrationsCheckers(test_migrations.ModelsMigrationsSync,
         special = [
             216,  # Havana
             272,  # NOOP migration due to revert
+            391,  # ccloud: custom placeholder for Rocky upgrade
         ]
 
         havana_placeholders = list(range(217, 227))
@@ -225,6 +226,10 @@ class NovaMigrationsCheckers(test_migrations.ModelsMigrationsSync,
             # is no longer used. The field value is always NULL so
             # it does not affect anything.
             346,
+
+            # 392 changes 'internal_access_path' column type from String to
+            # Text to allow more than 255 chars. Alter operation is done.
+            392
         ]
         # Reviewers: DO NOT ALLOW THINGS TO BE ADDED HERE
 
@@ -1008,6 +1013,14 @@ class NovaMigrationsCheckers(test_migrations.ModelsMigrationsSync,
         self.assertColumnExists(engine, 'instance_extra', 'trusted_certs')
         self.assertColumnExists(engine, 'shadow_instance_extra',
                                 'trusted_certs')
+
+    def _check_392(self, engine, data):
+        self.assertColumnExists(engine,
+                                'console_auth_tokens',
+                                'internal_access_path')
+        table = oslodbutils.get_table(engine, 'console_auth_tokens')
+        self.assertIsInstance(table.c.internal_access_path.type,
+                              sqlalchemy.types.Text)
 
 
 class TestNovaMigrationsSQLite(NovaMigrationsCheckers,
