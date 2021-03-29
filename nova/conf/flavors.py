@@ -33,8 +33,10 @@ The Nova API does not support a default flavor.
         help="""
 To enable gradual deprecation of old flavor names, the new flavors can specifiy
 an extra_spec key 'catalog:alias', which adds the flavor to the flavor listing
-a second time, only with a different flavorid, and the flavor name replaced by
-the value of 'catalog:alias'.
+a second time (or more), only with a different flavorid, and the flavor name
+replaced by the value of 'catalog:alias'. You can set multiple aliases (so the
+new flavor takes the place of several old flavors) by specifying multiple
+comma-separated aliases.
 
 The flavorid is changed by prepending this config value to the actual flavorid.
 When the flavor with this flavorid is inspected or used to deploy a server, the

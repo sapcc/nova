@@ -193,17 +193,38 @@ def _flavor_destroy(context, flavor_id=None, flavorid=None):
     return result
 
 
-def _aliased_flavor_dict(flavor_dict):
-    alias = deepcopy(flavor_dict)
-    alias['name'] = flavor_dict['extra_specs']['catalog:alias']
-    alias['flavorid'] = CONF.flavorid_alias_prefix + flavor_dict['flavorid']
-    del alias['extra_specs']['catalog:alias']
-    return alias
+def _get_aliased_flavors(flavor_dict):
+    '''Return a list of flavor dicts for all aliases (comma-separated)
+    listed in the flavor's 'catalog:alias' extra_spec value.
+
+    FlavorIDs will be prepended with the flavorid_alias_prefix config value and
+    appended with an '_' followed by an index. Example, with "x_deprecated_" as
+    configured prefix: A flavorid "30" will become "x_deprecated_30_0" in the
+    alias flavor.
+    '''
+    alias_name_list = flavor_dict['extra_specs'].get('catalog:alias', '')
+    alias_names = alias_name_list.split(',')
+    aliased_flavors = []
+    for i, name in enumerate(alias_names):
+        if not name:
+            # This will skip empty names without affecting alias numbering for
+            # following aliases for the same flavor.
+            continue
+        flavorid_index_suffix = "_{}".format(i)
+        alias = deepcopy(flavor_dict)
+        alias['name'] = name.strip()
+        alias['flavorid'] = CONF.flavorid_alias_prefix \
+                            + flavor_dict['flavorid'] \
+                            + flavorid_index_suffix
+        del alias['extra_specs']['catalog:alias']
+        aliased_flavors.append(alias)
+    return aliased_flavors
 
 
 def _unaliased_flavor_id(flavor_id):
     if str(flavor_id).startswith(CONF.flavorid_alias_prefix):
-        flavor_id = flavor_id[len(CONF.flavorid_alias_prefix):]
+        alias_index_pos = flavor_id.rfind("_")
+        flavor_id = flavor_id[len(CONF.flavorid_alias_prefix):alias_index_pos]
     return flavor_id
 
 
@@ -632,10 +653,10 @@ def _flavor_get_all_from_db(context, inactive, filters, sort_key, sort_dir,
 
     all_flavors = [_dict_with_extra_specs(i) for i in query.all()]
 
-    aliased_flavors = [_aliased_flavor_dict(f)
-                       for f in all_flavors
-                       if f['extra_specs'].get('catalog:alias')
-                           and f['is_public']]
+    aliased_flavors = []
+    for f in all_flavors:
+        if f['extra_specs'].get('catalog:alias') and f['is_public']:
+            aliased_flavors += _get_aliased_flavors(f)
     all_flavors += aliased_flavors
     all_flavors.sort(key=itemgetter(sort_key, 'id'))
 
