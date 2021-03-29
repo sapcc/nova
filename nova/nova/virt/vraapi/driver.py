@@ -1,3 +1,20 @@
+# Copyright (c) 2013 Hewlett-Packard Development Company, L.P.
+# Copyright (c) 2012 VMware, Inc.
+# Copyright (c) 2011 Citrix Systems, Inc.
+# Copyright 2011 OpenStack Foundation
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
 """
 A connection to the VMware vRA platform.
 """
@@ -26,8 +43,12 @@ class VMwareVRADriver(machine.Machine):
                               "host_password to use vraapi.VMwareVRADriver"))
 
     def init_host(self, host):
-        LOG.debug(50 * "=", "vRA Driver Initialized", 50 * "=")
+        print(50 * "=", "VRA DRIVER INITIALIZED", 50 * "=")
         self.vraops = vraops.VraOps()
+
+    def get_info(self, instance):
+        return hardware.InstanceInfo(
+            state=instance.power_state)
 
     def get_available_nodes(self, refresh=False):
         """No nodes are returned in case of vRA driver"""
@@ -35,11 +56,6 @@ class VMwareVRADriver(machine.Machine):
 
     def get_available_resource(self, nodename):
         pass
-
-    def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, allocations, network_info=None,
-              block_device_info=None):
-        LOG.debug('Spawning instance from vRA driver')
 
     def get_info(self, instance):
         return hardware.InstanceInfo(
@@ -80,4 +96,7 @@ class VMwareVRADriver(machine.Machine):
         return True
 
     def cleanup_host(self, host):
+        pass
+
+    def get_volume_connector(self, instance):
         pass
