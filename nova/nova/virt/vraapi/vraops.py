@@ -80,7 +80,8 @@ class VraOps(object):
         instance_template['name'] = instance.display_name
         instance_template['imageRef'] = "wwcoe / smallVM" #Mock for now - use image_url
         instance_template['projectId'] = project_id
-        instance_template['bootConfig']['content'] = "#cloud-config\nrepo_update: true\nrepo_upgrade: all\n\npackages:\n - mysql-server\n\nruncmd:\n - sed -e '/bind-address/ s/^#*/#/' -i /etc/mysql/mysql.conf.d/mysqld.cnf\n - service mysql restart\n - mysql -e \"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'mysqlpassword';\"\n - mysql -e \"FLUSH PRIVILEGES;\"\n"
+        #instance_template['bootConfig']['content'] = "#cloud-config\nrepo_update: true\nrepo_upgrade: all\n\npackages:\n - mysql-server\n\nruncmd:\n - sed -e '/bind-address/ s/^#*/#/' -i /etc/mysql/mysql.conf.d/mysqld.cnf\n - service mysql restart\n - mysql -e \"GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY 'mysqlpassword';\"\n - mysql -e \"FLUSH PRIVILEGES;\"\n"
+        del instance_template['bootConfigSettings'] #DELETE FOR NOW
 
         storage_tag = {
             'key': "Storage",
@@ -92,12 +93,15 @@ class VraOps(object):
             'value': instance.uuid
         }
 
-        self.__build_vra_network_resource(instance_template, network_info)
+        #DO NOT USE until VRA can provision virtual machine from vmdk snapshot
+        #self.__build_vra_network_resource(instance_template, network_info)
+        self.__build_vra_network_cp(instance_template, network_info)
 
         instance_template['storage']['constraints']['tag'].append(storage_tag)
         instance_template['tags'].append(instance_tag)
-        instance_template['customProperties']['nicsMacAddresses'] = \
-            json.dumps(instance_template['customProperties']['nicsMacAddresses'])
+        # instance_template['customProperties']['nicsMacAddresses'] = \
+        #     json.dumps(instance_template['customProperties']['nicsMacAddresses'])
+
         instance_template['customProperties']['openstack_instance_id'] = instance.uuid
         self.vraClient.iaasMachineRequest(instance_template)
 
@@ -239,3 +243,25 @@ class VraOps(object):
             }
 
             instance_template['nics'].append(nic)
+
+    def __build_vra_network_cp(self, instance_template, network_info):
+        """
+        Build nic payload for vRA machine request
+        :param instance_template: static instance dict template
+        :param network_info: openstack instance network info
+        """
+        networks = []
+        for index, net_info in enumerate(network_info):
+            net_id = net_info['network']['id']
+
+            network_details = {
+                "deviceIndex": index,
+                "openstack_network_id": net_id,
+                "openstack_network_port_id": net_info['id'],
+                "macAddress": net_info['address']
+            }
+
+            networks.append(network_details)
+
+        instance_template['customProperties']['networkDetails'] = json.dumps(networks)
+

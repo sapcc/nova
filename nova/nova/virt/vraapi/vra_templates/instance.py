@@ -9,7 +9,7 @@ class InstanceTemplate(object):
             "disks": [],
             "customProperties": {},
             "bootConfig": {
-                "content": ""
+                "content": "_"
             },
             "bootConfigSettings": {
                 "phoneHomeShouldWait": True,

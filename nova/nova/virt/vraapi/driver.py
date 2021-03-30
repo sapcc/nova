@@ -43,7 +43,6 @@ class VMwareVRADriver(machine.Machine):
                               "host_password to use vraapi.VMwareVRADriver"))
 
     def init_host(self, host):
-        print(50 * "=", "VRA DRIVER INITIALIZED", 50 * "=")
         self.vraops = vraops.VraOps()
 
     def get_info(self, instance):
