@@ -22,4 +22,4 @@ vra_opts = [
 ]
 
 CONF = cfg.CONF
-CONF.register_opts(vra_opts, "vmware")
+CONF.register_opts(vra_opts, "VRA")
