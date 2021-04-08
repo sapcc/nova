@@ -40,13 +40,22 @@ class Machine(driver.ComputeDriver):
     def snapshot(self, context, instance, image_id, update_task_state):
         self.vraops.snapshot(context, instance, image_id, update_task_state)
 
+    def power_off(self, instance, timeout=0, retry_interval=0):
+        """Power off the specified instance."""
+        self.vraops.power_off(instance)
 
-    def resume(self, context, instance, network_info, block_device_info=None):
+    def power_on(self, context, instance, network_info,
+                 block_device_info=None):
+        """Power on the specified instance."""
         self.vraops.power_on(instance)
 
 
+    def resume(self, context, instance, network_info, block_device_info=None):
+        pass
+
+
     def suspend(self, context, instance):
-        self.vraops.power_off(instance)
+        pass
 
 
     def rescue(self, context, instance, network_info, image_meta,

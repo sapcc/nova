@@ -25,6 +25,7 @@ import nova.privsep.path
 from nova.virt import hardware
 from nova.virt.vraapi import machine
 from nova.virt.vraapi import vraops
+#from config import volume_config
 
 LOG = logging.getLogger(__name__)
 
@@ -98,4 +99,23 @@ class VMwareVRADriver(machine.Machine):
         pass
 
     def get_volume_connector(self, instance):
-        pass
+        """Return volume connector information."""
+        connector = {'host': CONF.vmware.host_ip}
+        connector['instance'] = instance.uuid
+        connector['connection_capabilities'] = ['vmware_service_instance_uuid:%s' %
+                                                instance.uuid]
+        return connector
+
+    def attach_volume(self, context, connection_info, instance, mountpoint,
+                      disk_bus=None, device_type=None, encryption=None):
+        """Attach volume storage to VM instance."""
+        self.vraops.attach_volume(connection_info, instance, mountpoint,
+                      disk_bus=None, device_type=None, encryption=None)
+
+    def detach_volume(self, context, connection_info, instance, mountpoint,
+                      encryption=None):
+        """Detach volume storage to VM instance."""
+        # NOTE(claudiub): if context parameter is to be used in the future,
+        # the _detach_instance_volumes method will have to be updated as well.
+        self.vraops.detach_volume(connection_info, instance, mountpoint,
+                                  disk_bus=None, device_type=None, encryption=None)
