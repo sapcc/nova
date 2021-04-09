@@ -44,9 +44,11 @@ class VMwareVRADriver(machine.Machine):
                               "host_password to use vraapi.VMwareVRADriver"))
 
     def init_host(self, host):
+        LOG.debug("host: {}".format(host))
         self.vraops = vraops.VraOps()
 
     def get_info(self, instance):
+        LOG.debug("instance: {}".format(instance))
         return hardware.InstanceInfo(
             state=instance.power_state)
 
@@ -55,9 +57,10 @@ class VMwareVRADriver(machine.Machine):
         return []
 
     def get_available_resource(self, nodename):
-        pass
+        LOG.debug("nodename: {}".format(nodename))
 
     def get_info(self, instance):
+        LOG.debug("instance: {}".format(instance))
         return hardware.InstanceInfo(
             state=instance.power_state)
 
@@ -74,21 +77,26 @@ class VMwareVRADriver(machine.Machine):
         raise NotImplementedError()
 
     def host_maintenance_mode(self, host, mode):
+        LOG.debug("host: {}, mode: {}".format(host, mode))
         raise NotImplementedError()
 
     def host_power_action(self, action):
+        LOG.debug("action: {}".format(action))
         raise NotImplementedError()
 
     def set_host_enabled(self, enabled):
+        LOG.debug("enabled: {}".format(enabled))
         raise NotImplementedError()
 
     def update_provider_tree(self, provider_tree, nodename):
+        LOG.debug("provider_tree: {}, nodename: {}".format(provider_tree, nodename))
         raise NotImplementedError()
 
     def manage_image_cache(self, context, all_instances):
-        pass
+        LOG.debug("all_instances: {}".format(all_instances))
 
     def poll_rebooting_instances(self, timeout, instances):
+        LOG.debug("timeout: {}, instance: {}".format(timeout, instances))
         raise NotImplementedError()
 
     @property
@@ -96,10 +104,11 @@ class VMwareVRADriver(machine.Machine):
         return True
 
     def cleanup_host(self, host):
-        pass
+        LOG.debug("host: {}".format(host))
 
     def get_volume_connector(self, instance):
         """Return volume connector information."""
+        LOG.debug("instance: {}".format(instance))
         connector = {'host': CONF.vmware.host_ip}
         connector['instance'] = instance.uuid
         connector['connection_capabilities'] = ['vmware_service_instance_uuid:%s' %
@@ -109,13 +118,17 @@ class VMwareVRADriver(machine.Machine):
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None):
         """Attach volume storage to VM instance."""
+        LOG.debug("connection_info: {}, instance: {}, mountpoint: {}, disk_bus: {},"
+                  " device_type: {}, encryption: {}".
+                  format(connection_info, instance, mountpoint,
+                      disk_bus, device_type, encryption))
         self.vraops.attach_volume(connection_info, instance, mountpoint,
                       disk_bus=None, device_type=None, encryption=None)
 
     def detach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
+        LOG.debug("connection_info: {}, instance: {}, mountpoint: {}, encryption: {}".
+                  format(connection_info, instance, mountpoint, encryption))
         """Detach volume storage to VM instance."""
-        # NOTE(claudiub): if context parameter is to be used in the future,
-        # the _detach_instance_volumes method will have to be updated as well.
         self.vraops.detach_volume(connection_info, instance, mountpoint,
                                   disk_bus=None, device_type=None, encryption=None)
