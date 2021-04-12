@@ -41,6 +41,7 @@ class Machine(driver.ComputeDriver):
         LOG.debug("instance: {}, network_info: {}, reboot_type: {}, block_device_info: {}"
                   "bad_volumes_callback".format(instance, network_info, reboot_type,
                block_device_info, bad_volumes_callback))
+        self.vraops.reboot(instance)
 
     def snapshot(self, context, instance, image_id, update_task_state):
         LOG.debug("instance: {}, image_id: {}, update_task_state: {}".

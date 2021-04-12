@@ -90,7 +90,6 @@ class Resource(object):
         r = self.client.get(
             path=path
         )
-        LOG.debug("GET HANDLER RESPONSE: {}".format(r))
         content = json.loads(r.content)
         return content["content"]
 
@@ -366,6 +365,15 @@ class Instance(Resource):
         LOG.debug('Attempting to suspend instance: {}'.format(self.instance.display_name))
         vra_instance = self.fetch()
         url = constants.SUSPEND_API.replace("{id}", vra_instance['id'])
+        self.save_and_track(url, "")
+
+    def reboot(self):
+        """
+        Reboot vRA instance
+        """
+        LOG.debug('Attempting to reboot instance: {}'.format(self.instance.display_name))
+        vra_instance = self.fetch()
+        url = constants.REBOOT_API.replace("{id}", vra_instance['id'])
         self.save_and_track(url, "")
 
     def attach_volume(self, block_device_id, vra_instance_id, volume_id):
