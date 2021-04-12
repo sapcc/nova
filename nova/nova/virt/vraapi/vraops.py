@@ -95,6 +95,17 @@ class VraOps(object):
         os_instance.load(instance)
         os_instance.power_off()
 
+    def suspend(self, instance):
+        """
+        Suspend vRA instance
+
+        :param instance: Openstack instance
+        :return:
+        """
+        os_instance = self.vra.instance
+        os_instance.load(instance)
+        os_instance.suspend()
+
     def destroy(self, instance):
         """
         Destroy vRA instance

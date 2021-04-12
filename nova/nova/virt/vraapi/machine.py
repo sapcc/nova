@@ -14,7 +14,7 @@ class Machine(driver.ComputeDriver):
         self.vraops = vraops.VraOps()
 
     def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, allocations, network_info,
+              admin_password, allocations, network_info=None,
               block_device_info=None):
         LOG.debug("instance: {}, image_meta: {}, injected_files: {}, admin_password: {},"
                   " allocations: {}, network_info: {}, block_device_info: {}".
@@ -62,9 +62,11 @@ class Machine(driver.ComputeDriver):
     def resume(self, context, instance, network_info, block_device_info=None):
         LOG.debug("instance: {}, network_info: {}, block_device_info: {}".format(
             instance, network_info, block_device_info))
+        self.vraops.power_on(instance)
 
     def suspend(self, context, instance):
         LOG.debug("instance: {}".format(instance))
+        self.vraops.suspend(instance)
 
     def rescue(self, context, instance, network_info, image_meta,
                rescue_password):

@@ -359,6 +359,15 @@ class Instance(Resource):
         url = constants.POWER_OFF_API.replace("{id}", vra_instance['id'])
         self.save_and_track(url, "")
 
+    def suspend(self):
+        """
+        Suspend vRA instance
+        """
+        LOG.debug('Attempting to suspend instance: {}'.format(self.instance.display_name))
+        vra_instance = self.fetch()
+        url = constants.SUSPEND_API.replace("{id}", vra_instance['id'])
+        self.save_and_track(url, "")
+
     def attach_volume(self, block_device_id, vra_instance_id, volume_id):
         """
         Attach volume to instance
