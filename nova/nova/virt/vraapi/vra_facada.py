@@ -238,7 +238,7 @@ class Instance(Resource):
         LOG.debug('vRA Machine content: {}'.format(content))
         if len(content) == 0:
             #Let's try to refetch instance by custom property, if tag is missing
-            vra_machine_content = self.get_instance_by_cp(self.instance)
+            vra_machine_content = self.get_instance_by_cp()
         else:
             vra_machine_content = content[0]
         return vra_machine_content
