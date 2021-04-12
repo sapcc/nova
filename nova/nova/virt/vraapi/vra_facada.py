@@ -90,7 +90,6 @@ class Resource(object):
         r = self.client.get(
             path=path
         )
-        LOG.debug("GET HANDLER RESPONSE: {}".format(r))
         content = json.loads(r.content)
         return content["content"]
 
@@ -238,7 +237,7 @@ class Instance(Resource):
         LOG.debug('vRA Machine content: {}'.format(content))
         if len(content) == 0:
             #Let's try to refetch instance by custom property, if tag is missing
-            vra_machine_content = self.get_instance_by_cp(self.instance)
+            vra_machine_content = self.get_instance_by_cp()
         else:
             vra_machine_content = content[0]
         return vra_machine_content
@@ -357,6 +356,24 @@ class Instance(Resource):
         LOG.debug('Attempting to power off instance: {}'.format(self.instance.display_name))
         vra_instance = self.fetch()
         url = constants.POWER_OFF_API.replace("{id}", vra_instance['id'])
+        self.save_and_track(url, "")
+
+    def suspend(self):
+        """
+        Suspend vRA instance
+        """
+        LOG.debug('Attempting to suspend instance: {}'.format(self.instance.display_name))
+        vra_instance = self.fetch()
+        url = constants.SUSPEND_API.replace("{id}", vra_instance['id'])
+        self.save_and_track(url, "")
+
+    def reboot(self):
+        """
+        Reboot vRA instance
+        """
+        LOG.debug('Attempting to reboot instance: {}'.format(self.instance.display_name))
+        vra_instance = self.fetch()
+        url = constants.REBOOT_API.replace("{id}", vra_instance['id'])
         self.save_and_track(url, "")
 
     def attach_volume(self, block_device_id, vra_instance_id, volume_id):
