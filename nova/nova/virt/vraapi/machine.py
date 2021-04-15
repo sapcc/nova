@@ -90,9 +90,11 @@ class Machine(driver.ComputeDriver):
         LOG.debug("instance: {}, image_meta: {}, vif: {}".format(instance,
                                                                 image_meta,
                                                                 vif))
+        self.vraops.attach_interface(instance, vif)
 
     def detach_interface(self, context, instance, vif):
         LOG.debug("instance: {}, vif: {}".format(instance, vif))
+        self.vraops.detach_interface(instance, vif)
 
     def get_mks_console(self, context, instance):
         LOG.debug("instance: {}".format(instance))

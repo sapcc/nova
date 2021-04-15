@@ -1,7 +1,7 @@
 import nova.conf
 import nova.privsep.path
 import vra_facada
-
+import constants as vra_constants
 
 from nova import image
 from nova.compute import task_states
@@ -236,7 +236,6 @@ class VraOps(object):
     def detach_volume(self, connection_info, instance, mountpoint,
                   disk_bus=None, device_type=None, encryption=None):
         """Detach volume storage from VM instance."""
-
         os_instance = self.vra.instance
         os_instance.load(instance)
         vra_vm_resource = os_instance.fetch()
@@ -247,3 +246,29 @@ class VraOps(object):
 
         os_instance.detach_volume(block_device['id'],
                                   vra_vm_resource['id'])
+
+    def attach_interface(self, instance, vif):
+        self.__interface_operation_flow(instance, vif,
+                                operation=vra_constants.ATTACH_INTERFACE)
+
+    def detach_interface(self, instance, vif):
+        network_info = instance.info_cache.network_info
+        for index, vif_cache in enumerate(network_info):
+            if vif_cache['address'] == vif['address']:
+                self.__interface_operation_flow(instance, vif,
+                                        operation=vra_constants.DETACH_INTERFACE)
+
+    def __interface_operation_flow(self, instance, vif, operation):
+        os_instance = self.vra.instance
+        os_instance.load(instance)
+
+        project = self.vra.project
+        project_id = project.fetch(instance.project_id)
+
+        vra_vm_resource = os_instance.fetch()
+
+        catalog = self.vra.catalog_item
+        if operation == vra_constants.ATTACH_INTERFACE:
+            os_instance.attach_interface(project_id, catalog, vra_vm_resource, vif)
+        elif operation == vra_constants.DETACH_INTERFACE:
+            os_instance.detach_interface(project_id, catalog, vra_vm_resource, vif)
