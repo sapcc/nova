@@ -1,6 +1,7 @@
 """
 vRA REST URL mappings
 """
+from nova.compute import power_state
 
 #Blueprint
 LOGIN_API = "/csp/gateway/am/api/login"
@@ -37,3 +38,7 @@ CATALOG_DETACH_INTERFACE = "Detach Nic"
 #Instance operations
 ATTACH_INTERFACE = "attach"
 DETACH_INTERFACE = "detach"
+
+POWER_STATES = {'OFF': power_state.SHUTDOWN,
+                'ON': power_state.RUNNING,
+                'SUSPEND': power_state.SUSPENDED}

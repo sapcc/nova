@@ -272,3 +272,9 @@ class VraOps(object):
             os_instance.attach_interface(project_id, catalog, vra_vm_resource, vif)
         elif operation == vra_constants.DETACH_INTERFACE:
             os_instance.detach_interface(project_id, catalog, vra_vm_resource, vif)
+
+    def get_vra_instance_info(self, instance):
+        os_instance = self.vra.instance
+        os_instance.load(instance)
+        vra_instance = os_instance.fetch()
+        return vra_instance

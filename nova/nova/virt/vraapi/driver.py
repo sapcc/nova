@@ -20,6 +20,7 @@ A connection to the VMware vRA platform.
 """
 from oslo_log import log as logging
 import nova.conf
+import constants
 from nova.i18n import _
 import nova.privsep.path
 from nova.virt import hardware
@@ -58,8 +59,9 @@ class VMwareVRADriver(machine.Machine):
 
     def get_info(self, instance):
         LOG.debug("instance: {}".format(instance))
+        vra_instance = self.vraops.get_vra_instance_info(instance)
         return hardware.InstanceInfo(
-            state=instance.power_state)
+            state=constants.POWER_STATES[vra_instance['powerState']])
 
     def get_available_nodes(self, refresh=False):
         """No nodes are returned in case of vRA driver"""
