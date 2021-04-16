@@ -427,7 +427,7 @@ class Instance(Resource):
         catalog_item = catalog.fetch(constants.CATALOG_ATTACH_INTERFACE)[0]
         inputs = {
             "machineId": resource['customProperties']['instanceUUID'],
-            "name": "Overlay-Segment",#vif['network']['label'],
+            "name": vif['network']['label'],
             "macAddress": vif['address'],
             "openStackSegmentPortId": vif['id']
         }
