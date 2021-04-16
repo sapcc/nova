@@ -11,7 +11,7 @@ BLUEPRINTS_API = "/blueprint/api/blueprints"
 DEPLOYMENTS_GET_API = "/deployment/api/deployments/"
 DEPLOYMENT_RESOURCES_API = "/deployment/api/deployments/{deployment_id}/resources/"
 DEPLOYMENT_RESOURCE_REQUESTS_API = "/deployment/api/deployments/{deployment_id}/resources/{resource_id}/requests/"
-
+DEPLOYMENT_REQUEST_API = "/deployment/api/deployments/{dep_id}/requests"
 
 #IAAS
 MACHINES_API = "/iaas/api/machines/"
@@ -25,3 +25,15 @@ REBOOT_API = "/iaas/api/machines/{id}/operations/reboot"
 ATTACH_VOLUME_API = "/iaas/api/machines/{id}/disks"
 DETACH_VOLUME_API = "/iaas/api/machines/{id}/disks/{disk_id}"
 BLOCK_DEVICE_API = "/iaas/api/block-devices/"
+
+#Catalog
+CATALOG_ITEM_API = "/catalog/api/items/"
+CATALOG_ITEM_REQUEST = "/catalog/api/items/{catalog_item_id}/request"
+
+#Catalog item names
+CATALOG_ATTACH_INTERFACE = "Attach Nic"
+CATALOG_DETACH_INTERFACE = "Detach Nic"
+
+#Instance operations
+ATTACH_INTERFACE = "attach"
+DETACH_INTERFACE = "detach"

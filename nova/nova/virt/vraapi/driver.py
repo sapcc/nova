@@ -34,6 +34,15 @@ CONF = nova.conf.CONF
 class VMwareVRADriver(machine.Machine):
     """The VRA host connection object."""
 
+    capabilities = {
+        "has_imagecache": True,
+        "supports_recreate": False,
+        "supports_migrate_to_same_host": True,
+        "resource_scheduling": True,
+        "supports_attach_interface": True,
+        "supports_multiattach": False
+    }
+
     def __init__(self, virtapi, scheme="https"):
         super(VMwareVRADriver, self).__init__(virtapi)
 
@@ -58,11 +67,6 @@ class VMwareVRADriver(machine.Machine):
 
     def get_available_resource(self, nodename):
         LOG.debug("nodename: {}".format(nodename))
-
-    def get_info(self, instance):
-        LOG.debug("instance: {}".format(instance))
-        return hardware.InstanceInfo(
-            state=instance.power_state)
 
     def get_host_ip_addr(self):
         raise NotImplementedError()

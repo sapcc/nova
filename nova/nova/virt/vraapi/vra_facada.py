@@ -69,6 +69,13 @@ class Resource(object):
             LOG.error(tracker['message'])
             raise Exception(tracker['message'])
 
+    def track_deployment(self, deployment_id):
+        tracker = vra_utils.track_deployment_waiter(self.client, deployment_id,
+                                                RESOURCE_TRACKER_SLEEP)
+        if tracker['status'] == 'FAILED':
+            LOG.error(tracker['message'])
+            raise Exception(tracker['message'])
+
     def save_and_track(self, path, payload):
         response = self.client.post(
             path=path,
@@ -285,7 +292,7 @@ class Instance(Resource):
                 "content": "_"
             },
             "name": self.instance.display_name,
-            "imageRef": "wwcoe / Ubuntu_16.10_x64_minimal",
+            "imageRef": "demoVM",
             "projectId": project_id,
             "storage": {
                 "constraints": {
@@ -416,6 +423,79 @@ class Instance(Resource):
         LOG.debug('vRA Detach volume initialized: {}'.format(content))
         return content
 
+    def attach_interface(self, project_id, catalog, resource, vif):
+        catalog_item = catalog.fetch(constants.CATALOG_ATTACH_INTERFACE)[0]
+        inputs = {
+            "machineId": resource['customProperties']['instanceUUID'],
+            "name": vif['network']['label'],
+            "macAddress": vif['address'],
+            "openStackSegmentPortId": vif['id']
+        }
+
+        catalog.call_catalog_item(project_id, catalog_item['id'],
+                                  "Attach {} network".format(vif['id']),
+                                  inputs, track=False)
+
+    def detach_interface(self, project_id, catalog, resource, vif):
+        catalog_item = catalog.fetch(constants.CATALOG_DETACH_INTERFACE)[0]
+
+        inputs = {
+          "machineId": resource['customProperties']['instanceUUID'],
+          "macAddress": vif['address']
+        }
+
+        catalog.call_catalog_item(project_id, catalog_item['id'],
+                                  "Detach {} network".format(vif['id']),
+                                  inputs, track=True)
+
+
+class CatalogItem(Resource):
+    """
+    vRA CatalogItem class
+    """
+
+    def __init__(self, client):
+        super(CatalogItem, self).__init__(client)
+
+    def fetch(self, catalog_item_name):
+        """
+        Get catalog item by name
+        """
+        path = constants.CATALOG_ITEM_API + "?search=" + catalog_item_name
+        return self.get_request_handler(path)
+
+    def all(self):
+        """
+        Fetch all available vRA catalog items
+
+        :return: HTTP Response content
+        """
+        path = constants.CATALOG_ITEM_API
+        return self.get_request_handler(path)
+
+    def call_catalog_item(self, project_id, catalog_item_id, deployment_name,
+                                                    inputs, track=True):
+        path = constants.CATALOG_ITEM_REQUEST.replace("{catalog_item_id}",
+                                                      catalog_item_id)
+
+        interface_payload = {
+            "bulkRequestCount": 1,
+            "deploymentName": deployment_name,
+            "inputs": inputs,
+            "projectId": project_id
+        }
+
+        response = self.client.post(
+            path=path,
+            json=interface_payload
+        )
+
+        deployment = json.loads(response.content)
+        deployment_id = deployment[0]['deploymentId']
+        if track:
+            self.track_deployment(deployment_id)
+
+
 class VraFacada(object):
 
     def __init__(self):
@@ -464,3 +544,7 @@ class VraFacada(object):
     @property
     def network(self):
         return Network(self.client)
+
+    @property
+    def catalog_item(self):
+        return CatalogItem(self.client)
