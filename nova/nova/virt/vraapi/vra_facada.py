@@ -116,8 +116,9 @@ class Project(Resource):
         vra_projects = self.all()
         projId = None
         for proj in vra_projects:
-            if proj['customProperties']['openstackProjId'] == project_id:
-                projId = proj['id']
+            if 'openstackProjId' in proj['customProperties']:
+                if proj['customProperties']['openstackProjId'] == project_id:
+                    projId = proj['id']
 
         if not projId:
             raise ValueError('Project id not found in vRA for id: {}'.format(
