@@ -26,7 +26,7 @@ import nova.privsep.path
 from nova.virt import hardware
 from nova.virt.vraapi import machine
 from nova.virt.vraapi import vraops
-from config import volume_config
+from config import vra_config
 
 LOG = logging.getLogger(__name__)
 
