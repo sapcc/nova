@@ -128,7 +128,7 @@ class _SpecialVmSpawningServer(object):
                 vm_props['config.instanceUuid'],
                 vm_props['config.hardware.memoryMB'],
                 vm_props['runtime.powerState'],
-                vm_props['config.managedBy']))
+                vm_props.get('config.managedBy')))
         return vm_data
 
     def remove_host_from_hostgroup(self, context):
@@ -313,7 +313,7 @@ class _SpecialVmSpawningServer(object):
                            constants.VCLS_EXTENSION_TYPE_AGENT)
         non_vcls_vms = [
             (u, state) for u, h, state, m in self._get_vms_on_host(host_ref)
-            if (m.extensionKey, m.type) != vcls_identifier]
+            if not m or (m.extensionKey, m.type) != vcls_identifier]
 
         # check if there are running VMs on that host
         running_vms = [u for u, state in non_vcls_vms
