@@ -325,14 +325,25 @@ class BigVmManager(manager.Manager):
                 hv_size = memory_mb_inventory['max_unit']
                 memory_mb_total = (memory_mb_inventory['total']
                                    - memory_mb_inventory['reserved'])
-                memory_mb_used_percent = (usages[MEMORY_MB]
-                                          / float(memory_mb_total) * 100)
+                try:
+                    memory_mb_used_percent = (usages[MEMORY_MB]
+                                              / float(memory_mb_total) * 100)
+                except ZeroDivisionError:
+                    LOG.warning('memory_mb_total is 0 for resource provider '
+                                '%s', rp['uuid'])
+                    memory_mb_used_percent = 100
+
                 memory_reservable_mb_total = (
                     memory_reservable_mb_inventory['total']
                     - memory_reservable_mb_inventory['reserved'])
-                memory_reservable_mb_used_percent = (
-                    usages.get(MEMORY_RESERVABLE_MB_RESOURCE, 0)
-                    / float(memory_reservable_mb_total) * 100)
+                try:
+                    memory_reservable_mb_used_percent = (
+                        usages.get(MEMORY_RESERVABLE_MB_RESOURCE, 0)
+                        / float(memory_reservable_mb_total) * 100)
+                except ZeroDivisionError:
+                    LOG.info('memory_reservable_mb_total is 0 for resource '
+                             'provider %s', rp['uuid'])
+                    memory_reservable_mb_used_percent = 100
 
                 host = vmware_hvs[rp['uuid']]
                 # ignore hypervisors we would never use anyways
