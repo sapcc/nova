@@ -57,7 +57,7 @@ class VMwareVRADriver(machine.Machine):
         LOG.debug("host: {}".format(host))
         self.vraops = vraops.VraOps()
 
-    def get_info(self, instance):
+    def get_info(self, instance, use_cache=False):
         LOG.debug("instance: {}".format(instance))
         vra_instance = self.vraops.get_vra_instance_info(instance)
         return hardware.InstanceInfo(
