@@ -293,7 +293,7 @@ class Instance(Resource):
                 "content": "_"
             },
             "name": self.instance.display_name,
-            "imageRef": "demoVM",
+            "imageRef": image_url,
             "projectId": project_id,
             "storage": {
                 "constraints": {
