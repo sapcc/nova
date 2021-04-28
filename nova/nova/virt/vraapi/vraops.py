@@ -38,7 +38,9 @@ class VraOps(object):
 
         os_instance = self.vra.instance
         os_instance.load(instance)
-        os_instance.create(project_id, image_url, network)
+        #TO DO - probably we dont want to sent directly image_meta.name
+        #The initial idea is to use image_url - which should be the image direct url
+        os_instance.create(project_id, image_meta.name, network)
 
     def snapshot(self, context, instance, image_id, update_task_state):
         """
