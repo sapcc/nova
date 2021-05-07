@@ -251,9 +251,18 @@ class Instance(Resource):
         return vra_machine_content
 
     def get_instance_by_cp(self):
+        """
+        Get instance by custom property - openstack_instance_id
+        Every Openstack provisioned instance should have one
+        """
         path = constants.MACHINES_API + "?$filter=customProperties.openstack_instance_id eq  {}"\
             .format(self.instance.uuid)
-        return self.get_request_handler(path)[0]
+        try:
+            return self.get_request_handler(path)[0]
+        except IndexError:
+            raise LookupError('Instance {} not found in vRA.'
+                              'Possible reason is VM was removed through vRA or vCenter.'.
+                              format(self.instance.display_name))
 
     def load(self, instance_payload):
         self.instance = instance_payload
