@@ -1,0 +1,14 @@
+{
+    "priority": "INFO",
+    "payload": {
+        "$ref": "common_payloads/ServiceStatusPayload.json#",
+        "nova_object.data": {
+            "host": "host1",
+            "last_seen_up": "2012-10-29T13:42:05Z",
+            "report_count": 1
+        }
+    },
+    "event_type": "service.update",
+    "publisher_id": "nova-compute:host1"
+}
+

@@ -1,0 +1,20 @@
+{
+    "instanceAction": {
+        "action": "stop",
+        "events": [
+            {
+                "event": "compute_stop_instance",
+                "finish_time": "2018-04-25T01:26:29.262877",
+                "result": "Success",
+                "start_time": "2018-04-25T01:26:29.012774",
+                "traceback": null
+            }
+        ],
+        "instance_uuid": "a53525ef-9ed5-4169-9f2e-dd141d575d87",
+        "message": null,
+        "project_id": "6f70656e737461636b20342065766572",
+        "request_id": "req-343506f4-4dc3-4153-8de5-de6a60cb26ab",
+        "start_time": "2018-04-25T01:26:28.757301",
+        "user_id": "admin"
+    }
+}

@@ -1,0 +1,11 @@
+{
+    "event_type":"instance.reboot.start",
+    "payload":{
+        "$ref":"common_payloads/InstanceActionPayload.json#",
+        "nova_object.data":{
+            "task_state":"reboot_pending_hard"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

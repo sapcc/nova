@@ -1,0 +1,19 @@
+{
+    "event_type":"instance.resize_finish.start",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data":{
+            "flavor": {
+                "nova_object.data": {
+                    "name": "other_flavor",
+                    "flavorid": "d5a8bb54-365a-45ae-abdb-38d249df7845",
+                    "extra_specs": {"hw:watchdog_action": "reset"},
+                    "memory_mb": 256
+                }
+            },
+            "task_state": "resize_finish"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

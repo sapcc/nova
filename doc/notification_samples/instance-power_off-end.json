@@ -1,0 +1,12 @@
+{
+    "event_type":"instance.power_off.end",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data":{
+            "state":"stopped",
+            "power_state":"shutdown"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

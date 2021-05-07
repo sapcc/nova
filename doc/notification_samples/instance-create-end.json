@@ -1,0 +1,6 @@
+{
+    "event_type":"instance.create.end",
+    "payload":{"$ref":"common_payloads/InstanceCreatePayload.json#"},
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

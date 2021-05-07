@@ -1,0 +1,11 @@
+{
+    "priority": "INFO",
+    "event_type": "instance.rebuild.start",
+    "publisher_id": "nova-compute:compute",
+    "payload": {
+        "$ref": "common_payloads/InstanceActionRebuildPayload.json#",
+        "nova_object.data": {
+            "task_state": "rebuilding"
+        }
+    }
+}

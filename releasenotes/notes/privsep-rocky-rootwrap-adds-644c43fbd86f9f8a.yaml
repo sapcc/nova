@@ -1,0 +1,5 @@
+---
+upgrade:
+  - |
+    The following commands are no longer required to be listed in your rootwrap
+    configuration: e2fsck; mkfs; tune2fs; xenstore_read.

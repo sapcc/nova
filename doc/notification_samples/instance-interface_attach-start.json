@@ -1,0 +1,6 @@
+{
+    "priority": "INFO",
+    "event_type": "instance.interface_attach.start",
+    "payload":{"$ref":"common_payloads/InstanceActionPayload.json#"},
+    "publisher_id": "nova-compute:compute"
+}

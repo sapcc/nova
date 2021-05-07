@@ -1,0 +1,29 @@
+---
+upgrade:
+  - |
+    The *nova-network* service has been deprecated since the 14.0.0 Newton
+    release and now the following *nova-network* specific REST APIs have been
+    removed along with their related policy rules. Calling these APIs will now
+    result in a ``410 HTTPGone`` error response.
+
+    * ``GET /os-fping``
+    * ``GET /os-fping/{server_id}``
+    * ``GET /servers/{server_id}/os-virtual-interfaces``
+    * ``GET /os-fixed-ips/{fixed_ip}``
+    * ``POST /os-fixed-ips/{fixed_ip}/action (reserve)``
+    * ``POST /os-fixed-ips/{fixed_ip}/action (unreserve)``
+    * ``GET /os-floating-ips-bulk``
+    * ``GET /os-floating-ips-bulk/{host_name}``
+    * ``POST /os-floating-ips-bulk``
+    * ``PUT /os-floating-ips-bulk/delete``
+    * ``GET /os-floating-ip-dns``
+    * ``PUT /os-floating-ip-dns/{domain}``
+    * ``DELETE /os-floating-ip-dns/{domain}``
+    * ``GET /os-floating-ip-dns/{domain}/entries/{ip}``
+    * ``GET /os-floating-ip-dns/{domain}/entries/{name}``
+    * ``PUT /os-floating-ip-dns/{domain}/entries/{name}``
+    * ``DELETE /os-floating-ip-dns/{domain}/entries/{name}``
+
+    In addition, the following configuration options have been removed.
+
+    * ``[api]/fping_path``

@@ -1,0 +1,6 @@
+{
+    "priority": "INFO",
+    "payload": {"$ref": "common_payloads/ServerGroupPayload.json#"},
+    "event_type": "server_group.delete",
+    "publisher_id": "nova-api:fake-mini"
+}

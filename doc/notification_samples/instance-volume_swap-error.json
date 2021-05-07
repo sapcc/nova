@@ -1,0 +1,24 @@
+{
+    "event_type": "instance.volume_swap.error",
+    "payload": {
+        "$ref": "common_payloads/InstanceActionVolumeSwapPayload.json#",
+        "nova_object.data": {
+            "new_volume_id": "9c6d9c2d-7a8f-4c80-938d-3bf062b8d489",
+            "old_volume_id": "828419fa-3efb-4533-b458-4267ca5fe9b1",
+            "fault": {
+                "nova_object.data": {
+                    "exception": "TypeError",
+                    "exception_message": "'tuple' object does not support item assignment",
+                    "function_name": "_init_volume_connection",
+                    "module_name": "nova.compute.manager",
+                    "traceback": "Traceback (most recent call last):\n  File \"nova/compute/manager.py\", line ..."
+                },
+                "nova_object.name": "ExceptionPayload",
+                "nova_object.namespace": "nova",
+                "nova_object.version": "1.1"
+            }
+        }
+    },
+    "priority": "ERROR",
+    "publisher_id": "nova-compute:compute"
+}

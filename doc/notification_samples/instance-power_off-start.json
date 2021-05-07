@@ -1,0 +1,11 @@
+{
+    "event_type":"instance.power_off.start",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data":{
+            "task_state":"powering-off"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

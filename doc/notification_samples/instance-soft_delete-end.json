@@ -1,0 +1,12 @@
+{
+    "event_type":"instance.soft_delete.end",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data": {
+            "deleted_at": "2012-10-29T13:42:11Z",
+            "state": "soft-delete"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

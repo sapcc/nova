@@ -1,0 +1,17 @@
+{
+    "event_type":"instance.create.start",
+    "payload":{
+        "$ref":"common_payloads/InstanceCreatePayload.json#",
+        "nova_object.data": {
+            "host": null,
+            "ip_addresses": [],
+            "launched_at": null,
+            "node": null,
+            "updated_at": null,
+            "power_state": "pending",
+            "state": "building"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

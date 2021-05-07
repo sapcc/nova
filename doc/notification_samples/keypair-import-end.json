@@ -1,0 +1,6 @@
+{
+    "priority": "INFO",
+    "payload": {"$ref": "common_payloads/KeypairPayload.json#"},
+    "event_type": "keypair.import.end",
+    "publisher_id": "nova-api:fake-mini"
+}

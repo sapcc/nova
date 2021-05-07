@@ -1,0 +1,12 @@
+{
+    "event_type": "instance.resume.start",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data": {
+            "state": "suspended",
+            "task_state": "resuming"
+        }
+    },
+    "priority": "INFO",
+    "publisher_id": "nova-compute:compute"
+}

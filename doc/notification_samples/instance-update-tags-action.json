@@ -1,0 +1,11 @@
+{
+    "event_type": "instance.update",
+    "payload": {
+        "$ref":"common_payloads/InstanceUpdatePayload.json#",
+        "nova_object.data": {
+            "tags": ["tag1"]
+        }
+    },
+    "priority": "INFO",
+    "publisher_id": "nova-api:fake-mini"
+}

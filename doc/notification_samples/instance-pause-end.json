@@ -1,0 +1,11 @@
+{
+    "event_type":"instance.pause.end",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data": {
+            "state": "paused"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

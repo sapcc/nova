@@ -1,0 +1,22 @@
+{
+    "event_type": "instance.volume_swap.end",
+    "payload": {
+        "$ref": "common_payloads/InstanceActionVolumeSwapPayload.json#",
+        "nova_object.data": {
+            "block_devices": [{
+                "nova_object.data": {
+                    "boot_index": null,
+                    "delete_on_termination": false,
+                    "device_name": "/dev/sdb",
+                    "tag": null,
+                    "volume_id": "227cc671-f30b-4488-96fd-7d0bf13648d8"
+                },
+                "nova_object.name": "BlockDevicePayload",
+                "nova_object.namespace": "nova",
+                "nova_object.version": "1.0"
+            }]
+        }
+    },
+    "priority": "INFO",
+    "publisher_id": "nova-compute:compute"
+}

@@ -1,0 +1,8 @@
+{
+    "event_type":"instance.restore.end",
+    "payload":{
+        "$ref":"common_payloads/InstanceActionPayload.json#"
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

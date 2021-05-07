@@ -1,0 +1,22 @@
+{
+    "event_type": "instance.update",
+    "payload": {
+        "$ref":"common_payloads/InstanceUpdatePayload.json#",
+        "nova_object.data": {
+            "ip_addresses": [],
+            "updated_at": null,
+            "power_state": "pending",
+            "launched_at": null,
+            "task_state": "scheduling",
+            "state_update": {
+                "nova_object.data": {
+                    "old_state": "building",
+                    "state": "building"},
+                "nova_object.name": "InstanceStateUpdatePayload",
+                "nova_object.namespace": "nova",
+                "nova_object.version": "1.0"}
+        }
+    },
+    "priority": "INFO",
+    "publisher_id": "nova-compute:fake-mini"
+}

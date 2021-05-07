@@ -1,0 +1,12 @@
+{
+    "priority": "INFO",
+    "payload": {
+        "$ref": "common_payloads/KeypairPayload.json#",
+        "nova_object.data": {
+            "fingerprint": null,
+            "public_key": null
+        }
+    },
+    "event_type": "keypair.create.start",
+    "publisher_id": "nova-api:fake-mini"
+}

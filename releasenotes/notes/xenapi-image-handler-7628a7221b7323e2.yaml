@@ -1,0 +1,48 @@
+---
+features:
+  - |
+    Add a new option of ``image_handler`` in the ``xenapi`` section for
+    configuring the image handler plugin which will be used by XenServer
+    to download or upload images. The value for this option should be a
+    short name representing a supported handler.
+
+    The following are the short names and description of the plugins which
+    they represent:
+
+    * ``direct_vhd``
+
+      This plugin directly processes the VHD files in XenServer SR(Storage
+      Repository). So this plugin only works when the host's SR type is
+      file system based e.g. ext, nfs.  This is the default plugin.
+
+    * ``vdi_local_dev``
+
+      This plugin implements an image upload method which attaches the VDI
+      as a local disk in the VM in which the OpenStack Compute service runs.
+      It uploads the raw disk to glance when creating an image; When booting
+      an instance from a glance image, it downloads the image and streams it
+      into the disk which is attached to the compute VM.
+
+    * ``vdi_remote_stream``
+
+      This plugin implements an image proxy in nova compute service.
+
+      For image upload, the proxy will export a data stream for a VDI from
+      XenServer via the remote API supplied by XAPI; convert the stream
+      to the image format supported by glance; and upload the image to glance.
+
+      For image download, the proxy downloads an image stream from glance;
+      extracts the data stream from the image stream; and then remotely
+      imports the data stream to XenServer's VDI via the remote API supplied
+      by XAPI.
+
+      Note: Under this implementation, the image data may reside in one or
+      more pieces of storage of various formats on the host, but the import
+      and export operations interact with a single, proxied VDI object
+      independent of the underlying structure.
+
+deprecations:
+  - |
+    The ``image_upload_handler`` option in the ``xenserver`` conf section
+    has been deprecated. Please use the new option of ``image_handler`` to
+    configure the image handler which is used to download or upload images.

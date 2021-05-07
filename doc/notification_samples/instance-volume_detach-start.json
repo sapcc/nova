@@ -1,0 +1,8 @@
+{
+    "event_type": "instance.volume_detach.start",
+    "payload": {
+        "$ref": "common_payloads/InstanceActionVolumePayload.json#"
+    },
+    "priority": "INFO",
+    "publisher_id": "nova-compute:compute"
+}

@@ -1,0 +1,11 @@
+{
+    "event_type":"instance.snapshot.start",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionSnapshotPayload.json#",
+        "nova_object.data":{
+            "task_state":"image_snapshot"
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}

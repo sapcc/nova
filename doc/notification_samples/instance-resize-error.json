@@ -1,0 +1,24 @@
+{
+    "event_type":"instance.resize.error",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data":{
+            "fault":{
+                "nova_object.data":{
+                    "exception":"FlavorDiskTooSmall",
+                    "exception_message":"The created instance's disk would be too small.",
+                    "function_name":"_build_resources",
+                    "module_name":"nova.tests.functional.notification_sample_tests.test_instance",
+                    "traceback":"Traceback (most recent call last):\n  File \"nova/compute/manager.py\", line ..."
+                },
+                "nova_object.name":"ExceptionPayload",
+                "nova_object.namespace":"nova",
+                "nova_object.version":"1.1"
+            },
+            "block_devices": [],
+            "task_state": "resize_prep"
+        }
+    },
+    "priority":"ERROR",
+    "publisher_id":"nova-compute:compute"
+}

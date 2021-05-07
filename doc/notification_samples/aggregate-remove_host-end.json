@@ -1,0 +1,8 @@
+{
+    "priority": "INFO",
+    "payload": {
+        "$ref": "common_payloads/AggregatePayload.json#"
+    },
+    "event_type": "aggregate.remove_host.end",
+    "publisher_id": "nova-api:fake-mini"
+}

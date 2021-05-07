@@ -1,0 +1,8 @@
+{
+    "event_type":"instance.trigger_crash_dump.start",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#"
+    },
+    "priority": "INFO",
+    "publisher_id": "nova-compute:compute"
+}

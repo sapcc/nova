@@ -1,0 +1,15 @@
+{
+    "event_type":"instance.unshelve.start",
+    "payload":{
+        "$ref": "common_payloads/InstanceActionPayload.json#",
+        "nova_object.data":{
+            "state": "shelved_offloaded",
+            "power_state": "shutdown",
+            "task_state": "unshelving",
+            "host": null,
+            "node": null
+        }
+    },
+    "priority":"INFO",
+    "publisher_id":"nova-compute:compute"
+}
