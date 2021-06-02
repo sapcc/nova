@@ -6341,7 +6341,8 @@ class ComputeTestCase(BaseTestCase,
         mock_get_bdms.side_effect = gen_fake_bdms
 
         # start test
-        migration = objects.Migration(uuid=uuids.migration)
+        migration = objects.Migration(uuid=uuids.migration,
+            source_compute='src_host', dest_compute=dest_host)
 
         @mock.patch.object(self.compute.network_api, 'setup_networks_on_host')
         @mock.patch.object(self.compute, 'reportclient')

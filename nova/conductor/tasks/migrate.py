@@ -263,7 +263,8 @@ class MigrationTask(base.TaskBase):
                     host_available = scheduler_utils.claim_resources(
                             elevated, self.reportclient, self.request_spec,
                             self.instance.uuid, alloc_req,
-                            selection.allocation_request_version)
+                            selection.allocation_request_version,
+                            host=selection.service_host)
                 else:
                     # Some deployments use different schedulers that do not
                     # use Placement, so they will not have an

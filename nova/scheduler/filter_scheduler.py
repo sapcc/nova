@@ -229,7 +229,8 @@ class FilterScheduler(driver.Scheduler):
                 alloc_req = alloc_reqs[0]
                 if utils.claim_resources(elevated, self.placement_client,
                         spec_obj, instance_uuid, alloc_req,
-                        allocation_request_version=allocation_request_version):
+                        allocation_request_version=allocation_request_version,
+                        host=host.host):
                     claimed_host = host
                     break
 

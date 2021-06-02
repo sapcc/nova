@@ -135,6 +135,20 @@ class SchedulerManager(manager.Manager):
                 raise exception.NoValidHost(reason=e.message)
 
             resources = utils.resources_from_request_spec(spec_obj)
+            if utils.request_is_resize(spec_obj):
+                status = "pre-migrating"
+                try:
+                    migration = objects.Migration.get_by_instance_and_status(
+                        ctxt, instance_uuids[0], status)
+                except exception.MigrationNotFoundByStatus:
+                    LOG.warning("Unable to find migration record with status "
+                                "'%s' for instance %s on resize. Cannot "
+                                "ignore Migration consumer.",
+                                status, instance_uuids)
+                else:
+                    LOG.debug("Ignoring consumers %s for resize of %s.",
+                              migration.uuid, instance_uuids)
+                    resources.ignore_consumers = [migration.uuid]
             res = self.placement_client.get_allocation_candidates(ctxt,
                                                                   resources)
             if res is None:

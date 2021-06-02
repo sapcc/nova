@@ -465,6 +465,36 @@ class TestUtils(test.NoDBTestCase):
         )
         self.assertEqual(expected_querystring, resources.to_querystring())
 
+    def test_process_use_ignore_consumers(self):
+        flavor = objects.Flavor(vcpus=1,
+                                memory_mb=1024,
+                                root_gb=15,
+                                ephemeral_gb=0,
+                                swap=0)
+        fake_spec = objects.RequestSpec(flavor=flavor, force_hosts=['test'])
+        expected = utils.ResourceRequest()
+        expected._rg_by_id[None] = plib.RequestGroup(
+            use_same_provider=False,
+            resources={
+                'VCPU': 1,
+                'MEMORY_MB': 1024,
+                'DISK_GB': 15,
+            },
+        )
+        expected._limit = None
+        resources = utils.resources_from_request_spec(fake_spec)
+        self.assertResourceRequestsEqual(expected, resources)
+        # NOTE(jkulik): can't use uuids.fake here, because we expect a certain
+        # order in the comparison and the order of the query parameters depends
+        # on sorting the values which is random for random UUIDs
+        resources._ignore_consumers = ['foo1', 'foo2']
+        expected_querystring = (
+            'ignore_consumer={}&ignore_consumer={}&'
+            'resources=DISK_GB%3A15%2CMEMORY_MB%3A1024%2CVCPU%3A1'
+            .format('foo1', 'foo2')
+        )
+        self.assertEqual(expected_querystring, resources.to_querystring())
+
     @ddt.data(
         # Test single hint that we are checking for.
         {'group': [uuids.fake]},
@@ -918,11 +948,14 @@ class TestUtils(test.NoDBTestCase):
 
     @mock.patch('nova.scheduler.client.report.SchedulerReportClient')
     @mock.patch('nova.scheduler.utils.request_is_rebuild')
-    def test_claim_resources(self, mock_is_rebuild, mock_client):
+    @mock.patch('nova.scheduler.utils.request_is_resize')
+    def test_claim_resources(self, mock_is_resize, mock_is_rebuild,
+                             mock_client):
         """Tests that when claim_resources() is called, that we appropriately
         call the placement client to claim resources for the instance.
         """
         mock_is_rebuild.return_value = False
+        mock_is_resize.return_value = False
         ctx = mock.Mock(user_id=uuids.user_id)
         spec_obj = mock.Mock(project_id=uuids.project_id)
         instance_uuid = uuids.instance
@@ -948,3 +981,128 @@ class TestUtils(test.NoDBTestCase):
         self.assertTrue(res)
         mock_is_rebuild.assert_called_once_with(mock.sentinel.spec_obj)
         self.assertFalse(mock_client.claim_resources.called)
+
+    @mock.patch('nova.scheduler.client.report.SchedulerReportClient')
+    @mock.patch('nova.scheduler.utils.request_is_rebuild')
+    @mock.patch('nova.scheduler.utils.request_is_resize')
+    @mock.patch('nova.objects.Migration.get_by_instance_and_status')
+    def test_claim_resources_on_resize(self, mock_mig_get, mock_is_resize,
+                                       mock_is_rebuild, mock_client):
+        """Test that when claim_resources() is called, that we we check for
+        resize and go the normal path of claim-resources if the hosts differ.
+        """
+        mock_is_rebuild.return_value = False
+        mock_is_resize.return_value = True
+        migration = objects.Migration(
+            context=self.context.elevated(),
+            id=1,
+            uuid=uuids.migration_uuid,
+            instance_uuid=uuids.instance,
+            new_instance_type_id=7,
+            dest_compute=None,
+            dest_node=None,
+            dest_host=None,
+            source_compute='source_compute',
+            source_node='source_node',
+            status='pre-migration')
+        mock_mig_get.return_value = migration
+
+        ctx = mock.Mock(user_id=uuids.user_id)
+        spec_obj = mock.Mock(project_id=uuids.project_id)
+        instance_uuid = uuids.instance
+        alloc_req = mock.sentinel.alloc_req
+        mock_client.claim_resources.return_value = True
+
+        res = utils.claim_resources(ctx, mock_client, spec_obj, instance_uuid,
+                alloc_req, host='dest_compute')
+
+        mock_client.claim_resources.assert_called_once_with(
+            ctx, uuids.instance, mock.sentinel.alloc_req, uuids.project_id,
+            uuids.user_id, allocation_request_version=None)
+        self.assertTrue(res)
+
+    @mock.patch('nova.scheduler.client.report.SchedulerReportClient')
+    @mock.patch('nova.scheduler.utils.request_is_rebuild')
+    @mock.patch('nova.scheduler.utils.request_is_resize')
+    @mock.patch('nova.objects.Migration.get_by_instance_and_status',
+                side_effect=exception.MigrationNotFoundByStatus(
+                    instance_id=uuids.instance, status='running (post-copy)'))
+    def test_claim_resources_on_resize_no_migration(self, mock_mig_get,
+            mock_is_resize, mock_is_rebuild, mock_client):
+        """Test that when claim_resources() is called, that we we check for
+        resize and go the normal path of claim-resources if we cannot find a
+        Migration object for the instance.
+        """
+        mock_is_rebuild.return_value = False
+        mock_is_resize.return_value = True
+        ctx = mock.Mock(user_id=uuids.user_id)
+        spec_obj = mock.Mock(project_id=uuids.project_id)
+        instance_uuid = uuids.instance
+        alloc_req = mock.sentinel.alloc_req
+        mock_client.claim_resources.return_value = True
+
+        res = utils.claim_resources(ctx, mock_client, spec_obj, instance_uuid,
+                alloc_req)
+
+        mock_client.claim_resources.assert_called_once_with(
+            ctx, uuids.instance, mock.sentinel.alloc_req, uuids.project_id,
+            uuids.user_id, allocation_request_version=None)
+        self.assertTrue(res)
+
+    @ddt.data(({}, None),
+              ({uuids.rp2: {'CUSTOM_BLA': 2},
+                uuids.rp1: {'DISK_GB': 15, 'VCPUS': 12, 'MEMORY_MB': 14}},
+               {uuids.rp2: {'CUSTOM_BLA': 2},
+                uuids.rp1: {'DISK_GB': 15, 'VCPUS': 4}}))
+    @ddt.unpack
+    @mock.patch('nova.scheduler.client.report.SchedulerReportClient')
+    @mock.patch('nova.scheduler.utils.request_is_rebuild')
+    @mock.patch('nova.scheduler.utils.request_is_resize')
+    @mock.patch('nova.objects.Migration.get_by_instance_and_status')
+    def test_claim_resources_on_resize_same_host(self, mig_allocs,
+            expected_mig_allocs, mock_mig_get, mock_is_resize, mock_is_rebuild,
+            mock_client):
+        """Test that when claim_resources() is called, that we we check for
+        resize and call placement client to claim the resources and update the
+        migration at the same time.
+        """
+        mock_is_rebuild.return_value = False
+        mock_is_resize.return_value = True
+        migration = objects.Migration(
+            context=self.context.elevated(),
+            id=1,
+            uuid=uuids.migration_uuid,
+            instance_uuid=uuids.instance,
+            new_instance_type_id=7,
+            dest_compute=None,
+            dest_node=None,
+            dest_host=None,
+            source_compute='source_compute',
+            source_node='source_node',
+            status='pre-migration')
+        mock_mig_get.return_value = migration
+
+        ctx = mock.Mock(user_id=uuids.user_id)
+        spec_obj = mock.Mock(project_id=uuids.project_id)
+        instance_uuid = uuids.instance
+        alloc_req = {'allocations':
+                        {uuids.rp1: {'resources':
+                                        {'DISK_GB': 17, 'VCPUS': 8,
+                                         'MEMORY_MB': 24, 'CUSTOM_2': 1}}}}
+        mock_client.claim_resources.return_value = True
+
+        mig_allocs = {rp: {'resources': values}
+                      for rp, values in mig_allocs.items()}
+        mock_client.get_allocations_for_consumer.return_value = mig_allocs
+        res = utils.claim_resources(ctx, mock_client, spec_obj, instance_uuid,
+                alloc_req, host='source_compute')
+
+        expected_req = {instance_uuid: alloc_req}
+        if expected_mig_allocs is not None:
+            expected_mig_allocs = {'allocations':
+                {rp: {'resources': values}
+                 for rp, values in expected_mig_allocs.items()}}
+            expected_req[uuids.migration_uuid] = expected_mig_allocs
+        mock_client.set_multiple_allocations.assert_called_once_with(
+            ctx, expected_req, uuids.project_id, uuids.user_id)
+        self.assertTrue(res)
