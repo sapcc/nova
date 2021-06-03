@@ -2028,8 +2028,7 @@ class _ComputeAPIUnitTestMixIn(object):
                 fake_spec = None
 
             scheduler_hint = {
-                'filter_properties': filter_properties,
-                '_nova_check_type': ['resize'],
+                'filter_properties': filter_properties
             }
 
         if flavor_id_passed:
@@ -2059,6 +2058,10 @@ class _ComputeAPIUnitTestMixIn(object):
                 self.assertIn('node', fake_spec.requested_destination)
                 self.assertEqual('hypervisor_host',
                                  fake_spec.requested_destination.node)
+
+            self.assertIn('_nova_check_type', fake_spec.scheduler_hints)
+            self.assertEqual('resize',
+                             fake_spec.scheduler_hints['_nova_check_type'][0])
 
         if host_name:
             mock_get_all_by_host.assert_called_once_with(
