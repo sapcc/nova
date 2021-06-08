@@ -1853,6 +1853,48 @@ class SchedulerReportClient(object):
                      'text': r.text})
         return r.status_code == 204
 
+    @retries
+    def set_multiple_allocations(self, context, consumer_alloc_requests,
+                                 project_id, user_id):
+        """Atomically update multiple allocations for multiple consumers
+
+        :param context: The security context
+        :param consumer_alloc_requests: Dict, keyed by consumer UUID, of dicts,
+                                        keyed by resource class, of amounts to
+                                        consume.
+        :param project_id: The project_id associated with the allocations.
+        :param user_id: The user_id associated with the allocations.
+        :returns: True if the allocations were created, False otherwise.
+        :raises: Retry if the operation should be retried due to a concurrent
+                 update.
+        """
+        # we will modify it, so make sure the caller keeps its original
+        payload = copy.deepcopy(consumer_alloc_requests)
+
+        for consumer_uuid in payload:
+            payload[consumer_uuid]['project_id'] = project_id
+            payload[consumer_uuid]['user_id'] = user_id
+
+        r = self.post('/allocations', payload,
+                      version=POST_ALLOCATIONS_API_VERSION,
+                      global_request_id=context.global_id)
+        if r.status_code != 204:
+            # NOTE(jaypipes): Yes, it sucks doing string comparison like this
+            # but we have no error codes, only error messages.
+            if 'concurrently updated' in r.text:
+                reason = ('another process changed the resource providers '
+                          'involved in our attempt to post allocations for '
+                          'consumers %s' % consumer_alloc_requests.keys())
+                raise Retry('set_and_clear_allocations', reason)
+            else:
+                LOG.warning(
+                    'Unable to post allocations for consumers '
+                    '%(uuids)s (%(code)i %(text)s)',
+                    {'uuids': consumer_alloc_requests.keys(),
+                     'code': r.status_code,
+                     'text': r.text})
+        return r.status_code == 204
+
     @safe_connect
     @retries
     def put_allocations(self, context, rp_uuid, consumer_uuid, alloc_data,
