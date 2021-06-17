@@ -59,7 +59,7 @@ def _get_not_deleted(context, uuids, not_deleted_inst_uuids=None):
         context, uuids)
     inst_by_cell = collections.defaultdict(list)
     cell_mappings = {}
-    found_inst_uuids = []
+    found_inst = {}
 
     # Get a master list of cell mappings, and a list of instance
     # uuids organized by cell
@@ -67,7 +67,7 @@ def _get_not_deleted(context, uuids, not_deleted_inst_uuids=None):
         if not im.cell_mapping:
             # Not scheduled yet, so just throw it in the final list
             # and move on
-            found_inst_uuids.append(im.instance_uuid)
+            found_inst[im.instance_uuid] = None
             continue
         if im.cell_mapping.uuid not in cell_mappings:
             cell_mappings[im.cell_mapping.uuid] = im.cell_mapping
@@ -81,11 +81,11 @@ def _get_not_deleted(context, uuids, not_deleted_inst_uuids=None):
                   {'cell': cell_mapping.identity, 'num': len(uuids)})
         filters = {'uuid': inst_uuids, 'deleted': False}
         with nova_context.target_cell(context, cell_mapping) as ctx:
-            found_inst_uuids.extend([
-                inst.uuid for inst in objects.InstanceList.get_by_filters(
-                    ctx, filters=filters)])
+            instances = objects.InstanceList.get_by_filters(
+                            ctx, filters=filters)
+            found_inst.update({inst.uuid: inst.host for inst in instances})
 
-    return found_inst_uuids
+    return found_inst
 
 
 def _should_enable_custom_max_server_rules(context, rules):
@@ -129,8 +129,8 @@ class ServerGroupController(wsgi.Controller):
         members = []
         if group.members:
             # Display the instances that are not deleted.
-            members = _get_not_deleted(context, group.members,
-                                       not_deleted_inst_uuids)
+            members = list(_get_not_deleted(context, group.members,
+                           not_deleted_inst_uuids))
         server_group['members'] = members
         # Add project id information to the response data for
         # API version v2.13
