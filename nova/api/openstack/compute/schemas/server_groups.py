@@ -99,3 +99,18 @@ show_query = {
     'properties': {},
     'additionalProperties': True,
 }
+
+update = {
+    'type': 'object',
+    'properties': {
+        'add_members': {
+            'type': 'array',
+            'items': parameter_types.server_id,
+        },
+        'remove_members': {
+            'type': 'array',
+            'items': parameter_types.server_id,
+        }
+    },
+    'additionalProperties': False
+}
