@@ -705,6 +705,7 @@ ROUTE_LIST = (
     }),
     ('/os-server-groups/{id}', {
         'GET': [server_groups_controller, 'show'],
+        'PUT': [server_groups_controller, 'update'],
         'DELETE': [server_groups_controller, 'delete']
     }),
     ('/os-services', {
