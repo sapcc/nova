@@ -375,7 +375,7 @@ notification_object_data = {
     'ComputeTaskNotification': '1.0-a73147b93b520ff0061865849d3dfa56',
     'ComputeTaskPayload': '1.0-59a9b78b6199470a83c8d07bffd13f5e',
     'DestinationPayload': '1.0-d8faf610201bf5f460892243f6632a37',
-    'EventType': '1.22-fab37f98c6e7513edece32ad5420f549',
+    'EventType': '1.22-23923a7e77f1a188085deb00fe5e850b',
     'ExceptionNotification': '1.0-a73147b93b520ff0061865849d3dfa56',
     'ExceptionPayload': '1.1-34f006107693b8c9eaf4b104157d21b4',
     'FlavorNotification': '1.0-a73147b93b520ff0061865849d3dfa56',
