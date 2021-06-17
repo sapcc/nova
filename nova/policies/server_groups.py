@@ -73,6 +73,17 @@ server_groups_policies = [
             }
         ]
     ),
+    policy.DocumentedRuleDefault(
+        POLICY_ROOT % 'update',
+        BASE_POLICY_RULE,
+        "Update members of a server group",
+        [
+            {
+                'path': '/os-server-groups/{server_group_id}',
+                'method': 'PUT'
+            }
+        ]
+    ),
 ]
 
 
