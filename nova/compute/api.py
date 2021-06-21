@@ -1231,13 +1231,6 @@ class API(base.Base):
         instance_group = self._get_requested_instance_group(context,
                                    filter_properties)
 
-        if instance_group and utils.vm_needs_special_spawning(
-                                                    base_options['memory_mb'],
-                                                    instance_type):
-            msg = 'This type of VM cannot be assigned to server groups ' \
-                  'because of its scheduling requirements.'
-            raise exception.InvalidRequest(msg)
-
         tags = self._create_tag_list_obj(context, tags)
 
         instances_to_build = self._provision_instances(

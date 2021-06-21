@@ -4467,26 +4467,6 @@ class ServersControllerCreateTest(test.TestCase):
         self.assertRaises(exception.ValidationError,
                           self.controller.create, self.req, body=self.body)
 
-    def test_create_instance_with_group_hint_big_vm(self):
-        ctxt = self.req.environ['nova.context']
-        test_group = objects.InstanceGroup(ctxt)
-        test_group.project_id = ctxt.project_id
-        test_group.user_id = ctxt.user_id
-        test_group.create()
-
-        CONF.set_override('bigvm_mb', 512)
-
-        def fake_instance_destroy(context, uuid, constraint):
-            return fakes.stub_instance(1)
-
-        self.stub_out('nova.db.instance_destroy', fake_instance_destroy)
-        self.body['os:scheduler_hints'] = {'group': test_group.uuid}
-        self.req.body = jsonutils.dump_as_bytes(self.body)
-        self.assertRaisesRegex(webob.exc.HTTPBadRequest,
-                               r'because of its scheduling requirements',
-                               self.controller.create, self.req,
-                               body=self.body)
-
     def test_create_server_bad_hints_non_dict(self):
         sch_hints = ['os:scheduler_hints', 'OS-SCH-HNT:scheduler_hints']
         for hint in sch_hints:
