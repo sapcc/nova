@@ -1314,10 +1314,27 @@ class API(base_api.NetworkAPI):
             if resp:
                 bindings_by_port_id[port_id] = resp.json()['binding']
             else:
+                step = 'creation'
+                # In case we actually managed to create the binding,
+                # but something went wrong in between, we can recover
+                if resp.status_code == 409:
+                    error_type = resp.json().get('NeutronError',
+                            {}).get('type')
+                    if error_type == 'PortBindingAlreadyExists':
+                        step = 'recovery'
+                        resp = client.get(
+                            '/v2.0/ports/{}/bindings/{}'.format(
+                                port_id, host), raise_exc=False)
+                        if resp:
+                            bindings_by_port_id[port_id] = resp.json()[
+                                'binding']
+                            continue
+
                 # Something failed, so log the error and rollback any
                 # successful bindings.
-                LOG.error('Binding failed for port %s and host %s. '
+                LOG.error('Binding %s failed for port %s and host %s. '
                           'Error: (%s %s)',
+                          step,
                           port_id, host, resp.status_code, resp.text,
                           instance=instance)
                 for rollback_port_id in bindings_by_port_id:
