@@ -13,6 +13,7 @@
 #    under the License.
 
 import contextlib
+import itertools
 
 from oslo_config import cfg
 from oslo_db import exception as db_exc
@@ -31,6 +32,7 @@ from nova.cells import rpcapi as cells_rpcapi
 from nova.cells import utils as cells_utils
 from nova.compute import task_states
 from nova.compute import vm_states
+from nova import context as nova_context
 from nova import db
 from nova.db.sqlalchemy import api as db_api
 from nova.db.sqlalchemy import models
@@ -1426,11 +1428,31 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
         :returns: A list of instance uuids for which faults were found.
         """
         uuids = [inst.uuid for inst in self]
-        faults = objects.InstanceFaultList.get_latest_by_instance_uuids(
+        inst_mappings = objects.InstanceMappingList.get_by_instance_uuids(
             self._context, uuids)
+
+        def _group_inst_mappings_by_cell_id(instance_mappings):
+            def _im_cell_id(instance_mapping):
+                cm = instance_mapping.cell_mapping
+                cell_id = getattr(cm, 'id', -1) if cm else -1
+                return cell_id
+
+            instance_mappings = sorted(instance_mappings, key=_im_cell_id)
+            return itertools.groupby(instance_mappings, key=_im_cell_id)
+
         faults_by_uuid = {}
-        for fault in faults:
-            faults_by_uuid[fault.instance_uuid] = fault
+        for cell_id, ims in _group_inst_mappings_by_cell_id(inst_mappings):
+            if cell_id == -1:
+                continue
+            cm, inst_uuids = None, []
+            for im in ims:
+                inst_uuids.append(im.instance_uuid)
+                cm = im.cell_mapping
+            with nova_context.target_cell(self._context, cm) as cell_ctxt:
+                faults = (objects.InstanceFaultList.
+                    get_latest_by_instance_uuids(cell_ctxt, inst_uuids))
+                for fault in faults:
+                    faults_by_uuid[fault.instance_uuid] = fault
 
         for instance in self:
             if instance.uuid in faults_by_uuid:

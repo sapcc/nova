@@ -140,8 +140,9 @@ class ExtendedVolumesTestV21(test.TestCase):
         actual = server.get('%svolumes_attached' % self.prefix)
         self.assertEqual(self.exp_volumes_show, actual)
 
+    @mock.patch.object(objects.InstanceList, 'fill_faults')
     @mock.patch.object(objects.InstanceMappingList, 'get_by_instance_uuids')
-    def test_detail(self, mock_get_by_instance_uuids):
+    def test_detail(self, mock_get_by_instance_uuids, mock_fill_faults):
         mock_get_by_instance_uuids.return_value = [
             objects.InstanceMapping(
                 instance_uuid=UUID1,
@@ -165,10 +166,12 @@ class ExtendedVolumesTestV21(test.TestCase):
             actual = server.get('%svolumes_attached' % self.prefix)
             self.assertEqual(self.exp_volumes_detail[i], actual)
 
+    @mock.patch.object(objects.InstanceList, 'fill_faults')
     @mock.patch.object(objects.InstanceMappingList, 'get_by_instance_uuids')
     @mock.patch('nova.context.scatter_gather_cells')
     def test_detail_with_cell_failures(self, mock_sg,
-                                        mock_get_by_instance_uuids):
+                                       mock_get_by_instance_uuids,
+                                       mock_fill_faults):
 
         mock_get_by_instance_uuids.return_value = [
             objects.InstanceMapping(

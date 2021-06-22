@@ -12,6 +12,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from contextlib import contextmanager
 import datetime
 
 import mock
@@ -1869,13 +1870,28 @@ class _TestInstanceListObject(object):
         mock_fault_get.assert_called_once_with(self.context,
             [x['uuid'] for x in fake_insts])
 
+    @mock.patch('nova.objects.InstanceMappingList.get_by_instance_uuids')
     @mock.patch.object(db, 'instance_fault_get_by_instance_uuids')
-    def test_fill_faults(self, mock_fault_get):
+    def test_fill_faults(self, mock_fault_get, mock_get_inst_map_list):
         inst1 = objects.Instance(uuid=uuids.db_fault_1)
         inst2 = objects.Instance(uuid=uuids.db_fault_2)
-        insts = [inst1, inst2]
+        inst_no_cm = objects.Instance(uuid=uuids.db_fault_no_cm)
+        insts_with_cm = [inst1, inst2]
+        insts = insts_with_cm + [inst_no_cm]
         for inst in insts:
             inst.obj_reset_changes()
+
+        cm = mock.Mock(database_connection=objects.CellMapping.CELL0_UUID,
+                       id=1)
+        mock_get_inst_map_list.return_value = [
+            mock.Mock(cell_mapping=cm,
+                      instance_uuid=uuids.db_fault_1),
+            mock.Mock(cell_mapping=cm,
+                      instance_uuid=uuids.db_fault_2),
+            mock.Mock(cell_mapping=None,
+                      instance_uuid=uuids.db_fault_no_cm)
+        ]
+
         db_faults = {
             'uuid1': [{'id': 123,
                        'instance_uuid': uuids.db_fault_1,
@@ -1902,9 +1918,84 @@ class _TestInstanceListObject(object):
         for inst in inst_list:
             self.assertEqual(set(), inst.obj_what_changed())
 
-        mock_fault_get.assert_called_once_with(self.context,
-                                               [x.uuid for x in insts],
+        mock_fault_get.assert_called_once_with(mock.ANY,
+                                               [x.uuid for x in insts_with_cm],
                                                latest=True)
+
+    @mock.patch('nova.context.target_cell')
+    @mock.patch('nova.objects.InstanceMappingList.get_by_instance_uuids')
+    @mock.patch.object(db, 'instance_fault_get_by_instance_uuids')
+    def test_fill_faults_multicell(self,
+                                     mock_fault_get,
+                                     mock_get_inst_map_list,
+                                     mock_ctxt_target_cell):
+        # Prepare list with 2 instances
+        inst_list = objects.InstanceList()
+        inst_list._context = self.context
+        inst_list.objects = [
+            objects.Instance(uuid=uuids.inst_1),
+            objects.Instance(uuid=uuids.inst_2)
+        ]
+        for inst in inst_list.objects:
+            inst.obj_reset_changes()
+
+        # Define different cell mappings for the 2 instances
+        im1 = mock.Mock(instance_uuid=uuids.inst_1,
+                        cell_mapping=mock.Mock(
+                            database_connection=self.context.db_connection,
+                            id=1))
+        im2 = mock.Mock(instance_uuid=uuids.inst_2,
+                        cell_mapping=mock.Mock(id=2))
+        mock_get_inst_map_list.return_value = [im1, im2]
+
+        # Define faults for the instances in different cell DBs (mocked)
+        def _fake_db_faults(instance_uuid):
+            return {
+                instance_uuid: [{
+                    'id': 123,
+                    'instance_uuid': instance_uuid,
+                    'code': 456,
+                    'message': 'Fake message %s' % instance_uuid,
+                    'details': 'No details',
+                    'host': 'foo',
+                    'deleted': False,
+                    'deleted_at': None,
+                    'updated_at': None,
+                    'created_at': None
+                }]
+            }
+
+        db_1_faults = _fake_db_faults(uuids.inst_1)
+        db_2_faults = _fake_db_faults(uuids.inst_2)
+        cell_faults = [
+            (im1.cell_mapping, db_1_faults),
+            (im2.cell_mapping, db_2_faults)
+        ]
+
+        def _mock_cell_fault_get(context, instance_uuids, latest=False):
+            for cf in cell_faults:
+                if context.db_connection == cf[0].database_connection:
+                    return cf[1]
+            return None
+        mock_fault_get.side_effect = _mock_cell_fault_get
+
+        @contextmanager
+        def _mock_ctxt_target_cell(context, cell_mapping):
+            yield mock.Mock(
+                db_connection=
+                    (cell_mapping.database_connection
+                     if cell_mapping
+                        and hasattr(cell_mapping, 'database_connection')
+                     else None))
+        mock_ctxt_target_cell.side_effect = _mock_ctxt_target_cell
+
+        inst_list.fill_faults()
+        # Verify multicell fill_faults by comparing combined list of faults
+        # from different cell DBs to the list of instance faults as filled
+        self.assertEqual([db_1_faults[uuids.inst_1][0]['message'],
+                          db_2_faults[uuids.inst_2][0]['message']],
+                         [getattr(inst.fault, 'message', None)
+                          for inst in inst_list])
 
     @mock.patch('nova.objects.instance.Instance.obj_make_compatible')
     def test_get_by_security_group(self, mock_compat):
