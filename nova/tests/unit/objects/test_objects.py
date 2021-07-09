@@ -1104,7 +1104,7 @@ object_data = {
     'InstanceFault': '1.2-7ef01f16f1084ad1304a513d6d410a38',
     'InstanceFaultList': '1.2-6bb72de2872fe49ded5eb937a93f2451',
     'InstanceGroup': '1.11-a26b476ba20883380476d4cb8c4b8d41',
-    'InstanceGroupList': '1.8-90f8f1a445552bb3bbc9fa1ae7da27d4',
+    'InstanceGroupList': '1.8-feac6a7c1f4519e069db17e9e6efcff2',
     'InstanceInfoCache': '1.5-cd8b96fefe0fc8d4d337243ba0bf0e1e',
     'InstanceList': '2.4-d2c5723da8c1d08e07cb00160edfd292',
     'InstanceMapping': '1.1-808df83f25987578ed3b187e16b47405',
