@@ -153,6 +153,9 @@ class VMwareVCDriver(driver.ComputeDriver):
         virtapi._compute.additional_endpoints.append(
             special_spawning._SpecialVmSpawningServer(self))
 
+        # filled by init_host(). contains the ComputeNode host name
+        self._compute_host = None
+
     def _check_min_version(self):
         min_version = v_utils.convert_version_to_int(constants.MIN_VC_VERSION)
         next_min_ver = v_utils.convert_version_to_int(
@@ -200,6 +203,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         vim = self._session.vim
         if vim is None:
             self._session._create_session()
+
+        self._compute_host = host
 
     def cleanup_host(self, host):
         self._session.logout()
