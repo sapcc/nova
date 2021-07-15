@@ -20,6 +20,8 @@ from nova import utils
 from oslo_log import log as logging
 from oslo_vmware import vim_util as vutil
 
+from nova.virt.vmwareapi import vim_util
+
 LOG = logging.getLogger(__name__)
 
 
@@ -122,6 +124,42 @@ def fetch_cluster_properties(session, vm_ref):
             break
 
     return result
+
+
+def fetch_cluster_groups(session, cluster_ref=None, cluster_config=None,
+                         group_type=None):
+    """Fetch all groups of a cluster
+
+    The cluster can be identified by a cluster_ref or by an explicit
+    cluster_config. If identified by cluster_ref, we fetch the cluster_config.
+
+    If the caller only needs either HostGroup or VmGroup, group_type can be set
+    to 'host' or 'vm' respectively.
+    """
+    if group_type not in (None, 'vm', 'host'):
+        msg = 'Invalid group_type {}'.format(group_type)
+        raise exception.ValidationError(msg)
+
+    if (cluster_config, cluster_ref) == (None, None):
+        msg = 'Either cluster_config or cluster_ref must be given.'
+        raise exception.ValidationError(msg)
+
+    if cluster_config is None:
+        cluster_config = session._call_method(
+            vutil, "get_object_property", cluster_ref, "configurationEx")
+
+    groups = {}
+    for group in cluster_config.group:
+        if group_type == 'vm':
+            if not vim_util.is_vim_instance(group, 'VmGroup'):
+                continue
+        elif group_type == 'host':
+            if not vim_util.is_vim_instance(group, 'HostGroup'):
+                continue
+
+        groups[group.name] = group
+
+    return groups
 
 
 def delete_vm_group(session, cluster, vm_group):
