@@ -18,7 +18,6 @@ from nova import exception
 from nova.i18n import _
 from nova import utils
 from oslo_log import log as logging
-from oslo_vmware import vim_util
 from oslo_vmware import vim_util as vutil
 
 LOG = logging.getLogger(__name__)
@@ -259,7 +258,7 @@ def _get_rule(cluster_config, rule_name):
 
 def _is_drs_enabled(session, cluster):
     """Check if DRS is enabled on a given cluster"""
-    drs_config = session._call_method(vim_util, "get_object_property", cluster,
+    drs_config = session._call_method(vutil, "get_object_property", cluster,
                                       "configuration.drsConfig")
     if drs_config and hasattr(drs_config, 'enabled'):
         return drs_config.enabled
