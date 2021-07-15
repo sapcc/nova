@@ -238,3 +238,10 @@ VALID_OS_TYPES = set([
 POWER_STATES = {'poweredOff': power_state.SHUTDOWN,
                 'poweredOn': power_state.RUNNING,
                 'suspended': power_state.SUSPENDED}
+
+
+# Prefix used in the name of DRS groups and rules created by the driver to
+# distinguish between what has been automatically created and what is
+# admin-created.
+# FIXME set a good value
+DRS_PREFIX = ''

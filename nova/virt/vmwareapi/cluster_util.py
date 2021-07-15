@@ -36,7 +36,7 @@ def reconfigure_cluster(session, cluster, config_spec):
 def _create_vm_group_spec(client_factory, group_info, vm_refs,
                           operation="add", group=None):
     group = group or client_factory.create('ns0:ClusterVmGroup')
-    group.name = group_info.uuid
+    group.name = group_info.name
 
     # On vCenter UI, it is not possible to create VM group without
     # VMs attached to it. But, using APIs, it is possible to create
@@ -73,7 +73,7 @@ def _get_vm_group(cluster_config, group_info):
     if not hasattr(cluster_config, 'group'):
         return
     for group in cluster_config.group:
-        if group.name == group_info.uuid:
+        if group.name == group_info.name:
             return group
 
 
@@ -217,7 +217,7 @@ def update_placement(session, cluster, vm_ref, group_infos):
             # VM group does not exist on cluster
             policy = group_info.policies[0]
             if policy != 'soft-affinity':
-                rule_name = "%s-%s" % (group_info.uuid, policy)
+                rule_name = "%s-%s" % (group_info.name, policy)
                 rule = _get_rule(cluster_config, rule_name)
                 operation = "edit" if rule else "add"
                 rules_spec = _create_cluster_rules_spec(
