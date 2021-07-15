@@ -33,7 +33,6 @@ from oslo_vmware import exceptions as vexc
 from oslo_vmware import pbm
 from oslo_vmware import vim_util as vutil
 import six
-from suds import sudsobject
 
 import nova.conf
 from nova import exception
@@ -2063,11 +2062,6 @@ def rename_vm(session, vm_ref, instance):
     rename_task = session._call_method(session.vim, "Rename_Task", vm_ref,
                                        newName=vm_name)
     session._wait_for_task(rename_task)
-
-
-def is_vim_instance(o, vim_type_name):
-    return isinstance(o, sudsobject.Factory.subclass(vim_type_name,
-                                                     sudsobject.Object))
 
 
 def create_service_locator_name_password(client_factory, username, password):
