@@ -198,6 +198,30 @@ def delete_vm_groups(session, cluster, vm_groups):
     LOG.debug("Deleted VM group(s) %s", ", ".join(g.name for g in vm_groups))
 
 
+def delete_rules(session, cluster, rules):
+    """Delete given ClusterAffinityRuleSpec and ClusterAntiAffinityRuleSpec
+       objects
+    """
+    if not rules:
+        return
+
+    client_factory = session.vim.client.factory
+    rule_specs = []
+
+    LOG.debug("Deleting DRS rule(s) %s", ", ".join(r.name for r in rules))
+    for rule in rules:
+        rule_spec = client_factory.create('ns0:ClusterRuleSpec')
+        rule_spec.info = rule
+        rule_spec.operation = "remove"
+        rule_spec.removeKey = rule.name
+        rule_specs.append(rule_spec)
+
+    config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+    config_spec.rulesSpec = rule_specs
+    reconfigure_cluster(session, cluster, config_spec)
+    LOG.debug("Deleted DRS rule(s) %s", ", ".join(r.namem for r in rules))
+
+
 @utils.synchronized('vmware-vm-group-policy')
 def update_placement(session, cluster, vm_ref, group_infos):
     """Updates cluster for vm placement using DRS"""
