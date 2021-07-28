@@ -179,22 +179,23 @@ def fetch_cluster_rules(session, cluster_ref=None, cluster_config=None):
     return {r.name: r for r in cluster_config.rule}
 
 
-def delete_vm_group(session, cluster, vm_group):
-    """Add delete impl fro removing group if deleted vm is the last vm in a
-     vm group
-     """
+def delete_vm_groups(session, cluster, vm_groups):
+    """Delete given ClusterVmGroup objects"""
     client_factory = session.vim.client.factory
-    group_spec = client_factory.create('ns0:ClusterGroupSpec')
     groups = []
 
-    group_spec.info = vm_group
-    group_spec.operation = "remove"
-    group_spec.removeKey = vm_group.name
-    groups.append(group_spec)
+    LOG.debug("Deleting VM group(s) %s", ", ".join(g.name for g in vm_groups))
+    for vm_group in vm_groups:
+        group_spec = client_factory.create('ns0:ClusterGroupSpec')
+        group_spec.info = vm_group
+        group_spec.operation = "remove"
+        group_spec.removeKey = vm_group.name
+        groups.append(group_spec)
 
     config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
     config_spec.groupSpec = groups
     reconfigure_cluster(session, cluster, config_spec)
+    LOG.debug("Deleted VM group(s) %s", ", ".join(g.name for g in vm_groups))
 
 
 @utils.synchronized('vmware-vm-group-policy')
@@ -377,10 +378,7 @@ def clean_empty_vm_groups(session, cluster, group_names=None, instance=None):
             continue
 
         try:
-            LOG.debug("Deleting VM group %s", group.name, instance=instance)
-            delete_vm_group(session, cluster, group)
-            LOG.debug("VM group %s deleted successfully", group.name,
-                instance=instance)
+            delete_vm_groups(session, cluster, [group])
         except Exception as e:
             LOG.warning("Deleting VM group %s failed: %s", group.name, e,
                 instance=instance)
