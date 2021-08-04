@@ -3415,7 +3415,6 @@ class VMwareVMOpsTestCase(test.TestCase):
             meta_dict)
 
         extra_specs = self._vmops._get_extra_specs(flavor, image_meta)
-        print(extra_specs)
         self.assertEqual(self._calculate_expected_fake_video_ram(
             expected_video_ram), extra_specs.hw_video_ram)
 
