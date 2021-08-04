@@ -20,7 +20,6 @@ The VMware API VM utility module to build SOAP object specs.
 
 import collections
 import copy
-import functools
 import operator
 
 from oslo_log import log as logging
@@ -275,19 +274,72 @@ def _vm_ref_cache(id, func, session, data):
 
 
 def vm_ref_cache_from_instance(func):
-    @functools.wraps(func)
+    @six.wraps(func)
     def wrapper(session, instance):
-        id = instance.uuid
-        return _vm_ref_cache(id, func, session, instance)
+        id_ = instance.uuid
+        return _vm_ref_cache(id_, func, session, instance)
     return wrapper
 
 
 def vm_ref_cache_from_name(func):
-    @functools.wraps(func)
+    @six.wraps(func)
     def wrapper(session, name):
-        id = name
-        return _vm_ref_cache(id, func, session, name)
+        id_ = name
+        return _vm_ref_cache(id_, func, session, name)
     return wrapper
+
+
+def vm_ref_cache_heal_from_instance(func):
+    """Decorator for a function working with a cached ManagedObject reference
+    for an instance
+
+    Invalidates the cache in case of matching ManagedObjectNotFoundException
+    Most functions rely on the reference to be stable over the life-time of an
+    instance, and do not handle this exception, they expect InstanceNotFound
+
+    By invalidating the cache, we solve two issues:
+    1. We have a chance to recover from such a rare change
+    2. If not, we now raise InstanceNotFound, which is actually handled
+
+    The main motivator though is the live-vm migration across vcenters,
+    which can make the VM "disappear"
+
+    An operator also can de-register and re-register a vm, or need to recover
+    the vsphere service, resulting in changed mo-refs,
+    requiring a restart to clear the cache.
+
+    WARNING: Care needs to be taken in applying the decorator:
+    It requires, that the function in question is idempotent (up to the point
+    where the vm_ref is being used)
+    """
+    @six.wraps(func)
+    def wrapper(session, instance, *args, **kwargs):
+        try:
+            return func(session, instance, *args, **kwargs)
+        except vexc.ManagedObjectNotFoundException as e:
+            with excutils.save_and_reraise_exception() as ctx:
+                id_ = instance.uuid
+                vm_ref = vm_ref_cache_get(id_)
+                obj = e.details.get("obj")
+
+                # A different moref may be invalid, nothing we can do about it
+                if obj != vm_ref.value:
+                    return  # noqa
+
+                vm_ref_cache_delete(id_)
+                ctx.reraise = False
+
+                # In case the reference has been passed
+                kw_vm_ref = kwargs.get("vm_ref", None)
+                if kw_vm_ref and kw_vm_ref.value == vm_ref.value:
+                    kwargs.pop("vm_ref")
+
+                # Unlikely, but we might run into the same situation again.
+                LOG.info("Trying to recover possible vm-ref incoherence")
+                return wrapper(session, instance, *args, **kwargs)
+
+    return wrapper
+
 
 # the config key which stores the VNC port
 VNC_CONFIG_KEY = 'config.extraConfig["RemoteDisplay.vnc.port"]'
@@ -1371,6 +1423,7 @@ def search_vm_ref_by_identifier(session, identifier):
     return vm_ref
 
 
+@vm_ref_cache_heal_from_instance
 def get_host_ref_for_vm(session, instance):
     """Get a MoRef to the ESXi host currently running an instance."""
 
@@ -1387,6 +1440,7 @@ def get_host_name_for_vm(session, instance):
                                 host_ref, "name")
 
 
+@vm_ref_cache_heal_from_instance
 def get_vm_state(session, instance):
     vm_ref = get_vm_ref(session, instance)
     vm_state = session._call_method(vutil, "get_object_property",
@@ -1731,16 +1785,21 @@ def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
     return task_info.result
 
 
+@vm_ref_cache_heal_from_instance
+def _destroy_vm(session, instance, vm_ref=None):
+    if not vm_ref:
+        vm_ref = get_vm_ref(session, instance)
+    LOG.debug("Destroying the VM", instance=instance)
+    destroy_task = session._call_method(session.vim, "Destroy_Task",
+                                        vm_ref)
+    session._wait_for_task(destroy_task)
+    LOG.info("Destroyed the VM", instance=instance)
+
+
 def destroy_vm(session, instance, vm_ref=None):
     """Destroy a VM instance. Assumes VM is powered off."""
     try:
-        if not vm_ref:
-            vm_ref = get_vm_ref(session, instance)
-        LOG.debug("Destroying the VM", instance=instance)
-        destroy_task = session._call_method(session.vim, "Destroy_Task",
-                                            vm_ref)
-        session._wait_for_task(destroy_task)
-        LOG.info("Destroyed the VM", instance=instance)
+        return _destroy_vm(session, instance, vm_ref=vm_ref)
     except vexc.VimFaultException as e:
         with excutils.save_and_reraise_exception() as ctx:
             LOG.exception(_('Destroy VM failed'), instance=instance)
@@ -1833,6 +1892,7 @@ def reconfigure_vm(session, vm_ref, config_spec):
     session._wait_for_task(reconfig_task)
 
 
+@vm_ref_cache_heal_from_instance
 def power_on_instance(session, instance, vm_ref=None):
     """Power on the specified instance."""
 
@@ -1893,6 +1953,7 @@ def get_vm_detach_port_index(session, vm_ref, iface_id):
                 return int(option.key.split('.')[2])
 
 
+@vm_ref_cache_heal_from_instance
 def power_off_instance(session, instance, vm_ref=None):
     """Power off the specified instance."""
 
