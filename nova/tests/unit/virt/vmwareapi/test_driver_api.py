@@ -2356,7 +2356,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         self.assertEqual(CONF.reserved_host_memory_mb,
                          stats['memory_mb_reserved'])
         self.assertEqual('VMware vCenter Server', stats['hypervisor_type'])
-        self.assertEqual(5001000, stats['hypervisor_version'])
+        self.assertEqual(5005000, stats['hypervisor_version'])
         self.assertEqual(self.node_name, stats['hypervisor_hostname'])
         cpu_info = {'features': ['aes', 'avx'],
                     'vendor': 'Intel',
