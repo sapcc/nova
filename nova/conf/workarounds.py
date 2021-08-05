@@ -276,6 +276,24 @@ Related options:
 * ``[libvirt]/images_type`` (rbd)
 * ``instances_path``
 """),
+
+    cfg.BoolOpt(
+        'enable_live_migration_to_old_hypervisor',
+        default=False,
+        help="""
+Disables the version check between source and destination hypervisor.
+
+When live migrating from one host to another, it is usually ensured that the
+destination host is at least of the same version, but some hypervisors
+(i.e. Vmware) allow migration from a newer hypervisor version to an older one.
+This disables the check until a more proper way of validating compatibility has
+been implemented.
+
+Related options:
+
+* ``compute_driver`` (vmwareapi.VMwareVCDriver)
+
+"""),
 ]
 
 
