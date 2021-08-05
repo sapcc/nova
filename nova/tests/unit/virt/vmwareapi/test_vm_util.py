@@ -539,7 +539,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         devices.append(ide_controller)
         fake._update_object("VirtualMachine", vm)
         # return the scsi type, not ide
-        hardware_device = vm.get("config.hardware.device")
+        hardware_device = vm.get("config.hardware.device").VirtualDevice
         self.assertEqual(constants.DEFAULT_ADAPTER_TYPE,
                          vm_util.get_scsi_adapter_type(hardware_device))
 
@@ -558,7 +558,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         hardware_device = vm.get("config.hardware.device")
         self.assertRaises(exception.StorageError,
                           vm_util.get_scsi_adapter_type,
-                          hardware_device)
+                          hardware_device.VirtualDevice)
 
     def test_find_allocated_slots(self):
         disk1 = fake.VirtualDisk(200, 0)
