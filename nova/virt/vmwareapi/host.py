@@ -145,9 +145,10 @@ class VCState(object):
         max_objects = 100
         vim = self._session.vim
         property_collector = vim.service_content.propertyCollector
+        client_factory = vim.client.factory
 
         traversal_spec = vutil.build_traversal_spec(
-            vim.client.factory,
+            client_factory,
             "c_to_h",
             "ComputeResource",
             "host",
@@ -155,21 +156,21 @@ class VCState(object):
             [])
 
         object_spec = vutil.build_object_spec(
-            vim.client.factory,
+            client_factory,
             self._cluster,
             [traversal_spec])
         property_spec = vutil.build_property_spec(
-            vim.client.factory,
+            client_factory,
             "HostSystem",
             ["hardware.cpuPkg",
              "hardware.cpuInfo",
              "config.featureCapability"])
 
         property_filter_spec = vutil.build_property_filter_spec(
-            vim.client.factory,
+            client_factory,
             [property_spec],
             [object_spec])
-        options = vim.client.factory.create('ns0:RetrieveOptions')
+        options = client_factory.create('ns0:RetrieveOptions')
         options.maxObjects = max_objects
 
         pc_result = vim.RetrievePropertiesEx(property_collector,
