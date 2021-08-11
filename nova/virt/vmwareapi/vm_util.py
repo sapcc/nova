@@ -1305,41 +1305,33 @@ def _get_allocated_vnc_ports(session):
     vnc_ports = set()
     result = session._call_method(vim_util, "get_objects",
                                   "VirtualMachine", [VNC_CONFIG_KEY])
-    while result:
-        for obj in result.objects:
+    with vutil.WithRetrieval(session.vim, result) as objects:
+        for obj in objects:
             if not hasattr(obj, 'propSet'):
                 continue
             dynamic_prop = obj.propSet[0]
             option_value = dynamic_prop.val
             vnc_port = option_value.value
             vnc_ports.add(int(vnc_port))
-        result = session._call_method(vutil, 'continue_retrieval',
-                                      result)
     return vnc_ports
 
 
-def _get_object_for_value(results, value):
-    for object in results.objects:
+def _get_object_for_value(objects, value):
+    for object in objects:
         if object.propSet[0].val == value:
             return object.obj
 
 
-def _get_object_for_optionvalue(results, value):
-    for object in results.objects:
+def _get_object_for_optionvalue(objects, value):
+    for object in objects:
         if hasattr(object, "propSet") and object.propSet:
             if object.propSet[0].val.value == value:
                 return object.obj
 
 
 def _get_object_from_results(session, results, value, func):
-    while results:
-        object = func(results, value)
-        if object:
-            session._call_method(vutil, 'cancel_retrieval',
-                                 results)
-            return object
-        results = session._call_method(vutil, 'continue_retrieval',
-                                       results)
+    with vutil.WithRetrieval(session.vim, results) as objects:
+        return func(objects, value)
 
 
 def _get_vm_ref_from_name(session, vm_name):
@@ -1535,8 +1527,8 @@ def get_stats_from_cluster(session, cluster):
     max_mem_mb_per_host = 0
     reserved_memory_mb = 0
     # Get the Host and Resource Pool Managed Object Refs
-    props = ["host", "resourcePool",
-             "configuration.dasConfig.admissionControlPolicy"]
+    admission_policy_key = "configuration.dasConfig.admissionControlPolicy"
+    props = ["host", "resourcePool", admission_policy_key]
     if CONF.vmware.hostgroup_reservations_json_file:
         props.append("configurationEx")
     prop_dict = session._call_method(vutil,
@@ -1545,8 +1537,7 @@ def get_stats_from_cluster(session, cluster):
                                      props)
     if prop_dict:
         failover_hosts = []
-        key = 'configuration.dasConfig.admissionControlPolicy'
-        policy = prop_dict.get(key)
+        policy = prop_dict.get(admission_policy_key)
         if policy and hasattr(policy, 'failoverHosts'):
             failover_hosts = set(h.value for h in policy.failoverHosts)
 
@@ -1562,13 +1553,22 @@ def get_stats_from_cluster(session, cluster):
                          "HostSystem", host_mors,
                          ["summary.hardware", "summary.runtime",
                           "summary.quickStats"])
-            for obj in result.objects:
-                host_props = propset_dict(obj.propSet)
-                hardware_summary = host_props['summary.hardware']
-                runtime_summary = host_props['summary.runtime']
-                stats_summary = host_props['summary.quickStats']
-                if (runtime_summary.inMaintenanceMode is False and
-                    runtime_summary.connectionState == "connected"):
+            total_hypervisor_count = 0
+            # NOTE (jakobk): For the total amount of hosts it doesn't matter
+            # whether the host is in MM or unreachable, because the count is
+            # used to calculate safety margins for resource allocations, and MM
+            # or otherwise unreachable hosts is precisely what that is supposed
+            # to guard against.
+            with vutil.WithRetrieval(session.vim, result) as objects:
+                for obj in objects:
+                    total_hypervisor_count += 1
+                    host_props = propset_dict(obj.propSet)
+                    runtime_summary = host_props['summary.runtime']
+                    if (runtime_summary.inMaintenanceMode or
+                            runtime_summary.connectionState != "connected"):
+                        continue
+                    hardware_summary = host_props['summary.hardware']
+                    stats_summary = host_props['summary.quickStats']
                     # Total vcpus is the sum of all pCPUs of individual hosts
                     # The overcommitment ratio is factored in by the scheduler
                     threads = hardware_summary.numCpuThreads
@@ -1585,12 +1585,6 @@ def get_stats_from_cluster(session, cluster):
                                              threads - reserved['vcpus'])
                     max_mem_mb_per_host = max(max_mem_mb_per_host,
                                               mem_mb - reserved['memory_mb'])
-            # NOTE (jakobk): For the total amount of hosts it doesn't matter
-            # whether the host is in MM or unreachable, because the count is
-            # used to calculate safety margins for resource allocations, and MM
-            # or otherwise unreachable hosts is precisely what that is supposed
-            # to guard against.
-            total_hypervisor_count = len(result.objects)
 
             # Calculate VM-reservable memory as a ratio of total available
             # memory, depending on either the configured tolerance for failed
@@ -1714,13 +1708,8 @@ def get_all_cluster_mors(session):
     try:
         results = session._call_method(vim_util, "get_objects",
                                         "ClusterComputeResource", ["name"])
-        session._call_method(vutil, 'cancel_retrieval',
-                             results)
-        if results.objects is None:
-            return []
-        else:
-            return results.objects
-
+        with vutil.WithRetrieval(session.vim, results) as objects:
+            return list(objects)
     except Exception as excep:
         LOG.warning("Failed to get cluster references %s", excep)
 
