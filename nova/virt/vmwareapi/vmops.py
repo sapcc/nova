@@ -2646,8 +2646,9 @@ class VMwareVMOps(object):
         """
         lst_vms = []
 
-        while retrieve_result:
-            for vm in retrieve_result.objects:
+        with vutil.WithRetrieval(self._session.vim, retrieve_result) \
+                as objects:
+            for vm in objects:
                 vm_uuid = None
                 conn_state = None
                 props = {}
@@ -2668,9 +2669,7 @@ class VMwareVMOps(object):
                     lst_vms.append((vm_uuid, props))
                 else:
                     lst_vms.append(vm_uuid)
-            retrieve_result = self._session._call_method(vutil,
-                                                         'continue_retrieval',
-                                                         retrieve_result)
+
         return lst_vms
 
     def instance_exists(self, instance):
