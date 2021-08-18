@@ -905,13 +905,11 @@ def _get_device_disk_type(device):
 
 
 def get_hardware_devices(session, vm_ref):
-    ds = session._call_method(vutil,
-                            "get_object_property",
-                            vm_ref,
-                            "config.hardware.device")
-    if ds.__class__.__name__ == "ArrayOfVirtualDevice":
-        return ds.VirtualDevice
-    return ds
+    hardware_devices = session._call_method(vutil,
+                                            "get_object_property",
+                                            vm_ref,
+                                            "config.hardware.device")
+    return vim_util.get_array_items(hardware_devices)
 
 
 def get_vmdk_info(session, vm_ref, uuid=None):
