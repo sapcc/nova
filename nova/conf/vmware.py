@@ -424,6 +424,11 @@ instances as clone from template.
 Before fetching from Glance an image missing on the datastore first look for it
 on other datastores and clone it from there if available.
 """),
+    cfg.BoolOpt('image_fetch_from_content_library',
+                default=False,
+                help="""
+Images are synced into the local content library. Use that instead of Glance.
+"""),
     cfg.StrOpt('smbios_asset_tag',
                help="""
 Set the SMBIOS chassis asset tag to the specified value, so users can identify

@@ -684,7 +684,8 @@ class Datastore(ManagedObject):
     """Datastore class."""
 
     def __init__(self, name="fake-ds", capacity=1024, free=500,
-                 accessible=True, maintenance_mode="normal"):
+                 accessible=True, maintenance_mode="normal",
+                 url="ds://none"):
         super(Datastore, self).__init__("ds")
         self.set("summary.type", "VMFS")
         self.set("summary.name", name)
@@ -692,6 +693,7 @@ class Datastore(ManagedObject):
         self.set("summary.freeSpace", free * units.Gi)
         self.set("summary.accessible", accessible)
         self.set("summary.maintenanceMode", maintenance_mode)
+        self.set("summary.url", url)
         self.set("browser", "")
 
 

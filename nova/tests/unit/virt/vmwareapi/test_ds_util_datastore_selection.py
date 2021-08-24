@@ -37,6 +37,9 @@ class VMwareDSUtilDatastoreSelectionTestCase(test.NoDBTestCase):
             ['VMFS', 'some-name-good', False, 'normal', 987654321, 12346789],
             ['VMFS', 'new-name', True, 'inMaintenance', 987654321, 12346789]
         ]
+        ds_url = 'ds://fake'
+        for d in self.data:
+            d.append(ds_url)
 
     def create_result_iterator(self, mock_data, name_list=None):
         # datastores will have a moref_id of ds-000 and
@@ -57,7 +60,7 @@ class VMwareDSUtilDatastoreSelectionTestCase(test.NoDBTestCase):
     def propset_name_list(self):
         return ['summary.type', 'summary.name', 'summary.accessible',
                 'summary.maintenanceMode', 'summary.capacity',
-                'summary.freeSpace']
+                'summary.freeSpace', 'summary.url']
 
     def test_filter_datastores_simple(self):
         datastores = self.create_result_iterator(self.data)

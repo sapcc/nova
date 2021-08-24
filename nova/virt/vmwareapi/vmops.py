@@ -65,6 +65,7 @@ from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import imagecache
 from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi import special_spawning
+from nova.virt.vmwareapi import vcenter as vcenter_rest
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
@@ -720,10 +721,77 @@ class VMwareVMOps(object):
                                                 self._imagecache,
                                                 extra_specs)
 
+    @staticmethod
+    def _get_datastore_path_for_item_storage(item_storage, datastore):
+        # URI looks like this:
+        # ds://{datastore.url}/{path}?serverId={vcenter.uuid}
+        path = item_storage['storage_uris'][0]
+
+        # Remove the datastore url from the URI
+        path = path.replace(datastore.url, '')
+
+        # Remove the query string from the uri
+        qs = path.find('?serverId')
+        if qs > 0:
+            path = path[:qs]
+
+        return ds_obj.DatastorePath(datastore.name, path)
+
+    def _fetch_image_from_content_library_item(self, context, vi,
+                                               image_ds_loc):
+        client = self._create_vcenter_rest_client()
+        items = client.find_item({'name': vi.image_id})
+
+        if not items:
+            LOG.warning("Image %s does not exist in any library.", vi.image_id)
+            raise exception.ImageNotFound()
+        item_id = items[0]
+
+        storage_list = client.list_item_storage(item_id)
+
+        if not storage_list or not storage_list[0]['cached']:
+            # This is a synchronous operation, waiting until the item is fully
+            # synced. The content will be available right away in the storage.
+            LOG.debug("Syncing item %s to the local content library", item_id)
+            client.sync_subscribed_item(item_id)
+            LOG.debug("Synced item %s to the local content library", item_id)
+
+            if not storage_list:
+                storage_list = client.list_item_storage(item_id)
+
+        storage = storage_list[0]
+        ds_ref = vutil.get_moref(storage['storage_backing']['datastore_id'],
+                                 'Datastore')
+        datastore = ds_obj.get_datastore_by_ref(self._session, ds_ref)
+        dc_info = self.get_datacenter_ref_and_name(ds_ref)
+        ds_path = self._get_datastore_path_for_item_storage(storage, datastore)
+
+        LOG.debug("Copying image %(image_id)s item to "
+                  "%(file_path)s on the data store "
+                  "%(datastore_name)s",
+                  {'image_id': vi.ii.image_id,
+                   'file_path': image_ds_loc,
+                   'datastore_name': vi.datastore.name},
+                  instance=vi.instance)
+
+        ds_util.file_copy(
+            self._session, str(ds_path), dc_info.ref,
+            str(image_ds_loc), vi.dc_info.ref)
+
+        LOG.debug("Copied image %(image_id)s item to "
+                  "%(file_path)s on the data store "
+                  "%(datastore_name)s",
+                  {'image_id': vi.ii.image_id,
+                   'file_path': image_ds_loc,
+                   'datastore_name': vi.datastore.name},
+                  instance=vi.instance)
+
     def _get_image_callbacks(self, vi):
         disk_type = vi.ii.disk_type
 
-        if vi.ii.is_ova:
+        if CONF.vmware.image_fetch_from_content_library:
+            image_fetch = self._fetch_image_from_content_library_item
+        elif vi.ii.is_ova:
             image_fetch = self._fetch_image_as_ova
         elif disk_type == constants.DISK_TYPE_STREAM_OPTIMIZED:
             image_fetch = self._fetch_image_as_vapp
@@ -3102,3 +3170,10 @@ class VMwareVMOps(object):
             [property_spec, property_spec_vm],
             [object_spec])
         return property_filter_spec
+
+    @staticmethod
+    def _create_vcenter_rest_client():
+        return vcenter_rest.VCenterRESTHelper(
+            host=CONF.vmware.host_ip,
+            user=CONF.vmware.host_username,
+            password=CONF.vmware.host_password)

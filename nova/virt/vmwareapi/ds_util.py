@@ -77,7 +77,8 @@ def _select_datastore(session, datastores, best_match, datastore_regex=None,
                     ref=obj_content.obj,
                     name=propdict['summary.name'],
                     capacity=propdict['summary.capacity'],
-                    freespace=propdict['summary.freeSpace'])
+                    freespace=propdict['summary.freeSpace'],
+                    url=propdict['summary.url'])
             # favor datastores with more free space
             if (best_match is None or
                     new_ds.freespace > best_match.freespace):
@@ -129,7 +130,8 @@ def get_datastore(session, cluster, datastore_regex=None,
                             ["summary.type", "summary.name",
                              "summary.capacity", "summary.freeSpace",
                              "summary.accessible",
-                             "summary.maintenanceMode"])
+                             "summary.maintenanceMode",
+                             "summary.url"])
 
     best_match = None
     with vutil.WithRetrieval(session.vim, result) as datastores:
@@ -166,7 +168,8 @@ def _get_allowed_datastores(datastores, datastore_regex):
             yield (ds_obj.Datastore(ref=obj_content.obj,
                                     name=propdict['summary.name'],
                                     capacity=propdict['summary.capacity'],
-                                    freespace=propdict['summary.freeSpace']))
+                                    freespace=propdict['summary.freeSpace'],
+                                    url=propdict['summary.url']))
 
 
 def get_available_datastores(session, cluster=None, datastore_regex=None,
@@ -194,7 +197,7 @@ def get_available_datastores(session, cluster=None, datastore_regex=None,
             "Datastore", data_store_mors,
             ["summary.type", "summary.name", "summary.accessible",
              "summary.maintenanceMode", "summary.capacity",
-             "summary.freeSpace"])
+             "summary.freeSpace", "summary.url"])
 
     with vutil.WithRetrieval(session.vim, result) as datastores:
         return list(_get_allowed_datastores(datastores, datastore_regex))
