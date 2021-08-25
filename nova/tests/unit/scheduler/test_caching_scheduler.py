@@ -102,7 +102,9 @@ class CachingSchedulerTestCase(test_scheduler.SchedulerTestCase):
         self.assertEqual(1, len(result))
         self.assertEqual(result[0][0].service_host, fake_host.host)
 
-    def _test_select_destinations(self, spec_obj):
+    @mock.patch('nova.scheduler.mixins.HypervisorSizeMixin._get_hv_size',
+                return_value=None)
+    def _test_select_destinations(self, spec_obj, mock_hv_size):
         provider_summaries = {}
         for cell_hosts in self.driver.all_host_states.values():
             for hs in cell_hosts:
@@ -122,6 +124,7 @@ class CachingSchedulerTestCase(test_scheduler.SchedulerTestCase):
             ephemeral_gb=1,
             vcpus=1,
             swap=0,
+            extra_specs={},
         )
         instance_properties = {
             "os_type": "linux",
@@ -169,7 +172,10 @@ class CachingSchedulerTestCase(test_scheduler.SchedulerTestCase):
     @mock.patch('nova.db.api.instance_extra_get_by_instance_uuid',
                 return_value={'numa_topology': None,
                               'pci_requests': None})
-    def test_performance_check_select_destination(self, mock_get_extra):
+    @mock.patch('nova.scheduler.mixins.HypervisorSizeMixin._get_hv_size',
+                return_value=None)
+    def test_performance_check_select_destination(self, mock_hv_size,
+                                                  mock_get_extra):
         hosts = 2
         requests = 1
 
@@ -221,7 +227,9 @@ class CachingSchedulerTestCase(test_scheduler.SchedulerTestCase):
         # But this is here so you can do simply performance testing easily.
         self.assertLess(per_request_ms, 1000)
 
-    def test_request_single_cell(self):
+    @mock.patch('nova.scheduler.mixins.HypervisorSizeMixin._get_hv_size',
+                return_value=None)
+    def test_request_single_cell(self, mock_hv_size):
         spec_obj = self._get_fake_request_spec()
         spec_obj.requested_destination = objects.Destination(
             cell=objects.CellMapping(uuid=uuids.cell2))
