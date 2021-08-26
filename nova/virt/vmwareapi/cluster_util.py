@@ -257,7 +257,7 @@ def _get_rule(cluster_config, rule_name):
             return rule
 
 
-def _is_drs_enabled(session, cluster):
+def is_drs_enabled(session, cluster):
     """Check if DRS is enabled on a given cluster"""
     drs_config = session._call_method(vim_util, "get_object_property", cluster,
                                       "configuration.drsConfig")
