@@ -16,12 +16,13 @@
 """
 Management class for host-related functions (start, reboot, etc).
 """
+from copy import deepcopy
+import six
 
 from oslo_log import log as logging
 from oslo_utils import units
 from oslo_utils import versionutils
 from oslo_vmware import exceptions as vexc
-from oslo_vmware import vim_util as vutil
 
 import nova.conf
 from nova import context
@@ -42,28 +43,29 @@ def _get_ds_capacity_and_freespace(session, cluster=None,
                                    datastore_regex=None):
     capacity = 0
     freespace = 0
+    max_freespace = 0
     try:
         for ds in ds_util.get_available_datastores(session,
                                                    cluster,
                                                    datastore_regex):
             capacity += ds.capacity
             freespace += ds.freespace
+            max_freespace = max(max_freespace, ds.freespace)
     except exception.DatastoreNotFound:
         pass
 
-    return capacity, freespace
+    return capacity, freespace, max_freespace
 
 
 class VCState(object):
     """Manages information about the vCenter cluster"""
-    def __init__(self, session, host_name, cluster, datastore_regex):
+    def __init__(self, session, cluster_node_name, cluster, datastore_regex):
         super(VCState, self).__init__()
         self._session = session
-        self._host_name = host_name
+        self._cluster_node_name = cluster_node_name
         self._cluster = cluster
         self._datastore_regex = datastore_regex
         self._stats = {}
-        self._cpu_model = None
         ctx = context.get_admin_context()
         try:
             service = objects.Service.get_by_compute_host(ctx, CONF.host)
@@ -90,44 +92,57 @@ class VCState(object):
         """Update the current state of the cluster."""
         data = {}
         try:
-            capacity, freespace = _get_ds_capacity_and_freespace(self._session,
-                self._cluster, self._datastore_regex)
+            capacity, free, max_free = _get_ds_capacity_and_freespace(
+                self._session, self._cluster, self._datastore_regex)
 
             # Get cpu, memory stats from the cluster
-            stats = vm_util.get_stats_from_cluster(self._session,
-                                                   self._cluster)
+            per_host_stats = vm_util.get_stats_from_cluster_per_host(
+                self._session, self._cluster)
         except (vexc.VimConnectionException, vexc.VimAttributeException) as ex:
             # VimAttributeException is thrown when vpxd service is down
             LOG.warning("Failed to connect with %(node)s. "
                         "Error: %(error)s",
-                        {'node': self._host_name, 'error': ex})
+                        {'node': self._cluster_node_name, 'error': ex})
             self._set_host_enabled(False)
             return data
 
-        data["vcpus"] = stats['cpu']['vcpus']
-        data["vcpus_reserved"] = stats['cpu']['reserved_vcpus']
-        data["disk_total"] = capacity / units.Gi
-        data["disk_available"] = freespace / units.Gi
-        data["disk_used"] = data["disk_total"] - data["disk_available"]
-        data["host_memory_total"] = stats['mem']['total']
-        data["host_memory_free"] = stats['mem']['free']
-        data['host_memory_reserved'] = stats['mem']['reserved_memory_mb']
-        data["hypervisor_type"] = self._hypervisor_type
-        data["hypervisor_version"] = self._hypervisor_version
-        data["hypervisor_hostname"] = self._host_name
-        data["supported_instances"] = [
-            (obj_fields.Architecture.I686,
-             obj_fields.HVType.VMWARE,
-             obj_fields.VMMode.HVM),
-            (obj_fields.Architecture.X86_64,
-             obj_fields.HVType.VMWARE,
-             obj_fields.VMMode.HVM)]
-        data["cpu_model"] = self.to_cpu_model()
+        local_gb = capacity / units.Gi
+        local_gb_used = (capacity - free) / units.Gi
+        local_gb_max_free = max_free / units.Gi
+
+        defaults = {
+            "local_gb": local_gb,
+            "local_gb_used": local_gb_used,
+            "local_gb_max_free": local_gb_max_free,
+            "supported_instances": [
+                (obj_fields.Architecture.I686,
+                 obj_fields.HVType.VMWARE,
+                 obj_fields.VMMode.HVM),
+                (obj_fields.Architecture.X86_64,
+                 obj_fields.HVType.VMWARE,
+                 obj_fields.VMMode.HVM)],
+            "numa_topology": None,
+        }
+
+        for host, stats in six.iteritems(per_host_stats):
+            data[host] = self._merge_stats(host, stats, defaults)
+
+        cluster_stats = vm_util.aggregate_stats_from_cluster(per_host_stats)
+        cluster_stats["hypervisor_type"] = self._hypervisor_type
+        cluster_stats["hypervisor_version"] = self._hypervisor_version
+        data[self._cluster_node_name] = self._merge_stats(
+            self._cluster_node_name, cluster_stats, defaults)
 
         self._stats = data
         if self._auto_service_disabled:
             self._set_host_enabled(True)
         return data
+
+    def _merge_stats(self, host, stats, defaults):
+        result = deepcopy(defaults)
+        result["hypervisor_hostname"] = host
+        result.update(stats)
+        return result
 
     def _set_host_enabled(self, enabled):
         """Sets the compute host's ability to accept new instances."""
@@ -137,101 +152,3 @@ class VCState(object):
         service.disabled_reason = SERVICE_DISABLED_REASON
         service.save()
         self._auto_service_disabled = service.disabled
-
-    def to_cpu_model(self):
-        max_objects = 100
-        vim = self._session.vim
-        property_collector = vim.service_content.propertyCollector
-        client_factory = vim.client.factory
-
-        traversal_spec = vutil.build_traversal_spec(
-            client_factory,
-            "c_to_h",
-            "ComputeResource",
-            "host",
-            False,
-            [])
-
-        object_spec = vutil.build_object_spec(
-            client_factory,
-            self._cluster,
-            [traversal_spec])
-        property_spec = vutil.build_property_spec(
-            client_factory,
-            "HostSystem",
-            ["hardware.cpuPkg",
-             "hardware.cpuInfo",
-             "config.featureCapability"])
-
-        property_filter_spec = vutil.build_property_filter_spec(
-            client_factory,
-            [property_spec],
-            [object_spec])
-        options = client_factory.create('ns0:RetrieveOptions')
-        options.maxObjects = max_objects
-
-        pc_result = vim.RetrievePropertiesEx(property_collector,
-                                             specSet=[property_filter_spec],
-                                             options=options)
-
-        result = []
-
-        # Retrieving needed hardware properties from ESX hosts
-        with vutil.WithRetrieval(vim, pc_result) as pc_objects:
-            for objContent in pc_objects:
-                props_in = {prop.name: prop.val for prop in objContent.propSet}
-
-                processor_type = None
-                cpu_vendor = None
-                if 'hardware.cpuPkg' in props_in:
-                    hardware_cpu_pkg = props_in["hardware.cpuPkg"]
-                    if hardware_cpu_pkg.HostCpuPackage:
-                        t = hardware_cpu_pkg.HostCpuPackage[0]
-                        processor_type = t.description
-                        cpu_vendor = t.vendor.title()
-
-                features = []
-                if 'config.featureCapability' in props_in:
-                    feature_capability = props_in["config.featureCapability"]
-                    for feature in feature_capability.HostFeatureCapability:
-                        if not feature.featureName.startswith("cpuid."):
-                            continue
-                        if feature.value != "1":
-                            continue
-
-                        name = feature.featureName
-                        features.append(name.split(".", 1)[1].lower())
-
-                props = {
-                    "model": processor_type,
-                    "vendor": cpu_vendor,
-                    "features": sorted(features)
-                    }
-
-                hardware_cpu_info = props_in.get("hardware.cpuInfo", None)
-                if hardware_cpu_info:
-                    props["topology"] = {
-                        "cores": hardware_cpu_info.numCpuCores,
-                        "sockets": hardware_cpu_info.numCpuPackages,
-                        "threads": hardware_cpu_info.numCpuThreads
-                    }
-
-                result.append(props)
-
-        equal = True
-
-        # Compare found ESX hosts
-        if len(result) > 1:
-            for i in range(len(result) - 1):
-                if result[i] == result[i + 1]:
-                    continue
-                else:
-                    equal = False
-                    break
-
-        if not equal:
-            self._cpu_model = "CPU's for this cluster have different values!"
-        elif result:
-            self._cpu_model = result[0]
-
-        return self._cpu_model
