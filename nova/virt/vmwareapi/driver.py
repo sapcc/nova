@@ -28,6 +28,7 @@ from six.moves import urllib
 import time
 
 from oslo_log import log as logging
+from oslo_serialization import jsonutils
 from oslo_utils import excutils
 from oslo_utils import units
 from oslo_utils import versionutils as v_utils
@@ -50,7 +51,6 @@ from nova import utils
 from nova.virt import driver
 from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
-from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import host
 from nova.virt.vmwareapi.session import VMwareAPISession
@@ -60,7 +60,6 @@ from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
 from nova.virt.vmwareapi import volumeops
-from oslo_serialization import jsonutils
 
 LOG = logging.getLogger(__name__)
 
@@ -348,29 +347,17 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         return '%s.%s' % (mo_id, self._vcenter_uuid)
 
-    def _get_available_resources(self, host_stats):
-        return {'vcpus': host_stats['vcpus'],
-               'memory_mb': host_stats['host_memory_total'],
-               'local_gb': host_stats['disk_total'],
-               'vcpus_used': 0,
-               'memory_mb_used': host_stats['host_memory_total'] -
-                                 host_stats['host_memory_free'],
-               'local_gb_used': host_stats['disk_used'],
-               'vcpus_reserved': CONF.reserved_host_cpus +
-                                 host_stats['vcpus_reserved'],
-               'memory_mb_reserved': CONF.reserved_host_memory_mb +
-                                     host_stats['host_memory_reserved'],
-               'hypervisor_type': host_stats['hypervisor_type'],
-               'hypervisor_version': host_stats['hypervisor_version'],
-               'hypervisor_hostname': host_stats['hypervisor_hostname'],
-                # The VMWare driver manages multiple hosts, so there are
-                # likely many different CPU models in use. As such it is
-                # impossible to provide any meaningful info on the CPU
-                # model of the "host"
-               'cpu_info': jsonutils.dumps(host_stats["cpu_model"]),
-               'supported_instances': host_stats['supported_instances'],
-               'numa_topology': None,
-               }
+    def _get_available_resources(self, host_stats, nodename):
+        stats = host_stats[nodename].copy()
+        stats["memory_mb_reserved"] = min(stats["memory_mb"],
+                                          stats["memory_mb_reserved"]
+                                          + CONF.reserved_host_memory_mb)
+        stats["vcpus_reserved"] = min(stats["vcpus"],
+                                      stats["vcpus_reserved"]
+                                      + CONF.reserved_host_cpus)
+        stats["cpu_info"] = jsonutils.dumps(stats['cpu_info'], sort_keys=True)
+
+        return stats
 
     def get_available_resource(self, nodename):
         """Retrieve resource info.
@@ -381,8 +368,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         :returns: dictionary describing resources
 
         """
-        host_stats = self._vc_state.get_host_stats(refresh=True)
-        stats_dict = self._get_available_resources(host_stats)
+        host_stats = self._vc_state.get_host_stats()
+        stats_dict = self._get_available_resources(host_stats, nodename)
         return stats_dict
 
     def get_cluster_metrics(self):
@@ -454,60 +441,72 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         This driver supports only one compute node.
         """
+        # get_available_nodes is called at the beginning of polling
+        # the resources of all the nodes via
+        #    get_inventory & get_available_resource
+        # We follow here the same pattern as in the ironic driver and use this
+        # function call as an indicator of a new polling cycle and refresh
+        # the host stats cached in _vc_state by calling...
+        self._vc_state.get_host_stats(refresh=True)
+        # In the following calls to get_inventory and get_available_resource
+        # for each node, we then return the cached data
         return [self._nodename]
 
     def get_inventory(self, nodename):
         """Return a dict, keyed by resource class, of inventory information for
         the supplied node.
         """
-        stats = vm_util.get_stats_from_cluster(self._session,
-                                               self._cluster_ref)
-        datastores = ds_util.get_available_datastores(self._session,
-                                                      self._cluster_ref,
-                                                      self._datastore_regex)
-        total_disk_capacity = sum([ds.capacity for ds in datastores])
-        max_free_space = max([ds.freespace for ds in datastores])
-        reserved_disk_gb = compute_utils.convert_mb_to_ceil_gb(
-            CONF.reserved_host_disk_mb)
-        result = {
-            fields.ResourceClass.DISK_GB: {
-                'total': total_disk_capacity // units.Gi,
+        stats = self.get_available_resource(nodename)
+        result = {}
+
+        local_gb = stats["local_gb"]
+        local_gb_max_free = stats.get("local_gb_max_free", "local_gb")
+        if local_gb > 0 and local_gb_max_free > 0:
+            reserved_disk_gb = compute_utils.convert_mb_to_ceil_gb(
+                CONF.reserved_host_disk_mb)
+            result[fields.ResourceClass.DISK_GB] = {
+                'total': local_gb,
                 'reserved': reserved_disk_gb,
                 'min_unit': 1,
-                'max_unit': max_free_space // units.Gi,
+                'max_unit': local_gb_max_free,
                 'step_size': 1,
             }
-        }
-        if stats['cpu']['max_vcpus_per_host'] > 0:
-            reserved_vcpus = stats['cpu'].get('reserved_vcpus', 0)
-            reserved_vcpus += CONF.reserved_host_cpus
-            result.update({fields.ResourceClass.VCPU: {
-                'total': stats['cpu']['vcpus'],
+
+        vcpus = stats["vcpus"]
+        max_vcpus = stats.get("max_vcpus_per_host", vcpus)
+        if vcpus > 0 and max_vcpus > 0:
+            reserved_vcpus = stats["vcpus_reserved"]
+            result[fields.ResourceClass.VCPU] = {
+                'total': vcpus,
                 'reserved': reserved_vcpus,
                 'min_unit': 1,
-                'max_unit': stats['cpu']['max_vcpus_per_host'],
+                'max_unit': max_vcpus,
                 'step_size': 1,
-            }})
-        if stats['mem']['max_mem_mb_per_host'] > 0:
-            reserved_memory_mb = stats['mem'].get('reserved_memory_mb', 0)
-            reserved_memory_mb += CONF.reserved_host_memory_mb
-            result.update({fields.ResourceClass.MEMORY_MB: {
-                'total': stats['mem']['total'],
+            }
+
+        memory_mb = stats["memory_mb"]
+        reserved_memory_mb = stats["memory_mb_reserved"]
+        max_memory_mb = stats.get("max_mem_mb_per_host", memory_mb)
+        if memory_mb > 0 and max_memory_mb > 0:
+            result[fields.ResourceClass.MEMORY_MB] = {
+                'total': memory_mb,
                 'reserved': reserved_memory_mb,
                 'min_unit': 1,
-                'max_unit': stats['mem']['max_mem_mb_per_host'],
+                'max_unit': max_memory_mb,
                 'step_size': 1,
-            }})
-            available_memory_mb = stats['mem']['total'] - reserved_memory_mb
-            result.update({
-                utils.MEMORY_RESERVABLE_MB_RESOURCE: {
-                    'total': available_memory_mb,
-                    'reserved': int(available_memory_mb
-                        * (1 - stats['mem']['vm_reservable_memory_ratio'])),
-                    'min_unit': 1,
-                    'max_unit': stats['mem']['max_mem_mb_per_host'],
-                    'step_size': 1,
-            }})
+            }
+
+            available_memory_mb = memory_mb - reserved_memory_mb
+            reserved_reservable_memory = int(available_memory_mb
+                        * (1 - stats.get("vm_reservable_memory_ratio", 0)))
+            if available_memory_mb > 0:
+                result[utils.MEMORY_RESERVABLE_MB_RESOURCE] = {
+                        'total': available_memory_mb,
+                        'reserved': reserved_reservable_memory,
+                        'min_unit': 1,
+                        'max_unit': max_memory_mb,
+                        'step_size': 1,
+                }
         return result
 
     def spawn(self, context, instance, image_meta, injected_files,
