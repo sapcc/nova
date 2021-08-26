@@ -17,9 +17,11 @@
 Management class for host-related functions (start, reboot, etc).
 """
 
+from oslo_log import log as logging
 from oslo_utils import units
 from oslo_utils import versionutils
 from oslo_vmware import exceptions as vexc
+from oslo_vmware import vim_util as vutil
 
 import nova.conf
 from nova import context
@@ -30,8 +32,6 @@ from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
-from oslo_log import log as logging
-from oslo_vmware import vim_util as vutil
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ class VCState(object):
 
         result = []
 
-        """ Retrieving needed hardware properties from ESX hosts """
+        # Retrieving needed hardware properties from ESX hosts
         with vutil.WithRetrieval(vim, pc_result) as pc_objects:
             for objContent in pc_objects:
                 props_in = {prop.name: prop.val for prop in objContent.propSet}
@@ -223,7 +223,7 @@ class VCState(object):
 
         equal = True
 
-        """ Compare found ESX hosts """
+        # Compare found ESX hosts
         if len(result) > 1:
             for i in range(len(result) - 1):
                 if result[i] == result[i + 1]:
