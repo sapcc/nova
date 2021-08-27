@@ -33,28 +33,25 @@ def reconfigure_cluster(session, cluster, config_spec):
     session.wait_for_task(reconfig_task)
 
 
-def _create_vm_group_spec(client_factory, group_info, vm_refs,
-                          operation="add", group=None):
+def create_vm_group(client_factory, name, vm_refs, group=None):
+    """Create a ClusterVmGroup object
+
+    :param:group: if given, update this ClusterVmGroup object instead of
+                  creating a new one
+    """
     group = group or client_factory.create('ns0:ClusterVmGroup')
-    group.name = group_info.name
+    group.name = name
+    group.vm = vm_refs
 
-    # On vCenter UI, it is not possible to create VM group without
-    # VMs attached to it. But, using APIs, it is possible to create
-    # VM group without VMs attached. Therefore, check for existence
-    # of vm attribute in the group to avoid exceptions
-    if hasattr(group, 'vm'):
-        group.vm += vm_refs
-    else:
-        group.vm = vm_refs
-
-    group_spec = client_factory.create('ns0:ClusterGroupSpec')
-    group_spec.operation = operation
-    group_spec.info = group
-    return [group_spec]
+    return group
 
 
-def _create_host_group_spec(client_factory, name, host_refs, operation="add",
-                            group=None):
+def create_host_group(client_factory, name, host_refs, group=None):
+    """Create a ClusterHostGroup object
+
+    :param:group: if given, update the ClusterHostGroup object instead of
+                  creating a new one
+    """
     group = group or client_factory.create('ns0:ClusterHostGroup')
     group.name = name
 
@@ -63,10 +60,37 @@ def _create_host_group_spec(client_factory, name, host_refs, operation="add",
     else:
         group.host = host_refs
 
+    return group
+
+
+def create_group_spec(client_factory, group, operation):
+    """Create a ClusterGroupSpec object"""
+    if operation not in ('add', 'edit', 'remove'):
+        msg = 'Invalid operation for ClusterGroupSpec: {}'.format(operation)
+        raise exception.ValidationError(msg)
+
     group_spec = client_factory.create('ns0:ClusterGroupSpec')
     group_spec.operation = operation
     group_spec.info = group
+    if operation == 'remove':
+        group_spec.removeKey = group.name
+
     return group_spec
+
+
+def _create_vm_group_spec(client_factory, group_info, vm_refs,
+                          operation="add", group=None):
+    if group:
+        # On vCenter UI, it is not possible to create VM group without
+        # VMs attached to it. But, using APIs, it is possible to create
+        # VM group without VMs attached. Therefore, check for existence
+        # of vm attribute in the group to avoid exceptions
+        if hasattr(group, 'vm'):
+            vm_refs += group.vm
+
+    group = create_vm_group(client_factory, group_info.name, vm_refs, group)
+
+    return create_group_spec(client_factory, group, operation)
 
 
 def _get_vm_group(cluster_config, group_info):
@@ -186,10 +210,7 @@ def delete_vm_groups(session, cluster, vm_groups):
 
     LOG.debug("Deleting VM group(s) %s", ", ".join(g.name for g in vm_groups))
     for vm_group in vm_groups:
-        group_spec = client_factory.create('ns0:ClusterGroupSpec')
-        group_spec.info = vm_group
-        group_spec.operation = "remove"
-        group_spec.removeKey = vm_group.name
+        group_spec = create_group_spec(client_factory, vm_group, "remove")
         groups.append(group_spec)
 
     config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
