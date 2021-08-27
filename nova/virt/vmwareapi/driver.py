@@ -20,9 +20,11 @@ A connection to the VMware vCenter platform.
 """
 import os
 import re
+import six
 from six.moves import urllib
 
 from oslo_log import log as logging
+from oslo_service import periodic_task
 from oslo_utils import excutils
 from oslo_utils import units
 from oslo_utils import versionutils as v_utils
@@ -39,10 +41,12 @@ from nova.compute import vm_states
 import nova.conf
 from nova import exception
 from nova.i18n import _
+from nova import objects
 import nova.privsep.path
 from nova import rc_fields as fields
 from nova import utils
 from nova.virt import driver
+from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
@@ -697,6 +701,229 @@ class VMwareVCDriver(driver.ComputeDriver):
     def detach_interface(self, context, instance, vif):
         """Detach an interface from the instance."""
         self._vmops.detach_interface(context, instance, vif)
+
+    @periodic_task.periodic_task(spacing=CONF.vmware_drs_group_sync_interval)
+    def _sync_cluster_groups(self, context):
+        LOG.debug('Starting DRS groups/rules sync-loop.')
+        client_factory = self._session.vim.client.factory
+
+        # retrieve all DRS groups, rules and members
+        cluster_groups = cluster_util.fetch_cluster_groups(
+            self._session, cluster_ref=self._cluster_ref, group_type='vm')
+        cluster_rules = cluster_util.fetch_cluster_rules(
+            self._session, cluster_ref=self._cluster_ref)
+
+        # NOTE: No need to filter the members of DRS groups and rules, because
+        # DRS rules/groups are cluster-local and thus can only contain VMs of
+        # the cluster.
+
+        # filter DRS groups matching to our naming scheme
+        cluster_groups = {name: g for (name, g) in cluster_groups.items()
+                          if name.startswith(constants.DRS_PREFIX)}
+        cluster_rules = {name: r for (name, r) in cluster_rules.items()
+                         if name.startswith(constants.DRS_PREFIX)}
+
+        # get all instance uuids belonging to this host
+        InstanceList = objects.instance.InstanceList
+        instances = InstanceList.get_by_host(context, self._compute_host,
+                                             expected_attrs=[])
+        instances_by_uuid = {i.uuid: i for i in instances}
+        instance_uuids = set(instances_by_uuid)
+
+        # retrieve all InstanceGroups
+        InstanceGroupList = objects.instance_group.InstanceGroupList
+        expected_groups = {}
+        expected_rules = {}
+        ig_list = InstanceGroupList.get_by_instance_uuids(
+            context, set(instances_by_uuid))
+        for ig in ig_list:
+            # InstanceGroup.members contains all members - even deleted ones.
+            # Therefore, we filter them to only include our instances.
+            member_uuids_on_host = set(ig.members) & instance_uuids
+
+            # We have to translate the instance uuids to morefs for the vcenter
+            members_on_host = {}
+            for vm_uuid in member_uuids_on_host:
+                instance = instances_by_uuid[vm_uuid]
+                try:
+                    moref = vim_util.get_vm_ref(self._session, instance)
+                except exception.InstanceNotFound:
+                    LOG.warning('Could not find moref for instance %s. '
+                                'Ignoring member of server-group %s.',
+                                instance.uuid, ig.uuid)
+                    continue
+                members_on_host[vm_uuid] = moref
+
+            group_name = '{}{}'.format(constants.DRS_PREFIX, ig.uuid)
+            expected_groups[group_name] = members_on_host
+
+            rule_name = '{}-{}'.format(group_name, ig.policy)
+            expected_rules[rule_name] = (ig.policy, members_on_host)
+
+        updates = {'rules': {'remove': [], 'edit': [], 'add': []},
+                   'groups': {'remove': [], 'edit': [], 'add': []}}
+
+        orphan_drs_groups = set(cluster_groups) - set(expected_groups)
+
+        # FIXME the orphans might not be orphans, if we have automatic sharding
+        # for soft-anti-affinity
+
+        # Mark orphan DRS groups for deletion
+        for group_name in orphan_drs_groups:
+            LOG.debug('Orphan DRS group %s designated for deletion',
+                      group_name)
+            updates['groups']['remove'].append(cluster_groups[group_name])
+
+        # NOTE: Orphan DRS rules don't exist. The vCenter deletes a rule
+        # automatically, if the last VM leaves.
+
+        # Delete DRS groups having less than 2 members on this host
+        # This is to keep the number of groups minimal and thus reduce load on
+        # DRS.
+        existing_groups = set(cluster_groups) & set(expected_groups)
+        for group_name in existing_groups:
+            expected_members = expected_groups[group_name]
+            if len(expected_members) > 1:
+                continue
+
+            group = cluster_groups[group_name]
+            LOG.debug('Less than 2 members in DRS group %s. Group designated '
+                      'for deletion',
+                      group_name)
+            updates['groups']['remove'].append(group)
+
+        # Delete DRS rules having less than 2 members on this host
+        # This is to keep the number of groups minimal and thus reduce load on
+        # DRS.
+        existing_rules = set(cluster_rules) & set(expected_rules)
+        for rule_name in existing_rules:
+            expected_members = expected_rules[rule_name][1]
+            if len(expected_members) > 1:
+                continue
+
+            rule = cluster_rules[rule_name]
+            LOG.debug('Less than 2 members in DRS rule %s. Rule designated '
+                      'for deletion',
+                      rule_name)
+            updates['rules']['remove'].append(rule)
+
+        # Update DRS groups if members don't match
+        for i, group_name in enumerate(existing_groups, start=1):
+            expected_members = expected_groups[group_name]
+            if len(expected_members) < 2:
+                continue
+
+            expected_morefs = expected_members.values()
+            group = cluster_groups[group_name]
+
+            # check both missing and additional morefs
+            expected_moref_values = set(vim_util.get_moref_value(m)
+                                        for m in expected_morefs)
+            existing_moref_values = set(vim_util.get_moref_value(m)
+                                        for m in group.vm)
+            if expected_moref_values == existing_moref_values:
+                continue
+
+            LOG.info('DRS group members of %s are out of sync with cluster; '
+                     'expected %s but found %s.', group_name,
+                     ', '.join(expected_moref_values),
+                     ', '.join(existing_moref_values))
+            group.vm = expected_morefs
+            updates['groups']['edit'].append(group)
+
+        # Update DRS rules if members don't match
+        for i, rule_name in enumerate(existing_rules, start=1):
+            expected_members = expected_rules[rule_name]
+            if len(expected_members) < 2:
+                continue
+
+            expected_morefs = expected_members.values()
+            rule = cluster_rules[rule_name]
+
+            # check both missing and additional morefs
+            expected_moref_values = set(vim_util.get_moref_value(m)
+                                        for m in expected_morefs)
+            existing_moref_values = set(vim_util.get_moref_value(m)
+                                        for m in rule.vm)
+            if expected_moref_values == existing_moref_values:
+                continue
+
+            LOG.info('DRS rule members of %s are out of sync with cluster; '
+                     'expected %s but found %s.', rule_name,
+                     ', '.join(expected_moref_values),
+                     ', '.join(existing_moref_values))
+            rule.vm = expected_morefs
+            updates['rules']['edit'].append(rule)
+
+        # Add non-existing DRS groups containing more than 1 member
+        missing_groups = set(expected_groups) - set(cluster_groups)
+        for group_name in missing_groups:
+            expected_members = expected_groups[group_name]
+            if len(expected_members) < 2:
+                continue
+
+            member_morefs = expected_members.values()
+            group = cluster_util.create_vm_group(client_factory, group_name,
+                                                 member_morefs)
+
+            LOG.info('Will add missing DRS group %s with members %s',
+                     group_name, ', '.join(expected_members))
+            updates['groups']['add'].append(group)
+
+        # Add non-existing DRS rules containing more than 1 member
+        missing_rules = set(expected_rules) - set(cluster_rules)
+        for rule_name in missing_rules:
+            policy, expected_members = expected_rules[rule_name]
+            if len(expected_members) < 2:
+                continue
+
+            member_morefs = expected_members.values()
+            rule = cluster_util.create_vm_rule(client_factory, rule_name,
+                                               member_morefs, policy)
+
+            LOG.info('Will add missing DRS rule %s with members %s',
+                     group_name, ', '.join(expected_members))
+            updates['rules']['add'].append(rule)
+
+        # Check if we found any necessary updates or bail early
+        if not any(ops[op] for ops in six.itervalues(updates) for op in ops):
+            LOG.debug('DRS group/rule sync-loop found no updates.')
+            LOG.debug('Finished DRS groups/rules sync-loop.')
+            return
+
+        # Now we have a set of changes to do on the cluster. We'll do this in
+        # batches to not overwhelm the vCenter
+        config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+        config_spec.groupSpec = []
+        config_spec.rulesSpec = []
+        i = 0
+        for obj_type, operations in six.iteritems(updates):
+            for operation, objs in six.itervalues(operations):
+                for obj in objs:
+                    if obj_type == 'groups':
+                        spec = cluster_util.create_group_spec(client_factory,
+                                                              obj, operation)
+                        config_spec.groupSpec.append(spec)
+                    if obj_type == 'rules':
+                        spec = cluster_util.create_rule_spec(client_factory,
+                                                             obj, operation)
+                        config_spec.rulesSpec.append(spec)
+                    i += 1
+                    if i % 50 == 0:
+                        LOG.debug('Reconfiguring cluster for DRS '
+                                  'groups/rules.')
+                        cluster_util.reconfigure_cluster(self._session,
+                            self._cluster_ref, config_spec)
+                        LOG.info('Reconfigured cluster for DRS groups/rules '
+                                 'update found in sync-loop.')
+                        config_spec.groupSpec = []
+                        config_spec.rulesSpec = []
+
+        if config_spec.groupSpec or config_spec.rulesSpec:
+            cluster_util.reconfigure_cluster(self._session, self._cluster_ref,
+                                             config_spec)
+
+        LOG.debug('Finished DRS groups/rules sync-loop.')
 
 
 class VMwareAPISession(api.VMwareAPISession):
