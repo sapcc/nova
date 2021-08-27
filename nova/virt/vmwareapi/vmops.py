@@ -159,6 +159,9 @@ class VMwareVMOps(object):
                                                         self._base_folder)
         self._network_api = network.API()
 
+        # pre-warm the cache, so we don't have to do extra queries per instance
+        self.update_vmref_cache()
+
     def _get_base_folder(self):
         # Enable more than one compute node to run on the same host
         if CONF.vmware.cache_prefix:
@@ -3112,3 +3115,13 @@ class VMwareVMOps(object):
             [property_spec, property_spec_vm],
             [object_spec])
         return property_filter_spec
+
+    def update_vmref_cache(self):
+        """List all VMs in the cluster and cache their morefs"""
+        props = ['config.instanceUuid']
+        instances = self._list_instances_in_cluster(props, include_moref=True)
+        for vm_uuid, props in instances:
+            if vm_uuid != props.get('config.instance_metadata'):
+                continue
+
+            vm_util.vm_ref_cache_update(vm_uuid, props['obj'])
