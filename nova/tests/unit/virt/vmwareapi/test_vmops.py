@@ -555,24 +555,25 @@ class VMwareVMOpsTestCase(test.TestCase):
         if vmware_tools_status == "toolsOk":
             if returns_on > 0:
                 expected_methods.append('ShutdownGuest')
-                for x in range(returns_on + 1):
-                    return_props.append(props_on)
-                for x in range(returns_on):
-                    expected_methods.append('get_object_properties_dict')
-            for x in range(returns_off):
-                return_props.append(props_off)
+                return_props.append(props_on)
+                for _ in range(returns_on):
+                    return_props.append(props_on['runtime.powerState'])
+                    expected_methods.append('get_object_property')
+            for _ in range(returns_off):
+                return_props.append(props_off['runtime.powerState'])
                 if returns_on > 0:
-                    expected_methods.append('get_object_properties_dict')
+                    expected_methods.append('get_object_property')
         else:
             return_props.append(props_off)
 
         def fake_call_method(module, method, *args, **kwargs):
             expected_method = expected_methods.pop(0)
             self.assertEqual(expected_method, method)
-            if expected_method == 'get_object_properties_dict':
+            if expected_method in ('get_object_properties_dict',
+                                   'get_object_property'):
                 props = return_props.pop(0)
                 return props
-            elif expected_method == 'ShutdownGuest':
+            if expected_method == 'ShutdownGuest':
                 return
 
         with test.nested(
@@ -584,7 +585,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                  retry_interval)
 
         self.assertEqual(succeeds, result)
-        mock_get_vm_ref.assert_called_once_with(self._session,
+        mock_get_vm_ref.assert_called_with(self._session,
                                                 self._instance)
 
     def test_clean_shutdown_first_time(self):

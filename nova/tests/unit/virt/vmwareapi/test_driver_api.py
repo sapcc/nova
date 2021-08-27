@@ -399,7 +399,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                 return vm
         self.fail('Unable to find VM backing!')
 
-    def _get_info(self, uuid=None, node=None, name=None):
+    def _get_info(self, uuid=None, node=None, name=None, use_cache=False):
         uuid = uuid if uuid else self.uuid
         node = node if node else self.instance_node
         name = name if node else '1'
@@ -407,7 +407,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             None,
             **{'uuid': uuid,
                'name': name,
-               'node': node}))
+               'node': node}), use_cache)
 
     def _check_vm_record(self, num_instances=1, powered_on=True, uuid=None):
         """Check if the spawned VM's properties correspond to the instance in
