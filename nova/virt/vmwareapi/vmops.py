@@ -2667,11 +2667,15 @@ class VMwareVMOps(object):
                         self._unregister_template_vm(templ_vm_ref)
 
     def _get_valid_vms_from_retrieve_result(self, retrieve_result,
-                                            return_properties=False):
+                                            return_properties=False,
+                                            include_moref=False):
         """Returns list of valid vms from RetrieveResult object.
 
         If `return_properties` is True, it will also return the properties of
         these VMs, thus returning a tuple (vm_uuid, properties).
+
+        If `include_moref' is True, it will return a tuple as above and the
+        properties will include a special "obj" key containing the moref.
         """
         lst_vms = []
 
@@ -2693,6 +2697,9 @@ class VMwareVMOps(object):
                 # Ignoring the orphaned or inaccessible VMs
                 if conn_state in ["orphaned", "inaccessible"]:
                     continue
+
+                if include_moref:
+                    props['obj'] = vm.obj
 
                 if return_properties:
                     lst_vms.append((vm_uuid, props))
@@ -2929,7 +2936,8 @@ class VMwareVMOps(object):
 
         return lst_vm_names
 
-    def _list_instances_in_cluster(self, additional_properties=None):
+    def _list_instances_in_cluster(self, additional_properties=None,
+                                   include_moref=False):
         """Lists the VM instances that are registered with vCenter cluster."""
         properties = ['runtime.connectionState',
                       'config.extraConfig["nvp.vm-uuid"]']
@@ -2942,9 +2950,10 @@ class VMwareVMOps(object):
             vms = self._session._call_method(
                 vim_util, 'get_inner_objects', self._root_resource_pool, 'vm',
                 'VirtualMachine', properties)
-        return_properties = additional_properties is not None
+        return_properties = additional_properties is not None or include_moref
         lst_vm_names = self._get_valid_vms_from_retrieve_result(vms,
-                                        return_properties=return_properties)
+                                        return_properties=return_properties,
+                                        include_moref=include_moref)
 
         return lst_vm_names
 
