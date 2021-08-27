@@ -452,6 +452,19 @@ all clusters in the environment.
 Example: "vmx-13" for vSphere 6.5.
 Versions can be looked up here: https://kb.vmware.com/s/article/1003746
 """),
+    cfg.StrOpt('hypervisor_mode',
+               default="cluster",
+               help="""
+Defines how the vsphere host is exposed to nova.
+
+Can be one of the following:
+
+cluster: The host has one hypervisor for the whole cluster. (Original)
+esxi_to_cluster: Both will be exposed, but the ESXi resources are reserved, and
+                 all instances will be moved over to the cluster
+cluster_to_esxi: Both will be exposed, but the ESXi resources are reserved, and
+                 all instances will be from the cluster to the ESXi-hosts
+"""),
 ]
 
 vmwareapi_driver_opts = [

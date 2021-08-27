@@ -443,6 +443,7 @@ class ComputeTaskManager:
     def _live_migrate(self, context, instance, scheduler_hint,
                       block_migration, disk_over_commit, request_spec):
         destination = scheduler_hint.get("host")
+        destination_node = scheduler_hint.get("node")
 
         def _set_vm_state(context, instance, ex, vm_state=None,
                           task_state=None):
@@ -459,10 +460,12 @@ class ComputeTaskManager:
 
         migration = objects.Migration(context=context.elevated())
         migration.dest_compute = destination
+        migration.dest_node = destination_node
         migration.status = 'accepted'
         migration.instance_uuid = instance.uuid
         migration.source_compute = instance.host
         migration.migration_type = fields.MigrationType.LIVE_MIGRATION
+        migration.source_node = instance.node
         if instance.obj_attr_is_set('flavor'):
             migration.old_instance_type_id = instance.flavor.id
             migration.new_instance_type_id = instance.flavor.id

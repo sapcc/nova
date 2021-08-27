@@ -22,6 +22,7 @@ from oslo_log import log as logging
 from oslo_utils import units
 from oslo_utils import versionutils
 from oslo_vmware import exceptions as vexc
+from oslo_vmware import vim_util as v_util
 
 import nova.conf
 from nova import context
@@ -64,6 +65,7 @@ class VCState(object):
         self._cluster = cluster
         self._datastore_regex = datastore_regex
         self._stats = {}
+        self._host_ref_to_name = {}
         ctx = context.get_admin_context()
         try:
             service = objects.Service.get_by_compute_host(ctx, CONF.host)
@@ -78,6 +80,10 @@ class VCState(object):
                 str(about_info.version))
         self.update_status()
 
+    @property
+    def cluster_node_name(self):
+        return self._cluster_node_name
+
     def get_host_stats(self, refresh=False):
         """Return the current state of the cluster. If 'refresh' is
         True, run the update first.
@@ -85,6 +91,11 @@ class VCState(object):
         if refresh or not self._stats:
             self.update_status()
         return self._stats
+
+    def get_host_name(self, host_ref):
+        if not self._host_ref_to_name:
+            self.update_status()
+        return self._host_ref_to_name[v_util.get_moref_value(host_ref)]
 
     def update_status(self):
         """Update the current state of the cluster."""
@@ -123,6 +134,8 @@ class VCState(object):
         }
 
         for host, stats in per_host_stats.items():
+            obj = stats.pop("obj")
+            self._host_ref_to_name[v_util.get_moref_value(obj)] = host
             data[host] = self._merge_stats(host, stats, defaults)
 
         cluster_stats = vm_util.aggregate_stats_from_cluster(per_host_stats)

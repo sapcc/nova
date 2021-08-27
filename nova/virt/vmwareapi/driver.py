@@ -71,6 +71,7 @@ MAX_CONSOLE_BYTES = 100 * units.Ki
 
 UUID_RE = re.compile(r'[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-'
                      r'[a-fA-F0-9]{4}-[a-fA-F0-9]{12}')
+HYPERVISOR_MODES = ('cluster', 'esxi_to_cluster', 'cluster_to_esxi')
 
 
 class VMwareVCDriver(driver.ComputeDriver):
@@ -117,6 +118,12 @@ class VMwareVCDriver(driver.ComputeDriver):
                 CONF.vmware.host_password is None):
             raise Exception(_("Must specify host_ip, host_username and "
                               "host_password to use vmwareapi.VMwareVCDriver"))
+
+        if CONF.vmware.hypervisor_mode not in HYPERVISOR_MODES:
+            raise Exception("Unknown hypervisor mode {}. Expecting {}".format(
+                CONF.vmware.hypervisor_mode,
+                HYPERVISOR_MODES,
+            ))
 
         self._datastore_regex = None
         if CONF.vmware.datastore_regex:
@@ -171,6 +178,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                       self._nodename,
                                       self._cluster_ref,
                                       self._datastore_regex)
+                                        self._vc_state,
         self._vmops = vmops.VMwareVMOps(self._session,
                                         virtapi,
                                         self._volumeops,
@@ -476,8 +484,6 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def get_available_nodes(self, refresh=False):
         """Returns nodenames of all nodes managed by the compute service.
-
-        This driver supports only one compute node.
         """
         # get_available_nodes is called at the beginning of polling
         # the resources of all the nodes via
@@ -485,10 +491,12 @@ class VMwareVCDriver(driver.ComputeDriver):
         # We follow here the same pattern as in the ironic driver and use this
         # function call as an indicator of a new polling cycle and refresh
         # the host stats cached in _vc_state by calling...
-        self._vc_state.get_host_stats(refresh=True)
+        hosts = self._vc_state.get_host_stats(refresh=True)
         # In the following calls to get_inventory and get_available_resource
         # for each node, we then return the cached data
-        return [self._nodename]
+
+        if CONF.vmware.hypervisor_mode == 'cluster':
+            return [self._nodename]
 
     def update_provider_tree(self, provider_tree, nodename, allocations=None):
         """Update a ProviderTree object with current resource provider,
@@ -537,6 +545,13 @@ class VMwareVCDriver(driver.ComputeDriver):
         :raises: ReshapeFailed if the requested tree reshape fails for
             whatever reason.
         """
+        if nodename == self._nodename:
+            # Either "cluster", or
+            normal = (CONF.vmware.hypervisor_mode in ('cluster',
+                                                      'esxi_to_cluster'))
+        else:
+            normal = (CONF.vmware.hypervisor_mode == 'cluster_to_esxi')
+
         stats = self.get_available_resource(nodename)
         result = {}
 
@@ -548,13 +563,13 @@ class VMwareVCDriver(driver.ComputeDriver):
         ratios = self._get_allocation_ratios(inv)
 
         local_gb = stats["local_gb"]
-        local_gb_max_free = stats.get("local_gb_max_free", "local_gb")
+        local_gb_max_free = stats.get("local_gb_max_free", local_gb)
         if local_gb > 0 and local_gb_max_free > 0:
             reserved_disk_gb = compute_utils.convert_mb_to_ceil_gb(
                 CONF.reserved_host_disk_mb)
             result[orc.DISK_GB] = {
                 'total': local_gb,
-                'reserved': reserved_disk_gb,
+                'reserved': reserved_disk_gb if normal else local_gb,
                 'min_unit': 1,
                 'max_unit': local_gb_max_free,
                 'step_size': 1,
@@ -567,7 +582,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             reserved_vcpus = stats["vcpus_reserved"]
             result[orc.VCPU] = {
                 'total': vcpus,
-                'reserved': reserved_vcpus,
+                'reserved': reserved_vcpus if normal else vcpus,
                 'min_unit': 1,
                 'max_unit': max_vcpus,
                 'step_size': 1,
@@ -580,7 +595,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         if memory_mb > 0 and max_memory_mb > 0:
             result[orc.MEMORY_MB] = {
                 'total': memory_mb,
-                'reserved': reserved_memory_mb,
+                'reserved': reserved_memory_mb if normal else memory_mb,
                 'min_unit': 1,
                 'max_unit': max_memory_mb,
                 'step_size': 1,
@@ -593,7 +608,8 @@ class VMwareVCDriver(driver.ComputeDriver):
             if available_memory_mb > 0:
                 result[utils.MEMORY_RESERVABLE_MB_RESOURCE] = {
                         'total': available_memory_mb,
-                        'reserved': reserved_reservable_memory,
+                        'reserved': (reserved_reservable_memory
+                                     if normal else available_memory_mb),
                         'min_unit': 1,
                         'max_unit': max_memory_mb,
                         'step_size': 1,
