@@ -49,7 +49,7 @@ def _create_vm_group_spec(client_factory, group_info, vm_refs,
     group_spec = client_factory.create('ns0:ClusterGroupSpec')
     group_spec.operation = operation
     group_spec.info = group
-    return [group_spec]
+    return group_spec
 
 
 def _create_host_group_spec(client_factory, name, host_refs, operation="add",
