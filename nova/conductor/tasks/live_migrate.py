@@ -62,10 +62,12 @@ class LiveMigrationTask(base.TaskBase):
                  request_spec=None):
         super(LiveMigrationTask, self).__init__(context, instance)
         self.destination = destination
+        self.dest_node = None
         self.block_migration = block_migration
         self.disk_over_commit = disk_over_commit
         self.migration = migration
         self.source = instance.host
+        self.source_node = instance.node
         self.migrate_data = None
         self.limits = None
 
@@ -97,7 +99,7 @@ class LiveMigrationTask(base.TaskBase):
             # wants the scheduler to pick a destination host, or a host was
             # specified but is not forcing it, so they want the scheduler
             # filters to run on the specified host, like a scheduler hint.
-            self.destination, dest_node, self.limits = self._find_destination()
+            self.destination, self.dest_node, self.limits = self._find_destination()
         else:
             # This is the case that the user specified the 'force' flag when
             # live migrating with a specific destination host so the scheduler
@@ -336,12 +338,18 @@ class LiveMigrationTask(base.TaskBase):
                     instance_uuid=instance_uuid, dest=dest, avail=avail,
                     mem_inst=mem_inst))
 
-    def _get_compute_info(self, host):
-        return objects.ComputeNode.get_first_node_by_host_for_old_compat(
-            self.context, host)
+    def _get_compute_info(self, host, nodename=None):
+        if not nodename:
+            return objects.ComputeNode.get_first_node_by_host_for_old_compat(
+                self.context, host)
+
+        return objects.ComputeNode.get_by_host_and_nodename(
+            self.context, host, nodename)
 
     def _check_compatible_with_source_hypervisor(self, destination):
-        source_info = self._get_compute_info(self.source)
+        migration = self.migration
+        source_info = self._get_compute_info(migration.source_compute,
+                                             migration.source_node)
         destination_info = self._get_compute_info(destination)
 
         source_type = source_info.hypervisor_type

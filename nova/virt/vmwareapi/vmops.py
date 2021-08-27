@@ -3320,14 +3320,22 @@ class VMwareVMOps(object):
 
     def get_info(self, instance, use_cache=True):
         """Return data about the VM instance."""
-        powerstate_property = 'runtime.powerState'
+        lst_properties = ["runtime.powerState"]
+        if CONF.vmware.hypervisor_mode == 'cluster_to_esxi':
+            lst_properties.append("runtime.host")
         # if use_cache is true, then we are fine with possibly slightly
         # outdated values in favour of less api load, so no polling of updates
         # => skip_update=use_cache
-        vm_props = self._get_instance_props(instance, [powerstate_property],
+        vm_props = self._get_instance_props(instance, lst_properties,
                                             skip_update=use_cache)
+        if CONF.vmware.hypervisor_mode == 'cluster_to_esxi':
+            node = self._vc_state.get_host_name(vm_props["runtime.host"])
+        else:
+            node = self._vc_state.cluster_node_name
         return hardware.InstanceInfo(
-            state=constants.POWER_STATES[vm_props[powerstate_property]])
+            state=constants.POWER_STATES[vm_props["runtime.powerState"]],
+            node=node
+            )
 
     def _get_diagnostics(self, instance):
         """Return data about VM diagnostics."""
@@ -4131,6 +4139,7 @@ class VMwareVMOps(object):
             ["config.instanceUuid",
              "config.managedBy",
              "runtime.powerState",
+             "runtime.host",
              "summary.guest.toolsStatus",
              "summary.guest.toolsRunningStatus",
             ])

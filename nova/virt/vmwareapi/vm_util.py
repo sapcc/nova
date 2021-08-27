@@ -1734,6 +1734,7 @@ def _process_host_stats(obj, host_reservations_map):
         "memory_mb": mem_mb,
         "memory_mb_used": getattr(stats_summary, "overallMemoryUsage", 0),
         "cpu_info": _host_props_to_cpu_info(host_props),
+        "obj": obj.obj,
     }
 
     _set_hypervisor_type_and_version(stats, host_props)
