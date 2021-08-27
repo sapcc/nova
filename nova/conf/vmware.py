@@ -318,7 +318,23 @@ This option sets the http connection pool size
 The connection pool size is the maximum number of connections from nova to
 vSphere.  It should only be increased if there are warnings indicating that
 the connection pool is full, otherwise, the default should suffice.
-""")
+"""),
+    cfg.IntOpt('drs_group_sync_interval',
+               min=60,
+               default=300,
+               help="""
+Internval in seconds of how often to sync server-groups to the cluster
+
+VMware supports adding rules/groups to a cluster for managing anti-/affinity.
+If a user changes the servers belonging to a server-group, we will sync those
+changes down to the cluster every N seconds.
+
+Possible values:
+
+* Positive integer for the space between runs.
+* 0 to run at default value for periodic tasks
+* Negative integer to disable.
+"""),
 ]
 
 spbm_opts = [
