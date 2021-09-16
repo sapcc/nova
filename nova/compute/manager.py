@@ -8838,3 +8838,7 @@ class ComputeManager(manager.Manager):
         if not CONF.cells.enable:
             objects.ConsoleAuthToken.\
                 clean_expired_console_auths_for_host(context, self.host)
+
+    def sync_server_group(self, context, sg_uuid):
+        """Calls the driver to update the server-group in the backend"""
+        self.driver.sync_server_group(context, sg_uuid)

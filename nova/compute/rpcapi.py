@@ -1107,3 +1107,9 @@ class ComputeAPI(object):
         cctxt = client.prepare(server=_compute_host(None, instance),
                 version=version)
         return cctxt.cast(ctxt, "trigger_crash_dump", instance=instance)
+
+    def sync_server_group(self, ctxt, host, sg_uuid):
+        version = '5.0'
+        client = self.router.client(ctxt)
+        cctxt = client.prepare(server=host, version=version)
+        return cctxt.cast(ctxt, "sync_server_group", sg_uuid=sg_uuid)

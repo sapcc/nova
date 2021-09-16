@@ -5005,6 +5005,10 @@ class API(base.Base):
             host_statuses[instance.uuid] = host_status
         return host_statuses
 
+    def sync_server_group(self, context, hosts, sg_uuid):
+        for host in hosts:
+            self.compute_rpcapi.sync_server_group(context, host, sg_uuid)
+
 
 def target_host_cell(fn):
     """Target a host-based function to a cell.
