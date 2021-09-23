@@ -135,12 +135,8 @@ class SecurityGroupAPI(security_group_base.SecurityGroupBase):
         neutron = neutronapi.get_client(context)
         try:
             if not id and name:
-                # NOTE(flwang): The project id should be honoured so as to get
-                # the correct security group id when user(with admin role but
-                # non-admin project) try to query by name, so as to avoid
-                # getting more than duplicated records with the same name.
                 id = neutronv20.find_resourceid_by_name_or_id(
-                    neutron, 'security_group', name, context.project_id)
+                    neutron, 'security_group', name)
             group = neutron.show_security_group(id).get('security_group')
             return self._convert_to_nova_security_group_format(group)
         except n_exc.NeutronClientNoUniqueMatch as e:
