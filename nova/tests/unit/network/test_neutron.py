@@ -9313,7 +9313,7 @@ class TestNeutronPortSecurity(test.NoDBTestCase):
             instance, mock_neutron, ["sg1", uuids.sg2])
 
         mock_neutron.list_security_groups.assert_called_once_with(
-            fields=['id', 'name'], tenant_id=uuids.project_id)
+            fields=['id', 'name'])
 
     def test__process_security_groups(self):
         instance = objects.Instance(project_id=uuids.project_id)
@@ -9347,7 +9347,7 @@ class TestNeutronPortSecurity(test.NoDBTestCase):
             instance, mock_neutron, ["sg1", uuids.sg2])
 
         mock_neutron.list_security_groups.assert_has_calls(
-            [mock.call(fields=['id', 'name'], tenant_id=uuids.project_id)])
+            [mock.call(fields=['id', 'name'])])
 
     def test__process_security_groups_not_found(self):
         instance = objects.Instance(project_id=uuids.project_id)
@@ -9380,7 +9380,7 @@ class TestNeutronPortSecurity(test.NoDBTestCase):
 
         self.assertIn(uuids.sg2, str(ex))
         mock_neutron.list_security_groups.assert_has_calls(
-            [mock.call(fields=['id', 'name'], tenant_id=uuids.project_id),
+            [mock.call(fields=['id', 'name']),
              mock.call(fields=['id', 'name'], shared=True)])
 
     def test__process_security_groups_non_unique_match(self):
@@ -9414,7 +9414,7 @@ class TestNeutronPortSecurity(test.NoDBTestCase):
 
         self.assertIn("nonunique-name", str(ex))
         mock_neutron.list_security_groups.assert_has_calls(
-            [mock.call(fields=['id', 'name'], tenant_id=uuids.project_id),
+            [mock.call(fields=['id', 'name']),
              mock.call(fields=['id', 'name'], shared=True)])
 
     @mock.patch.object(neutronapi.API, 'get_instance_nw_info')
