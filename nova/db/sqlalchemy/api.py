@@ -4525,6 +4525,22 @@ def migration_get_in_progress_by_instance(context, instance_uuid,
     return query.all()
 
 
+def _migration_filter_item(query, filters, name):
+    if name not in filters:
+        return query
+
+    column = getattr(models.Migration, name)
+
+    item = filters[name]
+    if isinstance(item, six.string_types) or item is None:
+        return query.filter(column == item)
+
+    try:
+        return query.filter(column.in_(item))
+    except TypeError:  # in_ expects an iterable, we fall back to comparison
+        return query.filter(column == item)
+
+
 @pick_context_manager_reader
 def migration_get_all_by_filters(context, filters,
                                  sort_keys=None, sort_dirs=None,
@@ -4533,36 +4549,27 @@ def migration_get_all_by_filters(context, filters,
         return []
 
     query = model_query(context, models.Migration)
-    if "uuid" in filters:
-        # The uuid filter is here for the MigrationLister and multi-cell
-        # paging support in the compute API.
-        uuid = filters["uuid"]
-        uuid = [uuid] if isinstance(uuid, six.string_types) else uuid
-        query = query.filter(models.Migration.uuid.in_(uuid))
     if 'changes-since' in filters:
         changes_since = timeutils.normalize_time(filters['changes-since'])
         query = query. \
             filter(models.Migration.updated_at >= changes_since)
-    if "status" in filters:
-        status = filters["status"]
-        status = [status] if isinstance(status, six.string_types) else status
-        query = query.filter(models.Migration.status.in_(status))
+
+    # The uuid filter is here for the MigrationLister and multi-cell
+    # paging support in the compute API.
+    for item in ("uuid", "status", "migration_type", "instance_uuid"):
+        query = _migration_filter_item(query, filters, item)
+
     if "host" in filters:
         host = filters["host"]
         query = query.filter(or_(models.Migration.source_compute == host,
                                  models.Migration.dest_compute == host))
-    elif "source_compute" in filters:
-        host = filters['source_compute']
-        query = query.filter(models.Migration.source_compute == host)
-    if "migration_type" in filters:
-        migtype = filters["migration_type"]
-        query = query.filter(models.Migration.migration_type == migtype)
+    else:
+        query = _migration_filter_item(query, filters, "source_compute")
+
     if "hidden" in filters:
         hidden = filters["hidden"]
         query = query.filter(models.Migration.hidden == hidden)
-    if "instance_uuid" in filters:
-        instance_uuid = filters["instance_uuid"]
-        query = query.filter(models.Migration.instance_uuid == instance_uuid)
+
     if marker:
         try:
             marker = migration_get_by_uuid(context, marker)
