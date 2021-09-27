@@ -2224,6 +2224,10 @@ class VMwareVMOps(object):
             self.update_cluster_placement(context, instance)
             self.disable_drs_if_needed(instance)
 
+            if CONF.vnc.enabled:
+                client_factory = self._session.vim.client.factory
+                self._get_and_set_vnc_config(client_factory, instance, vm_ref)
+
         self._update_instance_progress(context, instance,
                                        step=2,
                                        total_steps=RESIZE_TOTAL_STEPS)
@@ -2472,9 +2476,8 @@ class VMwareVMOps(object):
     @utils.synchronized('vmware.get_and_set_vnc_port')
     def _get_and_set_vnc_config(self, client_factory, instance, vm_ref):
         """Set the vnc configuration of the VM."""
-        port = vm_util.get_vnc_port(self._session)
-        vnc_config_spec = vm_util.get_vnc_config_spec(
-                                      client_factory, port)
+        port = vm_util.get_vnc_port(self._session, self._root_resource_pool)
+        vnc_config_spec = vm_util.get_vnc_config_spec(client_factory, port)
 
         LOG.debug("Reconfiguring VM instance to enable vnc on "
                   "port - %(port)s", {'port': port},

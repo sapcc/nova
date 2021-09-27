@@ -715,7 +715,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         self.flags(vnc_port=5900, group='vmware')
         self.flags(vnc_port_total=10000, group='vmware')
         actual = vm_util.get_vnc_port(
-            fake.FakeObjectRetrievalSession(fake_vms))
+            fake.FakeObjectRetrievalSession(fake_vms), 'fake_cluster')
         self.assertEqual(actual, 5910)
 
     def test_get_vnc_port_exhausted(self):
@@ -724,7 +724,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         self.flags(vnc_port_total=10, group='vmware')
         self.assertRaises(exception.ConsolePortRangeExhausted,
                           vm_util.get_vnc_port,
-                          fake.FakeObjectRetrievalSession(fake_vms))
+                          fake.FakeObjectRetrievalSession(fake_vms),
+                          'fake_cluster')
 
     def test_get_cluster_ref_by_name_none(self):
         fake_objects = fake.FakeRetrieveResult()

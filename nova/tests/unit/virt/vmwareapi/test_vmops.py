@@ -643,12 +643,14 @@ class VMwareVMOpsTestCase(test.TestCase):
                 mock.patch.object(vmops.VMwareVMOps, "_attach_volumes"),
                 mock.patch.object(vmops.VMwareVMOps,
                                   "update_cluster_placement"),
+                mock.patch.object(vmops.VMwareVMOps,
+                                  "_get_and_set_vnc_config"),
         ) as (fake_resize_create_ephemerals_and_swap,
               fake_update_instance_progress, fake_power_on, fake_get_vm_ref,
               fake_remove_ephemerals_and_swap, fake_get_vmdk_info,
               fake_resize_vm, fake_resize_disk, fake_relocate_vm,
               fake_detach_volumes, fake_attach_volumes,
-              fake_update_cluster_placement):
+              fake_update_cluster_placement, fake_get_and_set_vnc_config):
             migration = migration or objects.Migration(dest_compute="nova",
                                                        source_compute="nova")
             if relocate_fails:
@@ -688,6 +690,12 @@ class VMwareVMOpsTestCase(test.TestCase):
                 else:
                     fake_update_cluster_placement.assert_not_called()
                     relocate_failed = True
+
+                fake_get_and_set_vnc_config.assert_called_once_with(
+                    self._session.vim.client.factory,
+                    self._instance,
+                    'fake-ref'
+                )
 
             if not relocate_failed:
                 fake_resize_create_ephemerals_and_swap.assert_called_once_with(

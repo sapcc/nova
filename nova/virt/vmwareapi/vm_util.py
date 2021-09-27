@@ -1281,11 +1281,17 @@ def get_vnc_config_spec(client_factory, port):
     return virtual_machine_config_spec
 
 
-def get_vnc_port(session):
+def get_instances_in_object(session, object_, properties, path='vm'):
+    """May be called on whatever has a vm attribute"""
+    return session._call_method(vim_util, 'get_inner_objects', object_, path,
+                                'VirtualMachine', properties)
+
+
+def get_vnc_port(session, resource_pool):
     """Return VNC port for an VM or None if there is no available port."""
     min_port = CONF.vmware.vnc_port
     port_total = CONF.vmware.vnc_port_total
-    allocated_ports = _get_allocated_vnc_ports(session)
+    allocated_ports = _get_allocated_vnc_ports(session, resource_pool)
     max_port = min_port + port_total
     for port in range(min_port, max_port):
         if port not in allocated_ports:
@@ -1294,13 +1300,11 @@ def get_vnc_port(session):
                                               max_port=max_port)
 
 
-def _get_allocated_vnc_ports(session):
+def _get_allocated_vnc_ports(session, resource_pool):
     """Return an integer set of all allocated VNC ports."""
-    # TODO(rgerganov): bug #1256944
-    # The VNC port should be unique per host, not per vCenter
     vnc_ports = set()
-    result = session._call_method(vim_util, "get_objects",
-                                  "VirtualMachine", [VNC_CONFIG_KEY])
+    result = get_instances_in_object(session, resource_pool, [VNC_CONFIG_KEY],
+                                     path='vm')
     with vutil.WithRetrieval(session.vim, result) as objects:
         for obj in objects:
             if not hasattr(obj, 'propSet'):
