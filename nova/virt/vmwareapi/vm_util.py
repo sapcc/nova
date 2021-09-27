@@ -39,7 +39,6 @@ import nova.conf
 from nova import exception
 from nova.i18n import _
 from nova.network import model as network_model
-from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
 
@@ -1616,13 +1615,6 @@ def get_hosts_and_reservations_for_cluster(session, cluster):
     host_mors = [m for m in host_ret.ManagedObjectReference
                             if m.value not in failover_hosts]
     return host_mors, _get_host_reservations_map(group_ret)
-
-
-def update_cluster_placement(session, instance, cluster, server_group_infos):
-    if not server_group_infos:
-        return
-    vm_ref = get_vm_ref(session, instance)
-    cluster_util.update_placement(session, cluster, vm_ref, server_group_infos)
 
 
 def get_host_ref(session, cluster=None):

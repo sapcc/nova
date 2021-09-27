@@ -258,8 +258,9 @@ class VMwareAPIVMTestCase(test.TestCase,
 
         """ Monkey patch for vm_util.vm_needs_special_spawning
         Currently set to return `True` since most of the methods are calling
-        vm_util.update_cluster_placement which calls _get_server_groups. This
-        is done in order to prevent mocking the tests using spawn.
+        VMOps.update_cluster_placement which calls
+        update_admin_vm_group_membership.
+        This is done in order to prevent mocking the tests using spawn.
         """
         self.useFixture(
             fixtures.MonkeyPatch(
