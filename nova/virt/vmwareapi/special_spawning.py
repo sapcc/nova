@@ -202,11 +202,6 @@ class _SpecialVmSpawningServer(object):
                      'runtime.powerState',
                      'summary.quickStats.hostMemoryUsage']
             cluster_vms = self._vmops._list_instances_in_cluster(props)
-            if not cluster_vms:
-                LOG.error('Got no VMs for freeing a host for spawning. '
-                          'Treating as error instead of continuing, as an '
-                          'empty cluster is unlikely.')
-                return FREE_HOST_STATE_ERROR
 
             for vm_uuid, vm_props in cluster_vms:
                 props = (vm_props.get('config.hardware.memoryMB', 0),
