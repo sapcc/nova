@@ -98,6 +98,13 @@ class _SpecialVmSpawningServer(object):
             if group.name == hg_name:
                 return group
 
+    def _get_hosts_in_cluster(self, cluster_ref):
+        """Return a list of HostSystem morefs belonging to the cluster"""
+        result = self._session._call_method(
+            vim_util, 'get_inner_objects', cluster_ref, 'host', 'HostSystem')
+        with vutil.WithRetrieval(self._session.vim, result) as objects:
+            return [obj.obj for obj in objects]
+
     def _get_vms_on_host(self, host_ref):
         """Return a list of VMs uuids with their memory size and state"""
         vm_data = []
@@ -184,6 +191,11 @@ class _SpecialVmSpawningServer(object):
         if group is None or not getattr(group, 'host', None):
             # find a host to free
 
+            # retrieve all hosts of the cluster
+            host_objs = {vutil.get_moref_value(h): h
+                    for h in self._get_hosts_in_cluster(self._cluster_ref)}
+            vms_per_host = {h: [] for h in host_objs}
+
             # get all the vms in a cluster, because we need to find a host
             # without big VMs.
             props = ['config.hardware.memoryMB', 'runtime.host',
@@ -196,8 +208,6 @@ class _SpecialVmSpawningServer(object):
                           'empty cluster is unlikely.')
                 return FREE_HOST_STATE_ERROR
 
-            host_objs = {}
-            vms_per_host = {}
             for vm_uuid, vm_props in cluster_vms:
                 props = (vm_props.get('config.hardware.memoryMB', 0),
                          vm_props.get('runtime.powerState', 'poweredOff'),
@@ -209,7 +219,6 @@ class _SpecialVmSpawningServer(object):
                     continue
 
                 host = vutil.get_moref_value(host_obj)
-                host_objs.setdefault(host, host_obj)
                 vms_per_host.setdefault(host, []). \
                         append(props)
 
