@@ -78,7 +78,7 @@ class _SpecialVmSpawningServer(object):
             cluster_config = self._session._call_method(
                 vutil, "get_object_property", self._cluster, "configurationEx")
         if not cluster_config:
-            # that should never happen. we should not precede with whatever
+            # that should never happen. we should not procede with whatever
             # called us
             msg = 'Cluster {} must have an attribute "configurationEx".'
             raise exception.ValidationError(msg.format(self._cluster))
@@ -178,7 +178,8 @@ class _SpecialVmSpawningServer(object):
         failover_hosts = []
         policy = cluster_config.dasConfig.admissionControlPolicy
         if policy and hasattr(policy, 'failoverHosts'):
-            failover_hosts = set(h.value for h in policy.failoverHosts)
+            failover_hosts = set(vutil.get_moref_value(h)
+                                 for h in policy.failoverHosts)
 
         if group is None or not getattr(group, 'host', None):
             # find a host to free
@@ -207,7 +208,7 @@ class _SpecialVmSpawningServer(object):
                 if not host_obj:
                     continue
 
-                host = host_obj.value
+                host = vutil.get_moref_value(host_obj)
                 host_objs.setdefault(host, host_obj)
                 vms_per_host.setdefault(host, []). \
                         append(props)
@@ -244,7 +245,8 @@ class _SpecialVmSpawningServer(object):
                 for obj in objects:
                     host_props = propset_dict(obj.propSet)
                     runtime_summary = host_props['summary.runtime']
-                    host_states[obj.obj.value] = (
+                    moref_value = vutil.get_moref_value(obj.obj)
+                    host_states[moref_value] = (
                         runtime_summary.inMaintenanceMode is False and
                         runtime_summary.connectionState == "connected")
 
@@ -296,7 +298,7 @@ class _SpecialVmSpawningServer(object):
             host_ref = group.host[0]
 
             # check if the host is still suitable
-            if host_ref.value in failover_hosts:
+            if vutil.get_moref_value(host_ref) in failover_hosts:
                 LOG.warning('Host destined for spawning became a failover '
                             'host.')
                 return FREE_HOST_STATE_ERROR
@@ -322,9 +324,9 @@ class _SpecialVmSpawningServer(object):
                        if state != 'poweredOff']
         if running_vms:
             LOG.debug('Freeing up %(host)s for spawning in progress.',
-                      {'host': host_ref.value})
+                      {'host': vutil.get_moref_value(host_ref)})
             return FREE_HOST_STATE_STARTED
 
         LOG.info('Done freeing up %(host)s for spawning.',
-                 {'host': host_ref.value})
+                 {'host': vutil.get_moref_value(host_ref)})
         return FREE_HOST_STATE_DONE
