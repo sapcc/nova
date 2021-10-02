@@ -1143,16 +1143,23 @@ class VMwareVMOps(object):
         except nova.exception.InstanceGroupNotFound:
             pass
 
-    def update_admin_vm_group_membership(self, instance, remove=False):
+    @staticmethod
+    def _get_admin_group_name_for_instance(instance):
         vm_group_name = CONF.vmware.special_spawning_vm_group
         if not vm_group_name:
-            return
+            return None
 
         needs_empty_host = utils.vm_needs_special_spawning(
             int(instance.memory_mb), instance.flavor)
         if needs_empty_host:
-            return
+            return None
 
+        return vm_group_name
+
+    def update_admin_vm_group_membership(self, instance, remove=False):
+        vm_group_name = self._get_admin_group_name_for_instance(instance)
+        if not vm_group_name:
+            return
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         cluster_util.update_vm_group_membership(self._session, self._cluster,
                                                 vm_group_name, vm_ref,
@@ -1915,6 +1922,19 @@ class VMwareVMOps(object):
 
         return False
 
+    def is_instance_in_resource_pool(self, instance):
+        try:
+            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            res_pool = self._session._call_method(vutil, "get_object_property",
+                                                  vm_ref, "resourcePool")
+
+            return vutil.get_moref_value(res_pool) == \
+                vutil.get_moref_value(self._root_resource_pool)
+        except (exception.InstanceNotFound,
+                vexc.ManagedObjectNotFoundException):
+            LOG.debug("Failed to find instance", instance=instance)
+            return False
+
     def _get_instance_props(self, vm_ref):
         lst_properties = ["config.instanceUuid",
                           "runtime.powerState",
@@ -2302,6 +2322,88 @@ class VMwareVMOps(object):
                 spec.deviceChange.append(config_spec)
 
         vm_util.relocate_vm(self._session, vm_ref, spec=spec)
+
+    def live_migration(self, instance, migrate_data, volume_mapping):
+        defaults = migrate_data.relocate_defaults
+        relocate_spec_defaults = defaults["relocate_spec"]
+        disk_move_type = relocate_spec_defaults.get("diskMoveType",
+            "moveAllDiskBackingsAndDisallowSharing")
+
+        def moref(item):
+            v = relocate_spec_defaults[item]
+            return vutil.get_moref(v["value"], v["_type"])
+
+        client_factory = self._session.vim.client.factory
+        datastore = moref("datastore")
+        relocate_spec = vm_util.relocate_vm_spec(client_factory,
+            res_pool=moref("pool"),
+            datastore=datastore,
+            host=moref("host"),
+            disk_move_type=disk_move_type,
+            folder=moref("folder"))
+
+        service = defaults.get("service")
+        if service:
+            credentials_dict = service.pop("credentials")
+            credentials = client_factory.create(
+                "ns0:" + credentials_dict.pop("_type"))
+
+            for k, v in credentials_dict.items():
+                setattr(credentials, k, v)
+
+            relocate_spec.service = vm_util.create_service_locator(
+                client_factory,
+                service["url"],
+                service["instance_uuid"],
+                credentials,
+                service["ssl_thumbprint"],
+            )
+
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+
+        device_config_spec = []
+        relocate_spec.deviceChange = device_config_spec
+        disks = []
+        relocate_spec.disk = disks
+
+        netdevices = []
+        for device in vm_util.get_hardware_devices(self._session, vm_ref):
+            class_name = device.__class__.__name__
+            if class_name in vm_util.ALL_SUPPORTED_NETWORK_DEVICES:
+                netdevices.append(device)
+            elif class_name == "VirtualDisk":
+                locator = client_factory.create(
+                    "ns0:VirtualMachineRelocateSpecDiskLocator")
+                locator.diskId = device.key
+                target = volume_mapping.get(device.key)
+                if not target:  # Not a volume
+                    locator.datastore = datastore
+                else:
+                    locator.datastore = target["datastore_ref"]
+                    profile_id = target.get("profile_id")
+                    if profile_id:
+                        profile_spec = client_factory.create(
+                            "ns0:VirtualMachineDefinedProfileSpec")
+                        profile_spec.profileId = profile_id
+                        locator.profile = [profile_spec]
+                disks.append(locator)
+
+        for vif_info in migrate_data.vif_infos:
+            device = vmwarevif.get_network_device(netdevices,
+                                                  vif_info["mac_address"])
+            if not device:
+                msg = _("No device with MAC address %s exists on the "
+                        "VM") % vif_info["mac_address"]
+                raise exception.NotFound(msg)
+
+            # Update the network device backing
+            config_spec = client_factory.create("ns0:VirtualDeviceConfigSpec")
+            vm_util.set_net_device_backing(client_factory, device, vif_info)
+            config_spec.operation = "edit"
+            config_spec.device = device
+            device_config_spec.append(config_spec)
+
+        vm_util.relocate_vm(self._session, vm_ref, spec=relocate_spec)
 
     def _detach_volumes(self, instance, block_device_info):
         block_devices = driver.block_device_info_get_mapping(block_device_info)
@@ -3306,3 +3408,63 @@ class VMwareVMOps(object):
             LOG.debug('Sync for server-group %s done', sg_uuid)
 
         _sync_sync_server_group(context, sg_uuid)
+
+    def place_vm(self, context, instance):
+        # We currently only fill the bare-minimum to get a placement.
+        # The datastore for the VM is selected as on instance creation,
+        # instead of allowing placevm to decide it (which may be better)
+        # We also do not pass the information about the NICs and other
+        # attached disks, which may give the placement a better information
+        client_factory = self._session.vim.client.factory
+        flavor = instance.flavor
+        image_meta = instance.image_meta
+        image_info = images.VMwareImage.from_image(context,
+                                                instance.image_ref,
+                                                image_meta)
+
+        extra_specs = self._get_extra_specs(flavor, image_meta)
+
+        vi = self._get_vm_config_info(instance, image_info, extra_specs)
+
+        vm_folder = self._get_project_folder(vi.dc_info,
+            project_id=instance.project_id, type_='Instances')
+
+        relocate_spec = vm_util.relocate_vm_spec(
+            client_factory,
+            res_pool=self._root_resource_pool,
+            datastore=vi.datastore.ref,
+            disk_move_type="moveAllDiskBackingsAndDisallowSharing",
+            folder=vm_folder)
+
+        placement_spec = client_factory.create("ns0:PlacementSpec")
+        placement_spec.placementType = "relocate"
+        # Maybe we want to allow that? Default is True
+        # placement_spec.disallowPrerequisiteMoves = False
+        placement_spec.relocateSpec = relocate_spec
+        # So we do not place the vm on a failover host
+        placement_spec.hosts, _ = \
+            vm_util.get_hosts_and_reservations_for_cluster(
+                self._session, self._cluster)
+
+        # Sets cpuAllocation, memoryAllocation, numCPUs, memoryMB
+        config_spec = vm_util.get_vm_resize_spec(client_factory,
+                                                 int(flavor.vcpus),
+                                                 int(flavor.memory_mb),
+                                                 extra_specs)
+        # The last mandatory field for config_spec per doc
+        config_spec.version = extra_specs.hw_version
+        placement_spec.configSpec = config_spec
+
+        vm_group_name = self._get_admin_group_name_for_instance(instance)
+        if vm_group_name:
+            placement_rules = []
+            placement_spec.rules = placement_rules
+            cluster_rules = cluster_util.fetch_cluster_rules(self._session,
+                                                             self._cluster)
+            for rule in six.itervalues(cluster_rules):
+                if getattr(rule, "vmGroupName", None) == vm_group_name:
+                    placement_rules.append(rule)
+
+        result = self._session._call_method(self._session.vim, "PlaceVm",
+            self._cluster, placementSpec=placement_spec)
+        return result
