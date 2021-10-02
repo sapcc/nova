@@ -2609,28 +2609,157 @@ class VMwareAPIVMTestCase(test.TestCase,
         # currently there are 2 data stores
         self.assertEqual(2, len(ds_util._DS_DC_MAPPING))
 
-    def test_pre_live_migration(self):
-        migrate_data = objects.migrate_data.LiveMigrateData()
-        self.assertRaises(NotImplementedError,
-                          self.conn.pre_live_migration, self.context,
-                          'fake_instance', 'fake_block_device_info',
-                          'fake_network_info', 'fake_disk_info', migrate_data)
+    def _create_live_migrate_data(self):
+        data = objects.migrate_data.VMWareLiveMigrateData()
 
-    def test_live_migration(self):
-        self.assertRaises(NotImplementedError,
-                          self.conn.live_migration, self.context,
-                          'fake_instance', 'fake_dest', 'fake_post_method',
-                          'fake_recover_method')
+        data.dest_cluster_ref = "cluster-0"
+        data.instance_already_migrated = False
+        data.is_same_vcenter = False
+        data.relocate_defaults = {
+            "relocate_spec": {
+                "pool": {
+                    "_type": "Resgroup",
+                    "value": "resgroup-0",
+                },
+                "datastore": {
+                    "_type": "Datastore",
+                    "value": "datastore-0",
+                },
+                "host": {
+                    "_type": "Host",
+                    "value": "host-0",
+                },
+                "folder": {
+                    "_type": "Folder",
+                    "value": "folder-0",
+                }
+            },
+            "service": {
+                "url": "https://otherhost.test",
+                "instance_uuid": "uuid",
+                "ssl_thumbprint": "sha1thumbprint",
+                "credentials": {
+                    "_type": "ServiceLocatorNamePassword",
+                    "username": "username",
+                    "password": "password",
+                }
+            }
+        }
+
+        return data
+
+    def _create_block_device_info(self):
+        return {}
+
+    def _create_placement_result(self, *args, **kwargs):
+        relocate_spec = mock.NonCallableMagicMock(
+            host=mock.sentinel.placement_host,
+            datastore=mock.sentinel.placement_datastore
+        )
+
+        recommendation = mock.NonCallableMagicMock(
+            reason="xvmotionPlacement",
+            rating=5,
+            action=[mock.NonCallableMagicMock(relocateSpec=relocate_spec)]
+        )
+
+        return mock.NonCallableMagicMock(
+            recommendations=[recommendation]
+        )
+
+    @mock.patch.object(vmops.VMwareVMOps, 'place_vm')
+    def test_pre_live_migration(self, mock_place_vm):
+        mock_place_vm.side_effect = self._create_placement_result
+        self._create_instance()
+        migrate_data = self._create_live_migrate_data()
+        block_device_info = self._create_block_device_info()
+        result = self.conn.pre_live_migration(self.context,
+            self.instance, block_device_info, 'fake_network_info',
+            'fake_disk_info', migrate_data)
+        self.assertEqual(result, migrate_data)
+
+    @mock.patch.object(vm_util, 'relocate_vm')
+    @mock.patch.object(vm_util, 'create_service_locator')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(volumeops.VMwareVolumeOps,
+        'map_volumes_to_devices', returns=[])
+    def test_live_migration(self, volumes_to_devices, get_hardware_devices,
+                            service_locator, relocate_vm):
+        self._create_instance()
+        migrate_data = self._create_live_migrate_data()
+
+        post_method = mock.Mock()
+        recover_method = mock.Mock()
+        get_hardware_devices.returns = []
+
+        with mock.patch.object(vm_util, 'get_vm_ref',
+                return_value=mock.sentinel.vm_ref):
+
+            self.conn.live_migration(self.context, self.instance,
+                'fake_dest', post_method, recover_method,
+                migrate_data=migrate_data)
+
+        service_locator.assert_called()
+        get_hardware_devices.assert_called()
+        relocate_vm.assert_called()
+        post_method.assert_called()
+        recover_method.assert_not_called()
+
+    @mock.patch.object(vm_util, 'create_service_locator')
+    @mock.patch.object(volumeops.VMwareVolumeOps,
+        'map_volumes_to_devices', returns=[])
+    @mock.patch.object(vmops.VMwareVMOps,
+        'live_migration', side_effect=Exception)
+    def test_live_migration_failure_rollback(self, mock_live_migration,
+                    volumes_to_devices, mock_service_locator):
+        self._create_instance()
+        migrate_data = self._create_live_migrate_data()
+
+        post_method = mock.Mock()
+        recover_method = mock.Mock()
+
+        exception = Exception
+
+        with test.nested(
+                mock.patch.object(vm_util, 'get_vm_ref',
+                              return_value=mock.sentinel.vm_ref),
+            ) as (mock_vm_ref,):
+
+            self.assertRaises(exception, self.conn.live_migration,
+                self.context, self.instance,
+                'fake_dest', post_method, recover_method,
+                migrate_data=migrate_data)
+
+        post_method.assert_not_called()
+        recover_method.assert_called()
 
     def test_rollback_live_migration_at_destination(self):
-        self.assertRaises(NotImplementedError,
-                          self.conn.rollback_live_migration_at_destination,
-                          self.context, 'fake_instance', 'fake_network_info',
-                          'fake_block_device_info')
+        self._create_instance()
+        block_device_info = self._create_block_device_info()
+        migrate_data = self._create_live_migrate_data()
+        with test.nested(
+                mock.patch.object(self.conn._volumeops, 'delete_shadow_vms'),
+            ) as (mock_delete_shadow_vms, ):
+
+            self.conn.rollback_live_migration_at_destination(
+                          self.context, self.instance, 'fake_network_info',
+                          block_device_info, migrate_data=migrate_data)
+            mock_delete_shadow_vms.assert_called_once()
 
     def test_post_live_migration(self):
-        self.assertIsNone(self.conn.post_live_migration(self.context,
-            'fake_instance', 'fake_block_device_info'))
+        self._create_instance()
+        migrate_data = self._create_live_migrate_data()
+        block_device_info = self._create_block_device_info()
+        with test.nested(
+                mock.patch.object(self.conn._volumeops, 'delete_shadow_vms'),
+                mock.patch.object(self.conn._vmops, 'update_cluster_placement')
+            ) as (mock_delete_shadow_vms, mock_update_cluster_placement):
+
+            self.conn.post_live_migration(
+                          self.context, self.instance, block_device_info,
+                          migrate_data)
+            mock_delete_shadow_vms.assert_called_once()
+            mock_update_cluster_placement.assert_called_once()
 
     def test_get_instance_disk_info_is_implemented(self):
         # Ensure that the method has been implemented in the driver
