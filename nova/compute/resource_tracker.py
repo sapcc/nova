@@ -1160,7 +1160,7 @@ class ResourceTracker(object):
                 continue
 
     def _update_usage_from_instance(self, context, instance, nodename,
-            is_removed=False, require_allocation_refresh=False):
+            is_removed=False, require_allocation_refresh=False, bdms=None):
         """Update usage for a single instance."""
 
         uuid = instance['uuid']
@@ -1194,7 +1194,8 @@ class ResourceTracker(object):
                 self.reportclient.update_instance_allocation(context, cn,
                                                              instance, sign)
             # new instance, update compute node resource usage:
-            self._update_usage(self._get_usage_dict(instance, instance),
+            self._update_usage(self._get_usage_dict(instance, instance,
+                                                    bdms=bdms),
                                nodename, sign=sign)
 
         # Stop tracking removed instances in the is_bfv cache. This needs to
@@ -1293,14 +1294,24 @@ class ResourceTracker(object):
 
         instance_by_uuid = {}
         for instance in instances:
+            instance_by_uuid[instance.uuid] = instance
+
+        bdms_by_instance_uuid = (
+            objects.BlockDeviceMappingList.bdms_by_instance_uuid(
+                context, instance_by_uuid.keys()))
+
+        for instance in instances:
             if instance.vm_state not in vm_states.ALLOW_RESOURCE_REMOVAL:
                 if msg_allocation_refresh:
                     LOG.debug(msg_allocation_refresh)
                     msg_allocation_refresh = False
-
+                bdms = bdms_by_instance_uuid.get(instance.uuid)
+                # bdms will be passed down to
+                # compute_utils.is_volume_backed_instance
+                # which will fetch the bdm-list in case it is None as before
                 self._update_usage_from_instance(context, instance, nodename,
-                    require_allocation_refresh=require_allocation_refresh)
-            instance_by_uuid[instance.uuid] = instance
+                    require_allocation_refresh=require_allocation_refresh,
+                    bdms=bdms)
         return instance_by_uuid
 
     def _remove_deleted_instances_allocations(self, context, cn,
@@ -1504,7 +1515,7 @@ class ResourceTracker(object):
             # them. In that case - just get the instance flavor.
             return instance.flavor
 
-    def _get_usage_dict(self, object_or_dict, instance, **updates):
+    def _get_usage_dict(self, object_or_dict, instance, bdms=None, **updates):
         """Make a usage dict _update methods expect.
 
         Accepts a dict or an Instance or Flavor object, and a set of updates.
@@ -1514,6 +1525,7 @@ class ResourceTracker(object):
         :param instance: nova.objects.Instance for the related operation; this
                          is needed to determine if the instance is
                          volume-backed
+        :param bdms: Optional a BlockDeviceMappingList for the instance
         :param updates: key-value pairs to update the passed object.
                         Currently only considers 'numa_topology', all other
                         keys are ignored.
@@ -1528,7 +1540,7 @@ class ResourceTracker(object):
                 is_bfv = self.is_bfv[instance.uuid]
             else:
                 is_bfv = compute_utils.is_volume_backed_instance(
-                    instance._context, instance)
+                    instance._context, instance, bdms=bdms)
                 self.is_bfv[instance.uuid] = is_bfv
             return is_bfv
 
