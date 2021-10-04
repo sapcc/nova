@@ -412,6 +412,7 @@ notification_object_data = {
     'ServerGroupPayload': '1.1-4ded2997ea1b07038f7af33ef5c45f7f',
     'ServiceStatusNotification': '1.0-a73147b93b520ff0061865849d3dfa56',
     'ServiceStatusPayload': '1.1-7b6856bd879db7f3ecbcd0ca9f35f92f',
+    'VMWareLiveMigrateData': '1.1-13e17ad269e942ef13a8af7f5e402da7',
 }
 
 
