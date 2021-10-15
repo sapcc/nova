@@ -2385,3 +2385,7 @@ class ZVMConnectorError(ZVMDriverException):
         self.rc = results.get('rc')
         self.rs = results.get('rs')
         self.errmsg = results.get('errmsg')
+
+
+class VolumeMigrationError(NovaException):
+    msg_fmt = 'Migration of volume %(volume_id)s failed: %(reason)s'

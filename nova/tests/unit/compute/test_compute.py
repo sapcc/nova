@@ -4909,6 +4909,7 @@ class ComputeTestCase(BaseTestCase,
         fake_bdms = objects.BlockDeviceMappingList(objects=[
             objects.BlockDeviceMapping(destination_type='volume',
                                        attachment_id=uuids.attachment_id,
+                                       volume_id=uuids.volume_id,
                                        device_name='/dev/vdb'),
             objects.BlockDeviceMapping(destination_type='volume',
                                        attachment_id=None),
@@ -5016,7 +5017,8 @@ class ComputeTestCase(BaseTestCase,
             # volume BDM that had an attachment.
             mock_attachment_update.assert_called_once_with(
                 self.context, uuids.attachment_id,
-                mock_get_vol_connector.return_value, '/dev/vdb')
+                mock_get_vol_connector.return_value, uuids.volume_id,
+                '/dev/vdb')
             mock_attachment_complete.assert_called_once_with(
                 self.context, uuids.attachment_id)
 
