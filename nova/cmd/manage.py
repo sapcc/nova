@@ -3163,7 +3163,7 @@ class VolumeAttachmentCommands(object):
             # Update the attachment with host connector, this regenerates
             # the connection_info that we can now stash in the bdm.
             new_connection_info = volume_api.attachment_update(
-                cctxt, new_attachment_id, connector,
+                cctxt, new_attachment_id, connector, volume_id,
                 bdm.device_name)['connection_info']
 
             # Before we save it to the BDM ensure the serial is stashed as
