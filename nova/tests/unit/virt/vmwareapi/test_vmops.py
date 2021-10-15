@@ -223,7 +223,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_mkdir.assert_called_with(ops._session, path, dc)
 
     def test_get_valid_vms_from_retrieve_result(self):
-        ops = vmops.VMwareVMOps(self._session, mock.Mock(), mock.Mock())
+        ops = vmops.VMwareVMOps(self._session, mock.Mock(), mock.Mock(),
+                                cluster=self._cluster.obj)
         fake_objects = vmwareapi_fake.FakeRetrieveResult()
         for x in range(0, 3):
             vm = vmwareapi_fake.VirtualMachine()
@@ -235,7 +236,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         self.assertEqual(3, len(vms))
 
     def test_get_valid_vms_from_retrieve_result_with_invalid(self):
-        ops = vmops.VMwareVMOps(self._session, mock.Mock(), mock.Mock())
+        ops = vmops.VMwareVMOps(self._session, mock.Mock(), mock.Mock(),
+                                cluster=self._cluster.obj)
         fake_objects = vmwareapi_fake.FakeRetrieveResult()
         valid_vm = vmwareapi_fake.VirtualMachine()
         valid_vm.set('config.extraConfig["nvp.vm-uuid"]',
@@ -380,7 +382,8 @@ class VMwareVMOpsTestCase(test.TestCase):
     def _test_get_datacenter_ref_and_name(self, ds_ref_exists=False):
         instance_ds_ref = mock.Mock()
         instance_ds_ref.value = "ds-1"
-        _vcvmops = vmops.VMwareVMOps(self._session, None, None)
+        _vcvmops = vmops.VMwareVMOps(self._session, None, None,
+                                     cluster=self._cluster.obj)
         result = vmwareapi_fake.FakeRetrieveResult()
         if ds_ref_exists:
             ds_ref = mock.Mock()
