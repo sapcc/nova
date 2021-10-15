@@ -1728,7 +1728,7 @@ class CinderFixtureNewAttachFlow(fixtures.Fixture):
             attachments.remove(attachment)
 
         def fake_attachment_update(_self, context, attachment_id, connector,
-                                   mountpoint=None):
+                                   volume_id, mountpoint=None):
             # Ensure the attachment exists
             _find_attachment(attachment_id)
             attachment_ref = {'driver_volume_type': 'fake_type',
