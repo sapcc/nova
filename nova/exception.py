@@ -2661,3 +2661,7 @@ class EphemeralEncryptionCleanupFailed(NovaException):
 
 class HostConflict(Exception):
     pass
+
+
+class VolumeMigrationError(NovaException):
+    msg_fmt = 'Migration of volume %(volume_id)s failed: %(reason)s'

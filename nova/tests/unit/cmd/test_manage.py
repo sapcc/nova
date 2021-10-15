@@ -3734,7 +3734,8 @@ class VolumeAttachmentCommandsTestCase(test.NoDBTestCase):
             mock.ANY, mock_get_instance.return_value, uuidsentinel.volume,
             mock_get_instance.return_value.host, delete_attachment=True)
         fake_volume_api.attachment_update.assert_called_once_with(
-            mock.ANY, uuidsentinel.new_attachment, mock.ANY, device_name)
+            mock.ANY, uuidsentinel.new_attachment, mock.ANY,
+            uuidsentinel.volume, device_name)
         fake_volume_api.attachment_complete.assert_called_once_with(
             mock.ANY, uuidsentinel.new_attachment)
         fake_compute_api.unlock.assert_called_once_with(
