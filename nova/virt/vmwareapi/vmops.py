@@ -3320,7 +3320,8 @@ class VMwareVMOps(object):
             # retrieve the instances, because sg.members contains all members
             # and we need to filter them for our host
             InstanceList = objects.instance.InstanceList
-            filters = {'host': self._compute_host, 'uuid': sg.members}
+            filters = {'host': self._compute_host, 'uuid': sg.members,
+                       'deleted': False}
             instances = InstanceList.get_by_filters(context, filters,
                                                     expected_attrs=[])
 
