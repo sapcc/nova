@@ -340,7 +340,7 @@ def _build_import_spec_for_import_vapp(session, vm_name, datastore_name):
 
 
 def fetch_image_stream_optimized(context, instance, session, vm_name,
-                                 ds_name, vm_folder_ref, res_pool_ref,
+                                 datastore, vm_folder_ref, res_pool_ref,
                                  image_id=None):
     """Fetch image from Glance to ESX datastore."""
     image_ref = image_id if image_id else instance.image_ref
@@ -352,13 +352,14 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     file_size = int(metadata['size'])
 
     vm_import_spec = _build_import_spec_for_import_vapp(
-            session, vm_name, ds_name)
+            session, vm_name, datastore.name)
 
     read_iter = IMAGE_API.download(context, image_ref)
     read_handle = rw_handles.ImageReadHandle(read_iter)
 
     imported_vm_ref = _import_image(session, read_handle, vm_import_spec,
                                     vm_name, vm_folder_ref, res_pool_ref,
+                                    datastore.ref,
                                     file_size)
 
     LOG.info("Downloaded image file data %(image_ref)s",
@@ -369,7 +370,7 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
 
 
 def _import_image(session, read_handle, vm_import_spec, vm_name, vm_folder_ref,
-                  res_pool_ref, file_size):
+                  res_pool_ref, datastore_ref, file_size):
     # retry in order to handle conflicts in case of parallel execution
     # (multiple agents) or previously failed import of the same image
     max_attempts = 3
@@ -390,21 +391,26 @@ def _import_image(session, read_handle, vm_import_spec, vm_name, vm_folder_ref,
         except vexc.DuplicateName:
             LOG.debug("Handling name duplication during import of VM %s",
                       vm_name)
-            vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
+            vm_ref = vm_util.get_vm_ref_from_name(session, vm_name,
+                            base_obj=vm_folder_ref, path="childEntity")
+            if not vm_ref:
+                # This only happens, if the owner of the image
+                # has been changed, while we where importing... rather unlikely
+                vm_ref = vm_util.get_vm_ref_from_name(session, vm_name,
+                            base_obj=datastore_ref, path="vm")
+
             waited_for_ongoing_import = _wait_for_import_task(session, vm_ref)
             if waited_for_ongoing_import:
                 imported_vm_ref = vm_ref
                 break
-            else:
-                try:
-                    destroy_task = session._call_method(session.vim,
-                                                        "Destroy_Task",
-                                                        vm_ref)
-                    session._wait_for_task(destroy_task)
-                    vm_util.vm_ref_cache_delete(vm_name)
-                except vexc.ManagedObjectNotFoundException:
-                    # another agent destroyed the VM in the meantime
-                    pass
+            try:
+                destroy_task = session._call_method(session.vim,
+                                                    "Destroy_Task",
+                                                    vm_ref)
+                session._wait_for_task(destroy_task)
+            except vexc.ManagedObjectNotFoundException:
+                # another agent destroyed the VM in the meantime
+                pass
 
     if not imported_vm_ref:
         raise vexc.VMwareDriverException("Could not import image"
@@ -474,7 +480,7 @@ def get_vmdk_name_from_ovf(xmlstr):
     return vmdk_name
 
 
-def fetch_image_ova(context, instance, session, vm_name, ds_name,
+def fetch_image_ova(context, instance, session, vm_name, datastore,
                     vm_folder_ref, res_pool_ref):
     """Download the OVA image from the glance image server to the
     Nova compute node.
@@ -488,7 +494,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
     file_size = int(metadata['size'])
 
     vm_import_spec = _build_import_spec_for_import_vapp(
-        session, vm_name, ds_name)
+        session, vm_name, datastore.name)
 
     read_iter = IMAGE_API.download(context, image_ref)
     read_handle = rw_handles.ImageReadHandle(read_iter)
@@ -506,7 +512,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
                 imported_vm_ref = _import_image(session, extracted,
                                                 vm_import_spec, vm_name,
                                                 vm_folder_ref, res_pool_ref,
-                                                file_size)
+                                                datastore.ref, file_size)
 
                 LOG.info("Downloaded OVA image file %(image_ref)s",
                          {'image_ref': instance.image_ref})

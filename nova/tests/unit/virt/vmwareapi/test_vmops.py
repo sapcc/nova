@@ -2909,7 +2909,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 vi.instance,
                 self._session,
                 'fake-name',
-                self._ds.name,
+                self._ds,
                 vi.dc_info.vmFolder,
                 self._vmops._root_resource_pool,
                 image_id=self._image_id)
@@ -2937,7 +2937,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 vi.instance,
                 self._session,
                 'fake-name',
-                self._ds.name,
+                self._ds,
                 vi.dc_info.vmFolder,
                 self._vmops._root_resource_pool)
         self.assertEqual(vi.ii.file_size, 123)
