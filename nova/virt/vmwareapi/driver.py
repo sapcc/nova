@@ -54,13 +54,13 @@ from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
-from nova.virt.vmwareapi import host
+from nova.virt.vmwareapi.host import VCState
 from nova.virt.vmwareapi import special_spawning
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
-from nova.virt.vmwareapi import vmops
-from nova.virt.vmwareapi import volumeops
+from nova.virt.vmwareapi.vmops import VMwareVMOps
+from nova.virt.vmwareapi.volumeops import VMwareVolumeOps
 from oslo_serialization import jsonutils
 
 LOG = logging.getLogger(__name__)
@@ -137,17 +137,17 @@ class VMwareVCDriver(driver.ComputeDriver):
                                      % self._cluster_name)
         self._vcenter_uuid = self._get_vcenter_uuid()
         self._nodename = self._create_nodename(self._cluster_ref.value)
-        self._volumeops = volumeops.VMwareVolumeOps(self._session,
-                                                    self._cluster_ref)
-        self._vmops = vmops.VMwareVMOps(self._session,
-                                        virtapi,
-                                        self._volumeops,
-                                        self._cluster_ref,
-                                        datastore_regex=self._datastore_regex)
-        self._vc_state = host.VCState(self._session,
-                                      self._nodename,
-                                      self._cluster_ref,
-                                      self._datastore_regex)
+        self._volumeops = VMwareVolumeOps(self._session,
+                                          self._cluster_ref)
+        self._vmops = VMwareVMOps(self._session,
+                                  virtapi,
+                                  self._volumeops,
+                                  self._cluster_ref,
+                                  datastore_regex=self._datastore_regex)
+        self._vc_state = VCState(self._session,
+                                 self._nodename,
+                                 self._cluster_ref,
+                                 self._datastore_regex)
         self.capabilities['resource_scheduling'] = \
             cluster_util.is_drs_enabled(self._session, self._cluster_ref)
         # Register the OpenStack extension
