@@ -1952,6 +1952,9 @@ class ComputeManager(manager.Manager):
 
         @utils.synchronized(instance.uuid)
         def _locked_do_build_and_run_instance(*args, **kwargs):
+            # NOTE(fwiesel): Spawned in a different thread, store the context
+            context.update_store()
+
             # NOTE(danms): We grab the semaphore with the instance uuid
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
@@ -7929,6 +7932,9 @@ class ComputeManager(manager.Manager):
                          'num_vm_instances': num_vm_instances})
 
         def _sync(db_instance):
+            context.resource_uuid = db_instance.uuid
+            context.update_store()
+
             # NOTE(melwitt): This must be synchronized as we query state from
             #                two separate sources, the driver and the database.
             #                They are set (in stop_instance) and read, in sync.
