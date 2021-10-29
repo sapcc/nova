@@ -76,7 +76,10 @@ def _glanceclient_from_endpoint(context, endpoint, version):
 
     return glanceclient.Client(version, session=sess, auth=auth,
                                endpoint_override=endpoint,
-                               global_request_id=context.global_id)
+                               global_request_id=context.global_id,
+                               connect_retries=CONF.glance.http_retries,
+                               status_code_retries=CONF.glance.http_retries
+                               )
 
 
 def generate_glance_url(context):

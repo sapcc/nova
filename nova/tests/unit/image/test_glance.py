@@ -374,8 +374,10 @@ class TestCreateGlanceClient(test.NoDBTestCase):
         self.assertEqual(session, glance._SESSION)
         # Ensure new client created every time
         client_call = mock.call(2, auth="fake_auth",
+                connect_retries=glance.CONF.glance.http_retries,
                 endpoint_override=endpoint, session=session,
-                                global_request_id='reqid')
+                global_request_id='reqid',
+                status_code_retries=glance.CONF.glance.http_retries)
         mock_client.assert_has_calls([client_call, client_call])
         self.assertEqual("a", result1)
         self.assertEqual("b", result2)
