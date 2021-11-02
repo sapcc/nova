@@ -74,7 +74,7 @@ def _get_network_obj(session, network_objects, network_name):
             for network in network_refs:
                 # Get network properties
                 if network._type == 'DistributedVirtualPortgroup':
-                    props = session._call_method(vutil,
+                    props = session.call_method(vutil,
                                                  "get_object_property",
                                                  network,
                                                  "config")
@@ -84,14 +84,14 @@ def _get_network_obj(session, network_objects, network_name):
                     if network_name in net_name:
                         network_obj['type'] = 'DistributedVirtualPortgroup'
                         network_obj['dvpg'] = props.key
-                        dvs_props = session._call_method(vutil,
+                        dvs_props = session.call_method(vutil,
                                         "get_object_property",
                                         props.distributedVirtualSwitch,
                                         "uuid")
                         network_obj['dvsw'] = dvs_props
                         return network_obj
                 else:
-                    props = session._call_method(vutil,
+                    props = session.call_method(vutil,
                                                  "get_object_property",
                                                  network,
                                                  "summary.name")
@@ -105,7 +105,7 @@ def get_network_with_the_name(session, network_name="vmnet0", cluster=None):
     """Gets reference to the network whose name is passed as the
     argument.
     """
-    vm_networks = session._call_method(vim_util,
+    vm_networks = session.call_method(vim_util,
                                        'get_object_properties',
                                        None, cluster,
                                        'ClusterComputeResource', ['network'])
@@ -124,7 +124,7 @@ def get_vswitch_for_vlan_interface(session, vlan_interface, cluster=None):
     """
     # Get the list of vSwitches on the Host System
     host_mor = vm_util.get_host_ref(session, cluster)
-    vswitches_ret = session._call_method(vutil,
+    vswitches_ret = session.call_method(vutil,
                                          "get_object_property",
                                          host_mor,
                                          "config.network.vswitch")
@@ -148,7 +148,7 @@ def get_vswitch_for_vlan_interface(session, vlan_interface, cluster=None):
 def check_if_vlan_interface_exists(session, vlan_interface, cluster=None):
     """Checks if the vlan_interface exists on the esx host."""
     host_mor = vm_util.get_host_ref(session, cluster)
-    physical_nics_ret = session._call_method(vutil,
+    physical_nics_ret = session.call_method(vutil,
                                              "get_object_property",
                                              host_mor,
                                              "config.network.pnic")
@@ -165,7 +165,7 @@ def check_if_vlan_interface_exists(session, vlan_interface, cluster=None):
 def get_vlanid_and_vswitch_for_portgroup(session, pg_name, cluster=None):
     """Get the vlan id and vswitch associated with the port group."""
     host_mor = vm_util.get_host_ref(session, cluster)
-    port_grps_on_host_ret = session._call_method(vutil,
+    port_grps_on_host_ret = session.call_method(vutil,
                                                  "get_object_property",
                                                  host_mor,
                                                  "config.network.portgroup")
@@ -193,14 +193,14 @@ def create_port_group(session, pg_name, vswitch_name, vlan_id=0, cluster=None):
                     pg_name,
                     vlan_id)
     host_mor = vm_util.get_host_ref(session, cluster)
-    network_system_mor = session._call_method(vutil,
+    network_system_mor = session.call_method(vutil,
                                               "get_object_property",
                                               host_mor,
                                               "configManager.networkSystem")
     LOG.debug("Creating Port Group with name %s on "
               "the ESX host", pg_name)
     try:
-        session._call_method(session.vim,
+        session.call_method(session.vim,
                 "AddPortGroup", network_system_mor,
                 portgrp=add_prt_grp_spec)
     except vexc.AlreadyExistsException:

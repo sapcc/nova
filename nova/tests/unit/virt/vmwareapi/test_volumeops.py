@@ -72,8 +72,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                                  'fileOperation'))
             return 'fake_configure_task'
         with test.nested(
-            mock.patch.object(self._session, '_wait_for_task'),
-            mock.patch.object(self._session, '_call_method',
+            mock.patch.object(self._session, 'wait_for_task'),
+            mock.patch.object(self._session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             fake_device = vmwareapi_fake.DataObject()
@@ -106,7 +106,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         uuid = '1234'
         opt_val = vmwareapi_fake.OptionValue('volume-%s' % uuid, 'volume-val')
         fake_call = self._fake_call_get_object_property(uuid, opt_val)
-        with mock.patch.object(self._session, "_call_method", fake_call):
+        with mock.patch.object(self._session, "call_method", fake_call):
             val = self._volumeops._get_volume_uuid(vm_ref, uuid)
             self.assertEqual('volume-val', val)
 
@@ -115,7 +115,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                                                        'vm-134')
         uuid = '1234'
         fake_call = self._fake_call_get_object_property(uuid, None)
-        with mock.patch.object(self._session, "_call_method", fake_call):
+        with mock.patch.object(self._session, "call_method", fake_call):
             val = self._volumeops._get_volume_uuid(vm_ref, uuid)
             self.assertIsNone(val)
 
@@ -178,7 +178,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         session = mock.Mock()
         self._volumeops._session = session
         hardware_devices = mock.sentinel.hardware_devices
-        session._call_method.return_value = hardware_devices
+        session.call_method.return_value = hardware_devices
 
         disk_uuid = mock.sentinel.disk_uuid
         get_volume_uuid.return_value = disk_uuid
@@ -192,7 +192,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             vm_ref, connection_info['data'])
 
         self.assertEqual(device, ret)
-        session._call_method.assert_called_once_with(
+        session.call_method.assert_called_once_with(
             vutil, "get_object_property", vm_ref, "config.hardware.device")
         get_volume_uuid.assert_called_once_with(
             vm_ref, connection_info['data']['volume_id'])
@@ -206,7 +206,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         session = mock.Mock()
         self._volumeops._session = session
         hardware_devices = mock.sentinel.hardware_devices
-        session._call_method.return_value = hardware_devices
+        session.call_method.return_value = hardware_devices
 
         disk_uuid = mock.sentinel.disk_uuid
         get_volume_uuid.return_value = disk_uuid
@@ -218,7 +218,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         self.assertRaises(exception.DiskNotFound,
                           self._volumeops._get_vmdk_backed_disk_device,
                           vm_ref, connection_info['data'])
-        session._call_method.assert_called_once_with(
+        session.call_method.assert_called_once_with(
             vutil, "get_object_property", vm_ref, "config.hardware.device")
         get_volume_uuid.assert_called_once_with(
             vm_ref, connection_info['data']['volume_id'])
@@ -247,7 +247,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                               return_value='fake-disk-type'),
             mock.patch.object(self._volumeops, '_consolidate_vmdk_volume'),
             mock.patch.object(self._volumeops, 'detach_disk_from_vm'),
-            mock.patch.object(self._volumeops._session, '_call_method',
+            mock.patch.object(self._volumeops._session, 'call_method',
                               return_value=[virtual_controller])
         ) as (get_vm_ref, get_volume_ref, get_vmdk_backed_disk_device,
               _get_device_disk_type, consolidate_vmdk_volume,
@@ -303,7 +303,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                               return_value=virtual_disk),
             mock.patch.object(vm_util, 'get_vm_state',
                               return_value=power_state.RUNNING),
-            mock.patch.object(self._volumeops._session, '_call_method',
+            mock.patch.object(self._volumeops._session, 'call_method',
                               return_value=[virtual_controller])
         ) as (get_vm_ref, get_volume_ref, get_vmdk_backed_disk_device,
               get_vm_state, session_call_method):
@@ -336,7 +336,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         session = mock.Mock()
         self._volumeops._session = session
         hardware_devices = mock.sentinel.hardware_devices
-        session._call_method.return_value = hardware_devices
+        session.call_method.return_value = hardware_devices
 
         device = mock.sentinel.device
         get_rdm_disk.return_value = device
@@ -347,7 +347,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
 
         get_vm_ref.assert_called_once_with(session, instance)
         iscsi_get_target.assert_called_once_with(connection_info['data'])
-        session._call_method.assert_called_once_with(
+        session.call_method.assert_called_once_with(
             vutil, "get_object_property", vm_ref, "config.hardware.device")
         get_rdm_disk.assert_called_once_with(hardware_devices, disk_uuid)
         detach_disk_from_vm.assert_called_once_with(
@@ -388,7 +388,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         session = mock.Mock()
         self._volumeops._session = session
         hardware_devices = mock.sentinel.hardware_devices
-        session._call_method.return_value = hardware_devices
+        session.call_method.return_value = hardware_devices
 
         get_rdm_disk.return_value = None
 
@@ -399,7 +399,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             connection_info, instance)
         get_vm_ref.assert_called_once_with(session, instance)
         iscsi_get_target.assert_called_once_with(connection_info['data'])
-        session._call_method.assert_called_once_with(
+        session.call_method.assert_called_once_with(
             vutil, "get_object_property", vm_ref, "config.hardware.device")
         get_rdm_disk.assert_called_once_with(hardware_devices, disk_uuid)
         self.assertFalse(detach_disk_from_vm.called)
@@ -627,7 +627,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         with test.nested(
             mock.patch.object(vm_util, 'get_host_ref_for_vm',
                               return_value=host_mor),
-            mock.patch.object(self._volumeops._session, '_call_method',
+            mock.patch.object(self._volumeops._session, 'call_method',
                               return_value=hbas)
         ) as (fake_get_host_ref_for_vm, fake_call_method):
             result = self._volumeops._iscsi_get_host_iqn(self._instance)
@@ -652,7 +652,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                               side_effect=exception.InstanceNotFound('fake')),
             mock.patch.object(vm_util, 'get_host_ref',
                               return_value=host_mor),
-            mock.patch.object(self._volumeops._session, '_call_method',
+            mock.patch.object(self._volumeops._session, 'call_method',
                               return_value=hbas)
         ) as (fake_get_host_ref_for_vm,
               fake_get_host_ref,

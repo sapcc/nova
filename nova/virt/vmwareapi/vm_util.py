@@ -140,11 +140,11 @@ class HistoryCollectorItems(six.Iterator):
         self._page_items = None
 
         if self.reverse_page_order:
-            self.session._call_method(self.session.vim,
+            self.session.call_method(self.session.vim,
                                       "ResetCollector",
                                       self.history_collector)
         else:
-            self.session._call_method(self.session.vim,
+            self.session.call_method(self.session.vim,
                                       "RewindCollector",
                                       self.history_collector)
 
@@ -164,7 +164,7 @@ class HistoryCollectorItems(six.Iterator):
             self._load_latest_page()
 
         if not self._page_items:
-            self._page_items = self.session._call_method(
+            self._page_items = self.session.call_method(
                 self.session.vim, self.read_page_method,
                 self.history_collector, maxCount=self.max_page_size)
 
@@ -182,7 +182,7 @@ class HistoryCollectorItems(six.Iterator):
 
     def destroy_collector(self):
         if self.history_collector:
-            self.session._call_method(self.session.vim,
+            self.session.call_method(self.session.vim,
                                       "DestroyCollector",
                                       self.history_collector)
 
@@ -190,7 +190,7 @@ class HistoryCollectorItems(six.Iterator):
 class TaskHistoryCollectorItems(HistoryCollectorItems):
     def __init__(self, session, task_filter_spec, reverse_page_order=False,
                  max_page_size=10):
-        task_collector = session._call_method(
+        task_collector = session.call_method(
             session.vim,
             "CreateCollectorForTasks",
             session.vim.service_content.taskManager,
@@ -212,7 +212,7 @@ class TaskHistoryCollectorItems(HistoryCollectorItems):
 class EventHistoryCollectorItems(HistoryCollectorItems):
     def __init__(self, session, event_filter_spec, reverse_page_order=False,
                  max_page_size=10):
-        event_collector = session._call_method(
+        event_collector = session.call_method(
             session.vim,
             "CreateCollectorForEvents",
             session.vim.service_content.eventManager,
@@ -905,7 +905,7 @@ def _get_device_disk_type(device):
 
 
 def get_hardware_devices(session, vm_ref):
-    hardware_devices = session._call_method(vutil,
+    hardware_devices = session.call_method(vutil,
                                             "get_object_property",
                                             vm_ref,
                                             "config.hardware.device")
@@ -1219,9 +1219,9 @@ def relocate_vm(session, vm_ref, res_pool=None, datastore=None, host=None,
     client_factory = session.vim.client.factory
     rel_spec = spec or relocate_vm_spec(client_factory, res_pool, datastore,
                                         host, disk_move_type)
-    relocate_task = session._call_method(session.vim, "RelocateVM_Task",
+    relocate_task = session.call_method(session.vim, "RelocateVM_Task",
                                          vm_ref, spec=rel_spec)
-    session._wait_for_task(relocate_task)
+    session.wait_for_task(relocate_task)
 
 
 def get_machine_id_change_spec(client_factory, machine_id_str):
@@ -1297,7 +1297,7 @@ def _get_allocated_vnc_ports(session):
     # TODO(rgerganov): bug #1256944
     # The VNC port should be unique per host, not per vCenter
     vnc_ports = set()
-    result = session._call_method(vim_util, "get_objects",
+    result = session.call_method(vim_util, "get_objects",
                                   "VirtualMachine", [VNC_CONFIG_KEY])
     with vutil.WithRetrieval(session.vim, result) as objects:
         for obj in objects:
@@ -1337,13 +1337,13 @@ def get_vm_ref_from_name(session, vm_name, base_obj=None, path=None):
     """
     property_list = ["name"]
     if not base_obj:  # Legacy: It doesn't scale
-        vms = session._call_method(
+        vms = session.call_method(
             vim_util, "get_objects",
             "VirtualMachine", property_list)
     else:
         if not path:
             raise ValueError("Method needs base_obj and path")
-        vms = session._call_method(
+        vms = session.call_method(
             vim_util, "get_inner_objects", base_obj, path,
             "VirtualMachine", property_list)
 
@@ -1359,7 +1359,7 @@ def _get_vm_ref_from_vm_uuid(session, instance_uuid):
     instance_uuid, more specifically all VM's on the backend that have
     'config_spec.instanceUuid' set to 'instance_uuid'.
     """
-    vm_refs = session._call_method(
+    vm_refs = session.call_method(
         session.vim,
         "FindAllByUuid",
         session.vim.service_content.searchIndex,
@@ -1371,7 +1371,7 @@ def _get_vm_ref_from_vm_uuid(session, instance_uuid):
 
 
 def find_by_inventory_path(session, inv_path):
-    return session._call_method(
+    return session.call_method(
         session.vim,
         "FindByInventoryPath",
         session.vim.service_content.searchIndex,
@@ -1380,7 +1380,7 @@ def find_by_inventory_path(session, inv_path):
 
 def _get_vm_ref_from_extraconfig(session, instance_uuid):
     """Get reference to the VM with the uuid specified."""
-    vms = session._call_method(vim_util, "get_objects",
+    vms = session.call_method(vim_util, "get_objects",
                 "VirtualMachine", ['config.extraConfig["nvp.vm-uuid"]'])
     return _get_object_from_results(session, vms, instance_uuid,
                                      _get_object_for_optionvalue)
@@ -1414,20 +1414,20 @@ def search_vm_ref_by_identifier(session, identifier):
 def get_host_ref_for_vm(session, vm_ref):
     """Get a MoRef to the ESXi host currently running an instance."""
 
-    return session._call_method(vutil, "get_object_property",
-                                vm_ref, "runtime.host")
+    return session.call_method(vutil, "get_object_property",
+                               vm_ref, "runtime.host")
 
 
 def get_host_name_for_vm(session, vm_ref):
     """Get the hostname of the ESXi host currently running an instance."""
 
     host_ref = get_host_ref_for_vm(session, vm_ref)
-    return session._call_method(vutil, "get_object_property",
-                                host_ref, "name")
+    return session.call_method(vutil, "get_object_property",
+                               host_ref, "name")
 
 
 def get_vm_state(session, vm_ref):
-    vm_state = session._call_method(vutil, "get_object_property",
+    vm_state = session.call_method(vutil, "get_object_property",
                                     vm_ref, "runtime.powerState")
     return constants.POWER_STATES[vm_state]
 
@@ -1525,7 +1525,7 @@ def get_stats_from_cluster(session, cluster):
         get_hosts_and_reservations_for_cluster(session, cluster)
 
     if host_mors:
-        result = session._call_method(vim_util,
+        result = session.call_method(vim_util,
                         "get_properties_for_a_collection_of_objects",
                         "HostSystem", host_mors,
                         ["summary.hardware", "summary.runtime",
@@ -1592,7 +1592,7 @@ def get_hosts_and_reservations_for_cluster(session, cluster):
     props = ["host", "resourcePool", admission_policy_key]
     if CONF.vmware.hostgroup_reservations_json_file:
         props.append("configurationEx")
-    prop_dict = session._call_method(vutil,
+    prop_dict = session.call_method(vutil,
                                      "get_object_properties_dict",
                                      cluster,
                                      props)
@@ -1619,13 +1619,13 @@ def get_hosts_and_reservations_for_cluster(session, cluster):
 def get_host_ref(session, cluster=None):
     """Get reference to a host within the cluster specified."""
     if cluster is None:
-        results = session._call_method(vim_util, "get_objects",
+        results = session.call_method(vim_util, "get_objects",
                                        "HostSystem")
-        session._call_method(vutil, 'cancel_retrieval',
+        session.call_method(vutil, 'cancel_retrieval',
                              results)
         host_mor = results.objects[0].obj
     else:
-        host_ret = session._call_method(vutil, "get_object_property",
+        host_ret = session.call_method(vutil, "get_object_property",
                                         cluster, "host")
         if not host_ret or not host_ret.ManagedObjectReference:
             msg = _('No host available on cluster')
@@ -1674,7 +1674,7 @@ def get_vmdk_volume_disk(hardware_devices, path=None):
 def get_res_pool_ref(session, cluster):
     """Get the resource pool."""
     # Get the root resource pool of the cluster
-    res_pool_ref = session._call_method(vutil,
+    res_pool_ref = session.call_method(vutil,
                                         "get_object_property",
                                         cluster,
                                         "resourcePool")
@@ -1684,7 +1684,7 @@ def get_res_pool_ref(session, cluster):
 def get_all_cluster_mors(session):
     """Get all the clusters in the vCenter."""
     try:
-        results = session._call_method(vim_util, "get_objects",
+        results = session.call_method(vim_util, "get_objects",
                                         "ClusterComputeResource", ["name"])
         with vutil.WithRetrieval(session.vim, results) as objects:
             return list(objects)
@@ -1719,12 +1719,12 @@ def get_vmdk_adapter_type(adapter_type):
 def create_vm(session, vm_folder, config_spec, res_pool_ref):
     """Create VM on ESX host."""
     LOG.debug("Creating VM on the ESX host")
-    vm_create_task = session._call_method(
+    vm_create_task = session.call_method(
         session.vim,
         "CreateVM_Task", vm_folder,
         config=config_spec, pool=res_pool_ref)
     try:
-        task_info = session._wait_for_task(vm_create_task)
+        task_info = session.wait_for_task(vm_create_task)
     except vexc.VMwareDriverException:
         # An invalid guestId will result in an error with no specific fault
         # type and the generic error 'A specified parameter was not correct'.
@@ -1748,9 +1748,9 @@ def destroy_vm(session, vm_ref):
     """Destroy a VM instance. Assumes VM is powered off."""
     try:
         LOG.debug("Destroying the VM")
-        destroy_task = session._call_method(session.vim, "Destroy_Task",
+        destroy_task = session.call_method(session.vim, "Destroy_Task",
                                             vm_ref)
-        session._wait_for_task(destroy_task)
+        session.wait_for_task(destroy_task)
         LOG.info("Destroyed the VM")
     except vexc.VimFaultException as e:
         with excutils.save_and_reraise_exception() as ctx:
@@ -1767,7 +1767,7 @@ def mark_vm_as_template(session, vm_ref):
     """Mark a VM instance as template. Assumes VM is powered off."""
     try:
         LOG.debug("Marking the VM as template")
-        session._call_method(session.vim, "MarkAsTemplate", vm_ref)
+        session.call_method(session.vim, "MarkAsTemplate", vm_ref)
         LOG.info("Marked the VM as template")
     except Exception:
         LOG.exception(_('Mark VM as template failed'))
@@ -1791,7 +1791,7 @@ def create_virtual_disk(session, dc_ref, adapter_type, disk_type,
             adapter_type,
             disk_type)
 
-    vmdk_create_task = session._call_method(
+    vmdk_create_task = session.call_method(
             session.vim,
             "CreateVirtualDisk_Task",
             session.vim.service_content.virtualDiskManager,
@@ -1799,7 +1799,7 @@ def create_virtual_disk(session, dc_ref, adapter_type, disk_type,
             datacenter=dc_ref,
             spec=vmdk_create_spec)
 
-    session._wait_for_task(vmdk_create_task)
+    session.wait_for_task(vmdk_create_task)
     LOG.debug("Created Virtual Disk of size %(vmdk_file_size_in_kb)s"
               " KB and type %(disk_type)s",
               {"vmdk_file_size_in_kb": size_in_kb,
@@ -1822,41 +1822,41 @@ def copy_virtual_disk(session, dc_ref, source, dest):
     LOG.debug("Copying Virtual Disk %(source)s to %(dest)s",
               {'source': source, 'dest': dest})
     vim = session.vim
-    vmdk_copy_task = session._call_method(
+    vmdk_copy_task = session.call_method(
             vim,
             "CopyVirtualDisk_Task",
             vim.service_content.virtualDiskManager,
             sourceName=source,
             sourceDatacenter=dc_ref,
             destName=dest)
-    session._wait_for_task(vmdk_copy_task)
+    session.wait_for_task(vmdk_copy_task)
     LOG.debug("Copied Virtual Disk %(source)s to %(dest)s",
               {'source': source, 'dest': dest})
 
 
 def reconfigure_vm(session, vm_ref, config_spec):
     """Reconfigure a VM according to the config spec."""
-    reconfig_task = session._call_method(session.vim,
+    reconfig_task = session.call_method(session.vim,
                                          "ReconfigVM_Task", vm_ref,
                                          spec=config_spec)
-    session._wait_for_task(reconfig_task)
+    session.wait_for_task(reconfig_task)
 
 
 def power_on_instance(session, vm_ref):
     """Power on the specified instance."""
     LOG.debug("Powering on the VM")
     try:
-        poweron_task = session._call_method(
+        poweron_task = session.call_method(
                                     session.vim,
                                     "PowerOnVM_Task", vm_ref)
-        session._wait_for_task(poweron_task)
+        session.wait_for_task(poweron_task)
         LOG.debug("Powered on the VM")
     except vexc.InvalidPowerStateException:
         LOG.debug("VM already powered on")
 
 
 def _get_vm_port_indices(session, vm_ref):
-    extra_config = session._call_method(vutil,
+    extra_config = session.call_method(vutil,
                                         'get_object_property',
                                         vm_ref,
                                         'config.extraConfig')
@@ -1886,7 +1886,7 @@ def get_attach_port_index(session, vm_ref):
 
 
 def get_vm_detach_port_index(session, vm_ref, iface_id):
-    extra_config = session._call_method(vutil,
+    extra_config = session.call_method(vutil,
                                         'get_object_property',
                                         vm_ref,
                                         'config.extraConfig')
@@ -1903,9 +1903,9 @@ def power_off_instance(session, vm_ref):
 
     LOG.debug("Powering off the VM")
     try:
-        poweroff_task = session._call_method(session.vim,
+        poweroff_task = session.call_method(session.vim,
                                          "PowerOffVM_Task", vm_ref)
-        session._wait_for_task(poweroff_task)
+        session.wait_for_task(poweroff_task)
         LOG.debug("Powered off the VM")
     except vexc.InvalidPowerStateException:
         LOG.debug("VM already powered off")
@@ -1987,7 +1987,7 @@ def create_folder(session, parent_folder_ref, name):
     LOG.debug("Creating folder: %(name)s. Parent ref: %(parent)s.",
               {'name': name, 'parent': parent_folder_ref.value})
     try:
-        folder = session._call_method(session.vim, "CreateFolder",
+        folder = session.call_method(session.vim, "CreateFolder",
                                       parent_folder_ref, name=name)
         LOG.info("Created folder: %(name)s in parent %(parent)s.",
                  {'name': name, 'parent': parent_folder_ref.value})
@@ -2016,9 +2016,9 @@ def _get_vm_name(display_name, id_):
 
 def rename_vm(session, vm_ref, instance):
     vm_name = _get_vm_name(instance.display_name, instance.uuid)
-    rename_task = session._call_method(session.vim, "Rename_Task", vm_ref,
+    rename_task = session.call_method(session.vim, "Rename_Task", vm_ref,
                                        newName=vm_name)
-    session._wait_for_task(rename_task)
+    session.wait_for_task(rename_task)
 
 
 def create_service_locator_name_password(client_factory, username, password):

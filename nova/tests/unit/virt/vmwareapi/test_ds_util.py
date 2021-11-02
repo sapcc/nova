@@ -38,7 +38,7 @@ class DsUtilTestCase(test.NoDBTestCase):
         fake.reset()
 
     def test_get_datacenter_ref(self):
-        with mock.patch.object(self.session, '_call_method') as call_method:
+        with mock.patch.object(self.session, 'call_method') as call_method:
             ds_util.get_datacenter_ref(self.session, "datacenter")
             call_method.assert_called_once_with(
                 self.session.vim,
@@ -56,8 +56,8 @@ class DsUtilTestCase(test.NoDBTestCase):
             return 'fake_delete_task'
 
         with test.nested(
-            mock.patch.object(self.session, '_wait_for_task'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'wait_for_task'),
+            mock.patch.object(self.session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             ds_path = ds_obj.DatastorePath('ds', 'fake/path')
@@ -80,8 +80,8 @@ class DsUtilTestCase(test.NoDBTestCase):
             return 'fake_copy_task'
 
         with test.nested(
-            mock.patch.object(self.session, '_wait_for_task'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'wait_for_task'),
+            mock.patch.object(self.session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             src_ds_path = ds_obj.DatastorePath('ds', 'fake/path', 'src_file')
@@ -106,8 +106,8 @@ class DsUtilTestCase(test.NoDBTestCase):
             return 'fake_move_task'
 
         with test.nested(
-            mock.patch.object(self.session, '_wait_for_task'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'wait_for_task'),
+            mock.patch.object(self.session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             src_ds_path = ds_obj.DatastorePath('ds', 'tmp/src')
@@ -131,8 +131,8 @@ class DsUtilTestCase(test.NoDBTestCase):
             return 'fake_move_task'
 
         with test.nested(
-            mock.patch.object(self.session, '_wait_for_task'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'wait_for_task'),
+            mock.patch.object(self.session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             ds_util.disk_move(self.session,
@@ -142,8 +142,8 @@ class DsUtilTestCase(test.NoDBTestCase):
 
     def test_disk_copy(self):
         with test.nested(
-            mock.patch.object(self.session, '_wait_for_task'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'wait_for_task'),
+            mock.patch.object(self.session, 'call_method',
                               return_value=mock.sentinel.cm)
         ) as (_wait_for_task, _call_method):
             ds_util.disk_copy(self.session, mock.sentinel.dc_ref,
@@ -158,8 +158,8 @@ class DsUtilTestCase(test.NoDBTestCase):
 
     def test_disk_delete(self):
         with test.nested(
-            mock.patch.object(self.session, '_wait_for_task'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'wait_for_task'),
+            mock.patch.object(self.session, 'call_method',
                               return_value=mock.sentinel.cm)
         ) as (_wait_for_task, _call_method):
             ds_util.disk_delete(self.session,
@@ -179,7 +179,7 @@ class DsUtilTestCase(test.NoDBTestCase):
             createParentDirectories = kwargs.get('createParentDirectories')
             self.assertTrue(createParentDirectories)
 
-        with mock.patch.object(self.session, '_call_method',
+        with mock.patch.object(self.session, 'call_method',
                                fake_call_method):
             ds_path = ds_obj.DatastorePath('ds', 'fake/path')
             ds_util.mkdir(self.session, ds_path, 'fake-dc-ref')
@@ -214,9 +214,9 @@ class DsUtilTestCase(test.NoDBTestCase):
             self.fail()
 
         with test.nested(
-                mock.patch.object(self.session, '_call_method',
+                mock.patch.object(self.session, 'call_method',
                                   fake_call_method),
-                mock.patch.object(self.session, '_wait_for_task',
+                mock.patch.object(self.session, 'wait_for_task',
                                   fake_wait_for_task)):
             ds_path = ds_obj.DatastorePath('ds', 'fake/path')
             file_exists = ds_util.file_exists(self.session,
@@ -239,9 +239,9 @@ class DsUtilTestCase(test.NoDBTestCase):
             self.fail()
 
         with test.nested(
-                mock.patch.object(self.session, '_call_method',
+                mock.patch.object(self.session, 'call_method',
                                   fake_call_method),
-                mock.patch.object(self.session, '_wait_for_task',
+                mock.patch.object(self.session, 'wait_for_task',
                                   fake_wait_for_task)):
             ds_path = ds_obj.DatastorePath('ds', 'fake/path')
             file_exists = ds_util.file_exists(self.session,
@@ -285,7 +285,7 @@ class DsUtilTestCase(test.NoDBTestCase):
         def next_datastore(*args, **kwargs):
             return next(datastores_i[0])
 
-        with mock.patch.object(self.session, '_call_method',
+        with mock.patch.object(self.session, 'call_method',
                     side_effect=fake_call_method), \
                 mock.patch('oslo_vmware.vim_util.continue_retrieval',
                     side_effect=next_datastore), \
@@ -400,7 +400,7 @@ class DsUtilTestCase(test.NoDBTestCase):
         def fake_call_method(module, method, *args, **kwargs):
             return ''
 
-        with mock.patch.object(self.session, '_call_method',
+        with mock.patch.object(self.session, 'call_method',
                                fake_call_method):
             self.assertRaises(exception.DatastoreNotFound,
                               ds_util.get_datastore,
@@ -456,7 +456,7 @@ class DsUtilTestCase(test.NoDBTestCase):
 
     def test_get_connected_hosts_none(self):
         with mock.patch.object(self.session,
-                               '_call_method') as _call_method:
+                               'call_method') as _call_method:
             hosts = ds_util.get_connected_hosts(self.session,
                                                 'fake_datastore')
             self.assertEqual([], hosts)
@@ -472,7 +472,7 @@ class DsUtilTestCase(test.NoDBTestCase):
         host_mounts = mock.Mock(spec=object)
         host_mounts.DatastoreHostMount = [host_mount]
 
-        with mock.patch.object(self.session, '_call_method',
+        with mock.patch.object(self.session, 'call_method',
                                return_value=host_mounts) as _call_method:
             hosts = ds_util.get_connected_hosts(self.session,
                                                 'fake_datastore')

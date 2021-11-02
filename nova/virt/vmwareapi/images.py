@@ -404,10 +404,10 @@ def _import_image(session, read_handle, vm_import_spec, vm_name, vm_folder_ref,
                 imported_vm_ref = vm_ref
                 break
             try:
-                destroy_task = session._call_method(session.vim,
+                destroy_task = session.call_method(session.vim,
                                                     "Destroy_Task",
                                                     vm_ref)
-                session._wait_for_task(destroy_task)
+                session.wait_for_task(destroy_task)
             except vexc.ManagedObjectNotFoundException:
                 # another agent destroyed the VM in the meantime
                 pass
@@ -431,13 +431,13 @@ def _wait_for_import_task(session, vm_ref):
     waited = False
 
     try:
-        task_collector = session._call_method(session.vim,
+        task_collector = session.call_method(session.vim,
                                       "CreateCollectorForTasks",
                                       session.vim.service_content.taskManager,
                                       filter=task_filter_spec)
 
         while True:
-            page_tasks = session._call_method(session.vim,
+            page_tasks = session.call_method(session.vim,
                                               "ReadNextTasks",
                                               task_collector,
                                               maxCount=10)
@@ -447,7 +447,7 @@ def _wait_for_import_task(session, vm_ref):
             for ti in page_tasks:
                 if ti.descriptionId == "ResourcePool.ImportVAppLRO":
                     try:
-                        session._wait_for_task(ti.task)
+                        session.wait_for_task(ti.task)
                         waited = True
                     except vexc.VimException as e:
                         LOG.debug("Awaiting previous import on VM %s "
@@ -458,7 +458,7 @@ def _wait_for_import_task(session, vm_ref):
                     return waited
     finally:
         if task_collector:
-            session._call_method(session.vim,
+            session.call_method(session.vim,
                                  "DestroyCollector",
                                  task_collector)
 

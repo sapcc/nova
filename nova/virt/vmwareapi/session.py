@@ -54,7 +54,7 @@ class VMwareAPISession(api.VMwareAPISession):
         """Check if the module is a VIM Object instance."""
         return isinstance(module, vim.Vim)
 
-    def _call_method(self, module, method, *args, **kwargs):
+    def call_method(self, module, method, *args, **kwargs):
         """Calls a method within the module specified with
         args provided.
         """
@@ -62,9 +62,3 @@ class VMwareAPISession(api.VMwareAPISession):
             return self.invoke_api(module, method, self.vim, *args, **kwargs)
 
         return self.invoke_api(module, method, *args, **kwargs)
-
-    def _wait_for_task(self, task_ref):
-        """Return a Deferred that will give the result of the given task.
-        The task is polled until it completes.
-        """
-        return self.wait_for_task(task_ref)

@@ -127,7 +127,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                 raise Exception('unexpected method call')
 
         session = fake.FakeSession()
-        with mock.patch.object(session, '_call_method', fake_call_method):
+        with mock.patch.object(session, 'call_method', fake_call_method):
             result = vm_util.get_stats_from_cluster(session, "cluster1")
             if connection_state == "connected" and not maintenance_mode:
                 num_hosts = 2
@@ -482,7 +482,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         filename = '[test_datastore] uuid/uuid.vmdk'
         devices = self._vmdk_path_and_adapter_type_devices(filename)
         session = fake.FakeSession()
-        with mock.patch.object(session, '_call_method', return_value=devices):
+        with mock.patch.object(session, 'call_method', return_value=devices):
             vmdk = vm_util.get_vmdk_info(session, None)
             self.assertEqual(constants.ADAPTER_TYPE_LSILOGICSAS,
                              vmdk.adapter_type)
@@ -495,7 +495,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         n_filename = '[test_datastore] uuid/uuid.vmdk'
         devices = self._vmdk_path_and_adapter_type_devices(n_filename)
         session = fake.FakeSession()
-        with mock.patch.object(session, '_call_method', return_value=devices):
+        with mock.patch.object(session, 'call_method', return_value=devices):
             vmdk = vm_util.get_vmdk_info(session, None, uuid='uuid')
             self.assertEqual(constants.ADAPTER_TYPE_LSILOGICSAS,
                              vmdk.adapter_type)
@@ -507,7 +507,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         n_filename = '[test_datastore] diuu/diuu.vmdk'
         session = fake.FakeSession()
         devices = self._vmdk_path_and_adapter_type_devices_nomatch(n_filename)
-        with mock.patch.object(session, '_call_method', return_value=devices):
+        with mock.patch.object(session, 'call_method', return_value=devices):
             vmdk = vm_util.get_vmdk_info(session, None, uuid='uuid')
             self.assertIsNone(vmdk.adapter_type)
             self.assertIsNone(vmdk.path)
@@ -1194,9 +1194,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         fake_call_mock = mock.Mock(side_effect=fake_call_method)
         fake_wait_mock = mock.Mock(side_effect=fake_wait_for_task)
         with test.nested(
-                mock.patch.object(session, '_wait_for_task',
+                mock.patch.object(session, 'wait_for_task',
                                   fake_wait_mock),
-                mock.patch.object(session, '_call_method',
+                mock.patch.object(session, 'call_method',
                                   fake_call_mock)
         ) as (wait_for_task, call_method):
             vm_ref = vm_util.create_vm(
@@ -1258,9 +1258,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_power_on_instance_with_vm_ref(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, "_call_method",
+            mock.patch.object(session, "call_method",
                               return_value='fake-task'),
-            mock.patch.object(session, "_wait_for_task"),
+            mock.patch.object(session, "wait_for_task"),
         ) as (fake_call_method, fake_wait_for_task):
             vm_util.power_on_instance(session, 'fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
@@ -1271,9 +1271,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_power_on_instance_with_exception(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, "_call_method",
+            mock.patch.object(session, "call_method",
                               return_value='fake-task'),
-            mock.patch.object(session, "_wait_for_task",
+            mock.patch.object(session, "wait_for_task",
                               side_effect=exception.NovaException('fake')),
         ) as (fake_call_method, fake_wait_for_task):
             self.assertRaises(exception.NovaException,
@@ -1287,10 +1287,10 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_power_on_instance_with_power_state_exception(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, "_call_method",
+            mock.patch.object(session, "call_method",
                               return_value='fake-task'),
             mock.patch.object(
-                    session, "_wait_for_task",
+                    session, "wait_for_task",
                     side_effect=vexc.InvalidPowerStateException),
         ) as (fake_call_method, fake_wait_for_task):
             vm_util.power_on_instance(session, 'fake-vm-ref')
@@ -1305,9 +1305,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         with test.nested(
             mock.patch.object(vm_util, "get_vmdk_create_spec",
                               return_value='fake-spec'),
-            mock.patch.object(session, "_call_method",
+            mock.patch.object(session, "call_method",
                               return_value='fake-task'),
-            mock.patch.object(session, "_wait_for_task"),
+            mock.patch.object(session, "wait_for_task"),
         ) as (fake_get_spec, fake_call_method, fake_wait_for_task):
             vm_util.create_virtual_disk(session, 'fake-dc-ref',
                                         'fake-adapter-type', 'fake-disk-type',
@@ -1329,9 +1329,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         session = fake.FakeSession()
         dm = session.vim.service_content.virtualDiskManager
         with test.nested(
-            mock.patch.object(session, "_call_method",
+            mock.patch.object(session, "call_method",
                               return_value='fake-task'),
-            mock.patch.object(session, "_wait_for_task"),
+            mock.patch.object(session, "wait_for_task"),
         ) as (fake_call_method, fake_wait_for_task):
             vm_util.copy_virtual_disk(session, 'fake-dc-ref',
                                       'fake-source', 'fake-dest')
@@ -1352,9 +1352,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_reconfigure_vm(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, '_call_method',
+            mock.patch.object(session, 'call_method',
                               return_value='fake_reconfigure_task'),
-            mock.patch.object(session, '_wait_for_task')
+            mock.patch.object(session, 'wait_for_task')
         ) as (_call_method, _wait_for_task):
             vm_util.reconfigure_vm(session, 'fake-ref', 'fake-spec')
             _call_method.assert_called_once_with(mock.ANY,
@@ -1650,9 +1650,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_power_off_instance(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, '_call_method',
+            mock.patch.object(session, 'call_method',
                               return_value='fake-task'),
-            mock.patch.object(session, '_wait_for_task')
+            mock.patch.object(session, 'wait_for_task')
         ) as (fake_call_method, fake_wait_for_task):
             vm_util.power_off_instance(session, 'fake-vm-ref')
             fake_call_method.assert_called_once_with(session.vim,
@@ -1663,9 +1663,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_power_off_instance_with_exception(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, '_call_method',
+            mock.patch.object(session, 'call_method',
                               return_value='fake-task'),
-            mock.patch.object(session, '_wait_for_task',
+            mock.patch.object(session, 'wait_for_task',
                               side_effect=exception.NovaException('fake'))
         ) as (fake_call_method, fake_wait_for_task):
             self.assertRaises(exception.NovaException,
@@ -1679,10 +1679,10 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_power_off_instance_power_state_exception(self):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, '_call_method',
+            mock.patch.object(session, 'call_method',
                               return_value='fake-task'),
             mock.patch.object(
-                    session, '_wait_for_task',
+                    session, 'wait_for_task',
                     side_effect=vexc.InvalidPowerStateException)
         ) as (fake_call_method, fake_wait_for_task):
             vm_util.power_off_instance(session, 'fake-vm-ref')
@@ -1969,7 +1969,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         devices = [root_disk, swap_disk]
 
         session = fake.FakeSession()
-        with mock.patch.object(session, '_call_method',
+        with mock.patch.object(session, 'call_method',
                                return_value=devices) as mock_call:
             device = vm_util.get_swap(session, vm_ref)
 
@@ -1981,7 +1981,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         """Test create_folder when the folder doesn't exist"""
         child_folder = mock.sentinel.child_folder
         session = fake.FakeSession()
-        with mock.patch.object(session, '_call_method',
+        with mock.patch.object(session, 'call_method',
                                side_effect=[child_folder]):
             parent_folder = mock.sentinel.parent_folder
             parent_folder.value = 'parent-ref'
@@ -1989,7 +1989,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
             ret = vm_util.create_folder(session, parent_folder, child_name)
 
             self.assertEqual(child_folder, ret)
-            session._call_method.assert_called_once_with(session.vim,
+            session.call_method.assert_called_once_with(session.vim,
                                                          'CreateFolder',
                                                          parent_folder,
                                                          name=child_name)
@@ -1999,7 +1999,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         session = fake.FakeSession()
         details = {'object': 'folder-1'}
         duplicate_exception = vexc.DuplicateName(details=details)
-        with mock.patch.object(session, '_call_method',
+        with mock.patch.object(session, 'call_method',
                                side_effect=[duplicate_exception]):
             parent_folder = mock.sentinel.parent_folder
             parent_folder.value = 'parent-ref'
@@ -2008,7 +2008,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
 
             self.assertEqual('Folder', ret._type)
             self.assertEqual('folder-1', ret.value)
-            session._call_method.assert_called_once_with(session.vim,
+            session.call_method.assert_called_once_with(session.vim,
                                                          'CreateFolder',
                                                          parent_folder,
                                                          name=child_name)
@@ -2040,9 +2040,9 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     def test_rename_vm(self, mock_get_name):
         session = fake.FakeSession()
         with test.nested(
-            mock.patch.object(session, '_call_method',
+            mock.patch.object(session, 'call_method',
                               return_value='fake_rename_task'),
-            mock.patch.object(session, '_wait_for_task')
+            mock.patch.object(session, 'wait_for_task')
         ) as (_call_method, _wait_for_task):
             vm_util.rename_vm(session, 'fake-ref', self._instance)
             _call_method.assert_called_once_with(mock.ANY,

@@ -212,11 +212,11 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def _register_openstack_extension(self):
         # Register an 'OpenStack' extension in vCenter
-        os_extension = self._session._call_method(vim_util, 'find_extension',
+        os_extension = self._session.call_method(vim_util, 'find_extension',
                                                   constants.EXTENSION_KEY)
         if os_extension is None:
             try:
-                self._session._call_method(vim_util, 'register_extension',
+                self._session.call_method(vim_util, 'register_extension',
                                            constants.EXTENSION_KEY,
                                            constants.EXTENSION_TYPE_INSTANCE)
                 LOG.info('Registered extension %s with vCenter',
@@ -335,7 +335,7 @@ class VMwareVCDriver(driver.ComputeDriver):
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
 
-        about = self._session._call_method(nova_vim_util, 'get_about_info')
+        about = self._session.call_method(nova_vim_util, 'get_about_info')
         return about.instanceUuid
 
     def _create_nodename(self, mo_id):
@@ -397,12 +397,12 @@ class VMwareVCDriver(driver.ComputeDriver):
         self.datastore_free_space = 0
         self.datastore_total = 0
 
-        cluster_data = self._session._call_method(vim_util,
+        cluster_data = self._session.call_method(vim_util,
                                   'get_object_properties_dict', cluster_ref,
                                   ['host', 'datastore', 'summary'])
 
         for datastore in cluster_data['datastore'][0]:
-            datastore_capacity = self._session._call_method(
+            datastore_capacity = self._session.call_method(
                 vim_util,
                 "get_object_properties_dict",
                 datastore,
@@ -412,7 +412,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             self.datastore_total += datastore_capacity['summary.capacity']
 
         for cluster_host in cluster_data['host'][0]:
-            props = self._session._call_method(vim_util,
+            props = self._session.call_method(vim_util,
                                                "get_object_properties_dict",
                                                cluster_host,
                                                lst_properties)

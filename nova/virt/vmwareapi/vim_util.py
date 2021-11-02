@@ -162,7 +162,7 @@ def get_about_info(vim):
 
 
 def get_entity_name(session, entity):
-    return session._call_method(vutil, 'get_object_property',
+    return session.call_method(vutil, 'get_object_property',
                                 entity, 'name')
 
 

@@ -1216,17 +1216,17 @@ class FakeSession(object):
     def __init__(self):
         self.vim = FakeVim()
 
-    def _call_method(self, module, method, *args, **kwargs):
+    def call_method(self, module, method, *args, **kwargs):
         raise NotImplementedError()
 
-    def _wait_for_task(self, task_ref):
+    def wait_for_task(self, task_ref):
         raise NotImplementedError()
 
 
 class FakeObjectRetrievalSession(FakeSession):
     """A session for faking object retrieval tasks.
 
-    _call_method() returns a given set of objects
+    call_method() returns a given set of objects
     sequentially, regardless of the method called.
     """
 
@@ -1235,7 +1235,7 @@ class FakeObjectRetrievalSession(FakeSession):
         self.ret = ret
         self.ind = 0
 
-    def _call_method(self, module, method, *args, **kwargs):
+    def call_method(self, module, method, *args, **kwargs):
         if (method == 'continue_retrieval' or
             method == 'cancel_retrieval'):
             return

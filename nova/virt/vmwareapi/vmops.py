@@ -179,7 +179,7 @@ class VMwareVMOps(object):
     def _extend_virtual_disk(self, requested_size, name, dc_ref):
         service_content = self._session.vim.service_content
         LOG.debug("Extending root virtual disk to %s", requested_size)
-        vmdk_extend_task = self._session._call_method(
+        vmdk_extend_task = self._session.call_method(
                 self._session.vim,
                 "ExtendVirtualDisk_Task",
                 service_content.virtualDiskManager,
@@ -188,7 +188,7 @@ class VMwareVMOps(object):
                 newCapacityKb=requested_size,
                 eagerZero=False)
         try:
-            self._session._wait_for_task(vmdk_extend_task)
+            self._session.wait_for_task(vmdk_extend_task)
         except Exception as e:
             with excutils.save_and_reraise_exception():
                 LOG.error('Extending virtual disk failed with error: %s',
@@ -416,7 +416,7 @@ class VMwareVMOps(object):
     def _get_esx_host_and_cookies(self, datastore, dc_path, file_path):
         hosts = datastore.get_connected_hosts(self._session)
         host = ds_obj.Datastore.choose_host(hosts)
-        host_name = self._session._call_method(vutil, 'get_object_property',
+        host_name = self._session.call_method(vutil, 'get_object_property',
                                                host, 'name')
         url = ds_obj.DatastoreURL('https', host_name, file_path, dc_path,
                                   datastore.name)
@@ -644,7 +644,7 @@ class VMwareVMOps(object):
         try:
             LOG.debug("Unregistering the template VM %s",
                       templ_vm_ref.value)
-            self._session._call_method(self._session.vim,
+            self._session.call_method(self._session.vim,
                                        "UnregisterVM", templ_vm_ref)
             LOG.debug("Unregistered the template VM")
         except Exception as excep:
@@ -764,7 +764,7 @@ class VMwareVMOps(object):
                 clone_spec = vm_util.clone_vm_spec(client_factory,
                                                    rel_spec,
                                                    template=True)
-                templ_vm_clone_task = self._session._call_method(
+                templ_vm_clone_task = self._session.call_method(
                     self._session.vim,
                     "CloneVM_Task",
                     other_templ_vm_ref,
@@ -776,7 +776,7 @@ class VMwareVMOps(object):
                     spec=clone_spec)
                 try:
                     task_info = \
-                        self._session._wait_for_task(templ_vm_clone_task)
+                        self._session.wait_for_task(templ_vm_clone_task)
                 except vexc.FileNotFoundException:
                     LOG.warning("Could not find files for template VM %s",
                                 other_templ_vm_ref.value)
@@ -983,7 +983,7 @@ class VMwareVMOps(object):
                                   destroy_templ_exc)
 
     def _build_template_vm_inventory_path(self, vi):
-        vm_folder_name = self._session._call_method(vutil,
+        vm_folder_name = self._session.call_method(vutil,
                                                     "get_object_property",
                                                     vi.dc_info.vmFolder,
                                                     "name")
@@ -1053,7 +1053,7 @@ class VMwareVMOps(object):
                         res_pool=self._root_resource_pool,
                         disk_move_type="moveAllDiskBackingsAndDisallowSharing")
         clone_spec = vm_util.clone_vm_spec(client_factory, rel_spec)
-        vm_clone_task = self._session._call_method(
+        vm_clone_task = self._session.call_method(
             self._session.vim,
             "CloneVM_Task",
             templ_vm_ref,
@@ -1062,7 +1062,7 @@ class VMwareVMOps(object):
                                     type_='Instances'),
             name=vi.instance.uuid,
             spec=clone_spec)
-        task_info = self._session._wait_for_task(vm_clone_task)
+        task_info = self._session.wait_for_task(vm_clone_task)
         vm_ref = task_info.result
 
         root_vmdk_info = vm_util.get_vmdk_info(self._session,
@@ -1394,16 +1394,16 @@ class VMwareVMOps(object):
 
     def _create_vm_snapshot(self, instance, vm_ref, image_id=None):
         LOG.debug("Creating Snapshot of the VM instance")
-        snapshot_task = self._session._call_method(
+        snapshot_task = self._session.call_method(
                     self._session.vim,
                     "CreateSnapshot_Task", vm_ref,
                     name="%s-snapshot" % (image_id or instance.uuid),
                     description="Taking Snapshot of the VM",
                     memory=False,
                     quiesce=True)
-        self._session._wait_for_task(snapshot_task)
+        self._session.wait_for_task(snapshot_task)
         LOG.debug("Created Snapshot of the VM instance")
-        task_info = self._session._call_method(vutil,
+        task_info = self._session.call_method(vutil,
                                                "get_object_property",
                                                snapshot_task,
                                                "info")
@@ -1413,11 +1413,11 @@ class VMwareVMOps(object):
     @retry_if_task_in_progress
     def _delete_vm_snapshot(self, snapshot):
         LOG.debug("Deleting Snapshot of the VM instance")
-        delete_snapshot_task = self._session._call_method(
+        delete_snapshot_task = self._session.call_method(
                     self._session.vim,
                     "RemoveSnapshot_Task", snapshot,
                     removeChildren=False, consolidate=True)
-        self._session._wait_for_task(delete_snapshot_task)
+        self._session.wait_for_task(delete_snapshot_task)
         LOG.debug("Deleted Snapshot of the VM instance")
 
     def _create_vm_clone(self, instance, vm_ref, snapshot_ref, dc_info,
@@ -1497,7 +1497,7 @@ class VMwareVMOps(object):
                                            config=config_spec)
 
         LOG.debug("Cloning VM %s", vm_name)
-        vm_clone_task = self._session._call_method(
+        vm_clone_task = self._session.call_method(
             self._session.vim,
             "CloneVM_Task",
             vm_ref,
@@ -1506,9 +1506,9 @@ class VMwareVMOps(object):
                                             type_='Images'),
             name=vm_name,
             spec=clone_spec)
-        self._session._wait_for_task(vm_clone_task)
+        self._session.wait_for_task(vm_clone_task)
         LOG.info("Cloned VM %s", vm_name)
-        task_info = self._session._call_method(vutil,
+        task_info = self._session.call_method(vutil,
                                                "get_object_property",
                                                vm_clone_task,
                                                "info")
@@ -1541,7 +1541,7 @@ class VMwareVMOps(object):
                 raise error_util.NoRootDiskDefined()
 
             lst_properties = ["datastore", "summary.config.guestId"]
-            props = self._session._call_method(vutil,
+            props = self._session.call_method(vutil,
                                                "get_object_properties_dict",
                                                vm_ref,
                                                lst_properties)
@@ -1621,14 +1621,14 @@ class VMwareVMOps(object):
                 tools_running_status == "guestToolsRunning" and
                 reboot_type == "SOFT"):
             LOG.debug("Rebooting guest OS of VM")
-            self._session._call_method(self._session.vim, "RebootGuest",
+            self._session.call_method(self._session.vim, "RebootGuest",
                                        vm_ref)
             LOG.debug("Rebooted guest OS of VM")
         else:
             LOG.debug("Doing hard reboot of VM")
-            reset_task = self._session._call_method(self._session.vim,
+            reset_task = self._session.call_method(self._session.vim,
                                                     "ResetVM_Task", vm_ref)
-            self._session._wait_for_task(reset_task)
+            self._session.wait_for_task(reset_task)
             LOG.debug("Did hard reboot of VM")
 
     def _destroy_instance(self, instance, destroy_disks=True):
@@ -1637,7 +1637,7 @@ class VMwareVMOps(object):
             vm_ref = vm_util.get_vm_ref(self._session, instance)
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
-            props = self._session._call_method(vutil,
+            props = self._session.call_method(vutil,
                                                "get_object_properties_dict",
                                                vm_ref,
                                                lst_properties)
@@ -1656,7 +1656,7 @@ class VMwareVMOps(object):
             # Un-register the VM
             try:
                 LOG.debug("Unregistering the VM")
-                self._session._call_method(self._session.vim,
+                self._session.call_method(self._session.vim,
                                            "UnregisterVM", vm_ref)
                 LOG.debug("Unregistered the VM")
             except Exception as excep:
@@ -1716,16 +1716,16 @@ class VMwareVMOps(object):
     def suspend(self, instance):
         """Suspend the specified instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        pwr_state = self._session._call_method(vutil,
+        pwr_state = self._session.call_method(vutil,
                                                "get_object_property",
                                                vm_ref,
                                                "runtime.powerState")
         # Only PoweredOn VMs can be suspended.
         if pwr_state == "poweredOn":
             LOG.debug("Suspending the VM")
-            suspend_task = self._session._call_method(self._session.vim,
+            suspend_task = self._session.call_method(self._session.vim,
                     "SuspendVM_Task", vm_ref)
-            self._session._wait_for_task(suspend_task)
+            self._session.wait_for_task(suspend_task)
             LOG.debug("Suspended the VM")
         # Raise Exception if VM is poweredOff
         elif pwr_state == "poweredOff":
@@ -1738,16 +1738,16 @@ class VMwareVMOps(object):
     def resume(self, instance):
         """Resume the specified instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        pwr_state = self._session._call_method(vutil,
+        pwr_state = self._session.call_method(vutil,
                                                "get_object_property",
                                                vm_ref,
                                                "runtime.powerState")
         if pwr_state.lower() == "suspended":
             LOG.debug("Resuming the VM")
-            suspend_task = self._session._call_method(
+            suspend_task = self._session.call_method(
                                         self._session.vim,
                                        "PowerOnVM_Task", vm_ref)
-            self._session._wait_for_task(suspend_task)
+            self._session.wait_for_task(suspend_task)
             LOG.debug("Resumed the VM")
         else:
             reason = _("instance is not in a suspended state")
@@ -1866,7 +1866,7 @@ class VMwareVMOps(object):
 
             LOG.debug("Soft shutdown instance, timeout: %d",
                      timeout)
-            self._session._call_method(self._session.vim,
+            self._session.call_method(self._session.vim,
                                        "ShutdownGuest",
                                        vm_ref)
 
@@ -1890,7 +1890,7 @@ class VMwareVMOps(object):
     def is_instance_in_resource_pool(self, instance):
         try:
             vm_ref = vm_util.get_vm_ref(self._session, instance)
-            res_pool = self._session._call_method(vutil, "get_object_property",
+            res_pool = self._session.call_method(vutil, "get_object_property",
                                                   vm_ref, "resourcePool")
 
             return vutil.get_moref_value(res_pool) == \
@@ -1913,7 +1913,7 @@ class VMwareVMOps(object):
         if set(vm_props.keys()).issuperset(lst_properties):
             return vm_props
         else:
-            return self._session._call_method(
+            return self._session.call_method(
                 vutil, "get_object_properties_dict",
                 vm_ref, lst_properties)
 
@@ -2409,7 +2409,7 @@ class VMwareVMOps(object):
             if CONF.vmware.use_property_collector:
                 LOG.debug("VM instance data was not found on the cache.")
 
-            return session._call_method(
+            return session.call_method(
                 vutil, "get_object_properties_dict",
                 vm_ref, [powerstate_property])
 
@@ -2427,7 +2427,7 @@ class VMwareVMOps(object):
         lst_properties = ["summary.config",
                           "summary.quickStats",
                           "summary.runtime"]
-        vm_props = self._session._call_method(vutil,
+        vm_props = self._session.call_method(vutil,
                                               "get_object_properties_dict",
                                               vm_ref,
                                               lst_properties)
@@ -2466,7 +2466,7 @@ class VMwareVMOps(object):
     def _get_vnc_console_connection(self, instance):
         """Return connection info for a vnc console."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        opt_value = self._session._call_method(vutil,
+        opt_value = self._session.call_method(vutil,
                                                'get_object_property',
                                                vm_ref,
                                                vm_util.VNC_CONFIG_KEY)
@@ -2538,7 +2538,7 @@ class VMwareVMOps(object):
     def _get_ds_browser(self, ds_ref):
         ds_browser = self._datastore_browser_mapping.get(ds_ref.value)
         if not ds_browser:
-            ds_browser = self._session._call_method(vutil,
+            ds_browser = self._session.call_method(vutil,
                                                     "get_object_property",
                                                     ds_ref,
                                                     "browser")
@@ -3005,7 +3005,7 @@ class VMwareVMOps(object):
                   vutil.get_moref_value(self._cluster))
         vms = []
         if self._root_resource_pool:
-            vms = self._session._call_method(
+            vms = self._session.call_method(
                 vim_util, 'get_inner_objects', self._root_resource_pool, 'vm',
                 'VirtualMachine', properties)
         return_properties = additional_properties is not None or include_moref
@@ -3034,7 +3034,7 @@ class VMwareVMOps(object):
 
     def get_mks_console(self, instance):
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        ticket = self._session._call_method(self._session.vim,
+        ticket = self._session.call_method(self._session.vim,
                                             'AcquireTicket',
                                             vm_ref,
                                             ticketType='mks')
@@ -3069,7 +3069,7 @@ class VMwareVMOps(object):
 
         if self._property_collector is None:
             pc = vim.service_content.propertyCollector
-            self._property_collector = self._session._call_method(
+            self._property_collector = self._session.call_method(
                 self._session.vim,
                 "CreatePropertyCollector", pc)
             vim.CreateFilter(self._property_collector,
@@ -3419,6 +3419,6 @@ class VMwareVMOps(object):
                 if getattr(rule, "vmGroupName", None) == vm_group_name:
                     placement_rules.append(rule)
 
-        result = self._session._call_method(self._session.vim, "PlaceVm",
+        result = self._session.call_method(self._session.vim, "PlaceVm",
             self._cluster, placementSpec=placement_spec)
         return result

@@ -75,7 +75,7 @@ class _SpecialVmSpawningServer(object):
     def _get_group(self, cluster_config=None):
         """Return the hostgroup or None if not found."""
         if cluster_config is None:
-            cluster_config = self._session._call_method(
+            cluster_config = self._session.call_method(
                 vutil, "get_object_property", self._cluster, "configurationEx")
         if not cluster_config:
             # that should never happen. we should not procede with whatever
@@ -100,7 +100,7 @@ class _SpecialVmSpawningServer(object):
 
     def _get_hosts_in_cluster(self, cluster_ref):
         """Return a list of HostSystem morefs belonging to the cluster"""
-        result = self._session._call_method(
+        result = self._session.call_method(
             vim_util, 'get_inner_objects', cluster_ref, 'host', 'HostSystem')
         with vutil.WithRetrieval(self._session.vim, result) as objects:
             return [obj.obj for obj in objects]
@@ -108,7 +108,7 @@ class _SpecialVmSpawningServer(object):
     def _get_vms_on_host(self, host_ref):
         """Return a list of VMs uuids with their memory size and state"""
         vm_data = []
-        vm_ret = self._session._call_method(vutil,
+        vm_ret = self._session.call_method(vutil,
                                             "get_object_property",
                                             host_ref,
                                             "vm")
@@ -117,7 +117,7 @@ class _SpecialVmSpawningServer(object):
             return vm_data
 
         vm_mors = vm_ret.ManagedObjectReference
-        result = self._session._call_method(vutil,
+        result = self._session.call_method(vutil,
                             "get_properties_for_a_collection_of_objects",
                             "VirtualMachine", vm_mors,
                             ["config.instanceUuid", "runtime.powerState",
@@ -183,7 +183,7 @@ class _SpecialVmSpawningServer(object):
         hostgroup. If that's already the case, return whether there are running
         VMs left on the host, i.e. the process is finished.
         """
-        cluster_config = self._session._call_method(
+        cluster_config = self._session.call_method(
             vutil, "get_object_property", self._cluster, "configurationEx")
 
         # check if DRS is enabled, so freeing up can work
@@ -252,7 +252,7 @@ class _SpecialVmSpawningServer(object):
                 return FREE_HOST_STATE_ERROR
 
             # filter hosts which are in a wrong state
-            result = self._session._call_method(vim_util,
+            result = self._session.call_method(vim_util,
                          "get_properties_for_a_collection_of_objects",
                          "HostSystem",
                          [host_objs[h] for h in vms_per_host],
@@ -319,7 +319,7 @@ class _SpecialVmSpawningServer(object):
                             'host.')
                 return FREE_HOST_STATE_ERROR
 
-            runtime_summary = self._session._call_method(
+            runtime_summary = self._session.call_method(
                 vutil, "get_object_property", host_ref, 'summary.runtime')
             if (runtime_summary.inMaintenanceMode is True or
                     runtime_summary.connectionState != "connected"):

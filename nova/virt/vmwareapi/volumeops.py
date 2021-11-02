@@ -95,7 +95,7 @@ class VMwareVolumeOps(object):
 
     def _get_volume_uuid(self, vm_ref, volume_uuid):
         prop = 'config.extraConfig["volume-%s"]' % volume_uuid
-        opt_val = self._session._call_method(vutil,
+        opt_val = self._session.call_method(vutil,
                                              'get_object_property',
                                              vm_ref,
                                              prop)
@@ -138,7 +138,7 @@ class VMwareVolumeOps(object):
         lst_properties = ["config.storageDevice.hostBusAdapter",
                           "config.storageDevice.scsiTopology",
                           "config.storageDevice.scsiLun"]
-        prop_dict = self._session._call_method(vutil,
+        prop_dict = self._session.call_method(vutil,
                                                "get_object_properties_dict",
                                                host_mor,
                                                lst_properties)
@@ -208,19 +208,19 @@ class VMwareVolumeOps(object):
         send_tgt = client_factory.create('ns0:HostInternetScsiHbaSendTarget')
         (send_tgt.address, send_tgt.port) = target_portal.split(':')
         LOG.debug("Adding iSCSI host %s to send targets", send_tgt.address)
-        self._session._call_method(
+        self._session.call_method(
             self._session.vim, "AddInternetScsiSendTargets",
             storage_system_mor, iScsiHbaDevice=hba_device, targets=[send_tgt])
 
     def _iscsi_rescan_hba(self, target_portal):
         """Rescan the iSCSI HBA to discover iSCSI targets."""
         host_mor = vm_util.get_host_ref(self._session, self._cluster)
-        storage_system_mor = self._session._call_method(
+        storage_system_mor = self._session.call_method(
                                                 vutil,
                                                 "get_object_property",
                                                 host_mor,
                                                 "configManager.storageSystem")
-        hbas_ret = self._session._call_method(
+        hbas_ret = self._session.call_method(
                                             vutil,
                                             "get_object_property",
                                             storage_system_mor,
@@ -248,7 +248,7 @@ class VMwareVolumeOps(object):
         else:
             return
         LOG.debug("Rescanning HBA %s", hba_device)
-        self._session._call_method(self._session.vim,
+        self._session.call_method(self._session.vim,
             "RescanHba", storage_system_mor, hbaDevice=hba_device)
         LOG.debug("Rescanned HBA %s ", hba_device)
 
@@ -288,7 +288,7 @@ class VMwareVolumeOps(object):
         else:
             host_mor = vm_util.get_host_ref(self._session, self._cluster)
 
-        hbas_ret = self._session._call_method(
+        hbas_ret = self._session.call_method(
                                       vutil,
                                       "get_object_property",
                                       host_mor,
@@ -404,18 +404,18 @@ class VMwareVolumeOps(object):
 
     def _get_host_of_vm(self, vm_ref):
         """Get the ESX host of given VM."""
-        return self._session._call_method(vutil, 'get_object_property',
+        return self._session.call_method(vutil, 'get_object_property',
                                           vm_ref, 'runtime').host
 
     def _get_res_pool_of_host(self, host):
         """Get the resource pool of given host's cluster."""
         # Get the compute resource, the host belongs to
-        compute_res = self._session._call_method(vutil,
+        compute_res = self._session.call_method(vutil,
                                                  'get_object_property',
                                                  host,
                                                  'parent')
         # Get resource pool from the compute resource
-        return self._session._call_method(vutil,
+        return self._session.call_method(vutil,
                                           'get_object_property',
                                           compute_res,
                                           'resourcePool')
@@ -681,10 +681,10 @@ class VMwareVolumeOps(object):
             try:
                 data = connection_info["data"]
                 volume_ref = self._get_volume_ref(data["volume"])
-                destroy_task = session._call_method(session.vim,
+                destroy_task = session.call_method(session.vim,
                                             "Destroy_Task",
                                             volume_ref)
-                session._wait_for_task(destroy_task)
+                session.wait_for_task(destroy_task)
                 deleted.append("{volume_id} ({volume})".format(**data))
             except oslo_vmw_exceptions.ManagedObjectNotFoundException:
                 LOG.debug("Volume %s already deleted",

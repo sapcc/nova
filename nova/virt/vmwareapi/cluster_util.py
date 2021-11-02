@@ -25,7 +25,7 @@ LOG = logging.getLogger(__name__)
 
 
 def reconfigure_cluster(session, cluster, config_spec):
-    reconfig_task = session._call_method(session.vim,
+    reconfig_task = session.call_method(session.vim,
                                          "ReconfigureComputeResource_Task",
                                          cluster, spec=config_spec,
                                          modify=True)
@@ -102,7 +102,7 @@ def fetch_cluster_groups(session, cluster_ref=None, cluster_config=None,
         raise exception.ValidationError(msg)
 
     if cluster_config is None:
-        cluster_config = session._call_method(
+        cluster_config = session.call_method(
             vutil, "get_object_property", cluster_ref, "configurationEx")
 
     groups = {}
@@ -130,7 +130,7 @@ def fetch_cluster_rules(session, cluster_ref=None, cluster_config=None):
         raise exception.ValidationError(msg)
 
     if cluster_config is None:
-        cluster_config = session._call_method(
+        cluster_config = session.call_method(
             vutil, "get_object_property", cluster_ref, "configurationEx")
 
     return {r.name: r for r in getattr(cluster_config, 'rule', [])}
@@ -163,7 +163,7 @@ def update_vm_group_membership(session, cluster, vm_group_name, vm_ref,
     The assumption is that an administrator defines rules with other means
     on that group.
     """
-    cluster_config = session._call_method(
+    cluster_config = session.call_method(
         vutil, "get_object_property", cluster, "configurationEx")
 
     client_factory = session.vim.client.factory
@@ -286,7 +286,7 @@ def add_rule(session, cluster_ref, rule):
 
 def get_rule(session, cluster_ref, rule_name):
     """Get a DRS rule from the cluster by name"""
-    cluster_config = session._call_method(
+    cluster_config = session.call_method(
         vutil, "get_object_property", cluster_ref, "configurationEx")
     return _get_rule(cluster_config, rule_name)
 
@@ -305,7 +305,7 @@ def get_rules_by_prefix(session, cluster_ref, rule_prefix):
     Useful, if you don't know the policy of a server-group the rule was created
     for.
     """
-    cluster_config = session._call_method(
+    cluster_config = session.call_method(
         vutil, "get_object_property", cluster_ref, "configurationEx")
 
     return [rule for rule in getattr(cluster_config, 'rules', [])
@@ -330,7 +330,7 @@ def update_rule(session, cluster_ref, rule):
 
 def is_drs_enabled(session, cluster):
     """Check if DRS is enabled on a given cluster"""
-    drs_config = session._call_method(vutil, "get_object_property", cluster,
+    drs_config = session.call_method(vutil, "get_object_property", cluster,
                                       "configuration.drsConfig")
     if drs_config and hasattr(drs_config, 'enabled'):
         return drs_config.enabled

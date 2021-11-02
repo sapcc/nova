@@ -268,8 +268,8 @@ class VMwareVMOpsTestCase(test.TestCase):
             return 'fake_remove_snapshot_task'
 
         with test.nested(
-            mock.patch.object(self._session, '_wait_for_task'),
-            mock.patch.object(self._session, '_call_method', fake_call_method)
+            mock.patch.object(self._session, 'wait_for_task'),
+            mock.patch.object(self._session, 'call_method', fake_call_method)
         ) as (_wait_for_task, _call_method):
             self._vmops._delete_vm_snapshot("fake_vm_snapshot")
             _wait_for_task.assert_has_calls([
@@ -294,8 +294,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                 return task_info
 
         with test.nested(
-            mock.patch.object(self._session, '_wait_for_task'),
-            mock.patch.object(self._session, '_call_method', fake_call_method)
+            mock.patch.object(self._session, 'wait_for_task'),
+            mock.patch.object(self._session, 'call_method', fake_call_method)
         ) as (_wait_for_task, _call_method):
             snap = self._vmops._create_vm_snapshot(self._instance,
                                                    "fake_vm_ref")
@@ -324,7 +324,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
                                                             value='test_id')
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                return_value=result):
             info = self._vmops.get_info(self._instance)
             mock_get_vm_ref.assert_called_once_with(self._session,
@@ -339,7 +339,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         }
         mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
             value='fake_powered_off')
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                return_value=result):
             info = self._vmops.get_info(self._instance)
             mock_get_vm_ref.assert_called_once_with(self._session,
@@ -369,7 +369,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         def mock_call_method(module, method, *args, **kwargs):
             raise vexc.ManagedObjectNotFoundException()
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                mock_call_method):
             self.assertRaises(exception.InstanceNotFound,
                               self._vmops.get_info,
@@ -391,7 +391,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             result.add_object(vmwareapi_fake.Datacenter(ds_ref=None))
             result.add_object(vmwareapi_fake.Datacenter())
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                return_value=result) as fake_call:
             dc_info = _vcvmops.get_datacenter_ref_and_name(instance_ds_ref)
 
@@ -499,7 +499,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 mock.patch.object(vm_util, 'power_on_instance'),
                 mock.patch.object(vm_util, 'find_rescue_device'),
                 mock.patch.object(vm_util, 'get_vm_ref', return_value=vm_ref),
-                mock.patch.object(self._session, '_call_method',
+                mock.patch.object(self._session, 'call_method',
                                   fake_call_method),
                 mock.patch.object(vm_util, 'power_off_instance')
         ) as (_power_on_instance, _find_rescue, _get_vm_ref,
@@ -571,7 +571,7 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         with test.nested(
                 mock.patch.object(vm_util, 'get_vm_ref', return_value=vm_ref),
-                mock.patch.object(self._session, '_call_method',
+                mock.patch.object(self._session, 'call_method',
                                   side_effect=fake_call_method)
         ) as (mock_get_vm_ref, mock_call_method):
             result = self._vmops._clean_shutdown(instance, timeout,
@@ -1430,8 +1430,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                 mock.patch.object(self._vmops, '_get_image_template_vms',
                                   return_value=[(expired_templ_vm_ref, 'n1'),
                                                 (used_templ_vm_ref, 'n2')]),
-                mock.patch.object(self._session, '_call_method'),
-                mock.patch.object(self._session, '_wait_for_task')):
+                mock.patch.object(self._session, 'call_method'),
+                mock.patch.object(self._session, 'wait_for_task')):
             self._vmops.manage_image_cache(self._context, fake_instances)
             mock_destroy_vm.assert_called_once_with(self._session,
                                                     expired_templ_vm_ref)
@@ -1788,7 +1788,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         moref = vmwareapi_fake.ManagedObjectReference(value='datastore-100')
         self.assertIsNone(cache.get(moref.value))
         mock_call_method = mock.Mock(return_value=ds_browser)
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                mock_call_method):
             ret = self._vmops._get_ds_browser(moref)
             mock_call_method.assert_called_once_with(vutil,
@@ -2050,8 +2050,8 @@ class VMwareVMOpsTestCase(test.TestCase):
             extra_specs = vm_util.ExtraSpecs()
 
         with test.nested(
-                mock.patch.object(self._session, '_wait_for_task'),
-                mock.patch.object(self._session, '_call_method',
+                mock.patch.object(self._session, 'wait_for_task'),
+                mock.patch.object(self._session, 'call_method',
                                   mock_call_method),
                 mock.patch.object(uuidutils, 'generate_uuid',
                                   return_value='tmp-uuid'),
@@ -2803,7 +2803,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 mock.patch.object(
                     self._session, 'invoke_api',
                     side_effect=[datacenter_moref, fake_copy_task]),
-                mock.patch.object(self._session, '_wait_for_task')) as (
+                mock.patch.object(self._session, 'wait_for_task')) as (
                     invoke_api, wait_for_task):
             self._vmops._fetch_vsphere_image(self._context, vi, image_ds_loc)
             expected_calls = [
@@ -3132,9 +3132,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         with test.nested(
             mock.patch.object(vm_util, "get_vm_ref",
                               return_value='fake-vm-ref'),
-            mock.patch.object(self._session, "_call_method",
+            mock.patch.object(self._session, "call_method",
                               fake_call_method),
-            mock.patch.object(self._session, "_wait_for_task")
+            mock.patch.object(self._session, "wait_for_task")
         ) as (_get_vm_ref, fake_call_method, _wait_for_task):
             self._vmops.reboot(self._instance, self.network_info, reboot_type)
             _get_vm_ref.assert_called_once_with(self._session,
@@ -3251,7 +3251,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         _network_api = mock.Mock()
         self._vmops._network_api = _network_api
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                return_value='hardware-devices'):
             self._vmops.detach_interface(self._context, self._instance,
                                          self._network_values)
@@ -3274,7 +3274,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         ticket.ticket = 'fira'
         ticket.sslThumbprint = 'aa:bb:cc:dd:ee:ff'
         ticket.cfgFile = '[ds1] fira/foo.vmx'
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                return_value=ticket):
             console = self._vmops.get_mks_console(self._instance)
             self.assertEqual('esx1', console.host)

@@ -127,7 +127,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
              mock.patch.object(images.IMAGE_API, 'download'),
              mock.patch.object(images, 'image_transfer'),
              mock.patch.object(images, '_build_shadow_vm_config_spec'),
-             mock.patch.object(session, '_call_method'),
+             mock.patch.object(session, 'call_method'),
              mock.patch.object(vm_util, 'get_vmdk_info')
         ) as (mock_image_api_get,
               mock_image_api_download,
@@ -198,7 +198,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
              mock.patch.object(images.IMAGE_API, 'download'),
              mock.patch.object(images, 'image_transfer'),
              mock.patch.object(images, '_build_shadow_vm_config_spec'),
-             mock.patch.object(session, '_call_method'),
+             mock.patch.object(session, 'call_method'),
              mock.patch.object(vm_util, 'get_vmdk_info')
         ) as (mock_image_api_get,
               mock_image_api_download,

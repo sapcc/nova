@@ -104,7 +104,7 @@ class GetNetworkWithTheNameTestCase(test.NoDBTestCase):
                 result.name = 'no-match'
                 return result
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                mock_call_method):
             res = network_util.get_network_with_the_name(self._session,
                                                         'fake_net',
@@ -126,7 +126,7 @@ class GetNetworkWithTheNameTestCase(test.NoDBTestCase):
                 result.distributedVirtualSwitch = 'fake_dvs'
                 return result
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                mock_call_method):
             res = network_util.get_network_with_the_name(self._session,
                                                         'fake_net',
@@ -149,7 +149,7 @@ class GetNetworkWithTheNameTestCase(test.NoDBTestCase):
             if method == 'get_object_property':
                 return 'fake_net'
 
-        with mock.patch.object(self._session, '_call_method',
+        with mock.patch.object(self._session, 'call_method',
                                mock_call_method):
             res = network_util.get_network_with_the_name(self._session,
                                                         'fake_net',
@@ -162,7 +162,7 @@ class GetVlanIdAndVswitchForPortgroupTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, 'get_host_ref')
     def test_no_port_groups(self, mock_get_host_ref):
         session = mock.Mock()
-        session._call_method.return_value = None
+        session.call_method.return_value = None
         self.assertRaises(
             exception.NovaException,
             network_util.get_vlanid_and_vswitch_for_portgroup,
@@ -174,7 +174,7 @@ class GetVlanIdAndVswitchForPortgroupTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, 'get_host_ref')
     def test_valid_port_group(self, mock_get_host_ref):
         session = mock.Mock()
-        session._call_method.return_value = self._fake_port_groups()
+        session.call_method.return_value = self._fake_port_groups()
         vlanid, vswitch = network_util.get_vlanid_and_vswitch_for_portgroup(
             session,
             'port_group_name',
@@ -186,7 +186,7 @@ class GetVlanIdAndVswitchForPortgroupTestCase(test.NoDBTestCase):
     @mock.patch.object(vm_util, 'get_host_ref')
     def test_unknown_port_group(self, mock_get_host_ref):
         session = mock.Mock()
-        session._call_method.return_value = self._fake_port_groups()
+        session.call_method.return_value = self._fake_port_groups()
         vlanid, vswitch = network_util.get_vlanid_and_vswitch_for_portgroup(
             session,
             'unknown_port_group',
