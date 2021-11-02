@@ -81,8 +81,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             fake_device.backing.fileName = 'fake_path'
             fake_device.key = 'fake_key'
             fake_vm_ref = vmwareapi_fake.ManagedObjectReference()
-            self._volumeops.detach_disk_from_vm(fake_vm_ref, self._instance,
-                                                fake_device, destroy_disk)
+            self._volumeops.detach_disk_from_vm(fake_vm_ref, fake_device,
+                                                destroy_disk)
             _wait_for_task.assert_has_calls([
                    mock.call('fake_configure_task')])
 
@@ -129,7 +129,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                                      constants.DISK_TYPE_PREALLOCATED, 1024,
                                      'fake-device')
         with test.nested(
-            mock.patch.object(vm_util, 'get_vm_ref'),
+            mock.patch.object(vm_util, 'get_vm_ref',
+                              return_value=mock.sentinel.vm_ref),
             mock.patch.object(self._volumeops, '_get_volume_ref'),
             mock.patch.object(vm_util, 'get_vmdk_info',
                               return_value=vmdk_info),
@@ -147,7 +148,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                 connection_info['data']['volume'])
             self.assertTrue(get_vmdk_info.called)
             get_vm_state.assert_called_once_with(self._volumeops._session,
-                                                 instance)
+                                                 mock.sentinel.vm_ref)
 
     @mock.patch.object(vm_util, 'create_extra_config',
                        return_value=mock.sentinel.extra_config)
@@ -271,11 +272,11 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             adapter_type = vm_util.CONTROLLER_TO_ADAPTER_TYPE.get(
                 virtual_controller.__class__.__name__)
             consolidate_vmdk_volume.assert_called_once_with(
-                instance, mock.sentinel.vm_ref, virtual_disk,
+                mock.sentinel.vm_ref, virtual_disk,
                 mock.sentinel.volume_ref, adapter_type=adapter_type,
                 disk_type='fake-disk-type')
             detach_disk_from_vm.assert_called_once_with(
-                mock.sentinel.vm_ref, instance, virtual_disk,
+                mock.sentinel.vm_ref, virtual_disk,
                 volume_uuid=connection_info['data']['volume_id'])
 
     def test_detach_volume_vmdk_invalid(self):
@@ -317,7 +318,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             get_vmdk_backed_disk_device.assert_called_once_with(
                 mock.sentinel.vm_ref, connection_info['data'])
             get_vm_state.assert_called_once_with(self._volumeops._session,
-                                                 instance)
+                                                 mock.sentinel.vm_ref)
 
     @mock.patch.object(vm_util, 'get_vm_ref')
     @mock.patch.object(vm_util, 'get_rdm_disk')
@@ -350,7 +351,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             vutil, "get_object_property", vm_ref, "config.hardware.device")
         get_rdm_disk.assert_called_once_with(hardware_devices, disk_uuid)
         detach_disk_from_vm.assert_called_once_with(
-            vm_ref, instance, device, destroy_disk=True)
+            vm_ref, device, destroy_disk=True)
 
     @mock.patch.object(vm_util, 'get_vm_ref')
     @mock.patch.object(volumeops.VMwareVolumeOps, '_iscsi_get_target')
@@ -444,13 +445,13 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                 connection_info['data']['volume'])
             self.assertTrue(get_vmdk_info.called)
             attach_disk_to_vm.assert_called_once_with(
-                vm_ref, self._instance, adapter_type,
+                vm_ref, adapter_type,
                 constants.DISK_TYPE_PREALLOCATED, vmdk_path='fake-path',
                 volume_uuid=connection_info['data']['volume_id'],
                 backing_uuid=disk_uuid)
             if adapter_type == constants.ADAPTER_TYPE_IDE:
                 get_vm_state.assert_called_once_with(self._volumeops._session,
-                                                     self._instance)
+                                                     vm_ref)
             else:
                 self.assertFalse(get_vm_state.called)
 
@@ -483,7 +484,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             if adapter_type is None:
                 self.assertTrue(get_scsi_adapter_type.called)
             attach_disk_to_vm.assert_called_once_with(vm_ref,
-                self._instance, adapter_type, 'rdmp',
+                adapter_type, 'rdmp',
                 device_name=mock.sentinel.device_name)
 
     def test_attach_volume_vmdk(self):
@@ -516,7 +517,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         volume_ref = mock.sentinel.volume_ref
         vm_ref = mock.sentinel.vm_ref
 
-        self._volumeops._consolidate_vmdk_volume(self._instance, vm_ref,
+        self._volumeops._consolidate_vmdk_volume(vm_ref,
                                                  device, volume_ref)
 
         get_vmdk_base_volume_device.assert_called_once_with(volume_ref)
@@ -549,13 +550,12 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
 
         detach_disk_from_vm.side_effect = [
             oslo_vmw_exceptions.FileNotFoundException]
-        instance = self._instance
         volume_ref = vmwareapi_fake.ManagedObjectReference()
         vm_ref = vmwareapi_fake.ManagedObjectReference()
         adapter_type = constants.ADAPTER_TYPE_BUSLOGIC
         disk_type = constants.DISK_TYPE_EAGER_ZEROED_THICK
 
-        self._volumeops._consolidate_vmdk_volume(instance, vm_ref, device,
+        self._volumeops._consolidate_vmdk_volume(vm_ref, device,
                                                  volume_ref, adapter_type,
                                                  disk_type)
 
@@ -563,9 +563,9 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         relocate_vm.assert_called_once_with(self._session,
             volume_ref, rp, datastore, host)
         detach_disk_from_vm.assert_called_once_with(
-            volume_ref, instance, original_device, destroy_disk=True)
+            volume_ref, original_device, destroy_disk=True)
         attach_disk_to_vm.assert_called_once_with(
-            volume_ref, instance, adapter_type, disk_type,
+            volume_ref, adapter_type, disk_type,
             vmdk_path=new_file_name)
 
     @mock.patch.object(volumeops.VMwareVolumeOps,
@@ -596,13 +596,12 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         relocate_vm.side_effect = [
             oslo_vmw_exceptions.FileNotFoundException, None]
 
-        instance = mock.sentinel.instance
         volume_ref = vmwareapi_fake.ManagedObjectReference()
         vm_ref = vmwareapi_fake.ManagedObjectReference()
         adapter_type = constants.ADAPTER_TYPE_BUSLOGIC
         disk_type = constants.DISK_TYPE_EAGER_ZEROED_THICK
 
-        self._volumeops._consolidate_vmdk_volume(instance, vm_ref, device,
+        self._volumeops._consolidate_vmdk_volume(vm_ref, device,
                                                  volume_ref, adapter_type,
                                                  disk_type)
 
@@ -614,9 +613,9 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                                     host)]
         self.assertEqual(relocate_calls, relocate_vm.call_args_list)
         detach_disk_from_vm.assert_called_once_with(
-            volume_ref, instance, original_device)
+            volume_ref, original_device)
         attach_disk_to_vm.assert_called_once_with(
-            volume_ref, instance, adapter_type, disk_type,
+            volume_ref, adapter_type, disk_type,
             vmdk_path=new_file_name)
 
     def test_iscsi_get_host_iqn(self):
@@ -658,10 +657,9 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         ) as (fake_get_host_ref_for_vm,
               fake_get_host_ref,
               fake_call_method):
-            result = self._volumeops._iscsi_get_host_iqn(self._instance)
+            result = self._volumeops._iscsi_get_host_iqn(None)
 
-            fake_get_host_ref_for_vm.assert_called_once_with(
-                        self._volumeops._session, self._instance)
+            fake_get_host_ref_for_vm.assert_not_called()
             fake_get_host_ref.assert_called_once_with(
                         self._volumeops._session, self._volumeops._cluster)
             fake_call_method.assert_called_once_with(vutil,
@@ -687,7 +685,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
 
             fake_get_vm_ref.assert_called_once_with(self._volumeops._session,
                                                     self._instance)
-            fake_iscsi_get_host_iqn.assert_called_once_with(self._instance)
+            fake_iscsi_get_host_iqn.assert_called_once_with(vm_ref)
 
             self.assertEqual(host_ip, connector['ip'])
             self.assertEqual(host_ip, connector['host'])

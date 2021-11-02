@@ -40,7 +40,7 @@ class VMwareVolumeOps(object):
         self._session = session
         self._cluster = cluster
 
-    def attach_disk_to_vm(self, vm_ref, instance,
+    def attach_disk_to_vm(self, vm_ref,
                           adapter_type, disk_type, vmdk_path=None,
                           disk_size=None, linked_clone=False,
                           device_name=None, disk_io_limits=None,
@@ -102,7 +102,7 @@ class VMwareVolumeOps(object):
         if opt_val is not None:
             return opt_val.value
 
-    def detach_disk_from_vm(self, vm_ref, instance, device,
+    def detach_disk_from_vm(self, vm_ref, device,
                             destroy_disk=False, volume_uuid=None):
         """Detach disk from VM by reconfiguration.
 
@@ -281,11 +281,11 @@ class VMwareVolumeOps(object):
                        'target_portal': target_portal})
         return (device_name, uuid)
 
-    def _iscsi_get_host_iqn(self, instance):
+    def _iscsi_get_host_iqn(self, vm_ref):
         """Return the host iSCSI IQN."""
-        try:
-            host_mor = vm_util.get_host_ref_for_vm(self._session, instance)
-        except exception.InstanceNotFound:
+        if vm_ref:
+            host_mor = vm_util.get_host_ref_for_vm(self._session, vm_ref)
+        else:
             host_mor = vm_util.get_host_ref(self._session, self._cluster)
 
         hbas_ret = self._session._call_method(
@@ -314,7 +314,7 @@ class VMwareVolumeOps(object):
             vm_ref = vm_util.get_vm_ref(self._session, instance)
         except exception.InstanceNotFound:
             vm_ref = None
-        iqn = self._iscsi_get_host_iqn(instance)
+        iqn = self._iscsi_get_host_iqn(vm_ref)
         connector = {'ip': CONF.vmware.host_ip,
                      'initiator': iqn,
                      'host': CONF.vmware.host_ip}
@@ -353,13 +353,13 @@ class VMwareVolumeOps(object):
 
         # IDE does not support disk hotplug
         if adapter_type == constants.ADAPTER_TYPE_IDE:
-            state = vm_util.get_vm_state(self._session, instance)
+            state = vm_util.get_vm_state(self._session, vm_ref)
             if state != power_state.SHUTDOWN:
                 raise exception.Invalid(_('%s does not support disk '
                                           'hotplug.') % adapter_type)
 
         # Attach the disk to virtual machine instance
-        self.attach_disk_to_vm(vm_ref, instance, adapter_type, vmdk.disk_type,
+        self.attach_disk_to_vm(vm_ref, adapter_type, vmdk.disk_type,
                                vmdk_path=vmdk.path,
                                volume_uuid=data['volume_id'],
                                backing_uuid=vmdk.device.backing.uuid)
@@ -386,7 +386,7 @@ class VMwareVolumeOps(object):
                                                             vm_ref)
             adapter_type = vm_util.get_scsi_adapter_type(hardware_devices)
 
-        self.attach_disk_to_vm(vm_ref, instance,
+        self.attach_disk_to_vm(vm_ref,
                                adapter_type, 'rdmp',
                                device_name=device_name)
         LOG.debug("Attached ISCSI: %s", connection_info)
@@ -427,7 +427,7 @@ class VMwareVolumeOps(object):
         # Get the resource pool of host's cluster.
         return self._get_res_pool_of_host(host)
 
-    def _consolidate_vmdk_volume(self, instance, vm_ref, device, volume_ref,
+    def _consolidate_vmdk_volume(self, vm_ref, device, volume_ref,
                                  adapter_type=None, disk_type=None):
         """Consolidate volume backing VMDK files if needed.
 
@@ -487,7 +487,7 @@ class VMwareVolumeOps(object):
                         original_device_path, exc_info=True)
             LOG.debug("Removing disk device of volume's backing and "
                       "reattempting relocate.")
-            self.detach_disk_from_vm(volume_ref, instance, original_device)
+            self.detach_disk_from_vm(volume_ref, original_device)
             detached = True
             vm_util.relocate_vm(self._session, volume_ref, res_pool, datastore,
                                 host)
@@ -496,14 +496,14 @@ class VMwareVolumeOps(object):
         # already.
         if not detached:
             try:
-                self.detach_disk_from_vm(volume_ref, instance,
+                self.detach_disk_from_vm(volume_ref,
                                          original_device, destroy_disk=True)
             except oslo_vmw_exceptions.FileNotFoundException:
                 LOG.debug("Original volume backing %s is missing, no need "
                           "to detach it", original_device.backing.fileName)
 
         # Attach the current volume to the volume_ref
-        self.attach_disk_to_vm(volume_ref, instance,
+        self.attach_disk_to_vm(volume_ref,
                                adapter_type, disk_type,
                                vmdk_path=current_device_path)
 
@@ -540,18 +540,18 @@ class VMwareVolumeOps(object):
 
         # IDE does not support disk hotplug
         if adapter_type == constants.ADAPTER_TYPE_IDE:
-            state = vm_util.get_vm_state(self._session, instance)
+            state = vm_util.get_vm_state(self._session, vm_ref)
             if state != power_state.SHUTDOWN:
                 raise exception.Invalid(_('%s does not support disk '
                                           'hotplug.') % adapter_type)
 
         disk_type = vm_util._get_device_disk_type(device)
 
-        self._consolidate_vmdk_volume(instance, vm_ref, device, volume_ref,
+        self._consolidate_vmdk_volume(vm_ref, device, volume_ref,
                                       adapter_type=adapter_type,
                                       disk_type=disk_type)
 
-        self.detach_disk_from_vm(vm_ref, instance, device,
+        self.detach_disk_from_vm(vm_ref, device,
                                  volume_uuid=data['volume_id'])
 
         LOG.debug("Detached VMDK: %s", connection_info)
@@ -574,7 +574,7 @@ class VMwareVolumeOps(object):
         device = vm_util.get_rdm_disk(hardware_devices, uuid)
         if device is None:
             raise exception.DiskNotFound(message=_("Unable to find volume"))
-        self.detach_disk_from_vm(vm_ref, instance, device, destroy_disk=True)
+        self.detach_disk_from_vm(vm_ref, device, destroy_disk=True)
         LOG.debug("Detached ISCSI: %s", connection_info)
 
     def detach_volume(self, connection_info, instance):
@@ -652,12 +652,11 @@ class VMwareVolumeOps(object):
                         " attached at %s replacing it with %s",
                         volume, original_device_path, current_device_path,
                         )
-                    self.detach_disk_from_vm(self, volume_ref, instance,
+                    self.detach_disk_from_vm(vm_ref, volume_ref,
                         original_device, destroy_disk=True)
 
                 disk_type = vm_util._get_device_disk_type(device)
                 self.attach_disk_to_vm(volume_ref,
-                    instance,
                     constants.DEFAULT_ADAPTER_TYPE,
                     disk_type,
                     current_device_path
@@ -666,7 +665,7 @@ class VMwareVolumeOps(object):
                 LOG.exception("Failed to attach volume {}. Device {}".format(
                     data["volume_id"], device.key))
 
-    def delete_shadow_vms(self, block_device_info, instance=None):
+    def delete_shadow_vms(self, block_device_info):
         # We need to delete the migrated shadow vms
         # (until we implement it in cinder)
         block_device_mapping = driver.block_device_info_get_mapping(

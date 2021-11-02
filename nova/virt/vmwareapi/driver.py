@@ -241,7 +241,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         """resume guest state when a host is booted."""
         # Check if the instance is running already and avoid doing
         # anything if it is.
-        state = vm_util.get_vm_state(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        state = vm_util.get_vm_state(self._session, vm_ref)
         ignored_states = [power_state.RUNNING, power_state.SUSPENDED]
         if state in ignored_states:
             return
@@ -1016,7 +1017,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         LOG.info("rollback_live_migration_at_destination %s",
             block_device_info)
         if not migrate_data.is_same_vcenter:
-            self._volumeops.delete_shadow_vms(block_device_info, instance)
+            self._volumeops.delete_shadow_vms(block_device_info)
 
     @contextlib.contextmanager
     def _error_out_instance_on_exception(self, instance, message):

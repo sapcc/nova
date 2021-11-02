@@ -1411,26 +1411,22 @@ def search_vm_ref_by_identifier(session, identifier):
     return vm_ref
 
 
-@vm_ref_cache_heal_from_instance
-def get_host_ref_for_vm(session, instance):
+def get_host_ref_for_vm(session, vm_ref):
     """Get a MoRef to the ESXi host currently running an instance."""
 
-    vm_ref = get_vm_ref(session, instance)
     return session._call_method(vutil, "get_object_property",
                                 vm_ref, "runtime.host")
 
 
-def get_host_name_for_vm(session, instance):
+def get_host_name_for_vm(session, vm_ref):
     """Get the hostname of the ESXi host currently running an instance."""
 
-    host_ref = get_host_ref_for_vm(session, instance)
+    host_ref = get_host_ref_for_vm(session, vm_ref)
     return session._call_method(vutil, "get_object_property",
                                 host_ref, "name")
 
 
-@vm_ref_cache_heal_from_instance
-def get_vm_state(session, instance):
-    vm_ref = get_vm_ref(session, instance)
+def get_vm_state(session, vm_ref):
     vm_state = session._call_method(vutil, "get_object_property",
                                     vm_ref, "runtime.powerState")
     return constants.POWER_STATES[vm_state]
@@ -1720,7 +1716,7 @@ def get_vmdk_adapter_type(adapter_type):
     return vmdk_adapter_type
 
 
-def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
+def create_vm(session, vm_folder, config_spec, res_pool_ref):
     """Create VM on ESX host."""
     LOG.debug("Creating VM on the ESX host")
     vm_create_task = session._call_method(
@@ -1748,21 +1744,14 @@ def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
     return task_info.result
 
 
-@vm_ref_cache_heal_from_instance
-def _destroy_vm(session, instance, vm_ref=None):
-    if not vm_ref:
-        vm_ref = get_vm_ref(session, instance)
-    LOG.debug("Destroying the VM")
-    destroy_task = session._call_method(session.vim, "Destroy_Task",
-                                        vm_ref)
-    session._wait_for_task(destroy_task)
-    LOG.info("Destroyed the VM")
-
-
-def destroy_vm(session, instance, vm_ref=None):
+def destroy_vm(session, vm_ref):
     """Destroy a VM instance. Assumes VM is powered off."""
     try:
-        return _destroy_vm(session, instance, vm_ref=vm_ref)
+        LOG.debug("Destroying the VM")
+        destroy_task = session._call_method(session.vim, "Destroy_Task",
+                                            vm_ref)
+        session._wait_for_task(destroy_task)
+        LOG.info("Destroyed the VM")
     except vexc.VimFaultException as e:
         with excutils.save_and_reraise_exception() as ctx:
             LOG.exception(_('Destroy VM failed'))
@@ -1774,11 +1763,9 @@ def destroy_vm(session, instance, vm_ref=None):
         LOG.exception(_('Destroy VM failed'))
 
 
-def mark_vm_as_template(session, instance, vm_ref=None):
+def mark_vm_as_template(session, vm_ref):
     """Mark a VM instance as template. Assumes VM is powered off."""
     try:
-        if not vm_ref:
-            vm_ref = get_vm_ref(session, instance)
         LOG.debug("Marking the VM as template")
         session._call_method(session.vim, "MarkAsTemplate", vm_ref)
         LOG.info("Marked the VM as template")
@@ -1855,13 +1842,8 @@ def reconfigure_vm(session, vm_ref, config_spec):
     session._wait_for_task(reconfig_task)
 
 
-@vm_ref_cache_heal_from_instance
-def power_on_instance(session, instance, vm_ref=None):
+def power_on_instance(session, vm_ref):
     """Power on the specified instance."""
-
-    if vm_ref is None:
-        vm_ref = get_vm_ref(session, instance)
-
     LOG.debug("Powering on the VM")
     try:
         poweron_task = session._call_method(
@@ -1916,12 +1898,8 @@ def get_vm_detach_port_index(session, vm_ref, iface_id):
                 return int(option.key.split('.')[2])
 
 
-@vm_ref_cache_heal_from_instance
-def power_off_instance(session, instance, vm_ref=None):
+def power_off_instance(session, vm_ref):
     """Power off the specified instance."""
-
-    if vm_ref is None:
-        vm_ref = get_vm_ref(session, instance)
 
     LOG.debug("Powering off the VM")
     try:

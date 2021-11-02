@@ -271,8 +271,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock.patch.object(self._session, '_wait_for_task'),
             mock.patch.object(self._session, '_call_method', fake_call_method)
         ) as (_wait_for_task, _call_method):
-            self._vmops._delete_vm_snapshot(self._instance,
-                                            "fake_vm_ref", "fake_vm_snapshot")
+            self._vmops._delete_vm_snapshot("fake_vm_snapshot")
             _wait_for_task.assert_has_calls([
                    mock.call('fake_remove_snapshot_task')])
 
@@ -306,8 +305,7 @@ class VMwareVMOpsTestCase(test.TestCase):
 
     def test_update_instance_progress(self):
         with mock.patch.object(self._instance, 'save') as mock_save:
-            self._vmops._update_instance_progress(self._instance._context,
-                                                  self._instance, 5, 10)
+            self._vmops._update_instance_progress(self._instance, 5, 10)
             mock_save.assert_called_once_with()
         self.assertEqual(50, self._instance.progress)
 
@@ -462,7 +460,6 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._vmops.rescue(
                 self._context, self._instance, None, self._image_meta)
             mock_power_off.assert_called_once_with(self._session,
-                                                   self._instance,
                                                    vm_ref)
 
             uuid = self._instance.image_ref
@@ -473,15 +470,14 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock_disk_copy.assert_called_once_with(self._session, dc_info.ref,
                              cache_path, rescue_path)
             _volumeops.attach_disk_to_vm.assert_called_once_with(vm_ref,
-                             self._instance, mock.ANY, mock.ANY, rescue_path)
+                             mock.ANY, mock.ANY, rescue_path)
             mock_get_boot_spec.assert_called_once_with(mock.ANY,
                                                        'fake-rescue-device')
             mock_reconfigure.assert_called_once_with(self._session,
                                                      vm_ref,
                                                      'fake-boot-spec')
             mock_power_on.assert_called_once_with(self._session,
-                                                  self._instance,
-                                                  vm_ref=vm_ref)
+                                                  vm_ref)
 
     def test_unrescue_power_on(self):
         self._test_unrescue(True)
@@ -512,15 +508,14 @@ class VMwareVMOpsTestCase(test.TestCase):
 
             if power_on:
                 _power_on_instance.assert_called_once_with(self._session,
-                        self._instance, vm_ref=vm_ref)
+                                                           vm_ref)
             else:
                 self.assertFalse(_power_on_instance.called)
             _get_vm_ref.assert_called_once_with(self._session,
                                                 self._instance)
-            _power_off.assert_called_once_with(self._session, self._instance,
-                                               vm_ref)
+            _power_off.assert_called_once_with(self._session, vm_ref)
             _volumeops.detach_disk_from_vm.assert_called_once_with(
-                vm_ref, self._instance, mock.ANY, destroy_disk=True)
+                vm_ref, mock.ANY, destroy_disk=True)
 
     @mock.patch.object(time, 'sleep')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
@@ -699,8 +694,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                     'fake-ref')
                 if power_on:
                     fake_power_on.assert_called_once_with(self._session,
-                                                          self._instance,
-                                                          vm_ref='fake-ref')
+                                                          'fake-ref')
                 else:
                     self.assertFalse(fake_power_on.called)
 
@@ -716,7 +710,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                 vmdk,
                                                 self._instance.flavor)
 
-                calls = [mock.call(self._context, self._instance, step=i,
+                calls = [mock.call(self._instance, step=i,
                                    total_steps=vmops.RESIZE_TOTAL_STEPS)
                          for i in range(2, 7)]
                 fake_update_instance_progress.assert_has_calls(calls)
@@ -874,7 +868,6 @@ class VMwareVMOpsTestCase(test.TestCase):
 
             vm_ref_calls = [mock.call(self._session, self._instance)]
             fake_power_off.assert_called_once_with(self._session,
-                                                   self._instance,
                                                    'fake-ref')
             # Validate VM reconfiguration
             metadata = ('name:fake_display_name\n'
@@ -909,7 +902,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                  'original.vmdk')
 
             mock_detach_disk.assert_called_once_with('fake-ref',
-                                                     self._instance,
                                                      device)
             fake_disk_delete.assert_called_once_with(
                 self._session, dc_info.ref, '[fake] uuid/root.vmdk')
@@ -918,7 +910,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 '[fake] uuid/original.vmdk',
                 '[fake] uuid/root.vmdk')
             mock_attach_disk.assert_called_once_with(
-                    'fake-ref', self._instance, vmdk.adapter_type, 'fake-disk',
+                    'fake-ref', vmdk.adapter_type, 'fake-disk',
                     '[fake] uuid/root.vmdk')
             fake_remove_ephemerals_and_swap.assert_called_once_with('fake-ref')
             fake_resize_create_ephemerals_and_swap.assert_called_once_with(
@@ -940,7 +932,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         fake_get_vm_ref.assert_has_calls(vm_ref_calls)
         if power_on and not relocate_fails:
             fake_power_on.assert_called_once_with(self._session,
-                                                  self._instance)
+                                                  'fake-ref')
         else:
             self.assertFalse(fake_power_on.called)
 
@@ -1134,10 +1126,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                 self._session, dc_info.ref, '[fake] uuid/root.vmdk',
                 '[fake] uuid/resized.vmdk')
             mock_detach_disk.assert_called_once_with('fake-ref',
-                                                     instance,
                                                      device)
             fake_extend.assert_called_once_with(
-                instance, flavor['root_gb'] * units.Mi,
+                flavor['root_gb'] * units.Mi,
                 '[fake] uuid/resized.vmdk', dc_info.ref)
             calls = [
                     mock.call(self._session, dc_info.ref,
@@ -1149,7 +1140,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             fake_disk_move.assert_has_calls(calls)
 
             mock_attach_disk.assert_called_once_with(
-                    'fake-ref', instance, 'fake-adapter', 'fake-disk',
+                    'fake-ref', 'fake-adapter', 'fake-disk',
                     '[fake] uuid/root.vmdk')
 
     @mock.patch.object(vm_util, 'detach_devices_from_vm')
@@ -1247,9 +1238,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                 self._instance)
 
         fake_power_off.assert_called_once_with(self._session,
-                                               self._instance,
                                                'fake-ref')
-        calls = [mock.call(self._context, self._instance, step=i,
+        calls = [mock.call(self._instance, step=i,
                            total_steps=vmops.RESIZE_TOTAL_STEPS)
                  for i in range(2)]
         fake_progress.assert_has_calls(calls)
@@ -1330,15 +1320,14 @@ class VMwareVMOpsTestCase(test.TestCase):
         fake_resize_create_eph_swap.assert_called_once_with(
             'fake-ref', self._instance, None)
         fake_remove_eph_and_swap.assert_called_once_with('fake-ref')
-        fake_power_on.assert_called_once_with(self._session, self._instance,
-                                              vm_ref='fake-ref')
+        fake_power_on.assert_called_once_with(self._session, 'fake-ref')
         fake_resize_vm.assert_called_once_with(self._context, self._instance,
                                                'fake-ref',
                                                self._instance.flavor,
                                                self._image_meta)
         fake_get_vmdk_info.assert_not_called()
         fake_resize_disk.assert_not_called()
-        calls = [mock.call(self._context, self._instance, step=i,
+        calls = [mock.call(self._instance, step=i,
                            total_steps=vmops.RESIZE_TOTAL_STEPS)
                  for i in range(2, 7)]
         fake_progress.assert_has_calls(calls)
@@ -1445,7 +1434,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                 mock.patch.object(self._session, '_wait_for_task')):
             self._vmops.manage_image_cache(self._context, fake_instances)
             mock_destroy_vm.assert_called_once_with(self._session,
-                                                    None,
                                                     expired_templ_vm_ref)
 
     @mock.patch.object(vutil, 'WithRetrieval')
@@ -1519,7 +1507,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 network_info, self._ds.name, 'fake_path', self._instance.uuid,
                 "Fake-CookieJar")
         mock_attach_cdrom_to_vm.assert_called_once_with(
-                vm_ref, self._instance, self._ds.ref, str(upload_iso_path))
+                vm_ref, self._ds.ref, str(upload_iso_path))
 
     @mock.patch('nova.image.api.API.get')
     @mock.patch.object(vmops.LOG, 'debug')
@@ -1667,7 +1655,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             get_vm_config_info.assert_called_once_with(self._instance,
                 image_info, extra_specs)
             build_virtual_machine.assert_called_once_with(
-                self._instance, self._context, image_info, vi.datastore, [],
+                self._instance, image_info, vi.datastore, [],
                 extra_specs, self._get_metadata(), 'fake_vm_folder')
             enlist_image.assert_called_once_with(image_info.image_id,
                                                  vi.datastore, vi.dc_info.ref)
@@ -1733,7 +1721,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             get_vm_config_info.assert_called_once_with(self._instance,
                 image_info, extra_specs)
             build_virtual_machine.assert_called_once_with(
-                self._instance, self._context, image_info, vi.datastore, [],
+                self._instance, image_info, vi.datastore, [],
                 extra_specs, self._get_metadata(is_image_used=False),
                 'fake_vm_folder')
             volumeops.attach_root_volume.assert_called_once_with(
@@ -1790,7 +1778,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         get_vm_config_info.assert_called_once_with(
             self._instance, image_info, extra_specs)
         build_virtual_machine.assert_called_once_with(
-            self._instance, self._context, image_info, vi.datastore, [],
+            self._instance, image_info, vi.datastore, [],
             extra_specs, self._get_metadata(is_image_used=False),
             'fake_vm_folder')
 
@@ -1847,11 +1835,11 @@ class VMwareVMOpsTestCase(test.TestCase):
                 str(sized_cached_image_ds_loc))
         mock_extend_if_required.assert_called_once_with(
             self._dc_info,
-            vi.ii,
-            vi.instance, str(sized_cached_image_ds_loc))
+            vi.instance,
+            str(sized_cached_image_ds_loc))
 
         mock_attach_disk_to_vm.assert_called_once_with(
-                "fake_vm_ref", self._instance, vi.ii.adapter_type,
+                "fake_vm_ref", vi.ii.adapter_type,
                 vi.ii.disk_type,
                 str(sized_cached_image_ds_loc),
                 vi.root_gb * units.Mi, False,
@@ -1899,11 +1887,11 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         mock_extend_if_required.assert_called_once_with(
             self._dc_info,
-            vi.ii,
-            vi.instance, fake_path)
+            vi.instance,
+            fake_path)
 
         mock_attach_disk_to_vm.assert_called_once_with(
-                "fake_vm_ref", self._instance, vi.ii.adapter_type,
+                "fake_vm_ref", vi.ii.adapter_type,
                 vi.ii.disk_type, fake_path,
                 vi.root_gb * units.Mi, False,
                 disk_io_limits=vi._extra_specs.disk_io_limits)
@@ -1939,7 +1927,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops._use_iso_image("fake_vm_ref", vi)
 
         mock_attach_cdrom.assert_called_once_with(
-                "fake_vm_ref", self._instance, self._ds.ref,
+                "fake_vm_ref", self._ds.ref,
                 str(vi.cache_image_path))
 
         fake_path = '[fake_ds] %(uuid)s/%(uuid)s.vmdk' % {'uuid': self._uuid}
@@ -1951,7 +1939,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                     vi.root_gb * units.Mi)
             linked_clone = False
             mock_attach_disk_to_vm.assert_called_once_with(
-                    "fake_vm_ref", self._instance,
+                    "fake_vm_ref",
                     vi.ii.adapter_type, vi.ii.disk_type,
                     fake_path,
                     vi.root_gb * units.Mi, linked_clone,
@@ -2109,7 +2097,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                     metadata='fake-metadata')
             mock_create_vm.assert_called_once_with(
                     self._session,
-                    self._instance,
                     'fake_vm_folder',
                     'fake_create_spec',
                     self._cluster.resourcePool)
@@ -2123,7 +2110,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 network_info,
                 vm_ref='fake_vm_ref')
             mock_power_on_instance.assert_called_once_with(
-                self._session, self._instance, vm_ref='fake_vm_ref')
+                self._session, 'fake_vm_ref')
 
             if (block_device_info and
                 'block_device_mapping' in block_device_info):
@@ -2341,7 +2328,6 @@ class VMwareVMOpsTestCase(test.TestCase):
         get_vm_config_info.assert_called_once_with(self._instance,
             image_info, extra_specs)
         build_virtual_machine.assert_called_once_with(self._instance,
-                                                      self._context,
             image_info, vi.datastore, [], extra_specs, metadata, 'fake-folder')
         enlist_image.assert_called_once_with(image_info.image_id,
                                              vi.datastore, vi.dc_info.ref)
@@ -2360,20 +2346,19 @@ class VMwareVMOpsTestCase(test.TestCase):
                                              self._uuid,
                                              'swap.vmdk'))
         create_and_attach_thin_disk.assert_has_calls([
-            mock.call(self._instance, 'fake-vm-ref', vi.dc_info,
+            mock.call('fake-vm-ref', vi.dc_info,
                       ephemerals[0]['size'] * units.Mi, vi.ii.adapter_type,
                       eph0_path),
-            mock.call(self._instance, 'fake-vm-ref', vi.dc_info,
+            mock.call('fake-vm-ref', vi.dc_info,
                       ephemerals[1]['size'] * units.Mi, vi.ii.adapter_type,
                       eph1_path),
-            mock.call(self._instance, 'fake-vm-ref', vi.dc_info,
+            mock.call('fake-vm-ref', vi.dc_info,
                       swap['swap_size'] * units.Ki, vi.ii.adapter_type,
                       swap_path)
         ])
 
         power_on_instance.assert_called_once_with(self._session,
-                                                  self._instance,
-                                                  vm_ref='fake-vm-ref')
+                                                  'fake-vm-ref')
 
     def _get_fake_vi(self):
         image_info = images.VMwareImage(
@@ -2393,8 +2378,7 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         path = str(ds_obj.DatastorePath(vi.datastore.name, self._uuid,
                                         'fake-filename'))
-        self._vmops._create_and_attach_thin_disk(self._instance,
-                                                 'fake-vm-ref',
+        self._vmops._create_and_attach_thin_disk('fake-vm-ref',
                                                  vi.dc_info, 1,
                                                  'fake-adapter-type',
                                                  path)
@@ -2402,7 +2386,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 self._session, self._dc_info.ref, 'fake-adapter-type',
                 'thin', path, 1)
         mock_attach_disk_to_vm.assert_called_once_with(
-                'fake-vm-ref', self._instance, 'fake-adapter-type',
+                'fake-vm-ref', 'fake-adapter-type',
                 'thin', path, 1, False)
 
     def test_create_ephemeral_with_bdi(self):
@@ -2421,7 +2405,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                           self._uuid,
                                           vi.ii.adapter_type)
             mock_caa.assert_called_once_with(
-                self._instance, 'fake-vm-ref',
+                'fake-vm-ref',
                 vi.dc_info, 1 * units.Mi, 'virtio',
                 '[fake_ds] %s/ephemeral_0.vmdk' % self._uuid)
 
@@ -2436,7 +2420,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                           self._uuid,
                                           vi.ii.adapter_type)
             mock_caa.assert_called_once_with(
-                self._instance, 'fake-vm-ref',
+                'fake-vm-ref',
                 vi.dc_info, 1 * units.Mi, constants.DEFAULT_ADAPTER_TYPE,
                 '[fake_ds] %s/ephemeral_0.vmdk' % self._uuid)
 
@@ -2466,8 +2450,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                 size = swap.get('swap_size', 0) * units.Ki
             path = str(ds_obj.DatastorePath(vi.datastore.name, self._uuid,
                                              'swap.vmdk'))
-            create_and_attach.assert_called_once_with(self._instance,
-                'fake-vm-ref', vi.dc_info, size, 'lsiLogic', path)
+            create_and_attach.assert_called_once_with('fake-vm-ref',
+                vi.dc_info, size, 'lsiLogic', path)
 
     def test_create_swap_with_bdi(self):
         block_device_info = {'swap': {'disk_bus': None,
@@ -2489,7 +2473,6 @@ class VMwareVMOpsTestCase(test.TestCase):
         extra_specs = vm_util.ExtraSpecs()
 
         vm_ref = self._vmops.build_virtual_machine(self._instance,
-                                                   self._context,
                                                    image,
                                                    self._ds,
                                                    self.network_info,
