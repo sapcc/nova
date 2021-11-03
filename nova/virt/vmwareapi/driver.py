@@ -240,7 +240,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """resume guest state when a host is booted."""
         # Check if the instance is running already and avoid doing
         # anything if it is.
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster_ref, instance)
         state = vm_util.get_vm_state(self._session, vm_ref)
         ignored_states = [power_state.RUNNING, power_state.SUSPENDED]
         if state in ignored_states:

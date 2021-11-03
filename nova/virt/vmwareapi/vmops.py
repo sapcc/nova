@@ -1145,7 +1145,7 @@ class VMwareVMOps(object):
         vm_group_name = self._get_admin_group_name_for_instance(instance)
         if not vm_group_name:
             return
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         cluster_util.update_vm_group_membership(self._session, self._cluster,
                                                 vm_group_name, vm_ref,
                                                 remove=remove)
@@ -1192,7 +1192,8 @@ class VMwareVMOps(object):
 
         # Cache the vm_ref. This saves a remote call to the VC. This uses the
         # instance uuid.
-        vm_util.vm_ref_cache_update(instance.uuid, vm_ref)
+        vm_util.vm_ref_cache_update(instance.uuid, vm_util.StableVmRefUuid(
+                self._session, self._cluster, instance.uuid, vm_ref))
 
         # Update all DRS related rules
         self.update_cluster_placement(context, instance)
@@ -1282,7 +1283,7 @@ class VMwareVMOps(object):
                 utils.is_large_vm(int(instance.memory_mb), instance.flavor):
             behavior = constants.DRS_BEHAVIOR_PARTIALLY_AUTOMATED
             LOG.debug("Adding DRS override '%s' for big VM.", behavior)
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
             cluster_util.update_cluster_drs_vm_override(self._session,
                                                         self._cluster,
                                                         vm_ref,
@@ -1530,7 +1531,7 @@ class VMwareVMOps(object):
         5. Delete the linked clone VM
         6. Deletes the snapshot in original instance.
         """
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         def _get_vm_and_vmdk_attribs():
             # Get the vmdk info that the VM is pointing to
@@ -1603,7 +1604,7 @@ class VMwareVMOps(object):
 
     def reboot(self, instance, network_info, reboot_type="SOFT"):
         """Reboot a VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         props = self._get_instance_props(vm_ref)
         pwr_state = props.get('runtime.powerState')
@@ -1634,7 +1635,7 @@ class VMwareVMOps(object):
     def _destroy_instance(self, instance, destroy_disks=True):
         # Destroy a VM instance
         try:
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session.call_method(vutil,
@@ -1715,7 +1716,7 @@ class VMwareVMOps(object):
 
     def suspend(self, instance):
         """Suspend the specified instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         pwr_state = self._session.call_method(vutil,
                                                "get_object_property",
                                                vm_ref,
@@ -1737,7 +1738,7 @@ class VMwareVMOps(object):
 
     def resume(self, instance):
         """Resume the specified instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         pwr_state = self._session.call_method(vutil,
                                                "get_object_property",
                                                vm_ref,
@@ -1763,7 +1764,7 @@ class VMwareVMOps(object):
 
         Attach the image that the instance was created from and boot from it.
         """
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         # Get the root disk vmdk object
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
@@ -1810,7 +1811,7 @@ class VMwareVMOps(object):
     def unrescue(self, instance, power_on=True):
         """Unrescue the specified instance."""
 
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Get the rescue device and detach it from the instance.
         try:
             rescue_device = self._get_rescue_device(instance, vm_ref)
@@ -1837,7 +1838,7 @@ class VMwareVMOps(object):
                                             retry_interval):
             return
 
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         vm_util.power_off_instance(self._session, vm_ref)
         self.update_cached_instances()
 
@@ -1852,7 +1853,7 @@ class VMwareVMOps(object):
                     False otherwise.
         """
         LOG.debug("Performing Soft shutdown on instance")
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         props = self._get_instance_props(vm_ref)
 
@@ -1889,7 +1890,7 @@ class VMwareVMOps(object):
 
     def is_instance_in_resource_pool(self, instance):
         try:
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
             res_pool = self._session.call_method(vutil, "get_object_property",
                                                   vm_ref, "resourcePool")
 
@@ -1918,7 +1919,7 @@ class VMwareVMOps(object):
                 vm_ref, lst_properties)
 
     def power_on(self, instance):
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         vm_util.power_on_instance(self._session, vm_ref)
         self.update_cached_instances()
 
@@ -2039,7 +2040,7 @@ class VMwareVMOps(object):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                      uuid=instance.uuid)
 
@@ -2068,7 +2069,7 @@ class VMwareVMOps(object):
 
     def confirm_migration(self, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
                                      uuid=instance.uuid)
         if not vmdk.device:
@@ -2113,7 +2114,7 @@ class VMwareVMOps(object):
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Ensure that the VM is off
         vm_util.power_off_instance(self._session, vm_ref)
         client_factory = self._session.vim.client.factory
@@ -2159,7 +2160,7 @@ class VMwareVMOps(object):
                          network_info, image_meta, resize_instance=False,
                          block_device_info=None, power_on=True):
         """Completes a resize, turning on the migrated instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         flavor = instance.flavor
         boot_from_volume = compute_utils.is_volume_backed_instance(context,
@@ -2315,7 +2316,7 @@ class VMwareVMOps(object):
                 service["ssl_thumbprint"],
             )
 
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         device_config_spec = []
         relocate_spec.deviceChange = device_config_spec
@@ -2399,31 +2400,22 @@ class VMwareVMOps(object):
         if not vm_util._VM_VALUE_CACHE:
             self.update_cached_instances()
 
-        @vm_util.vm_ref_cache_heal_from_instance
-        def _get_vm_props(session, instance):
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
-            vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
-            if vm_props and powerstate_property in vm_props:
-                return vm_props
-
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
+        vm_props = vm_util._VM_VALUE_CACHE.get(vm_ref.value, {})
+        if not vm_props or powerstate_property not in vm_props:
             if CONF.vmware.use_property_collector:
                 LOG.debug("VM instance data was not found on the cache.")
 
-            return session.call_method(
-                vutil, "get_object_properties_dict",
-                vm_ref, [powerstate_property])
-
-        try:
-            vm_props = _get_vm_props(self._session, instance)
-        except vexc.ManagedObjectNotFoundException:
-            raise exception.InstanceNotFound(instance_id=instance.uuid)
+            vm_props = self._session.call_method(vutil,
+                            "get_object_properties_dict",
+                            vm_ref, [powerstate_property])
 
         return hardware.InstanceInfo(
             state=constants.POWER_STATES[vm_props[powerstate_property]])
 
     def _get_diagnostics(self, instance):
         """Return data about VM diagnostics."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         lst_properties = ["summary.config",
                           "summary.quickStats",
                           "summary.runtime"]
@@ -2465,7 +2457,7 @@ class VMwareVMOps(object):
 
     def _get_vnc_console_connection(self, instance):
         """Return connection info for a vnc console."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         opt_value = self._session.call_method(vutil,
                                                'get_object_property',
                                                vm_ref,
@@ -2512,7 +2504,7 @@ class VMwareVMOps(object):
         and reconfigure the network interfaces.
         """
         if vm_ref is None:
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
 
         machine_id_change_spec = vm_util.get_machine_id_change_spec(
                                  client_factory,
@@ -2770,7 +2762,7 @@ class VMwareVMOps(object):
 
     def instance_exists(self, instance):
         try:
-            vm_util.get_vm_ref(self._session, instance)
+            vm_util.get_vm_ref(self._session, self._cluster, instance)
             return True
         except exception.InstanceNotFound:
             return False
@@ -2782,7 +2774,7 @@ class VMwareVMOps(object):
         vif_model = vm_util.convert_vif_model(vif_model)
         vif_info = vmwarevif.get_vif_dict(self._session, self._cluster,
                                           vif_model, utils.is_neutron(), vif)
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Ensure that there is not a race with the port index management
         with lockutils.lock(instance.uuid,
                             lock_file_prefix='nova-vmware-hot-plug'):
@@ -2810,7 +2802,7 @@ class VMwareVMOps(object):
 
     def detach_interface(self, context, instance, vif):
         """Detach an interface from the instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Ensure that there is not a race with the port index management
         with lockutils.lock(instance.uuid,
                             lock_file_prefix='nova-vmware-hot-plug'):
@@ -3022,7 +3014,7 @@ class VMwareVMOps(object):
         # a VNC proxy. Instead, you need to tell OpenStack to talk
         # directly to the ESX host running the VM you are attempting
         # to connect to via VNC.
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         vnc_console = self._get_vnc_console_connection(instance)
         host_name = vm_util.get_host_name_for_vm(self._session, vm_ref)
         vnc_console['host'] = host_name
@@ -3033,7 +3025,7 @@ class VMwareVMOps(object):
         return ctype.ConsoleVNC(**vnc_console)
 
     def get_mks_console(self, instance):
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         ticket = self._session.call_method(self._session.vim,
                                             'AcquireTicket',
                                             vm_ref,
@@ -3108,7 +3100,9 @@ class VMwareVMOps(object):
                         instance_uuid = changes.get("config.instanceUuid")
 
                         if update.kind == "enter":
-                            vm_util.vm_ref_cache_update(instance_uuid, vm_ref)
+                            vm_util.vm_ref_cache_update(instance_uuid,
+                                vm_util.StableVmRefUuid(self._session,
+                                     self._cluster, instance_uuid, vm_ref))
                         elif update.kind == "modify":
                             old_instance_uuid = values.get(
                                         "config.instanceUuid")
@@ -3119,7 +3113,9 @@ class VMwareVMOps(object):
                                 vm_util.vm_ref_cache_delete(
                                     old_instance_uuid)
                                 vm_util.vm_ref_cache_update(
-                                    instance_uuid, vm_ref)
+                                    instance_uuid,
+                                    vm_util.StableVmRefUuid(self._session,
+                                        self._cluster, instance_uuid, vm_ref))
 
                         values.update(changes)
                         LOG.debug("%s.%s.%s -> %s", vm_ref["_type"],
@@ -3176,7 +3172,8 @@ class VMwareVMOps(object):
             if vm_uuid != props.get('config.instanceUuid'):
                 continue
 
-            vm_util.vm_ref_cache_update(vm_uuid, props['obj'])
+            vm_util.vm_ref_cache_update(vm_uuid, vm_util.StableVmRefUuid(
+                self._session, self._cluster, vm_uuid, props['obj']))
 
     def set_compute_host(self, compute_host):
         """Called by the driver on init_host() so we know the compute host"""
@@ -3295,7 +3292,8 @@ class VMwareVMOps(object):
                     continue
 
                 try:
-                    moref = vm_util.get_vm_ref(self._session, instance)
+                    moref = vm_util.get_vm_ref(self._session, self._cluster,
+                                               instance)
                 except exception.InstanceNotFound:
                     LOG.warning('Could not find moref for instance %s. '
                                 'Ignoring member of server-group %s',

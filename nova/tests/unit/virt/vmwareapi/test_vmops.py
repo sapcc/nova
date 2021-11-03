@@ -79,7 +79,8 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         self._virtapi = mock.Mock()
         self._image_id = nova.tests.unit.image.fake.get_valid_image_id()
-        fake_ds_ref = vmwareapi_fake.ManagedObjectReference(value='fake-ds')
+        fake_ds_ref = vmwareapi_fake.ManagedObjectReference(name='fake-ds',
+                                                            value='Datastore')
         self._ds = ds_obj.Datastore(
                 ref=fake_ds_ref, name='fake_ds',
                 capacity=10 * units.Gi,
@@ -87,9 +88,9 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         self._dc_info = ds_util.DcInfo(
                 ref='fake_dc_ref', name='fake_dc',
-                vmFolder=vmwareapi_fake.ManagedObjectReference
-                                                        (name='fake_vm_folder',
-                                                        value='Folder'))
+                vmFolder=vmwareapi_fake.ManagedObjectReference(
+                    name='fake_vm_folder',
+                    value='Folder'))
         cluster = vmwareapi_fake.create_cluster('fake_cluster', fake_ds_ref)
         self._uuid = uuidsentinel.foo
         self._instance_values = {
@@ -109,7 +110,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                       root_gb=10, ephemeral_gb=0, swap=0,
                                       extra_specs={})
         self._instance.flavor = self._flavor
-        self._volumeops = volumeops.VMwareVolumeOps(self._session)
+        self._volumeops = volumeops.VMwareVolumeOps(self._session, cluster.obj)
         self._vmops = vmops.VMwareVMOps(self._session, self._virtapi,
                                         self._volumeops,
                                         cluster=cluster.obj)
@@ -328,7 +329,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                return_value=result):
             info = self._vmops.get_info(self._instance)
             mock_get_vm_ref.assert_called_once_with(self._session,
-                self._instance)
+                                                    self._cluster.obj,
+                                                    self._instance)
             expected = hardware.InstanceInfo(state=power_state.RUNNING)
             self.assertEqual(expected, info)
 
@@ -343,17 +345,19 @@ class VMwareVMOpsTestCase(test.TestCase):
                                return_value=result):
             info = self._vmops.get_info(self._instance)
             mock_get_vm_ref.assert_called_once_with(self._session,
-                self._instance)
+                                                    self._cluster.obj,
+                                                    self._instance)
             self.assertEqual(hardware.InstanceInfo(state=power_state.SHUTDOWN),
                              info)
 
-    @mock.patch.object(vm_util, 'get_vm_ref')
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
     @mock.patch.object(vm_util, '_VM_VALUE_CACHE')
     def test_get_info_instance_deleted(self, mock_value_cache,
                                        mock_update_cached_instances,
-                                       mock_get_vm_ref):
+                                       mock_search_vm_ref):
         vm_util.vm_value_cache_reset()
+        vm_ref_value = mock.sentinel.missing_ref
         props = ['summary.config.numCpu', 'summary.config.memorySizeMB',
                  'runtime.powerState']
         prop_cpu = vmwareapi_fake.Prop(props[0], 4)
@@ -363,19 +367,25 @@ class VMwareVMOpsTestCase(test.TestCase):
         obj_content = vmwareapi_fake.ObjectContent(None, prop_list=prop_list)
         result = vmwareapi_fake.FakeRetrieveResult()
         result.add_object(obj_content)
-        mock_get_vm_ref.return_value = vmwareapi_fake.ManagedObjectReference(
-            value='fake_powered_off')
+        mock_search_vm_ref.side_effect = [
+            vmwareapi_fake.ManagedObjectReference(value=vm_ref_value),
+            None
+        ]
 
         def mock_call_method(module, method, *args, **kwargs):
-            raise vexc.ManagedObjectNotFoundException()
+            raise vexc.ManagedObjectNotFoundException(
+                details={'obj': vm_ref_value}
+            )
 
-        with mock.patch.object(self._session, 'call_method',
+        with mock.patch.object(vutil, 'get_object_properties_dict',
                                mock_call_method):
             self.assertRaises(exception.InstanceNotFound,
                               self._vmops.get_info,
                               self._instance)
-            mock_get_vm_ref.assert_called_once_with(self._session,
-                self._instance)
+            mock_search_vm_ref.assert_has_calls(2 * [
+                mock.call(self._session,
+                          self._cluster.obj,
+                          self._instance.uuid)])
 
     def _test_get_datacenter_ref_and_name(self, ds_ref_exists=False):
         instance_ds_ref = mock.Mock()
@@ -511,7 +521,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                            vm_ref)
             else:
                 self.assertFalse(_power_on_instance.called)
+
             _get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
                                                 self._instance)
             _power_off.assert_called_once_with(self._session, vm_ref)
             _volumeops.detach_disk_from_vm.assert_called_once_with(
@@ -579,6 +591,7 @@ class VMwareVMOpsTestCase(test.TestCase):
 
         self.assertEqual(succeeds, result)
         mock_get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
                                                 self._instance)
 
     def test_clean_shutdown_first_time(self):
@@ -657,7 +670,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                     self._instance.flavor.root_gb * units.Gi,
                                     'fake-device')
             fake_get_vmdk_info.return_value = vmdk
-            vm_ref_calls = [mock.call(self._session, self._instance)]
+            vm_ref_calls = [mock.call(self._session,
+                            self._cluster.obj, self._instance)]
             try:
                 self._vmops.finish_migration(context=self._context,
                                              migration=migration,
@@ -866,7 +880,9 @@ class VMwareVMOpsTestCase(test.TestCase):
             except test.TestingException:
                 pass
 
-            vm_ref_calls = [mock.call(self._session, self._instance)]
+            vm_ref_calls = [mock.call(self._session,
+                                      self._cluster.obj,
+                                      self._instance)]
             fake_power_off.assert_called_once_with(self._session,
                                                    'fake-ref')
             # Validate VM reconfiguration
@@ -1190,6 +1206,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                           self._instance,
                                           None)
             fake_get_vm_ref.assert_called_once_with(self._session,
+                                                    self._cluster.obj,
                                                     self._instance)
             fake_get_vmdk_info.assert_called_once_with(
                 self._session, 'fake-ref', uuid=self._instance.uuid)
@@ -1235,6 +1252,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                flavor)
 
         fake_get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
                                                 self._instance)
 
         fake_power_off.assert_called_once_with(self._session,
@@ -1316,6 +1334,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                      image_meta=self._image_meta,
                                      power_on=True)
         fake_get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
                                                 self._instance)
         fake_resize_create_eph_swap.assert_called_once_with(
             'fake-ref', self._instance, None)
@@ -2480,7 +2499,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                    self._metadata,
                                                    None)
 
-        vm = vmwareapi_fake._get_object(vm_ref)
+        vm = vmwareapi_fake.get_object(vm_ref)
 
         # Test basic VM parameters
         self.assertEqual(self._instance.uuid, vm.name)
@@ -2503,7 +2522,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         datastores = vm.datastore.ManagedObjectReference
         self.assertEqual(1, len(datastores))
 
-        datastore = vmwareapi_fake._get_object(datastores[0])
+        datastore = vmwareapi_fake.get_object(datastores[0])
         self.assertEqual(self._ds.name, datastore.get('summary.name'))
 
         # Test that the VM's network is configured as specified
@@ -3138,6 +3157,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         ) as (_get_vm_ref, fake_call_method, _wait_for_task):
             self._vmops.reboot(self._instance, self.network_info, reboot_type)
             _get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
                                                 self._instance)
             if reboot_type == "HARD":
                 _wait_for_task.assert_has_calls([
@@ -3225,7 +3245,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_extra_specs.return_value = extra_specs
         self._vmops.attach_interface(self._context, self._instance,
                                      self._image_meta, self._network_values)
-        mock_get_vm_ref.assert_called_once_with(self._session, self._instance)
+        mock_get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
+                                                self._instance)
         mock_get_attach_port_index.assert_called_once_with(self._session,
                                                            'fake-ref')
         mock_get_network_attach_config_spec.assert_called_once_with(
@@ -3255,7 +3277,9 @@ class VMwareVMOpsTestCase(test.TestCase):
                                return_value='hardware-devices'):
             self._vmops.detach_interface(self._context, self._instance,
                                          self._network_values)
-        mock_get_vm_ref.assert_called_once_with(self._session, self._instance)
+        mock_get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
+                                                self._instance)
         mock_get_detach_port_index.assert_called_once_with(self._session,
                                                            'fake-ref', None)
         mock_get_network_detach_config_spec.assert_called_once_with(
@@ -3334,7 +3358,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops.attach_interface(self._context, self._instance,
                                      self._image_meta,
                                      self._network_values)
-        mock_get_vm_ref.assert_called_once_with(self._session, self._instance)
+        mock_get_vm_ref.assert_called_once_with(self._session,
+                                                self._cluster.obj,
+                                                self._instance)
         mock_get_attach_port_index.assert_called_once_with(self._session,
                                                            'fake-ref')
         mock_get_network_attach_config_spec.assert_called_once_with(

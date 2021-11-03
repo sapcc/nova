@@ -40,6 +40,7 @@ from nova import exception
 from nova.i18n import _
 from nova.network import model as network_model
 from nova.virt.vmwareapi import constants
+from nova.virt.vmwareapi.session import StableMoRefProxy
 from nova.virt.vmwareapi import vim_util
 
 LOG = logging.getLogger(__name__)
@@ -253,91 +254,16 @@ def vm_refs_cache_reset():
     _VM_REFS_CACHE = {}
 
 
-def vm_ref_cache_delete(id):
-    _VM_REFS_CACHE.pop(id, None)
+def vm_ref_cache_delete(id_):
+    _VM_REFS_CACHE.pop(id_, None)
 
 
-def vm_ref_cache_update(id, vm_ref):
-    _VM_REFS_CACHE[id] = vm_ref
+def vm_ref_cache_update(id_, vm_ref):
+    _VM_REFS_CACHE[id_] = vm_ref
 
 
-def vm_ref_cache_get(id):
-    return _VM_REFS_CACHE.get(id)
-
-
-def _vm_ref_cache(id, func, session, data):
-    vm_ref = vm_ref_cache_get(id)
-    if not vm_ref:
-        vm_ref = func(session, data)
-        vm_ref_cache_update(id, vm_ref)
-    return vm_ref
-
-
-def vm_ref_cache_from_instance(func):
-    @six.wraps(func)
-    def wrapper(session, instance):
-        id_ = instance.uuid
-        return _vm_ref_cache(id_, func, session, instance)
-    return wrapper
-
-
-def vm_ref_cache_heal_from_instance(func):
-    """Decorator for a function working with a cached ManagedObject reference
-    for an instance
-
-    Invalidates the cache in case of matching ManagedObjectNotFoundException
-    Most functions rely on the reference to be stable over the life-time of an
-    instance, and do not handle this exception, they expect InstanceNotFound
-
-    By invalidating the cache, we solve two issues:
-    1. We have a chance to recover from such a rare change
-    2. If not, we now raise InstanceNotFound, which is actually handled
-
-    The main motivator though is the live-vm migration across vcenters,
-    which can make the VM "disappear"
-
-    An operator also can de-register and re-register a vm, or need to recover
-    the vsphere service, resulting in changed mo-refs,
-    requiring a restart to clear the cache.
-
-    WARNING: Care needs to be taken in applying the decorator:
-    It requires, that the function in question is idempotent (up to the point
-    where the vm_ref is being used)
-    """
-    @six.wraps(func)
-    def wrapper(session, instance, *args, **kwargs):
-        try:
-            return func(session, instance, *args, **kwargs)
-        except vexc.ManagedObjectNotFoundException as e:
-            with excutils.save_and_reraise_exception() as ctx:
-                id_ = instance.uuid
-                vm_ref = vm_ref_cache_get(id_)
-                # if there was nothing in the cache, there's nothing to heal
-                if vm_ref is None:
-                    return  # noqa
-
-                # we are missing details about the issue, so raise it
-                if not e.details:
-                    return  # noqa
-
-                obj = e.details.get("obj")
-                # A different moref may be invalid, nothing we can do about it
-                if obj != vm_ref.value:
-                    return  # noqa
-
-                vm_ref_cache_delete(id_)
-                ctx.reraise = False
-
-                # In case the reference has been passed
-                kw_vm_ref = kwargs.get("vm_ref", None)
-                if kw_vm_ref and kw_vm_ref.value == vm_ref.value:
-                    kwargs.pop("vm_ref")
-
-                # Unlikely, but we might run into the same situation again.
-                LOG.info("Trying to recover possible vm-ref incoherence")
-                return wrapper(session, instance, *args, **kwargs)
-
-    return wrapper
+def vm_ref_cache_get(id_):
+    return _VM_REFS_CACHE.get(id_)
 
 
 # the config key which stores the VNC port
@@ -1328,6 +1254,12 @@ def _get_object_from_results(session, results, value, func):
         return func(objects, value)
 
 
+def _get_vms_relative(session, base_obj, path, property_list):
+    return session.call_method(vim_util, "get_inner_objects",
+                               base_obj, path,
+                               "VirtualMachine", property_list)
+
+
 def get_vm_ref_from_name(session, vm_name, base_obj=None, path=None):
     """Get reference to the VM with the name specified.
 
@@ -1336,16 +1268,10 @@ def get_vm_ref_from_name(session, vm_name, base_obj=None, path=None):
     It is far more optimal to use _get_vm_ref_from_vm_uuid.
     """
     property_list = ["name"]
-    if not base_obj:  # Legacy: It doesn't scale
-        vms = session.call_method(
-            vim_util, "get_objects",
-            "VirtualMachine", property_list)
-    else:
-        if not path:
-            raise ValueError("Method needs base_obj and path")
-        vms = session.call_method(
-            vim_util, "get_inner_objects", base_obj, path,
-            "VirtualMachine", property_list)
+
+    if not path or not base_obj:
+        raise ValueError("Method needs base_obj and path")
+    vms = _get_vms_relative(session, base_obj, path, property_list)
 
     return _get_object_from_results(session, vms, vm_name,
                                     _get_object_for_value)
@@ -1378,26 +1304,40 @@ def find_by_inventory_path(session, inv_path):
         inventoryPath=inv_path)
 
 
-def _get_vm_ref_from_extraconfig(session, instance_uuid):
+def _get_vm_ref_from_extraconfig(session, cluster, instance_uuid):
     """Get reference to the VM with the uuid specified."""
-    vms = session.call_method(vim_util, "get_objects",
-                "VirtualMachine", ['config.extraConfig["nvp.vm-uuid"]'])
+
+    vms = _get_vms_relative(session, cluster, "vm",
+                        ['config.extraConfig["nvp.vm-uuid"]'])
+
     return _get_object_from_results(session, vms, instance_uuid,
                                      _get_object_for_optionvalue)
 
 
-@vm_ref_cache_from_instance
-def get_vm_ref(session, instance):
-    """Get reference to the VM through uuid or vm name."""
-    uuid = instance.uuid
-    vm_ref = (search_vm_ref_by_identifier(session, uuid) or
-              get_vm_ref_from_name(session, instance.name))
-    if vm_ref is None:
-        raise exception.InstanceNotFound(instance_id=uuid)
-    return vm_ref
+class StableVmRefUuid(StableMoRefProxy):
+    def __init__(self, session, cluster, uuid, moref=None):
+        super(StableVmRefUuid, self).__init__(moref)
+        self._session = session
+        self._cluster = cluster
+        self._uuid = uuid
+        if not moref:
+            self.fetch_moref()
+
+    def fetch_moref(self):
+        vm_value_cache_delete(self._uuid)
+        self.moref = search_vm_ref_by_identifier(self._session,
+                                                 self._cluster, self._uuid)
+        if not self.moref:
+            raise exception.InstanceNotFound(instance_id=self._uuid)
+        vm_ref_cache_update(self._uuid, self)
 
 
-def search_vm_ref_by_identifier(session, identifier):
+def get_vm_ref(session, cluster, instance):
+    """Get reference to the VM through uuid."""
+    return StableVmRefUuid(session, cluster, instance.uuid)
+
+
+def search_vm_ref_by_identifier(session, cluster, identifier):
     """Searches VM reference using the identifier.
 
     This method is primarily meant to separate out part of the logic for
@@ -1406,8 +1346,7 @@ def search_vm_ref_by_identifier(session, identifier):
     use get_vm_ref instead.
     """
     vm_ref = (_get_vm_ref_from_vm_uuid(session, identifier) or
-              _get_vm_ref_from_extraconfig(session, identifier) or
-              get_vm_ref_from_name(session, identifier))
+              _get_vm_ref_from_extraconfig(session, cluster, identifier))
     return vm_ref
 
 

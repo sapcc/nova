@@ -36,7 +36,7 @@ LOG = logging.getLogger(__name__)
 class VMwareVolumeOps(object):
     """Management class for Volume-related tasks."""
 
-    def __init__(self, session, cluster=None):
+    def __init__(self, session, cluster):
         self._session = session
         self._cluster = cluster
 
@@ -311,7 +311,7 @@ class VMwareVolumeOps(object):
     def get_volume_connector(self, instance):
         """Return volume connector information."""
         try:
-            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         except exception.InstanceNotFound:
             vm_ref = None
         iqn = self._iscsi_get_host_iqn(vm_ref)
@@ -339,7 +339,7 @@ class VMwareVolumeOps(object):
     def _attach_volume_vmdk(self, connection_info, instance,
                             adapter_type=None):
         """Attach vmdk volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         LOG.debug("_attach_volume_vmdk: %s", connection_info)
         data = connection_info['data']
         volume_ref = self._get_volume_ref(data['volume'])
@@ -369,7 +369,7 @@ class VMwareVolumeOps(object):
     def _attach_volume_iscsi(self, connection_info, instance,
                              adapter_type=None):
         """Attach iscsi volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Attach Volume to VM
         LOG.debug("_attach_volume_iscsi: %s", connection_info)
 
@@ -522,7 +522,7 @@ class VMwareVolumeOps(object):
 
     def _detach_volume_vmdk(self, connection_info, instance):
         """Detach volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Detach Volume from VM
         LOG.debug("_detach_volume_vmdk: %s", connection_info)
         data = connection_info['data']
@@ -558,7 +558,7 @@ class VMwareVolumeOps(object):
 
     def _detach_volume_iscsi(self, connection_info, instance):
         """Detach volume storage to VM instance."""
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # Detach Volume from VM
         LOG.debug("_detach_volume_iscsi: %s", connection_info)
         data = connection_info['data']
@@ -625,7 +625,7 @@ class VMwareVolumeOps(object):
         # This should sensibly moved out to cinder:
         # Cinder can delete the old shadow-vm, as soon as the attachment
         # for the vm prior the vmotion gets deleted
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         for device in vm_util.get_hardware_devices(self._session, vm_ref):
             class_name = device.__class__.__name__
 
@@ -704,7 +704,7 @@ class VMwareVolumeOps(object):
         dicts to a a device by the stored volume_id
         """
         remapped = {}
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster, instance)
         # TODO(fwiesel) Create a function
         #  _get_vmdk_backed_disk_devices (plural)
         # so we do not have two calls for each device
