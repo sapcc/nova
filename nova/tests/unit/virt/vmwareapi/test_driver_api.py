@@ -1326,6 +1326,7 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     @mock.patch.object(vm_util, 'get_vmdk_info')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
+    @mock.patch.object(vmops.VMwareVMOps, '_fetch_image_if_missing')
     @mock.patch('nova.virt.vmwareapi.vmops.VMwareVMOps._delete_vm_snapshot')
     @mock.patch('nova.virt.vmwareapi.vmops.VMwareVMOps._create_vm_snapshot')
     @mock.patch('nova.virt.vmwareapi.volumeops.VMwareVolumeOps.'
@@ -1334,6 +1335,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                                          mock_create_vm_snapshot,
                                          mock_delete_vm_snapshot,
                                          mock_update_cached_instances,
+                                         mock_fetch_image_if_missing,
                                          mock_get_vmdk):
 
         mock_get_vmdk.return_value = self.get_fake_vmdk()
