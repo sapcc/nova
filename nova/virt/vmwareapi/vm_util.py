@@ -1942,7 +1942,7 @@ def find_rescue_device(hardware_devices, instance):
     :param instance: nova.objects.instance.Instance object
     :return: the rescue disk device object
     """
-    for device in hardware_devices.VirtualDevice:
+    for device in hardware_devices:
         if (device.__class__.__name__ == "VirtualDisk" and
                 device.backing.__class__.__name__ ==
                 'VirtualDiskFlatVer2BackingInfo' and
