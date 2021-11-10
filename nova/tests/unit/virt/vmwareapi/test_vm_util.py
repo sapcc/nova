@@ -34,6 +34,7 @@ from nova.tests.unit.virt.vmwareapi import fake
 from nova.tests.unit.virt.vmwareapi import stubs
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import driver
+from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
 
 CONF = nova.conf.CONF
@@ -1819,7 +1820,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         devices = fake._create_array_of_type('VirtualDevice')
         devices.VirtualDevice = self._vmdk_path_and_adapter_type_devices(
             filename)
-        return devices
+        return vim_util.get_array_items(devices)
 
     def test_find_rescue_device(self):
         filename = '[test_datastore] uuid/uuid-rescue.vmdk'
