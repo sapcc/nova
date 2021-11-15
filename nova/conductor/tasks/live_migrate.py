@@ -355,7 +355,8 @@ class LiveMigrationTask(base.TaskBase):
             This is generally at least seeded with the source host.
         :returns: nova.objects.RequestSpec object
         """
-        scheduler_hints = {'source_host': [self.source]}
+        scheduler_hints = {'source_host': [self.source],
+                           'source_node': [self.instance.node]}
         filter_properties = {'ignore_hosts': attempted_hosts,
                              'scheduler_hints': scheduler_hints}
         if not self.request_spec:

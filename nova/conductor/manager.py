@@ -306,7 +306,8 @@ class ComputeTaskManager(base.Base):
 
         # NOTE(jkulik): We need the instance's current host in at least one
         # filter to make sure we don't pass vCenter boundaries, i.e. shards
-        scheduler_hints = {'source_host': [instance.host]}
+        scheduler_hints = {'source_host': [instance.host],
+                           'source_node': [instance.node]}
         sh = filter_properties.setdefault('scheduler_hints', {})
         sh.update(scheduler_hints)
 
