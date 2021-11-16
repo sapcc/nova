@@ -628,6 +628,6 @@ try:
         def serialize(self, value, **kwargs):
             return 'NetworkInfoAsyncWrapper with {}'.format(value._gt)
 
-    serialization_manager.register(NetworkInfoAsyncWrapper)
+    serialization_manager.register(NetworkInfoAsyncWrapperSerializer)
 except ImportError:
     pass
