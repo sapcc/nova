@@ -971,7 +971,10 @@ class ServerGroupTestV264(ServerGroupTestV213):
                       six.text_type(result))
 
     @mock.patch('nova.compute.api.API.sync_server_group')
-    def test_update_server_group_add_with_remove_fixes_policy(self, mock_sync):
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
+    def test_update_server_group_add_with_remove_fixes_policy(self,
+                                                              mock_req_spec,
+                                                              mock_sync):
         """Don't fail if adding a server would break the policy, but the remove
         in the same request fixes that.
         """
@@ -1016,7 +1019,10 @@ class ServerGroupTestV264(ServerGroupTestV213):
                       six.text_type(result))
 
     @mock.patch('nova.compute.api.API.sync_server_group')
-    def test_update_server_group_add_instance_multiple_cells(self, mock_sync):
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
+    def test_update_server_group_add_instance_multiple_cells(self,
+                                                             mock_req_spec,
+                                                             mock_sync):
         """Don't fail if the instance the user tries to add is in another cell.
         """
         req = fakes.HTTPRequest.blank('', version=self.wsgi_api_version)
@@ -1042,7 +1048,9 @@ class ServerGroupTestV264(ServerGroupTestV213):
         mock_sync.assert_called_with(req_context, expected_hosts, ig_uuid)
 
     @mock.patch('nova.compute.api.API.sync_server_group')
-    def test_update_server_group_add_against_soft_policy(self, mock_sync):
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
+    def test_update_server_group_add_against_soft_policy(self, mock_req_spec,
+                                                         mock_sync):
         """Don't fail if the policy would fail, but it's a soft-* policy - they
         are best-effort by design.
         """
@@ -1099,3 +1107,57 @@ class ServerGroupTestV264(ServerGroupTestV213):
                       'assigned to another server group. Server groups: {}'
                       .format(ig_uuid),
                       six.text_type(result))
+
+    @mock.patch('nova.objects.InstanceGroupList.get_by_instance_uuids')
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
+    def test_update_server_group_updates_request_spec(self, mock_req_spec,
+                                                      mock_gbiu):
+        """If we update the server-group membership of a server, we also have
+        to update the appropriate RequestSpec attribute.
+        """
+        req = fakes.HTTPRequest.blank('', version=self.wsgi_api_version)
+        ctx = context.RequestContext('fake_user', 'fake')
+
+        cell1 = self.cells[uuidsentinel.cell1]
+        instances = [self._create_instance(ctx, cell1, host='host1')]
+
+        ig = objects.InstanceGroup(context=ctx, name='fake_name',
+                  user_id='fake_user', project_id='fake',
+                  members=[i.uuid for i in instances], policy='anti-affinity')
+        ig.create()
+
+        new_instance = self._create_instance(ctx, cell1, host='host2')
+
+        mock_gbiu.return_value = objects.InstanceGroupList(
+                objects=[objects.InstanceGroup(
+                    **server_group_db({'id': ig.uuid}))])
+
+        fake_spec_remove = mock.Mock(instance_group=ig)
+        fake_spec_add = mock.Mock(instance_group=None)
+
+        def _get_req_spec(context, instance_uuid):
+            if instance_uuid == new_instance.uuid:
+                return fake_spec_add
+            else:
+                return fake_spec_remove
+
+        mock_req_spec.side_effect = _get_req_spec
+
+        self.assertEqual(ig.uuid, fake_spec_remove.instance_group.uuid)
+        self.assertIsNone(fake_spec_add.instance_group)
+
+        body = {
+            'add_members': [new_instance.uuid],
+            'remove_members': [instances[0].uuid]
+        }
+        res_dict = self.controller.update(req, ig.uuid, body=body)
+        result_members = res_dict['server_group']['members']
+        self.assertEqual(1, len(result_members))
+        for member in [new_instance.uuid]:
+            self.assertIn(member, result_members)
+
+        self.assertIsNone(fake_spec_remove.instance_group)
+        fake_spec_remove.save.assert_called()
+        ig.members = [new_instance.uuid]
+        self.assertEqual(ig.uuid, fake_spec_add.instance_group.uuid)
+        fake_spec_add.save.assert_called()
