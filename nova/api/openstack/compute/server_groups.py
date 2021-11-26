@@ -366,6 +366,16 @@ class ServerGroupController(wsgi.Controller):
         # DB.
         sg.refresh()
 
+        # update the request-specs of the updated members
+        for member_uuid in found_instances_hosts:
+            request_spec = \
+                objects.RequestSpec.get_by_instance_uuid(context, member_uuid)
+            if member_uuid in members_to_add:
+                request_spec.instance_group = sg
+            else:
+                request_spec.instance_group = None
+            request_spec.save()
+
         # tell the compute hosts about the update, so they can sync if
         # necessary
         hosts_to_update = set(h for h in found_instances_hosts.values() if h)
