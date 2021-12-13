@@ -50,6 +50,7 @@ from sqlalchemy.orm import contains_eager
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm import joinedload_all
 from sqlalchemy.orm import noload
+from sqlalchemy.orm import subqueryload
 from sqlalchemy.orm import undefer
 from sqlalchemy.schema import Table
 from sqlalchemy import sql
@@ -2044,6 +2045,8 @@ def _build_instance_get(context, columns_to_join=None):
             continue
         if 'extra.' in column:
             query = query.options(undefer(column))
+        elif column in ['metadata', 'system_metadata']:
+            query = query.options(subqueryload(column))
         else:
             query = query.options(joinedload(column))
     # NOTE(alaski) Stop lazy loading of columns not needed.
