@@ -232,7 +232,8 @@ class FilterSchedulerTestCase(test_scheduler.SchedulerTestCase):
         mock_claim.assert_called_once_with(ctx.elevated.return_value,
                 self.placement_client, spec_obj, uuids.instance,
                 alloc_reqs_by_rp_uuid[uuids.cn1][0],
-                allocation_request_version=None)
+                allocation_request_version=None,
+                host=host_state.host)
 
         self.assertEqual(len(selected_hosts), 1)
         self.assertEqual(expected_selection, selected_hosts)
@@ -297,7 +298,8 @@ class FilterSchedulerTestCase(test_scheduler.SchedulerTestCase):
         mock_claim.assert_called_once_with(ctx.elevated.return_value,
                 self.placement_client, spec_obj, uuids.instance,
                 alloc_reqs_by_rp_uuid[uuids.cn1][0],
-            allocation_request_version=fake_version)
+            allocation_request_version=fake_version,
+            host=host_state.host)
 
         mock_cleanup.assert_not_called()
         # Ensure that we have consumed the resources on the chosen host states
@@ -547,11 +549,13 @@ class FilterSchedulerTestCase(test_scheduler.SchedulerTestCase):
             mock.call(ctx.elevated.return_value, self.placement_client,
                     spec_obj, uuids.instance0,
                     alloc_reqs_by_rp_uuid[uuids.cn2][0],
-                    allocation_request_version=None),
+                    allocation_request_version=None,
+                    host=hs2.host),
             mock.call(ctx.elevated.return_value, self.placement_client,
                     spec_obj, uuids.instance1,
                     alloc_reqs_by_rp_uuid[uuids.cn1][0],
-                    allocation_request_version=None),
+                    allocation_request_version=None,
+                    host=hs1.host),
         ]
         mock_claim.assert_has_calls(claim_calls)
 

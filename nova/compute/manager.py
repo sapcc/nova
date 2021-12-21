@@ -4506,6 +4506,16 @@ class ComputeManager(manager.Manager):
         # Get just the resources part of the one allocation we need below
         orig_alloc = orig_alloc[cn_uuid].get('resources', {})
 
+        # NOTE(jkulik): If this was a same-host resize, we didn't copy all
+        # resources into the Migration, but only the ones necessary to make
+        # sure we have enough to revert. Therefore, we have to rebuild the
+        # resources from the Migration's original flavor.
+        if migration.is_same_host():
+            # FIXME(jkulik): This method is flawed in that it assumes
+            # allocations against only one provider.
+            orig_alloc = scheduler_utils.resources_from_flavor(
+                            instance, instance.flavor)
+
         # FIXME(danms): This method is flawed in that it asssumes allocations
         # against only one provider. So, this may overwite allocations against
         # a shared provider, if we had one.

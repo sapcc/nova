@@ -60,6 +60,9 @@ class ResourceRequest(object):
         # Default to the configured limit but _limit can be
         # set to None to indicate "no limit".
         self._limit = CONF.scheduler.max_placement_results
+        # List of consumer UUIDs that should be ignored by placement in the
+        # call to get allocation candiates
+        self._ignore_consumers = []
 
     def __str__(self):
         return ', '.join(sorted(
@@ -67,7 +70,8 @@ class ResourceRequest(object):
 
     def get_request_group(self, ident):
         if ident not in self._rg_by_id:
-            rq_grp = placement_lib.RequestGroup(use_same_provider=bool(ident))
+            rq_grp = placement_lib.RequestGroup(use_same_provider=bool(ident),
+                                    ignore_consumers=self._ignore_consumers)
             self._rg_by_id[ident] = rq_grp
         return self._rg_by_id[ident]
 
@@ -280,6 +284,9 @@ class ResourceRequest(object):
             qparams = []
         if self._group_policy is not None:
             qparams.append(('group_policy', self._group_policy))
+        if self._ignore_consumers is not None:
+            for consumer_uuid in self._ignore_consumers:
+                qparams.append(('ignore_consumer', consumer_uuid))
         for ident, rg in self._rg_by_id.items():
             # [('resourcesN', 'rclass:amount,rclass:amount,...'),
             #  ('requiredN', 'trait_name,!trait_name,...'),
@@ -287,6 +294,19 @@ class ResourceRequest(object):
             #  ('member_ofN', 'in:uuid,uuid,...')]
             qparams.extend(to_queryparams(rg, ident or ''))
         return parse.urlencode(sorted(qparams))
+
+    @property
+    def ignore_consumers(self):
+        return self._ignore_consumers
+
+    @ignore_consumers.setter
+    def ignore_consumers(self, value):
+        self._ignore_consumers = value
+        # also update child request-groups, because this is a global setting
+        # all those groups adhere to and we want see it if we convert `self` to
+        # a string
+        for rg in self._rg_by_id.values():
+            rg.ignore_consumers = value
 
 
 def build_request_spec(image, instances, instance_type=None):
@@ -922,7 +942,7 @@ def request_is_resize(spec_obj):
 
 
 def claim_resources(ctx, client, spec_obj, instance_uuid, alloc_req,
-        allocation_request_version=None):
+        allocation_request_version=None, host=None):
     """Given an instance UUID (representing the consumer of resources) and the
     allocation_request JSON object returned from Placement, attempt to claim
     resources for the instance in the placement API. Returns True if the claim
@@ -941,6 +961,8 @@ def claim_resources(ctx, client, spec_obj, instance_uuid, alloc_req,
                       the instance
     :param allocation_request_version: The microversion used to request the
                                        allocations.
+    :param host: The name of the host the resources should be claimed on. This
+                 is only used to find same-host resizes.
     """
     if request_is_rebuild(spec_obj):
         # NOTE(danms): This is a rebuild-only scheduling request, so we should
@@ -960,6 +982,73 @@ def claim_resources(ctx, client, spec_obj, instance_uuid, alloc_req,
     # the context. Perhaps we should consider putting the user ID in
     # the spec object?
     user_id = ctx.user_id
+
+    if request_is_resize(spec_obj):
+        status = 'pre-migrating'
+        try:
+            migration = objects.Migration.get_by_instance_and_status(ctx,
+                instance_uuid, status)
+        except exception.MigrationNotFoundByStatus:
+            LOG.warning("Unable to find migration record with status "
+                        "'%s' for instance %s on resize. Cannot check for "
+                        "same-host resize and thus not replace resources "
+                        "in migration.",
+                        status, instance_uuid)
+        else:
+            if migration.source_compute == host:
+                LOG.info("Replacing resources for same-host resize on "
+                          "migration %s for instance %s.",
+                           migration.uuid, instance_uuid)
+
+                consumer_alloc_requests = {instance_uuid: alloc_req}
+                vm_allocs = alloc_req['allocations']
+
+                # get the allocations for migration consumer
+                mig_allocs = \
+                    client.get_allocations_for_consumer(ctx, migration.uuid)
+
+                # set allocations for migration consumer to keep the RAM/CPU
+                # reserved. This means the difference on downsize and 0 on
+                # upsize. Disk is kept as-is, because while the instance is not
+                # powered on and thus doesn't consume RAM/CPU, it does consume
+                # disk with the copied disk.
+                for rp_uuid, data in mig_allocs.items():
+                    # if we don't use this resource-provider with the new
+                    # allocation, we keep all resources reserved and thus don't
+                    # need to modify the resources in mig_allocs
+                    if rp_uuid not in vm_allocs:
+                        continue
+
+                    mig_resources = data['resources']
+                    vm_resources = vm_allocs[rp_uuid]['resources']
+                    for name, value in mig_resources.items():
+                        # same as above: if the new allocation doesn't contain
+                        # this resource, we need to keep it all reserved
+                        if name not in vm_resources:
+                            continue
+
+                        # we need to reserve the full disk because the disk is
+                        # used even on a powered-off VM.
+                        if name == 'DISK_GB':
+                            continue
+
+                        # take the difference to the new allocation-request,
+                        # but don't let it get negative. we only want to
+                        # reserve the resources for a down-size, to be able to
+                        # size up again on revert.
+                        new_value = max(value - vm_resources[name], 0)
+                        if new_value:
+                            mig_resources[name] = new_value
+                        else:
+                            del mig_resources[name]
+
+                if mig_allocs:
+                    consumer_alloc_requests[migration.uuid] = \
+                                                    {'allocations': mig_allocs}
+                LOG.debug("Claim looks like %s", consumer_alloc_requests)
+
+                return client.set_multiple_allocations(ctx,
+                    consumer_alloc_requests, project_id, user_id)
 
     return client.claim_resources(ctx, instance_uuid, alloc_req, project_id,
             user_id, allocation_request_version=allocation_request_version)
