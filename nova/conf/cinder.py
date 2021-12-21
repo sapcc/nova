@@ -94,6 +94,18 @@ cinder.conf), the volume create request will fail and the instance will fail
 the build request.
 By default there is no availability zone restriction on volume attach.
 """),
+    cfg.FloatOpt('min_migration_speed_mib_per_second',
+               default=24,
+               help="""
+Assumed mininum speed for a volume migration
+
+We compute a timeout how long Nova will wait for a volume to migrate based on
+this speed in MiB/s and the size of the volume.
+
+Possible values:
+
+  * Positive floating point value
+"""),
 ]
 
 
