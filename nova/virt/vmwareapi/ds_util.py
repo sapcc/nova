@@ -113,7 +113,7 @@ def get_datastore(session, cluster, datastore_regex=None,
                   storage_policy=None,
                   allowed_ds_types=ALL_SUPPORTED_DS_TYPES):
     """Get the datastore list and choose the most preferable one."""
-    datastore_ret = session._call_method(vutil,
+    datastore_ret = session.call_method(vutil,
                                          "get_object_property",
                                          cluster,
                                          "datastore")
@@ -123,7 +123,7 @@ def get_datastore(session, cluster, datastore_regex=None,
         raise exception.DatastoreNotFound()
 
     datastore_mors = datastore_ret.ManagedObjectReference
-    result = session._call_method(vim_util,
+    result = session.call_method(vim_util,
                             "get_properties_for_a_collection_of_objects",
                             "Datastore", datastore_mors,
                             ["summary.type", "summary.name",
@@ -173,12 +173,12 @@ def get_available_datastores(session, cluster=None, datastore_regex=None,
                              dc_ref=None):
     """Get the datastore list and choose the first local storage."""
     if cluster:
-        ds = session._call_method(vutil,
+        ds = session.call_method(vutil,
                                   "get_object_property",
                                   cluster,
                                   "datastore")
     elif dc_ref:
-        ds = session._call_method(vutil,
+        ds = session.call_method(vutil,
                                   "get_object_property",
                                   dc_ref,
                                   "datastore")
@@ -189,7 +189,7 @@ def get_available_datastores(session, cluster=None, datastore_regex=None,
         return []
     data_store_mors = ds.ManagedObjectReference
     # NOTE(garyk): use utility method to retrieve remote objects
-    result = session._call_method(vim_util,
+    result = session.call_method(vim_util,
             "get_properties_for_a_collection_of_objects",
             "Datastore", data_store_mors,
             ["summary.type", "summary.name", "summary.accessible",
@@ -207,7 +207,7 @@ def get_allowed_datastore_types(disk_type):
 
 
 def get_datacenter_ref(session, dc_path):
-    return session._call_method(
+    return session.call_method(
         session.vim,
         "FindByInventoryPath",
         session.vim.service_content.searchIndex,
@@ -217,13 +217,13 @@ def get_datacenter_ref(session, dc_path):
 def file_delete(session, ds_path, dc_ref):
     LOG.debug("Deleting the datastore file %s", ds_path)
     vim = session.vim
-    file_delete_task = session._call_method(
+    file_delete_task = session.call_method(
             vim,
             "DeleteDatastoreFile_Task",
             vim.service_content.fileManager,
             name=str(ds_path),
             datacenter=dc_ref)
-    session._wait_for_task(file_delete_task)
+    session.wait_for_task(file_delete_task)
     LOG.debug("Deleted the datastore file")
 
 
@@ -231,7 +231,7 @@ def file_copy(session, src_file, src_dc_ref, dst_file, dst_dc_ref):
     LOG.debug("Copying the datastore file from %(src)s to %(dst)s",
               {'src': src_file, 'dst': dst_file})
     vim = session.vim
-    copy_task = session._call_method(
+    copy_task = session.call_method(
             vim,
             "CopyDatastoreFile_Task",
             vim.service_content.fileManager,
@@ -239,7 +239,7 @@ def file_copy(session, src_file, src_dc_ref, dst_file, dst_dc_ref):
             sourceDatacenter=src_dc_ref,
             destinationName=dst_file,
             destinationDatacenter=dst_dc_ref)
-    session._wait_for_task(copy_task)
+    session.wait_for_task(copy_task)
     LOG.debug("Copied the datastore file")
 
 
@@ -269,7 +269,7 @@ def disk_move(session, dc_ref, src_file, dst_file):
     """
     LOG.debug("Moving virtual disk from %(src)s to %(dst)s.",
               {'src': src_file, 'dst': dst_file})
-    move_task = session._call_method(
+    move_task = session.call_method(
             session.vim,
             "MoveVirtualDisk_Task",
             session.vim.service_content.virtualDiskManager,
@@ -278,7 +278,7 @@ def disk_move(session, dc_ref, src_file, dst_file):
             destName=str(dst_file),
             destDatacenter=dc_ref,
             force=False)
-    session._wait_for_task(move_task)
+    session.wait_for_task(move_task)
     LOG.info("Moved virtual disk from %(src)s to %(dst)s.",
              {'src': src_file, 'dst': dst_file})
 
@@ -287,7 +287,7 @@ def disk_copy(session, dc_ref, src_file, dst_file):
     """Copies the source virtual disk to the destination."""
     LOG.debug("Copying virtual disk from %(src)s to %(dst)s.",
               {'src': src_file, 'dst': dst_file})
-    copy_disk_task = session._call_method(
+    copy_disk_task = session.call_method(
             session.vim,
             "CopyVirtualDisk_Task",
             session.vim.service_content.virtualDiskManager,
@@ -296,7 +296,7 @@ def disk_copy(session, dc_ref, src_file, dst_file):
             destName=str(dst_file),
             destDatacenter=dc_ref,
             force=False)
-    session._wait_for_task(copy_disk_task)
+    session.wait_for_task(copy_disk_task)
     LOG.info("Copied virtual disk from %(src)s to %(dst)s.",
              {'src': src_file, 'dst': dst_file})
 
@@ -304,13 +304,13 @@ def disk_copy(session, dc_ref, src_file, dst_file):
 def disk_delete(session, dc_ref, file_path):
     """Deletes a virtual disk."""
     LOG.debug("Deleting virtual disk %s", file_path)
-    delete_disk_task = session._call_method(
+    delete_disk_task = session.call_method(
             session.vim,
             "DeleteVirtualDisk_Task",
             session.vim.service_content.virtualDiskManager,
             name=str(file_path),
             datacenter=dc_ref)
-    session._wait_for_task(delete_disk_task)
+    session.wait_for_task(delete_disk_task)
     LOG.info("Deleted virtual disk %s.", file_path)
 
 
@@ -341,7 +341,7 @@ def file_move(session, dc_ref, src_file, dst_file):
     LOG.debug("Moving file from %(src)s to %(dst)s.",
               {'src': src_file, 'dst': dst_file})
     vim = session.vim
-    move_task = session._call_method(
+    move_task = session.call_method(
             vim,
             "MoveDatastoreFile_Task",
             vim.service_content.fileManager,
@@ -349,7 +349,7 @@ def file_move(session, dc_ref, src_file, dst_file):
             sourceDatacenter=dc_ref,
             destinationName=str(dst_file),
             destinationDatacenter=dc_ref)
-    session._wait_for_task(move_task)
+    session.wait_for_task(move_task)
     LOG.debug("File moved")
 
 
@@ -369,13 +369,13 @@ def file_exists(session, ds_browser, ds_path, file_name):
     """Check if the file exists on the datastore."""
     client_factory = session.vim.client.factory
     search_spec = search_datastore_spec(client_factory, file_name)
-    search_task = session._call_method(session.vim,
+    search_task = session.call_method(session.vim,
                                              "SearchDatastore_Task",
                                              ds_browser,
                                              datastorePath=str(ds_path),
                                              searchSpec=search_spec)
     try:
-        task_info = session._wait_for_task(search_task)
+        task_info = session.wait_for_task(search_task)
     except vexc.FileNotFoundException:
         return False
 
@@ -388,12 +388,12 @@ def file_size(session, ds_browser, ds_path, file_name):
     """Returns the size of the specified file."""
     client_factory = session.vim.client.factory
     search_spec = search_datastore_spec(client_factory, file_name)
-    search_task = session._call_method(session.vim,
+    search_task = session.call_method(session.vim,
                                        "SearchDatastore_Task",
                                        ds_browser,
                                        datastorePath=str(ds_path),
                                        searchSpec=search_spec)
-    task_info = session._wait_for_task(search_task)
+    task_info = session.wait_for_task(search_task)
     if hasattr(task_info.result, 'file'):
         return task_info.result.file[0].fileSize
 
@@ -404,7 +404,7 @@ def mkdir(session, ds_path, dc_ref):
     DataStore.
     """
     LOG.debug("Creating directory with path %s", ds_path)
-    session._call_method(session.vim, "MakeDirectory",
+    session.call_method(session.vim, "MakeDirectory",
             session.vim.service_content.fileManager,
             name=str(ds_path), datacenter=dc_ref,
             createParentDirectories=True)
@@ -416,13 +416,13 @@ def get_sub_folders(session, ds_browser, ds_path):
 
     If the path does not exist then an empty set is returned.
     """
-    search_task = session._call_method(
+    search_task = session.call_method(
             session.vim,
             "SearchDatastore_Task",
             ds_browser,
             datastorePath=str(ds_path))
     try:
-        task_info = session._wait_for_task(search_task)
+        task_info = session.wait_for_task(search_task)
     except vexc.FileNotFoundException:
         return set()
     # populate the folder entries
@@ -489,7 +489,7 @@ def get_dc_info(session, ds_ref):
     """Get the datacenter name and the reference."""
     dc_info = _DS_DC_MAPPING.get(ds_ref.value)
     if not dc_info:
-        dcs = session._call_method(vim_util, "get_objects",
+        dcs = session.call_method(vim_util, "get_objects",
                 "Datacenter", ["name", "datastore", "vmFolder"])
         _update_datacenter_cache_from_objects(session, dcs)
         dc_info = _DS_DC_MAPPING.get(ds_ref.value)
@@ -508,7 +508,7 @@ def get_connected_hosts(session, datastore):
     :return: List of managed object references of all connected
              hosts
     """
-    host_mounts = session._call_method(vutil, 'get_object_property',
+    host_mounts = session.call_method(vutil, 'get_object_property',
                                        datastore, 'host')
     if not hasattr(host_mounts, 'DatastoreHostMount'):
         return []

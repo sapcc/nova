@@ -227,8 +227,7 @@ def image_transfer(read_handle, write_handle):
 
 
 def upload_iso_to_datastore(iso_path, instance, **kwargs):
-    LOG.debug("Uploading iso %s to datastore", iso_path,
-              instance=instance)
+    LOG.debug("Uploading iso %s to datastore", iso_path)
     with open(iso_path, 'r') as iso_file:
         write_file_handle = rw_handles.FileWriteHandle(
             kwargs.get("host"),
@@ -248,8 +247,7 @@ def upload_iso_to_datastore(iso_path, instance, **kwargs):
             data = iso_file.read(block_size)
         write_file_handle.close()
 
-    LOG.debug("Uploaded iso %s to datastore", iso_path,
-              instance=instance)
+    LOG.debug("Uploaded iso %s to datastore", iso_path)
 
 
 def fetch_image(context, instance, host, port, dc_name, ds_name, file_path,
@@ -259,8 +257,7 @@ def fetch_image(context, instance, host, port, dc_name, ds_name, file_path,
     LOG.debug("Downloading image file data %(image_ref)s to the "
               "data store %(data_store_name)s",
               {'image_ref': image_ref,
-               'data_store_name': ds_name},
-              instance=instance)
+               'data_store_name': ds_name})
 
     metadata = IMAGE_API.get(context, image_ref)
     file_size = int(metadata['size'])
@@ -274,8 +271,7 @@ def fetch_image(context, instance, host, port, dc_name, ds_name, file_path,
               "%(data_store_name)s",
               {'image_ref': image_ref,
                'upload_name': 'n/a' if file_path is None else file_path,
-               'data_store_name': 'n/a' if ds_name is None else ds_name},
-              instance=instance)
+               'data_store_name': 'n/a' if ds_name is None else ds_name})
 
 
 def _build_shadow_vm_config_spec(session, name, size_kb, disk_type, ds_name):
@@ -344,37 +340,37 @@ def _build_import_spec_for_import_vapp(session, vm_name, datastore_name):
 
 
 def fetch_image_stream_optimized(context, instance, session, vm_name,
-                                 ds_name, vm_folder_ref, res_pool_ref,
+                                 datastore, vm_folder_ref, res_pool_ref,
                                  image_id=None):
     """Fetch image from Glance to ESX datastore."""
     image_ref = image_id if image_id else instance.image_ref
     LOG.debug("Downloading image file data %(image_ref)s to the ESX "
               "as VM named '%(vm_name)s'",
-              {'image_ref': image_ref, 'vm_name': vm_name},
-              instance=instance)
+              {'image_ref': image_ref, 'vm_name': vm_name})
 
     metadata = IMAGE_API.get(context, image_ref)
     file_size = int(metadata['size'])
 
     vm_import_spec = _build_import_spec_for_import_vapp(
-            session, vm_name, ds_name)
+            session, vm_name, datastore.name)
 
     read_iter = IMAGE_API.download(context, image_ref)
     read_handle = rw_handles.ImageReadHandle(read_iter)
 
     imported_vm_ref = _import_image(session, read_handle, vm_import_spec,
                                     vm_name, vm_folder_ref, res_pool_ref,
+                                    datastore.ref,
                                     file_size)
 
     LOG.info("Downloaded image file data %(image_ref)s",
-             {'image_ref': instance.image_ref}, instance=instance)
+             {'image_ref': instance.image_ref})
     vmdk = vm_util.get_vmdk_info(session, imported_vm_ref, vm_name)
-    vm_util.mark_vm_as_template(session, instance, imported_vm_ref)
+    vm_util.mark_vm_as_template(session, imported_vm_ref)
     return vmdk.capacity_in_bytes, vmdk.path
 
 
 def _import_image(session, read_handle, vm_import_spec, vm_name, vm_folder_ref,
-                  res_pool_ref, file_size):
+                  res_pool_ref, datastore_ref, file_size):
     # retry in order to handle conflicts in case of parallel execution
     # (multiple agents) or previously failed import of the same image
     max_attempts = 3
@@ -395,21 +391,26 @@ def _import_image(session, read_handle, vm_import_spec, vm_name, vm_folder_ref,
         except vexc.DuplicateName:
             LOG.debug("Handling name duplication during import of VM %s",
                       vm_name)
-            vm_ref = vm_util.get_vm_ref_from_name(session, vm_name)
+            vm_ref = vm_util.get_vm_ref_from_name(session, vm_name,
+                            base_obj=vm_folder_ref, path="childEntity")
+            if not vm_ref:
+                # This only happens, if the owner of the image
+                # has been changed, while we where importing... rather unlikely
+                vm_ref = vm_util.get_vm_ref_from_name(session, vm_name,
+                            base_obj=datastore_ref, path="vm")
+
             waited_for_ongoing_import = _wait_for_import_task(session, vm_ref)
             if waited_for_ongoing_import:
                 imported_vm_ref = vm_ref
                 break
-            else:
-                try:
-                    destroy_task = session._call_method(session.vim,
-                                                        "Destroy_Task",
-                                                        vm_ref)
-                    session._wait_for_task(destroy_task)
-                    vm_util.vm_ref_cache_delete(vm_name)
-                except vexc.ManagedObjectNotFoundException:
-                    # another agent destroyed the VM in the meantime
-                    pass
+            try:
+                destroy_task = session.call_method(session.vim,
+                                                    "Destroy_Task",
+                                                    vm_ref)
+                session.wait_for_task(destroy_task)
+            except vexc.ManagedObjectNotFoundException:
+                # another agent destroyed the VM in the meantime
+                pass
 
     if not imported_vm_ref:
         raise vexc.VMwareDriverException("Could not import image"
@@ -430,13 +431,13 @@ def _wait_for_import_task(session, vm_ref):
     waited = False
 
     try:
-        task_collector = session._call_method(session.vim,
+        task_collector = session.call_method(session.vim,
                                       "CreateCollectorForTasks",
                                       session.vim.service_content.taskManager,
                                       filter=task_filter_spec)
 
         while True:
-            page_tasks = session._call_method(session.vim,
+            page_tasks = session.call_method(session.vim,
                                               "ReadNextTasks",
                                               task_collector,
                                               maxCount=10)
@@ -446,7 +447,7 @@ def _wait_for_import_task(session, vm_ref):
             for ti in page_tasks:
                 if ti.descriptionId == "ResourcePool.ImportVAppLRO":
                     try:
-                        session._wait_for_task(ti.task)
+                        session.wait_for_task(ti.task)
                         waited = True
                     except vexc.VimException as e:
                         LOG.debug("Awaiting previous import on VM %s "
@@ -457,7 +458,7 @@ def _wait_for_import_task(session, vm_ref):
                     return waited
     finally:
         if task_collector:
-            session._call_method(session.vim,
+            session.call_method(session.vim,
                                  "DestroyCollector",
                                  task_collector)
 
@@ -479,7 +480,7 @@ def get_vmdk_name_from_ovf(xmlstr):
     return vmdk_name
 
 
-def fetch_image_ova(context, instance, session, vm_name, ds_name,
+def fetch_image_ova(context, instance, session, vm_name, datastore,
                     vm_folder_ref, res_pool_ref):
     """Download the OVA image from the glance image server to the
     Nova compute node.
@@ -487,14 +488,13 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
     image_ref = instance.image_ref
     LOG.debug("Downloading OVA image file %(image_ref)s to the ESX "
               "as VM named '%(vm_name)s'",
-              {'image_ref': image_ref, 'vm_name': vm_name},
-              instance=instance)
+              {'image_ref': image_ref, 'vm_name': vm_name})
 
     metadata = IMAGE_API.get(context, image_ref)
     file_size = int(metadata['size'])
 
     vm_import_spec = _build_import_spec_for_import_vapp(
-        session, vm_name, ds_name)
+        session, vm_name, datastore.name)
 
     read_iter = IMAGE_API.download(context, image_ref)
     read_handle = rw_handles.ImageReadHandle(read_iter)
@@ -512,14 +512,14 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
                 imported_vm_ref = _import_image(session, extracted,
                                                 vm_import_spec, vm_name,
                                                 vm_folder_ref, res_pool_ref,
-                                                file_size)
+                                                datastore.ref, file_size)
 
                 LOG.info("Downloaded OVA image file %(image_ref)s",
-                         {'image_ref': instance.image_ref}, instance=instance)
+                         {'image_ref': instance.image_ref})
                 vmdk = vm_util.get_vmdk_info(session,
                                              imported_vm_ref,
                                              vm_name)
-                vm_util.mark_vm_as_template(session, instance, imported_vm_ref)
+                vm_util.mark_vm_as_template(session, imported_vm_ref)
                 return vmdk.capacity_in_bytes, vmdk.path
         raise exception.ImageUnacceptable(
             reason=_("Extracting vmdk from OVA failed."),
@@ -529,7 +529,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
 def upload_image_stream_optimized(context, image_id, instance, session,
                                   vm, vmdk_size):
     """Upload the snapshotted vm disk file to Glance image server."""
-    LOG.debug("Uploading image %s", image_id, instance=instance)
+    LOG.debug("Uploading image %s", image_id)
     metadata = IMAGE_API.get(context, image_id)
 
     read_handle = rw_handles.VmdkReadHandle(session,
@@ -560,5 +560,4 @@ def upload_image_stream_optimized(context, image_id, instance, session,
         updater.stop()
         read_handle.close()
 
-    LOG.debug("Uploaded image %s to the Glance image server", image_id,
-              instance=instance)
+    LOG.debug("Uploaded image %s to the Glance image server", image_id)

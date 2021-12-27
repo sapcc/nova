@@ -147,23 +147,23 @@ class ConfigDriveTestCase(test.TestCase):
                         block_device_info=block_device_info)
 
     @mock.patch.object(vmops.VMwareVMOps, '_create_config_drive',
-                                 return_value=('[ds1] fake.iso'))
+                            return_value='fake-path/fake.iso')
     @mock.patch.object(vmops.VMwareVMOps, '_attach_cdrom_to_vm')
     def test_create_vm_with_config_drive_verify_method_invocation(self,
                             mock_attach_cdrom, mock_create_config_drive):
         self.test_instance.config_drive = 'True'
         self._spawn_vm()
-        mock_create_config_drive.assert_called_once_with(mock.ANY,
+        mock_create_config_drive.assert_called_once_with(self.context,
                                                          self.test_instance,
                                                          mock.ANY,
                                                          mock.ANY,
                                                          mock.ANY,
+                                                         'ds1',
                                                          mock.ANY,
                                                          mock.ANY,
-                                                         mock.ANY,
-                                                         mock.ANY)
+                                                         'Fake-CookieJar')
         mock_attach_cdrom.assert_called_once_with(mock.ANY, mock.ANY,
-                                                  mock.ANY, mock.ANY)
+                                                  mock.ANY)
 
     @mock.patch.object(vmops.VMwareVMOps, '_create_config_drive',
                        return_value=('[ds1] fake.iso'))

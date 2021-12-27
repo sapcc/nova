@@ -65,6 +65,7 @@ from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import imagecache
 from nova.virt.vmwareapi import images
+from nova.virt.vmwareapi.session import VMwareAPISession
 from nova.virt.vmwareapi import vif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
@@ -125,7 +126,7 @@ class VMwareDriverStartupTestCase(test.NoDBTestCase):
     def _start_driver_with_flags(self, expected_exception_type, startup_flags):
         self.flags(**startup_flags)
         with mock.patch(
-                'nova.virt.vmwareapi.driver.VMwareAPISession.__init__'):
+                'nova.virt.vmwareapi.session.VMwareAPISession.__init__'):
             e = self.assertRaises(
                     Exception, driver.VMwareVCDriver, None)  # noqa
             self.assertIs(type(e), expected_exception_type)
@@ -160,31 +161,31 @@ class VMwareDriverStartupTestCase(test.NoDBTestCase):
 
 class VMwareSessionTestCase(test.NoDBTestCase):
 
-    @mock.patch.object(driver.VMwareAPISession, '_is_vim_object',
+    @mock.patch.object(VMwareAPISession, '_is_vim_object',
                        return_value=False)
     def test_call_method(self, mock_is_vim):
         with test.nested(
-                mock.patch.object(driver.VMwareAPISession, '_create_session',
+                mock.patch.object(VMwareAPISession, '_create_session',
                                   _fake_create_session),
-                mock.patch.object(driver.VMwareAPISession, 'invoke_api'),
+                mock.patch.object(VMwareAPISession, 'invoke_api'),
         ) as (fake_create, fake_invoke):
-            session = driver.VMwareAPISession()
+            session = VMwareAPISession()
             session._vim = mock.Mock()
             module = mock.Mock()
-            session._call_method(module, 'fira')
+            session.call_method(module, 'fira')
             fake_invoke.assert_called_once_with(module, 'fira', session._vim)
 
-    @mock.patch.object(driver.VMwareAPISession, '_is_vim_object',
+    @mock.patch.object(VMwareAPISession, '_is_vim_object',
                        return_value=True)
     def test_call_method_vim(self, mock_is_vim):
         with test.nested(
-                mock.patch.object(driver.VMwareAPISession, '_create_session',
+                mock.patch.object(VMwareAPISession, '_create_session',
                                   _fake_create_session),
-                mock.patch.object(driver.VMwareAPISession, 'invoke_api'),
+                mock.patch.object(VMwareAPISession, 'invoke_api'),
         ) as (fake_create, fake_invoke):
-            session = driver.VMwareAPISession()
+            session = VMwareAPISession()
             module = mock.Mock()
-            session._call_method(module, 'fira')
+            session.call_method(module, 'fira')
             fake_invoke.assert_called_once_with(module, 'fira')
 
 
@@ -294,8 +295,8 @@ class VMwareAPIVMTestCase(test.TestCase,
             self.fail("init_host raised: %s" % ex)
 
     def _set_exception_vars(self):
-        self.wait_task = self.conn._session._wait_for_task
-        self.call_method = self.conn._session._call_method
+        self.wait_task = self.conn._session.wait_for_task
+        self.call_method = self.conn._session.call_method
         self.task_ref = None
         self.exception = False
 
@@ -349,7 +350,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                        _fake_check_session)
 
         with mock.patch.object(greenthread, 'sleep'):
-            self.conn = driver.VMwareAPISession()
+            self.conn = VMwareAPISession()
         self.assertEqual(2, self.attempts)
 
     def _get_instance_type_by_name(self, type):
@@ -430,8 +431,8 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     def _get_vm_record(self):
         # Get record for VM
-        vms = vmwareapi_fake._get_objects("VirtualMachine")
-        for vm in vms.objects:
+        vms = vmwareapi_fake.get_objects("VirtualMachine")
+        for vm in vms:
             if vm.get('name') == vm_util._get_vm_name(self._display_name,
                                                       self.uuid):
                 return vm
@@ -595,7 +596,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                                          self.fake_image_uuid,
                                          '%s.iso' % self.fake_image_uuid)
 
-        def fake_attach_cdrom(vm_ref, instance, data_store_ref,
+        def fake_attach_cdrom(vm_ref, data_store_ref,
                               iso_uploaded_path):
             self.assertEqual(iso_uploaded_path, str(iso_path))
 
@@ -626,7 +627,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             ds_obj.DatastorePath(self.ds, 'fake-config-drive')]
         self.iso_index = 0
 
-        def fake_attach_cdrom(vm_ref, instance, data_store_ref,
+        def fake_attach_cdrom(vm_ref, data_store_ref,
                               iso_uploaded_path):
             self.assertEqual(iso_uploaded_path, str(iso_path[self.iso_index]))
             self.iso_index += 1
@@ -680,7 +681,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         iso_path = ds_obj.DatastorePath(self.ds, 'fake-config-drive')
         self.cd_attach_called = False
 
-        def fake_attach_cdrom(vm_ref, instance, data_store_ref,
+        def fake_attach_cdrom(vm_ref, data_store_ref,
                               iso_uploaded_path):
             self.assertEqual(iso_uploaded_path, str(iso_path))
             self.cd_attach_called = True
@@ -816,7 +817,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with (
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               fake_call_method)
         ):
             if fault:
@@ -860,7 +861,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         self._create_vm()
         info = self._get_info()
         self._check_vm_info(info, power_state.RUNNING)
-        mock_extend.assert_called_once_with(mock.ANY, requested_size,
+        mock_extend.assert_called_once_with(requested_size,
                                             mock.ANY, mock.ANY)
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
@@ -869,7 +870,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                                      self.fake_image_uuid,
                                      '%s.80.vmdk' % self.fake_image_uuid)
 
-        def _fake_extend(instance, requested_size, name, dc_ref):
+        def _fake_extend(requested_size, name, dc_ref):
             vmwareapi_fake._add_file(str(root))
 
         with test.nested(
@@ -919,7 +920,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             cached_image = ds_obj.DatastorePath(self.ds, 'vmware_base',
                                                  iid, '%s.80.vmdk' % iid)
             mock_extend.assert_called_once_with(
-                    self.instance, self.instance.flavor.root_gb * units.Mi,
+                    self.instance.flavor.root_gb * units.Mi,
                     str(cached_image), "fake_dc_ref")
 
     def test_spawn_disk_extend_failed_copy(self):
@@ -943,9 +944,9 @@ class VMwareAPIVMTestCase(test.TestCase,
             return self.call_method(module, method, *args, **kwargs)
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               new=fake_call_method),
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               new=fake_wait_for_task)):
             self.assertRaises(CopyError, self._create_vm)
 
@@ -979,9 +980,9 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               new=fake_call_method),
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               new=fake_wait_for_task)):
             self.assertRaises(CopyError, self._create_vm)
         vmwareapi_fake.assertPathNotExists(self, cached_image)
@@ -1023,9 +1024,9 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               new=fake_wait_for_task),
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               new=fake_call_method)):
             self.assertRaises(DeleteError, self._create_vm)
         vmwareapi_fake.assertPathExists(self, cached_image)
@@ -1079,9 +1080,9 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               fake_wait_for_task),
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               fake_call_method)
         ) as (mock_wait_for_task, mock_call_method):
             self.assertRaises(NoDiskSpace, self._create_vm)
@@ -1111,9 +1112,9 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               fake_wait_for_task),
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             self._create_vm()
@@ -1142,9 +1143,9 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               fake_wait_for_task),
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               fake_call_method)
         ) as (_wait_for_task, _call_method):
             self.assertRaises(vexc.VMwareDriverException,
@@ -1152,7 +1153,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             self.assertTrue(self.exception)
 
     def test_spawn_with_move_poll_exception(self):
-        self.call_method = self.conn._session._call_method
+        self.call_method = self.conn._session.call_method
 
         def fake_call_method(module, method, *args, **kwargs):
             task_ref = self.call_method(module, method, *args, **kwargs)
@@ -1162,7 +1163,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with (
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               fake_call_method)
         ):
             self.assertRaises(vexc.VMwareDriverException,
@@ -1187,7 +1188,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             return task_ref
 
         with (
-            mock.patch.object(self.conn._session, '_call_method',
+            mock.patch.object(self.conn._session, 'call_method',
                               fake_call_method)
         ):
             self._create_vm()
@@ -1281,7 +1282,8 @@ class VMwareAPIVMTestCase(test.TestCase,
     def test_get_vm_ref_using_extra_config(self):
         self._create_vm()
         vm_ref = vm_util._get_vm_ref_from_extraconfig(self.conn._session,
-                                                     self.instance['uuid'])
+                                                      self.conn._cluster_ref,
+                                                      self.instance['uuid'])
         self.assertIsNotNone(vm_ref, 'VM Reference cannot be none')
         # Disrupt the fake Virtual Machine object so that extraConfig
         # cannot be matched.
@@ -1289,32 +1291,39 @@ class VMwareAPIVMTestCase(test.TestCase,
         fake_vm.get('config.extraConfig["nvp.vm-uuid"]').value = ""
         # We should not get a Virtual Machine through extraConfig.
         vm_ref = vm_util._get_vm_ref_from_extraconfig(self.conn._session,
-                                                     self.instance['uuid'])
+                                                      self.conn._cluster_ref,
+                                                      self.instance['uuid'])
         self.assertIsNone(vm_ref, 'VM Reference should be none')
         # Check if we can find the Virtual Machine using the name.
-        vm_ref = vm_util.get_vm_ref(self.conn._session, self.instance)
+        vm_ref = vm_util.get_vm_ref(self.conn._session, self.conn._cluster_ref,
+                                    self.instance)
         self.assertIsNotNone(vm_ref, 'VM Reference cannot be none')
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
     def test_search_vm_ref_by_identifier(self, mock_update_cached_instances):
         self._create_vm()
         vm_ref = vm_util.search_vm_ref_by_identifier(self.conn._session,
-                                            self.instance['uuid'])
+                                                     self.conn._cluster_ref,
+                                                     self.instance['uuid'])
         self.assertIsNotNone(vm_ref, 'VM Reference cannot be none')
         fake_vm = self._get_vm_record()
         fake_vm.set("summary.config.instanceUuid", "foo")
         fake_vm.set("name", "foo")
         fake_vm.get('config.extraConfig["nvp.vm-uuid"]').value = "foo"
         self.assertIsNone(vm_util.search_vm_ref_by_identifier(
-                                    self.conn._session, self.instance['uuid']),
+                                    self.conn._session,
+                                    self.conn._cluster_ref,
+                                    self.instance['uuid']),
                           "VM Reference should be none")
         self.assertIsNotNone(
-                vm_util.search_vm_ref_by_identifier(self.conn._session, "foo"),
+                vm_util.search_vm_ref_by_identifier(self.conn._session,
+                                                    self.conn._cluster_ref,
+                                                    "foo"),
                 "VM Reference should not be none")
 
     def test_get_object_for_optionvalue(self):
         self._create_vm()
-        vms = self.conn._session._call_method(vim_util, "get_objects",
+        vms = self.conn._session.call_method(vim_util, "get_objects",
                 "VirtualMachine", ['config.extraConfig["nvp.vm-uuid"]'])
         vm_ref = vm_util._get_object_for_optionvalue(vms.objects,
                                                      self.instance["uuid"])
@@ -1378,7 +1387,6 @@ class VMwareAPIVMTestCase(test.TestCase,
         mock_get_vmdk.return_value = self.get_fake_vmdk()
 
         self._create_vm()
-        fake_vm = self._get_vm_record()
         snapshot_ref = vmwareapi_fake.ManagedObjectReference(
                                value="Snapshot-123",
                                name="VirtualMachineSnapshot")
@@ -1388,9 +1396,7 @@ class VMwareAPIVMTestCase(test.TestCase,
 
         self._test_snapshot()
 
-        mock_delete_vm_snapshot.assert_called_once_with(self.instance,
-                                                        fake_vm.obj,
-                                                        snapshot_ref)
+        mock_delete_vm_snapshot.assert_called_once_with(snapshot_ref)
 
     def get_fake_vmdk(self):
         ds_ref = vmwareapi_fake.ManagedObjectReference(value='fake-ref')
@@ -1410,24 +1416,22 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     def _snapshot_delete_vm_snapshot_exception(self, exception, call_count=1):
         self._create_vm()
-        fake_vm = vmwareapi_fake._get_objects("VirtualMachine").objects[0].obj
         snapshot_ref = vmwareapi_fake.ManagedObjectReference(
                                value="Snapshot-123",
                                name="VirtualMachineSnapshot")
 
         with test.nested(
-            mock.patch.object(self.conn._session, '_wait_for_task',
+            mock.patch.object(self.conn._session, 'wait_for_task',
                               side_effect=exception),
             mock.patch.object(vmops, '_time_sleep_wrapper')
         ) as (_fake_wait, _fake_sleep):
             if exception != vexc.TaskInProgress:
                 self.assertRaises(exception,
                                   self.conn._vmops._delete_vm_snapshot,
-                                  self.instance, fake_vm, snapshot_ref)
+                                  snapshot_ref)
                 self.assertEqual(0, _fake_sleep.call_count)
             else:
-                self.conn._vmops._delete_vm_snapshot(self.instance, fake_vm,
-                                                     snapshot_ref)
+                self.conn._vmops._delete_vm_snapshot(snapshot_ref)
                 self.assertEqual(call_count - 1, _fake_sleep.call_count)
             self.assertEqual(call_count, _fake_wait.call_count)
 
@@ -1602,13 +1606,19 @@ class VMwareAPIVMTestCase(test.TestCase,
     @mock.patch.object(driver.VMwareVCDriver, 'reboot')
     @mock.patch.object(vm_util, 'get_vm_state',
                        return_value=power_state.SHUTDOWN)
-    def test_resume_state_on_host_boot(self, mock_get_vm_state,
+    @mock.patch.object(vm_util, 'get_vm_ref',
+                       return_value=mock.sentinel.vm_ref)
+    def test_resume_state_on_host_boot(self, mock_get_vm_ref,
+                                       mock_get_vm_state,
                                        mock_reboot):
         self._create_instance()
         self.conn.resume_state_on_host_boot(self.context, self.instance,
                 'network_info')
+        mock_get_vm_ref.assert_called_once_with(self.conn._session,
+                                                self.conn._cluster_ref,
+                                                self.instance)
         mock_get_vm_state.assert_called_once_with(self.conn._session,
-                                                  self.instance)
+                                                  mock.sentinel.vm_ref)
         mock_reboot.assert_called_once_with(self.context, self.instance,
                                             'network_info', 'hard', None)
 
@@ -1616,15 +1626,20 @@ class VMwareAPIVMTestCase(test.TestCase,
         self._create_instance()
         for state in [power_state.RUNNING, power_state.SUSPENDED]:
             with test.nested(
+                mock.patch.object(vm_util, 'get_vm_ref',
+                                  return_value=mock.sentinel.vm_ref),
                 mock.patch.object(driver.VMwareVCDriver, 'reboot'),
                 mock.patch.object(vm_util, 'get_vm_state',
                                   return_value=state)
-            ) as (mock_reboot, mock_get_vm_state):
+            ) as (mock_get_vm_ref, mock_reboot, mock_get_vm_state):
                 self.conn.resume_state_on_host_boot(self.context,
                                                     self.instance,
                                                     'network_info')
+                mock_get_vm_ref.assert_called_once_with(self.conn._session,
+                                                        self.conn._cluster_ref,
+                                                        self.instance)
                 mock_get_vm_state.assert_called_once_with(self.conn._session,
-                                                          self.instance)
+                                                          mock.sentinel.vm_ref)
                 self.assertFalse(mock_reboot.called)
 
     @mock.patch('nova.virt.driver.block_device_info_get_mapping')
@@ -1715,7 +1730,7 @@ class VMwareAPIVMTestCase(test.TestCase,
              mock.patch.object(vm_util, 'get_vm_ref_from_name',
                                fake_vm_ref_from_name),
              mock.patch.object(self.conn._session,
-                               '_call_method'),
+                               'call_method'),
              mock.patch.object(self.conn._vmops,
                                '_destroy_instance')
         ) as (mock_get, mock_call, mock_destroy):
@@ -1775,9 +1790,9 @@ class VMwareAPIVMTestCase(test.TestCase,
 
         self._create_vm()
 
-        def fake_power_on_instance(session, instance, vm_ref=None):
+        def fake_power_on_instance(session, vm_ref):
             self._power_on_called += 1
-            return self._power_on(session, instance, vm_ref=vm_ref)
+            return self._power_on(session, vm_ref)
 
         info = self._get_info()
         self._check_vm_info(info, power_state.RUNNING)
@@ -1959,12 +1974,13 @@ class VMwareAPIVMTestCase(test.TestCase,
                                     '/dev/vdc')
 
             get_vm_ref.assert_called_once_with(self.conn._session,
+                                               self.conn._cluster_ref,
                                                self.instance)
             get_volume_ref.assert_called_once_with(
                 connection_info['data']['volume'])
             self.assertTrue(get_vmdk_info.called)
             attach_disk_to_vm.assert_called_once_with(mock.sentinel.vm_ref,
-                self.instance, adapter_type, disk_type, vmdk_path='fake-path',
+                adapter_type, disk_type, vmdk_path='fake-path',
                 volume_uuid=connection_info['data']['volume_id'],
                 backing_uuid=disk_uuid)
 
@@ -2033,15 +2049,15 @@ class VMwareAPIVMTestCase(test.TestCase,
             self.conn.attach_volume(None, connection_info, self.instance,
                                     mount_point)
 
-            mock_attach_disk.assert_called_once_with(mock.ANY, self.instance,
+            mock_attach_disk.assert_called_once_with(mock.ANY,
                 mock.ANY, 'rdmp', device_name=mock.ANY)
             mock_iscsi_get_target.assert_called_once_with(
                 connection_info['data'])
 
     def test_iscsi_rescan_hba(self):
         fake_target_portal = 'fake_target_host:port'
-        host_storage_sys = vmwareapi_fake._get_objects(
-            "HostStorageSystem").objects[0]
+        host_storage_sys = vmwareapi_fake.get_first_object(
+            "HostStorageSystem")
         iscsi_hba_array = host_storage_sys.get('storageDeviceInfo'
                                                '.hostBusAdapter')
         iscsi_hba = iscsi_hba_array.HostHostBusAdapter[0]
@@ -2049,7 +2065,8 @@ class VMwareAPIVMTestCase(test.TestCase,
         self.assertRaises(AttributeError, getattr, iscsi_hba,
                           'configuredSendTarget')
         # Rescan HBA with the target portal
-        vops = volumeops.VMwareVolumeOps(self.conn._session)
+        vops = volumeops.VMwareVolumeOps(self.conn._session,
+                                         self.conn._cluster_ref)
         vops._iscsi_rescan_hba(fake_target_portal)
         # Check if HBA has the target portal configured
         self.assertEqual('fake_target_host',
@@ -2061,9 +2078,10 @@ class VMwareAPIVMTestCase(test.TestCase,
     def test_iscsi_get_target(self):
         data = {'target_portal': 'fake_target_host:port',
                 'target_iqn': 'fake_target_iqn'}
-        host = vmwareapi_fake._get_objects('HostSystem').objects[0]
+        host = vmwareapi_fake.get_first_object('HostSystem')
         host._add_iscsi_target(data)
-        vops = volumeops.VMwareVolumeOps(self.conn._session)
+        vops = volumeops.VMwareVolumeOps(self.conn._session,
+                                         self.conn._cluster_ref)
         result = vops._iscsi_get_target(data)
         self.assertEqual(('fake-device', 'fake-uuid'), result)
 
@@ -2093,7 +2111,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         mock_iscsi_get_target.assert_called_once_with(connection_info['data'])
         mock_get_rdm_disk.assert_called_once()
         mock_detach_disk_from_vm.assert_called_once_with(mock.ANY,
-            self.instance, device, destroy_disk=True)
+            device, destroy_disk=True)
 
     def test_connection_info_get(self):
         self._create_vm()
@@ -2228,7 +2246,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         self.assertPublicAPISignatures(v_driver.ComputeDriver(None), self.conn)
 
     def test_register_extension(self):
-        with mock.patch.object(self.conn._session, '_call_method',
+        with mock.patch.object(self.conn._session, 'call_method',
                                return_value=None) as mock_call_method:
             self.conn._register_openstack_extension()
             mock_call_method.assert_has_calls(
@@ -2239,7 +2257,7 @@ class VMwareAPIVMTestCase(test.TestCase,
                            constants.EXTENSION_TYPE_INSTANCE)])
 
     def test_register_extension_already_exists(self):
-        with mock.patch.object(self.conn._session, '_call_method',
+        with mock.patch.object(self.conn._session, 'call_method',
                                return_value='fake-extension') as mock_find_ext:
             self.conn._register_openstack_extension()
             mock_find_ext.assert_called_once_with(oslo_vim_util,
@@ -2255,7 +2273,7 @@ class VMwareAPIVMTestCase(test.TestCase,
             else:
                 raise Exception()
         with (mock.patch.object(
-                self.conn._session, '_call_method', fake_call_method)):
+                self.conn._session, 'call_method', fake_call_method)):
             self.conn._register_openstack_extension()
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
@@ -2525,7 +2543,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         self._create_vm()
         vif = self._create_vif()
 
-        with mock.patch.object(self.conn._session, '_wait_for_task',
+        with mock.patch.object(self.conn._session, 'wait_for_task',
                                side_effect=Exception):
             self.assertRaises(exception.InterfaceAttachFailed,
                               self.conn.attach_interface,
@@ -2572,7 +2590,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         vif = self._create_vif()
         self._attach_interface(vif)
 
-        with mock.patch.object(self.conn._session, '_wait_for_task',
+        with mock.patch.object(self.conn._session, 'wait_for_task',
                                side_effect=Exception):
             self.assertRaises(exception.InterfaceDetachFailed,
                               self.conn.detach_interface,

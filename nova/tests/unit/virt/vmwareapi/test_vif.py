@@ -188,7 +188,7 @@ class VMwareVifTestCase(test.NoDBTestCase):
         with test.nested(
             mock.patch.object(vm_util, 'get_add_vswitch_port_group_spec'),
             mock.patch.object(vm_util, 'get_host_ref'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'call_method',
                               fake_call_method)
         ) as (_add_vswitch, _get_host, _call_method):
             network_util.create_port_group(self.session, 'pg_name',
@@ -203,7 +203,7 @@ class VMwareVifTestCase(test.NoDBTestCase):
         with test.nested(
             mock.patch.object(vm_util, 'get_add_vswitch_port_group_spec'),
             mock.patch.object(vm_util, 'get_host_ref'),
-            mock.patch.object(self.session, '_call_method',
+            mock.patch.object(self.session, 'call_method',
                               fake_call_method)
         ) as (_add_vswitch, _get_host, _call_method):
             self.assertRaises(vexc.VMwareDriverException,

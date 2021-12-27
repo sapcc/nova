@@ -72,7 +72,7 @@ class VCState(object):
         except exception.ComputeHostNotFound:
             # this can happend on newly-added hosts
             self._auto_service_disabled = False
-        about_info = self._session._call_method(vim_util, "get_about_info")
+        about_info = self._session.call_method(vim_util, "get_about_info")
         self._hypervisor_type = about_info.name
         self._hypervisor_version = versionutils.convert_version_to_int(
                 str(about_info.version))

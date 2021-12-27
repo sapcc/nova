@@ -31,10 +31,8 @@ from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import units
 from oslo_utils import versionutils as v_utils
-from oslo_vmware import api
 from oslo_vmware import exceptions as vexc
 from oslo_vmware import pbm
-from oslo_vmware import vim
 from oslo_vmware import vim_util
 
 from nova.compute import power_state
@@ -54,13 +52,14 @@ from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
-from nova.virt.vmwareapi import host
+from nova.virt.vmwareapi.host import VCState
+from nova.virt.vmwareapi.session import VMwareAPISession
 from nova.virt.vmwareapi import special_spawning
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util as nova_vim_util
 from nova.virt.vmwareapi import vm_util
-from nova.virt.vmwareapi import vmops
-from nova.virt.vmwareapi import volumeops
+from nova.virt.vmwareapi.vmops import VMwareVMOps
+from nova.virt.vmwareapi.volumeops import VMwareVolumeOps
 from oslo_serialization import jsonutils
 
 LOG = logging.getLogger(__name__)
@@ -137,17 +136,17 @@ class VMwareVCDriver(driver.ComputeDriver):
                                      % self._cluster_name)
         self._vcenter_uuid = self._get_vcenter_uuid()
         self._nodename = self._create_nodename(self._cluster_ref.value)
-        self._volumeops = volumeops.VMwareVolumeOps(self._session,
-                                                    self._cluster_ref)
-        self._vmops = vmops.VMwareVMOps(self._session,
-                                        virtapi,
-                                        self._volumeops,
-                                        self._cluster_ref,
-                                        datastore_regex=self._datastore_regex)
-        self._vc_state = host.VCState(self._session,
-                                      self._nodename,
-                                      self._cluster_ref,
-                                      self._datastore_regex)
+        self._volumeops = VMwareVolumeOps(self._session,
+                                          self._cluster_ref)
+        self._vmops = VMwareVMOps(self._session,
+                                  virtapi,
+                                  self._volumeops,
+                                  self._cluster_ref,
+                                  datastore_regex=self._datastore_regex)
+        self._vc_state = VCState(self._session,
+                                 self._nodename,
+                                 self._cluster_ref,
+                                 self._datastore_regex)
         self.capabilities['resource_scheduling'] = \
             cluster_util.is_drs_enabled(self._session, self._cluster_ref)
         # Register the OpenStack extension
@@ -213,11 +212,11 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def _register_openstack_extension(self):
         # Register an 'OpenStack' extension in vCenter
-        os_extension = self._session._call_method(vim_util, 'find_extension',
+        os_extension = self._session.call_method(vim_util, 'find_extension',
                                                   constants.EXTENSION_KEY)
         if os_extension is None:
             try:
-                self._session._call_method(vim_util, 'register_extension',
+                self._session.call_method(vim_util, 'register_extension',
                                            constants.EXTENSION_KEY,
                                            constants.EXTENSION_TYPE_INSTANCE)
                 LOG.info('Registered extension %s with vCenter',
@@ -241,7 +240,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         """resume guest state when a host is booted."""
         # Check if the instance is running already and avoid doing
         # anything if it is.
-        state = vm_util.get_vm_state(self._session, instance)
+        vm_ref = vm_util.get_vm_ref(self._session, self._cluster_ref, instance)
+        state = vm_util.get_vm_state(self._session, vm_ref)
         ignored_states = [power_state.RUNNING, power_state.SUSPENDED]
         if state in ignored_states:
             return
@@ -326,7 +326,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         path = os.path.join(CONF.vmware.serial_log_dir, fname)
         if not os.path.exists(path):
             LOG.warning('The console log is missing. Check your VSPC '
-                        'configuration', instance=instance)
+                        'configuration')
             return b""
         read_log_data, remaining = nova.privsep.path.last_bytes(
             path, MAX_CONSOLE_BYTES)
@@ -335,7 +335,7 @@ class VMwareVCDriver(driver.ComputeDriver):
     def _get_vcenter_uuid(self):
         """Retrieves the vCenter UUID."""
 
-        about = self._session._call_method(nova_vim_util, 'get_about_info')
+        about = self._session.call_method(nova_vim_util, 'get_about_info')
         return about.instanceUuid
 
     def _create_nodename(self, mo_id):
@@ -397,12 +397,12 @@ class VMwareVCDriver(driver.ComputeDriver):
         self.datastore_free_space = 0
         self.datastore_total = 0
 
-        cluster_data = self._session._call_method(vim_util,
+        cluster_data = self._session.call_method(vim_util,
                                   'get_object_properties_dict', cluster_ref,
                                   ['host', 'datastore', 'summary'])
 
         for datastore in cluster_data['datastore'][0]:
-            datastore_capacity = self._session._call_method(
+            datastore_capacity = self._session.call_method(
                 vim_util,
                 "get_object_properties_dict",
                 datastore,
@@ -412,7 +412,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             self.datastore_total += datastore_capacity['summary.capacity']
 
         for cluster_host in cluster_data['host'][0]:
-            props = self._session._call_method(vim_util,
+            props = self._session.call_method(vim_util,
                                                "get_object_properties_dict",
                                                cluster_host,
                                                lst_properties)
@@ -528,8 +528,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Detach volume storage to VM instance."""
         if not self._vmops.is_instance_in_resource_pool(instance):
             LOG.debug("Not detaching %s, vm is in different cluster",
-                connection_info["volume_id"],
-                instance=instance)
+                connection_info["volume_id"])
             return True
         # NOTE(claudiub): if context parameter is to be used in the future,
         # the _detach_instance_volumes method will have to be updated as well.
@@ -572,15 +571,13 @@ class VMwareVCDriver(driver.ComputeDriver):
                                        disk.get('device_name'))
                 except exception.DiskNotFound:
                     LOG.warning('The volume %s does not exist!',
-                                disk.get('device_name'),
-                                instance=instance)
+                                disk.get('device_name'))
                 except Exception as e:
                     with excutils.save_and_reraise_exception():
                         LOG.error("Failed to detach %(device_name)s. "
                                   "Exception: %(exc)s",
                                   {'device_name': disk.get('device_name'),
-                                   'exc': e},
-                                  instance=instance)
+                                   'exc': e})
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True):
@@ -604,8 +601,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             except (vexc.ManagedObjectNotFoundException,
                     exception.InstanceNotFound):
                 LOG.warning('Instance does not exists. Proceeding to '
-                            'delete instance properties on datastore',
-                            instance=instance)
+                            'delete instance properties on datastore')
         self._vmops.destroy(context, instance, destroy_disks)
 
     def pause(self, instance):
@@ -851,7 +847,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         if hasattr(result, 'drsFault'):
             LOG.error("Placement Error: %s", vim_util.serialize_object(
-                result.drsFault), instance=instance)
+                result.drsFault))
 
         if (not hasattr(result, 'recommendations') or
                 not result.recommendations):
@@ -906,12 +902,12 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Live migration of an instance to another host."""
         if not migrate_data:
             LOG.error("live_migration() called without migration_data"
-                      " - cannot continue operations", instance=instance)
+                      " - cannot continue operations")
             recover_method(context, instance, dest, migrate_data)
             raise ValueError("Missing migrate_data")
 
         if migrate_data.instance_already_migrated:
-            LOG.info("Recovering migration", instance=instance)
+            LOG.info("Recovering migration")
             post_method(context, instance, dest, block_migration, migrate_data)
             return
 
@@ -933,16 +929,15 @@ class VMwareVCDriver(driver.ComputeDriver):
                 required_volume_attributes)
             self._set_vif_infos(migrate_data, dest_session)
             self._vmops.live_migration(instance, migrate_data, volumes)
-            LOG.info("Migration operation completed", instance=instance)
+            LOG.info("Migration operation completed")
             post_method(context, instance, dest, block_migration, migrate_data)
         except Exception:
-            LOG.exception("Failed due to an exception", instance=instance)
+            LOG.exception("Failed due to an exception")
             with excutils.save_and_reraise_exception():
                 # We are still in the task-state migrating, so cannot
                 # recover the DRS settings. We rely on the sync to do that
                 LOG.debug("Calling live migration recover_method "
-                          "for instance: %s", instance["name"],
-                          instance=instance)
+                          "for instance: %s", instance["name"])
                 recover_method(context, instance, dest, migrate_data)
 
     def _get_volume_mappings(self, context, instance):
@@ -967,7 +962,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 message = ("Could not parse connection_info for volume {}."
                     " Reason: {}"
                 ).format(bdm.volume_id, e)
-                LOG.warning(message, instance=instance)
+                LOG.warning(message)
 
             # Normalize the datastore reference
             # As it depends on the caller, if actually need the
@@ -1019,9 +1014,9 @@ class VMwareVCDriver(driver.ComputeDriver):
                                                migrate_data=None):
         """Clean up destination node after a failed live migration."""
         LOG.info("rollback_live_migration_at_destination %s",
-            block_device_info, instance=instance)
+            block_device_info)
         if not migrate_data.is_same_vcenter:
-            self._volumeops.delete_shadow_vms(block_device_info, instance)
+            self._volumeops.delete_shadow_vms(block_device_info)
 
     @contextlib.contextmanager
     def _error_out_instance_on_exception(self, instance, message):
@@ -1067,7 +1062,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         with self._error_out_instance_on_exception(instance,
                 "fixup shadow vms"):
             volumes = self._get_volume_mappings(context, instance)
-            LOG.debug("Fixing shadow vms %s", volumes, instance=instance)
+            LOG.debug("Fixing shadow vms %s", volumes)
             self._volumeops.fixup_shadow_vms(instance, volumes)
 
     def ensure_filtering_rules_for_instance(self, instance, network_info):
@@ -1075,49 +1070,3 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def unfilter_instance(self, instance, network_info):
         pass
-
-
-class VMwareAPISession(api.VMwareAPISession):
-    """Sets up a session with the VC/ESX host and handles all
-    the calls made to the host.
-    """
-    def __init__(self, host_ip=CONF.vmware.host_ip,
-                 host_port=CONF.vmware.host_port,
-                 username=CONF.vmware.host_username,
-                 password=CONF.vmware.host_password,
-                 retry_count=CONF.vmware.api_retry_count,
-                 scheme="https",
-                 cacert=CONF.vmware.ca_file,
-                 insecure=CONF.vmware.insecure,
-                 pool_size=CONF.vmware.connection_pool_size):
-        super(VMwareAPISession, self).__init__(
-                host=host_ip,
-                port=host_port,
-                server_username=username,
-                server_password=password,
-                api_retry_count=retry_count,
-                task_poll_interval=CONF.vmware.task_poll_interval,
-                scheme=scheme,
-                create_session=True,
-                cacert=cacert,
-                insecure=insecure,
-                pool_size=pool_size)
-
-    def _is_vim_object(self, module):
-        """Check if the module is a VIM Object instance."""
-        return isinstance(module, vim.Vim)
-
-    def _call_method(self, module, method, *args, **kwargs):
-        """Calls a method within the module specified with
-        args provided.
-        """
-        if not self._is_vim_object(module):
-            return self.invoke_api(module, method, self.vim, *args, **kwargs)
-
-        return self.invoke_api(module, method, *args, **kwargs)
-
-    def _wait_for_task(self, task_ref):
-        """Return a Deferred that will give the result of the given task.
-        The task is polled until it completes.
-        """
-        return self.wait_for_task(task_ref)

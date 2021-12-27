@@ -20,12 +20,14 @@ import tarfile
 
 import mock
 from oslo_utils import units
+from oslo_vmware.objects import datastore as ds_obj
 from oslo_vmware import rw_handles
 
 from nova import exception
 from nova import objects
 from nova import test
 import nova.tests.unit.image.fake
+from nova.tests.unit.virt.vmwareapi import fake as vmwareapi_fake
 from nova.tests import uuidsentinel
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import images
@@ -34,6 +36,13 @@ from nova.virt.vmwareapi import vm_util
 
 class VMwareImagesTestCase(test.NoDBTestCase):
     """Unit tests for Vmware API connection calls."""
+    def setUp(self):
+        super(test.NoDBTestCase, self).setUp()
+        fake_ds_ref = vmwareapi_fake.ManagedObjectReference(value='fake-ds')
+        self._ds = ds_obj.Datastore(
+                ref=fake_ds_ref, name='fake_ds',
+                capacity=10 * units.Gi,
+                freespace=10 * units.Gi)
 
     def test_fetch_image(self):
         """Test fetching images."""
@@ -118,7 +127,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
              mock.patch.object(images.IMAGE_API, 'download'),
              mock.patch.object(images, 'image_transfer'),
              mock.patch.object(images, '_build_shadow_vm_config_spec'),
-             mock.patch.object(session, '_call_method'),
+             mock.patch.object(session, 'call_method'),
              mock.patch.object(vm_util, 'get_vmdk_info')
         ) as (mock_image_api_get,
               mock_image_api_download,
@@ -164,7 +173,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
             mock_tar_open.return_value.__enter__.return_value = mock_tar
 
             images.fetch_image_ova(
-                    context, instance, session, 'fake-vm', 'fake-datastore',
+                    context, instance, session, 'fake-vm', self._ds,
                     vm_folder_ref, res_pool_ref)
 
             mock_tar_open.assert_called_once_with(mode='r|',
@@ -189,7 +198,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
              mock.patch.object(images.IMAGE_API, 'download'),
              mock.patch.object(images, 'image_transfer'),
              mock.patch.object(images, '_build_shadow_vm_config_spec'),
-             mock.patch.object(session, '_call_method'),
+             mock.patch.object(session, 'call_method'),
              mock.patch.object(vm_util, 'get_vmdk_info')
         ) as (mock_image_api_get,
               mock_image_api_download,
@@ -216,7 +225,7 @@ class VMwareImagesTestCase(test.NoDBTestCase):
                 mock.sentinel.vm_ref
 
             images.fetch_image_stream_optimized(
-                    context, instance, session, 'fake-vm', 'fake-datastore',
+                    context, instance, session, 'fake-vm', self._ds,
                     vm_folder_ref, res_pool_ref)
 
             mock_image_transfer.assert_called_once_with(mock_read_handle,
