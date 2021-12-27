@@ -324,7 +324,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         path = os.path.join(CONF.vmware.serial_log_dir, fname)
         if not os.path.exists(path):
             LOG.warning('The console log is missing. Check your VSPC '
-                        'configuration', instance=instance)
+                        'configuration')
             return b""
         read_log_data, remaining = nova.privsep.path.last_bytes(
             path, MAX_CONSOLE_BYTES)
@@ -526,8 +526,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Detach volume storage to VM instance."""
         if not self._vmops.is_instance_in_resource_pool(instance):
             LOG.debug("Not detaching %s, vm is in different cluster",
-                connection_info["volume_id"],
-                instance=instance)
+                connection_info["volume_id"])
             return True
         # NOTE(claudiub): if context parameter is to be used in the future,
         # the _detach_instance_volumes method will have to be updated as well.
@@ -570,15 +569,13 @@ class VMwareVCDriver(driver.ComputeDriver):
                                        disk.get('device_name'))
                 except exception.DiskNotFound:
                     LOG.warning('The volume %s does not exist!',
-                                disk.get('device_name'),
-                                instance=instance)
+                                disk.get('device_name'))
                 except Exception as e:
                     with excutils.save_and_reraise_exception():
                         LOG.error("Failed to detach %(device_name)s. "
                                   "Exception: %(exc)s",
                                   {'device_name': disk.get('device_name'),
-                                   'exc': e},
-                                  instance=instance)
+                                   'exc': e})
 
     def destroy(self, context, instance, network_info, block_device_info=None,
                 destroy_disks=True):
@@ -602,8 +599,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             except (vexc.ManagedObjectNotFoundException,
                     exception.InstanceNotFound):
                 LOG.warning('Instance does not exists. Proceeding to '
-                            'delete instance properties on datastore',
-                            instance=instance)
+                            'delete instance properties on datastore')
         self._vmops.destroy(context, instance, destroy_disks)
 
     def pause(self, instance):
@@ -849,7 +845,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         if hasattr(result, 'drsFault'):
             LOG.error("Placement Error: %s", vim_util.serialize_object(
-                result.drsFault), instance=instance)
+                result.drsFault))
 
         if (not hasattr(result, 'recommendations') or
                 not result.recommendations):
@@ -904,12 +900,12 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Live migration of an instance to another host."""
         if not migrate_data:
             LOG.error("live_migration() called without migration_data"
-                      " - cannot continue operations", instance=instance)
+                      " - cannot continue operations")
             recover_method(context, instance, dest, migrate_data)
             raise ValueError("Missing migrate_data")
 
         if migrate_data.instance_already_migrated:
-            LOG.info("Recovering migration", instance=instance)
+            LOG.info("Recovering migration")
             post_method(context, instance, dest, block_migration, migrate_data)
             return
 
@@ -931,16 +927,15 @@ class VMwareVCDriver(driver.ComputeDriver):
                 required_volume_attributes)
             self._set_vif_infos(migrate_data, dest_session)
             self._vmops.live_migration(instance, migrate_data, volumes)
-            LOG.info("Migration operation completed", instance=instance)
+            LOG.info("Migration operation completed")
             post_method(context, instance, dest, block_migration, migrate_data)
         except Exception:
-            LOG.exception("Failed due to an exception", instance=instance)
+            LOG.exception("Failed due to an exception")
             with excutils.save_and_reraise_exception():
                 # We are still in the task-state migrating, so cannot
                 # recover the DRS settings. We rely on the sync to do that
                 LOG.debug("Calling live migration recover_method "
-                          "for instance: %s", instance["name"],
-                          instance=instance)
+                          "for instance: %s", instance["name"])
                 recover_method(context, instance, dest, migrate_data)
 
     def _get_volume_mappings(self, context, instance):
@@ -965,7 +960,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 message = ("Could not parse connection_info for volume {}."
                     " Reason: {}"
                 ).format(bdm.volume_id, e)
-                LOG.warning(message, instance=instance)
+                LOG.warning(message)
 
             # Normalize the datastore reference
             # As it depends on the caller, if actually need the
@@ -1017,7 +1012,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                                                migrate_data=None):
         """Clean up destination node after a failed live migration."""
         LOG.info("rollback_live_migration_at_destination %s",
-            block_device_info, instance=instance)
+            block_device_info)
         if not migrate_data.is_same_vcenter:
             self._volumeops.delete_shadow_vms(block_device_info, instance)
 
@@ -1027,8 +1022,7 @@ class VMwareVCDriver(driver.ComputeDriver):
             yield
         except Exception as error:
             LOG.exception("Failed to %s, setting to ERROR state",
-                          message,
-                          instance=instance, error=error)
+                          message, error=error)
             instance.vm_state = vm_states.ERROR
             instance.save()
 
@@ -1065,7 +1059,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         with self._error_out_instance_on_exception(instance,
                 "fixup shadow vms"):
             volumes = self._get_volume_mappings(context, instance)
-            LOG.debug("Fixing shadow vms %s", volumes, instance=instance)
+            LOG.debug("Fixing shadow vms %s", volumes)
             self._volumeops.fixup_shadow_vms(instance, volumes)
 
     def ensure_filtering_rules_for_instance(self, instance, network_info):
