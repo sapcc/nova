@@ -1925,8 +1925,7 @@ class VMwareAPIVMTestCase(test.TestCase,
 
             get_vm_ref.assert_called_once_with(self.conn._session,
                                                self.instance)
-            get_volume_ref.assert_called_once_with(
-                connection_info['data']['volume'])
+            get_volume_ref.assert_called_once_with(connection_info['data'])
             self.assertTrue(get_vmdk_info.called)
             attach_disk_to_vm.assert_called_once_with(mock.sentinel.vm_ref,
                 self.instance, adapter_type, disk_type, vmdk_path='fake-path',
