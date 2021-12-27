@@ -227,8 +227,7 @@ def image_transfer(read_handle, write_handle):
 
 
 def upload_iso_to_datastore(iso_path, instance, **kwargs):
-    LOG.debug("Uploading iso %s to datastore", iso_path,
-              instance=instance)
+    LOG.debug("Uploading iso %s to datastore", iso_path)
     with open(iso_path, 'r') as iso_file:
         write_file_handle = rw_handles.FileWriteHandle(
             kwargs.get("host"),
@@ -248,8 +247,7 @@ def upload_iso_to_datastore(iso_path, instance, **kwargs):
             data = iso_file.read(block_size)
         write_file_handle.close()
 
-    LOG.debug("Uploaded iso %s to datastore", iso_path,
-              instance=instance)
+    LOG.debug("Uploaded iso %s to datastore", iso_path)
 
 
 def fetch_image(context, instance, host, port, dc_name, ds_name, file_path,
@@ -259,8 +257,7 @@ def fetch_image(context, instance, host, port, dc_name, ds_name, file_path,
     LOG.debug("Downloading image file data %(image_ref)s to the "
               "data store %(data_store_name)s",
               {'image_ref': image_ref,
-               'data_store_name': ds_name},
-              instance=instance)
+               'data_store_name': ds_name})
 
     metadata = IMAGE_API.get(context, image_ref)
     file_size = int(metadata['size'])
@@ -274,8 +271,7 @@ def fetch_image(context, instance, host, port, dc_name, ds_name, file_path,
               "%(data_store_name)s",
               {'image_ref': image_ref,
                'upload_name': 'n/a' if file_path is None else file_path,
-               'data_store_name': 'n/a' if ds_name is None else ds_name},
-              instance=instance)
+               'data_store_name': 'n/a' if ds_name is None else ds_name})
 
 
 def _build_shadow_vm_config_spec(session, name, size_kb, disk_type, ds_name):
@@ -350,8 +346,7 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
     image_ref = image_id if image_id else instance.image_ref
     LOG.debug("Downloading image file data %(image_ref)s to the ESX "
               "as VM named '%(vm_name)s'",
-              {'image_ref': image_ref, 'vm_name': vm_name},
-              instance=instance)
+              {'image_ref': image_ref, 'vm_name': vm_name})
 
     metadata = IMAGE_API.get(context, image_ref)
     file_size = int(metadata['size'])
@@ -367,7 +362,7 @@ def fetch_image_stream_optimized(context, instance, session, vm_name,
                                     file_size)
 
     LOG.info("Downloaded image file data %(image_ref)s",
-             {'image_ref': instance.image_ref}, instance=instance)
+             {'image_ref': instance.image_ref})
     vmdk = vm_util.get_vmdk_info(session, imported_vm_ref, vm_name)
     vm_util.mark_vm_as_template(session, instance, imported_vm_ref)
     return vmdk.capacity_in_bytes, vmdk.path
@@ -487,8 +482,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
     image_ref = instance.image_ref
     LOG.debug("Downloading OVA image file %(image_ref)s to the ESX "
               "as VM named '%(vm_name)s'",
-              {'image_ref': image_ref, 'vm_name': vm_name},
-              instance=instance)
+              {'image_ref': image_ref, 'vm_name': vm_name})
 
     metadata = IMAGE_API.get(context, image_ref)
     file_size = int(metadata['size'])
@@ -515,7 +509,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
                                                 file_size)
 
                 LOG.info("Downloaded OVA image file %(image_ref)s",
-                         {'image_ref': instance.image_ref}, instance=instance)
+                         {'image_ref': instance.image_ref})
                 vmdk = vm_util.get_vmdk_info(session,
                                              imported_vm_ref,
                                              vm_name)
@@ -529,7 +523,7 @@ def fetch_image_ova(context, instance, session, vm_name, ds_name,
 def upload_image_stream_optimized(context, image_id, instance, session,
                                   vm, vmdk_size):
     """Upload the snapshotted vm disk file to Glance image server."""
-    LOG.debug("Uploading image %s", image_id, instance=instance)
+    LOG.debug("Uploading image %s", image_id)
     metadata = IMAGE_API.get(context, image_id)
 
     read_handle = rw_handles.VmdkReadHandle(session,
@@ -560,5 +554,4 @@ def upload_image_stream_optimized(context, image_id, instance, session,
         updater.stop()
         read_handle.close()
 
-    LOG.debug("Uploaded image %s to the Glance image server", image_id,
-              instance=instance)
+    LOG.debug("Uploaded image %s to the Glance image server", image_id)
