@@ -430,8 +430,8 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     def _get_vm_record(self):
         # Get record for VM
-        vms = vmwareapi_fake._get_objects("VirtualMachine")
-        for vm in vms.objects:
+        vms = vmwareapi_fake.get_objects("VirtualMachine")
+        for vm in vms:
             if vm.get('name') == vm_util._get_vm_name(self._display_name,
                                                       self.uuid):
                 return vm
@@ -1281,7 +1281,7 @@ class VMwareAPIVMTestCase(test.TestCase,
     def test_get_vm_ref_using_extra_config(self):
         self._create_vm()
         vm_ref = vm_util._get_vm_ref_from_extraconfig(self.conn._session,
-                                                     self.instance['uuid'])
+                                                      self.instance['uuid'])
         self.assertIsNotNone(vm_ref, 'VM Reference cannot be none')
         # Disrupt the fake Virtual Machine object so that extraConfig
         # cannot be matched.
@@ -1289,7 +1289,7 @@ class VMwareAPIVMTestCase(test.TestCase,
         fake_vm.get('config.extraConfig["nvp.vm-uuid"]').value = ""
         # We should not get a Virtual Machine through extraConfig.
         vm_ref = vm_util._get_vm_ref_from_extraconfig(self.conn._session,
-                                                     self.instance['uuid'])
+                                                      self.instance['uuid'])
         self.assertIsNone(vm_ref, 'VM Reference should be none')
         # Check if we can find the Virtual Machine using the name.
         vm_ref = vm_util.get_vm_ref(self.conn._session, self.instance)
@@ -1299,14 +1299,15 @@ class VMwareAPIVMTestCase(test.TestCase,
     def test_search_vm_ref_by_identifier(self, mock_update_cached_instances):
         self._create_vm()
         vm_ref = vm_util.search_vm_ref_by_identifier(self.conn._session,
-                                            self.instance['uuid'])
+                                                     self.instance['uuid'])
         self.assertIsNotNone(vm_ref, 'VM Reference cannot be none')
         fake_vm = self._get_vm_record()
         fake_vm.set("summary.config.instanceUuid", "foo")
         fake_vm.set("name", "foo")
         fake_vm.get('config.extraConfig["nvp.vm-uuid"]').value = "foo"
         self.assertIsNone(vm_util.search_vm_ref_by_identifier(
-                                    self.conn._session, self.instance['uuid']),
+                                    self.conn._session,
+                                    self.instance['uuid']),
                           "VM Reference should be none")
         self.assertIsNotNone(
                 vm_util.search_vm_ref_by_identifier(self.conn._session, "foo"),
@@ -1410,7 +1411,7 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     def _snapshot_delete_vm_snapshot_exception(self, exception, call_count=1):
         self._create_vm()
-        fake_vm = vmwareapi_fake._get_objects("VirtualMachine").objects[0].obj
+        fake_vm = vmwareapi_fake.get_first_object_ref("VirtualMachine")
         snapshot_ref = vmwareapi_fake.ManagedObjectReference(
                                value="Snapshot-123",
                                name="VirtualMachineSnapshot")
@@ -2040,8 +2041,8 @@ class VMwareAPIVMTestCase(test.TestCase,
 
     def test_iscsi_rescan_hba(self):
         fake_target_portal = 'fake_target_host:port'
-        host_storage_sys = vmwareapi_fake._get_objects(
-            "HostStorageSystem").objects[0]
+        host_storage_sys = vmwareapi_fake.get_first_object(
+            "HostStorageSystem")
         iscsi_hba_array = host_storage_sys.get('storageDeviceInfo'
                                                '.hostBusAdapter')
         iscsi_hba = iscsi_hba_array.HostHostBusAdapter[0]
@@ -2049,7 +2050,8 @@ class VMwareAPIVMTestCase(test.TestCase,
         self.assertRaises(AttributeError, getattr, iscsi_hba,
                           'configuredSendTarget')
         # Rescan HBA with the target portal
-        vops = volumeops.VMwareVolumeOps(self.conn._session)
+        vops = volumeops.VMwareVolumeOps(self.conn._session,
+                                         self.conn._cluster_ref)
         vops._iscsi_rescan_hba(fake_target_portal)
         # Check if HBA has the target portal configured
         self.assertEqual('fake_target_host',
@@ -2061,9 +2063,10 @@ class VMwareAPIVMTestCase(test.TestCase,
     def test_iscsi_get_target(self):
         data = {'target_portal': 'fake_target_host:port',
                 'target_iqn': 'fake_target_iqn'}
-        host = vmwareapi_fake._get_objects('HostSystem').objects[0]
+        host = vmwareapi_fake.get_first_object('HostSystem')
         host._add_iscsi_target(data)
-        vops = volumeops.VMwareVolumeOps(self.conn._session)
+        vops = volumeops.VMwareVolumeOps(self.conn._session,
+                                         self.conn._cluster_ref)
         result = vops._iscsi_get_target(data)
         self.assertEqual(('fake-device', 'fake-uuid'), result)
 

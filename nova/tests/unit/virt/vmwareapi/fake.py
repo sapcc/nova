@@ -22,8 +22,9 @@ A fake VMware VI API implementation.
 import collections
 import sys
 
+import six
+
 from oslo_log import log as logging
-from oslo_serialization import jsonutils
 from oslo_utils import units
 from oslo_utils import uuidutils
 from oslo_vmware import exceptions as vexc
@@ -79,20 +80,27 @@ def cleanup():
 def _create_object(table, table_obj):
     """Create an object in the db."""
     _db_content.setdefault(table, {})
-    _db_content[table][table_obj.obj] = table_obj
+    _db_content[table][table_obj.obj.value] = table_obj
 
 
-def _get_object(obj_ref):
+def get_object(obj_ref):
     """Get object for the give reference."""
-    return _db_content[obj_ref.type][obj_ref]
+    return _db_content[obj_ref.type][obj_ref.value]
 
 
-def _get_objects(obj_type):
+def get_objects(obj_type):
     """Get objects of the type."""
-    lst_objs = FakeRetrieveResult()
-    for key in _db_content[obj_type]:
-        lst_objs.add_object(_db_content[obj_type][key])
-    return lst_objs
+    return six.itervalues(_db_content[obj_type])
+
+
+def get_first_object(obj_type):
+    """Get the first object of an object type"""
+    return next(six.itervalues(_db_content[obj_type]))
+
+
+def get_first_object_ref(obj_type):
+    """Get the first reference of an object type"""
+    return get_first_object(obj_type).obj
 
 
 def _convert_to_array_of_mor(mors):
@@ -140,16 +148,14 @@ class FakeRetrieveResult(object):
 
 
 def _get_object_refs(obj_type):
-    """Get object References of the type."""
-    lst_objs = []
-    for key in _db_content[obj_type]:
-        lst_objs.append(key)
-    return lst_objs
+    """Get iterator over object References of the type."""
+    for obj in _db_content[obj_type].values():
+        yield obj.obj
 
 
 def _update_object(table, table_obj):
     """Update objects of the type."""
-    _db_content[table][table_obj.obj] = table_obj
+    _db_content[table][table_obj.obj.value] = table_obj
 
 
 class Prop(object):
@@ -175,6 +181,9 @@ class ManagedObjectReference(object):
         # attribute is the identifier for
         self.type = name
         self._type = name
+
+    def __repr__(self):
+        return "{}:{}".format(self._type, self.value)
 
 
 class ObjectContent(object):
@@ -261,8 +270,11 @@ class ManagedObject(object):
         return prefix + "-" + str(self.__class__._counter)
 
     def __repr__(self):
-        return jsonutils.dumps({elem.name: elem.val
-                                for elem in self.propSet})
+        # We can't just dump the managed-object, because it may be circular
+        return "{}:{}({})".format(self.obj._type, self.obj.value,
+            ", ".join(
+                "{}={}".format(p.name, p.val if p.name == "name" else "<>")
+                for p in self.propSet))
 
 
 class DataObject(object):
@@ -592,8 +604,7 @@ class ResourcePool(ManagedObject):
 class DatastoreHostMount(DataObject):
     def __init__(self, value='host-100'):
         super(DatastoreHostMount, self).__init__()
-        host_ref = (_db_content["HostSystem"]
-                    [list(_db_content["HostSystem"].keys())[0]].obj)
+        host_ref = get_first_object_ref("HostSystem")
         host_system = DataObject()
         host_system.ManagedObjectReference = [host_ref]
         host_system.value = value
@@ -609,6 +620,7 @@ class ClusterComputeResource(ManagedObject):
         self.set("host", None)
         self.set("datastore", None)
         self.set("resourcePool", None)
+        self.set("vm", [])
 
         summary = DataObject()
         summary.numHosts = 0
@@ -630,9 +642,15 @@ class ClusterComputeResource(ManagedObject):
         configuration.dasConfig.admissionControlPolicy = policy
         self.set("configuration.dasConfig.admissionControlPolicy", policy)
 
+        vm_list = DataObject()
+        vm_list.ManagedObjectReference = []
+        self.set("vm", vm_list)
+
     def _add_root_resource_pool(self, r_pool):
         if r_pool:
             self.set("resourcePool", r_pool)
+            pool = get_object(r_pool)
+            self.set("vm", pool.get("vm"))
 
     def _add_host(self, host_sys):
         if host_sys:
@@ -668,7 +686,7 @@ class ClusterComputeResource(ManagedObject):
         # Compute the aggregate stats
         summary.numHosts = len(hosts.ManagedObjectReference)
         for host_ref in hosts.ManagedObjectReference:
-            host_sys = _get_object(host_ref)
+            host_sys = get_object(host_ref)
             connected = host_sys.get("connected")
             host_summary = host_sys.get("summary")
             summary.numCpuCores += host_summary.hardware.numCpuCores
@@ -726,14 +744,18 @@ class HostSystem(ManagedObject):
                  maintenance_mode=False):
         super(HostSystem, self).__init__("host")
         self.set("name", name)
-        if _db_content.get("HostNetworkSystem", None) is None:
+
+        if not _db_content.get("HostNetworkSystem", None):
             create_host_network_system()
-        if not _get_object_refs('HostStorageSystem'):
+
+        if not _db_content.get("HostStorageSystem", None):
             create_host_storage_system()
-        host_net_key = list(_db_content["HostNetworkSystem"].keys())[0]
-        host_net_sys = _db_content["HostNetworkSystem"][host_net_key].obj
-        self.set("configManager.networkSystem", host_net_sys)
-        host_storage_sys_key = _get_object_refs('HostStorageSystem')[0]
+
+        host_net_obj = get_first_object("HostNetworkSystem")
+        host_net_ref = host_net_obj.obj
+        self.set("configManager.networkSystem", host_net_ref)
+
+        host_storage_sys_key = get_first_object_ref('HostStorageSystem')
         self.set("configManager.storageSystem", host_storage_sys_key)
 
         if not ds_ref:
@@ -813,10 +835,9 @@ class HostSystem(ManagedObject):
         self.set("config.network.pnic", net_info_pnic)
         self.set("connected", connected)
 
-        if _db_content.get("Network", None) is None:
+        if not _db_content.get("Network", None):
             create_network()
-        net_ref = _db_content["Network"][
-            list(_db_content["Network"].keys())[0]].obj
+        net_ref = get_first_object_ref("Network")
         network_do = DataObject()
         network_do.ManagedObjectReference = [net_ref]
         self.set("network", network_do)
@@ -855,7 +876,7 @@ class HostSystem(ManagedObject):
         self.set("config.storageDevice.hostBusAdapter", host_bus_adapter_array)
 
         # Set the same on the storage system managed object
-        host_storage_sys = _get_object(host_storage_sys_key)
+        host_storage_sys = get_object(host_storage_sys_key)
         host_storage_sys.set('storageDeviceInfo.hostBusAdapter',
                              host_bus_adapter_array)
 
@@ -918,15 +939,13 @@ class Datacenter(ManagedObject):
         self.set("name", name)
         if _db_content.get("Folder", None) is None:
             create_folder()
-        folder_ref = _db_content["Folder"][
-            list(_db_content["Folder"].keys())[0]].obj
+        folder_ref = get_first_object_ref("Folder")
         folder_do = DataObject()
         folder_do.ManagedObjectReference = [folder_ref]
         self.set("vmFolder", folder_ref)
         if _db_content.get("Network", None) is None:
             create_network()
-        net_ref = _db_content["Network"][
-            list(_db_content["Network"].keys())[0]].obj
+        net_ref = get_first_object_ref("Network")
         network_do = DataObject()
         network_do.ManagedObjectReference = [net_ref]
         self.set("network", network_do)
@@ -1004,8 +1023,10 @@ def create_network():
 
 def create_cluster(name, ds_ref):
     cluster = ClusterComputeResource(name=name)
-    cluster._add_host(_get_object_refs("HostSystem")[0])
-    cluster._add_host(_get_object_refs("HostSystem")[1])
+    for i, host in enumerate(_get_object_refs("HostSystem")):
+        cluster._add_host(host)
+        if i >= 1:
+            break
     cluster._add_datastore(ds_ref)
     cluster._add_root_resource_pool(create_res_pool())
     _create_object('ClusterComputeResource', cluster)
@@ -1027,16 +1048,15 @@ def create_vm(uuid=None, name=None,
         devices = []
 
     if vmPathName is None:
-        vm_path = ds_obj.DatastorePath(
-            list(_db_content['Datastore'].values())[0])
+        vm_path = ds_obj.DatastorePath(get_first_object("Datastore"))
     else:
         vm_path = ds_obj.DatastorePath.parse(vmPathName)
 
     if res_pool_ref is None:
-        res_pool_ref = list(_db_content['ResourcePool'].keys())[0]
+        res_pool_ref = get_first_object_ref("ResourcePool")
 
     if host_ref is None:
-        host_ref = list(_db_content["HostSystem"].keys())[0]
+        host_ref = get_first_object_ref("HostSystem")
 
     # Fill in the default path to the vmx file if we were only given a
     # datastore. Note that if you create a VM with vmPathName '[foo]', when you
@@ -1047,7 +1067,7 @@ def create_vm(uuid=None, name=None,
 
     for key, value in _db_content["Datastore"].items():
         if value.get('summary.name') == vm_path.datastore:
-            ds = key
+            ds = value.obj
             break
     else:
         ds = create_datastore(vm_path.datastore, 1024, 500)
@@ -1067,7 +1087,7 @@ def create_vm(uuid=None, name=None,
     vm = VirtualMachine(**vm_dict)
     _create_object("VirtualMachine", vm)
 
-    res_pool = _get_object(res_pool_ref)
+    res_pool = get_object(res_pool_ref)
     res_pool.vm.ManagedObjectReference.append(vm.obj)
 
     return vm.obj
@@ -1140,10 +1160,10 @@ def _get_vm_mdo(vm_ref):
     """Gets the Virtual Machine with the ref from the db."""
     if _db_content.get("VirtualMachine", None) is None:
         raise exception.NotFound("There is no VM registered")
-    if vm_ref not in _db_content.get("VirtualMachine"):
+    if vm_ref.value not in _db_content.get("VirtualMachine"):
         raise exception.NotFound("Virtual Machine with ref %s is not "
-                                 "there" % vm_ref)
-    return _db_content.get("VirtualMachine")[vm_ref]
+                                 "there" % vm_ref.value)
+    return _db_content.get("VirtualMachine")[vm_ref.value]
 
 
 def _merge_extraconfig(existing, changes):
@@ -1394,11 +1414,10 @@ class FakeVim(object):
     def _find_all_by_uuid(self, *args, **kwargs):
         uuid = kwargs.get('uuid')
         vm_refs = []
-        for vm_ref in _db_content.get("VirtualMachine"):
-            vm = _get_object(vm_ref)
+        for vm in _db_content.get("VirtualMachine").values():
             vm_uuid = vm.get("summary.config.instanceUuid")
             if vm_uuid == uuid:
-                vm_refs.append(vm_ref)
+                vm_refs.append(vm.obj)
         return vm_refs
 
     def _delete_snapshot(self, method, *args, **kwargs):
@@ -1460,7 +1479,7 @@ class FakeVim(object):
         """Unregisters a VM from the Host System."""
         vm_ref = args[0]
         _get_vm_mdo(vm_ref)
-        del _db_content["VirtualMachine"][vm_ref]
+        del _db_content["VirtualMachine"][vm_ref.value]
         task_mdo = create_task(method, "success")
         return task_mdo.obj
 
@@ -1534,10 +1553,10 @@ class FakeVim(object):
         if _db_content.get("VirtualMachine", None) is None:
             raise exception.NotFound("No Virtual Machine has been "
                                      "registered yet")
-        if vm_ref not in _db_content.get("VirtualMachine"):
+        vm_mdo = _db_content.get("VirtualMachine").get(vm_ref.value)
+        if not vm_mdo:
             raise exception.NotFound("Virtual Machine with ref %s is not "
-                                     "there" % vm_ref)
-        vm_mdo = _db_content.get("VirtualMachine").get(vm_ref)
+                                     "there" % vm_ref.value)
         vm_mdo.set("runtime.powerState", pwr_state)
         task_mdo = create_task(method, "success")
         return task_mdo.obj
@@ -1566,7 +1585,8 @@ class FakeVim(object):
                     # This means that we are retrieving props for all managed
                     # data objects of the specified 'type' in the entire
                     # inventory. This gets invoked by vim_util.get_objects.
-                    mdo_refs = _db_content[spec_type]
+                    mdo_refs = [obj.obj
+                                for obj in _db_content[spec_type].values()]
                 elif obj_ref.type != spec_type:
                     # This means that we are retrieving props for the managed
                     # data objects in the parent object's 'path' property.
@@ -1576,7 +1596,7 @@ class FakeVim(object):
                     #     path = 'datastore'
                     # the above will retrieve all datastores in the given
                     # cluster.
-                    parent_mdo = _db_content[obj_ref.type][obj_ref]
+                    parent_mdo = _db_content[obj_ref.type][obj_ref.value]
                     path = obj.selectSet[0].path
                     mdo_refs = parent_mdo.get(path).ManagedObjectReference
                 else:
@@ -1586,7 +1606,7 @@ class FakeVim(object):
                     mdo_refs = [obj_ref]
 
                 for mdo_ref in mdo_refs:
-                    mdo = _db_content[spec_type][mdo_ref]
+                    mdo = _db_content[spec_type][mdo_ref.value]
                     prop_list = []
                     for prop_name in properties:
                         prop = Prop(prop_name, mdo.get(prop_name))
@@ -1600,14 +1620,13 @@ class FakeVim(object):
 
     def _add_port_group(self, method, *args, **kwargs):
         """Adds a port group to the host system."""
-        _host_sk = list(_db_content["HostSystem"].keys())[0]
-        host_mdo = _db_content["HostSystem"][_host_sk]
+        host_mdo = get_first_object("HostSystem")
         host_mdo._add_port_group(kwargs.get("portgrp"))
 
     def _add_iscsi_send_tgt(self, method, *args, **kwargs):
         """Adds a iscsi send target to the hba."""
         send_targets = kwargs.get('targets')
-        host_storage_sys = _get_objects('HostStorageSystem').objects[0]
+        host_storage_sys = get_first_object('HostStorageSystem')
         iscsi_hba_array = host_storage_sys.get('storageDeviceInfo'
                                                '.hostBusAdapter')
         iscsi_hba = iscsi_hba_array.HostHostBusAdapter[0]

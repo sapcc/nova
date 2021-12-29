@@ -2109,7 +2109,7 @@ class VMwareVMUtilGetHostRefTestCase(test.NoDBTestCase):
         self.session = driver.VMwareAPISession()
 
         # Create a fake VirtualMachine running on a known host
-        self.host_ref = list(fake._db_content['HostSystem'].keys())[0]
+        self.host_ref = fake.get_first_object_ref("HostSystem")
         self.vm_ref = fake.create_vm(host_ref=self.host_ref)
 
     @mock.patch.object(vm_util, 'get_vm_ref')
@@ -2125,7 +2125,7 @@ class VMwareVMUtilGetHostRefTestCase(test.NoDBTestCase):
     def test_get_host_name_for_vm(self, mock_get_vm_ref):
         mock_get_vm_ref.return_value = self.vm_ref
 
-        host = fake._get_object(self.host_ref)
+        host = fake.get_object(self.host_ref)
 
         ret = vm_util.get_host_name_for_vm(self.session, 'fake-instance')
 

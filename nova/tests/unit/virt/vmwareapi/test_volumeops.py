@@ -41,8 +41,9 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         stubs.set_stubs(self)
         self._session = driver.VMwareAPISession()
         self._context = context.RequestContext('fake_user', 'fake_project')
-
-        self._volumeops = volumeops.VMwareVolumeOps(self._session)
+        self._cluster = mock.sentinel.cluster
+        self._volumeops = volumeops.VMwareVolumeOps(self._session,
+                                                    self._cluster)
         self._image_id = image_fake.get_valid_image_id()
         self._instance_values = {
             'name': 'fake_name',
@@ -367,7 +368,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             exception.StorageError, self._volumeops._detach_volume_iscsi,
             connection_info, instance)
 
-        get_vm_ref.assert_called_once_with(self._volumeops._session, instance)
+        get_vm_ref.assert_called_once_with(self._volumeops._session,
+                                           instance)
         iscsi_get_target.assert_called_once_with(connection_info['data'])
 
     @mock.patch.object(vm_util, 'get_vm_ref')
@@ -396,7 +398,9 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         self.assertRaises(
             exception.DiskNotFound, self._volumeops._detach_volume_iscsi,
             connection_info, instance)
-        get_vm_ref.assert_called_once_with(session, instance)
+
+        get_vm_ref.assert_called_once_with(self._volumeops._session,
+                                           instance)
         iscsi_get_target.assert_called_once_with(connection_info['data'])
         session._call_method.assert_called_once_with(
             vutil, "get_object_property", vm_ref, "config.hardware.device")
@@ -560,7 +564,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                                                  disk_type)
 
         get_vmdk_base_volume_device.assert_called_once_with(volume_ref)
-        relocate_vm.assert_called_once_with(self._session,
+        relocate_vm.assert_called_once_with(self._volumeops._session,
             volume_ref, rp, datastore, host)
         detach_disk_from_vm.assert_called_once_with(
             volume_ref, instance, original_device, destroy_disk=True)
