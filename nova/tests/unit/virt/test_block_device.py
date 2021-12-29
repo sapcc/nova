@@ -602,9 +602,14 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                 attachment_id=uuids.attachment_id))
 
     @mock.patch.object(encryptors, 'get_encryption_metadata')
+    @mock.patch.object(driver_block_device,
+        '_get_volume_create_scheduler_hints',
+        return_value=mock.sentinel.volume_scheduler_hints)
     @mock.patch.object(objects.BlockDeviceMapping, 'save')
     def _test_volume_attach(self, driver_bdm, bdm_dict,
-                            fake_volume, mock_save, mock_get_encry,
+                            fake_volume, mock_save,
+                            mock_get_volume_create_scheduler_hints,
+                            mock_get_encry,
                             fail_check_av_zone=False,
                             driver_attach=False, fail_driver_attach=False,
                             volume_attach=True, fail_volume_attach=False,
@@ -995,6 +1000,7 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.context, 'fake-snapshot-id-1')
         self.volume_api.create.assert_called_once_with(
             self.context, 3, '', '', availability_zone=None,
+            scheduler_hints=mock.sentinel.volume_scheduler_hints,
             snapshot=snapshot, volume_type=None)
         wait_func.assert_called_once_with(self.context, 'fake-volume-id-2')
         self.volume_api.attachment_create.assert_called_once_with(
@@ -1029,10 +1035,14 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.context, 'fake-snapshot-id-1')
         self.volume_api.create.assert_called_once_with(
             self.context, 3, '', '', availability_zone='test-az',
+            scheduler_hints=mock.sentinel.volume_scheduler_hints,
             snapshot=snapshot, volume_type=None)
         wait_func.assert_called_once_with(self.context, 'fake-volume-id-2')
 
-    def test_snapshot_attach_fail_volume(self):
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
+    def test_snapshot_attach_fail_volume(self, mock_sched_hints):
         fail_volume_snapshot = self.volsnapshot_bdm_dict.copy()
         fail_volume_snapshot['volume_id'] = None
         test_bdm = self.driver_classes['volsnapshot'](
@@ -1065,7 +1075,9 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.context, 'fake-snapshot-id-1')
         self.volume_api.create.assert_called_once_with(
             self.context, 3, '', '', availability_zone=None,
-            snapshot=snapshot, volume_type=None)
+            snapshot=snapshot, volume_type=None,
+            scheduler_hints=mock.sentinel.volume_scheduler_hints)
+        mock_sched_hints.assert_called_once_with(self.context, instance)
         self.volume_api.delete.assert_called_once_with(
             self.context, volume['id'])
 
@@ -1087,7 +1099,11 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.volume_api.get_snapshot.assert_not_called()
             self.volume_api.create.assert_not_called()
 
-    def test_snapshot_attach_no_volume_and_no_volume_type(self):
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
+    def test_snapshot_attach_no_volume_and_no_volume_type(self,
+                                                          mock_sched_hints):
         bdm = self.driver_classes['volsnapshot'](self.volsnapshot_bdm)
         instance = fake_instance.fake_instance_obj(self.context,
                                                    **{'uuid': uuids.uuid})
@@ -1112,7 +1128,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.volume_api.create.assert_called_once_with(
                 self.context, bdm.volume_size,
                 '', '', volume_type='original_volume_type', snapshot=snapshot,
-                availability_zone=None)
+                availability_zone=None,
+                scheduler_hints=mock.sentinel.volume_scheduler_hints)
 
     def test_image_attach_no_volume(self):
         no_volume_image = self.volimage_bdm_dict.copy()
@@ -1136,7 +1153,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
         self.volume_api.create.assert_called_once_with(
             self.context, 1, '', '', image_id=image['id'],
-            availability_zone=None, volume_type=None)
+            availability_zone=None, volume_type=None,
+            scheduler_hints=mock.sentinel.volume_scheduler_hints)
         wait_func.assert_called_once_with(self.context, 'fake-volume-id-2')
         self.volume_api.attachment_create.assert_called_once_with(
             self.context, volume['id'], instance_uuid)
@@ -1166,10 +1184,14 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
         self.volume_api.create.assert_called_once_with(
             self.context, 1, '', '', image_id=image['id'],
-            availability_zone='test-az', volume_type=None)
+            availability_zone='test-az', volume_type=None,
+            scheduler_hints=mock.sentinel.volume_scheduler_hints)
         wait_func.assert_called_once_with(self.context, 'fake-volume-id-2')
 
-    def test_image_attach_fail_volume(self):
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
+    def test_image_attach_fail_volume(self, mock_sched_hints):
         fail_volume_image = self.volimage_bdm_dict.copy()
         fail_volume_image['volume_id'] = None
         test_bdm = self.driver_classes['volimage'](
@@ -1198,7 +1220,9 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
         self.volume_api.create.assert_called_once_with(
             self.context, 1, '', '', image_id=image['id'],
-            availability_zone=None, volume_type=None)
+            availability_zone=None, volume_type=None,
+            scheduler_hints=mock.sentinel.volume_scheduler_hints)
+        mock_sched_hints.assert_called_once_with(self.context, instance)
         self.volume_api.delete.assert_called_once_with(
             self.context, volume['id'])
 
@@ -1220,7 +1244,10 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.volume_api.get_snapshot.assert_not_called()
             self.volume_api.create.assert_not_called()
 
-    def test_blank_attach_fail_volume(self):
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
+    def test_blank_attach_fail_volume(self, mock_sched_hints):
         no_blank_volume = self.volblank_bdm_dict.copy()
         no_blank_volume['volume_id'] = None
         test_bdm = self.driver_classes['volblank'](
@@ -1247,11 +1274,16 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         self.volume_api.create.assert_called_once_with(
             self.context, test_bdm.volume_size,
             '%s-blank-vol' % uuids.uuid,
-            '', volume_type=None, availability_zone=None)
+            '', volume_type=None, availability_zone=None,
+            scheduler_hints=mock.sentinel.volume_scheduler_hints)
+        mock_sched_hints.assert_called_once_with(self.context, instance)
         self.volume_api.delete.assert_called_once_with(
             self.context, volume['id'])
 
-    def test_blank_attach_volume(self):
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
+    def test_blank_attach_volume(self, mock_sched_hints):
         no_blank_volume = self.volblank_bdm_dict.copy()
         no_blank_volume['volume_id'] = None
         test_bdm = self.driver_classes['volblank'](
@@ -1274,16 +1306,22 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.volume_api.create.assert_called_once_with(
                 self.context, test_bdm.volume_size,
                 '%s-blank-vol' % uuids.uuid,
-                '', volume_type=None, availability_zone=None)
+                '', volume_type=None, availability_zone=None,
+                scheduler_hints=mock.sentinel.volume_scheduler_hints)
             vol_attach.assert_called_once_with(self.context, instance,
                                                self.volume_api,
                                                self.virt_driver)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
+        mock_sched_hints.assert_called_once_with(self.context, instance)
         self.volume_api.attachment_create.assert_called_once_with(
             self.context, volume['id'], instance.uuid)
         self.assertEqual(ATTACHMENT_ID, test_bdm.get('attachment_id'))
 
-    def test_blank_attach_volume_cinder_cross_az_attach_false(self):
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
+    def test_blank_attach_volume_cinder_cross_az_attach_false(self,
+            mock_sched_hints):
         # Tests that the blank volume created is in the same availability zone
         # as the instance.
         self.flags(cross_az_attach=False, group='cinder')
@@ -1307,10 +1345,12 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.volume_api.create.assert_called_once_with(
                 self.context, test_bdm.volume_size,
                 '%s-blank-vol' % uuids.uuid,
-                '', volume_type=None, availability_zone='test-az')
+                '', volume_type=None, availability_zone='test-az',
+                scheduler_hints=mock.sentinel.volume_scheduler_hints)
             vol_attach.assert_called_once_with(self.context, instance,
                                                self.volume_api,
                                                self.virt_driver)
+            mock_sched_hints.assert_called_once_with(self.context, instance)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
 
     def test_convert_block_devices(self):
@@ -1447,8 +1487,11 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         self.assertEqual(set(['uuid', 'is_volume', 'B', 'C', 'E']),
                          E(bdm)._proxy_as_attr)
 
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
     def _test_boot_from_volume_source_blank_volume_type(
-            self, bdm, expected_volume_type):
+            self, bdm, expected_volume_type, mock_sched_hints):
         self.flags(cross_az_attach=False, group='cinder')
         test_bdm = self.driver_classes['volblank'](bdm)
         updates = {'uuid': uuids.uuid, 'availability_zone': 'test-az'}
@@ -1467,7 +1510,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                 self.context, test_bdm.volume_size,
                 '%s-blank-vol' % uuids.uuid, '',
                 volume_type=expected_volume_type,
-                availability_zone='test-az')
+                availability_zone='test-az',
+                scheduler_hints=mock.sentinel.volume_scheduler_hints)
             vol_attach.assert_called_once_with(
                 self.context, instance, self.volume_api, self.virt_driver)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
@@ -1491,8 +1535,11 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         bdm = fake_block_device.fake_bdm_object(self.context, no_blank_volume)
         self._test_boot_from_volume_source_blank_volume_type(bdm, 'fake-lvm-1')
 
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
     def _test_boot_from_volume_source_image_volume_type(
-            self, bdm, expected_volume_type):
+            self, bdm, expected_volume_type, mock_sched_hints):
         self.flags(cross_az_attach=False, group='cinder')
         test_bdm = self.driver_classes['volimage'](bdm)
 
@@ -1513,7 +1560,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                 self.context, test_bdm.volume_size,
                 '', '', image_id=image['id'],
                 volume_type=expected_volume_type,
-                availability_zone='test-az')
+                availability_zone='test-az',
+                scheduler_hints=mock.sentinel.volume_scheduler_hints)
             vol_attach.assert_called_once_with(
                 self.context, instance, self.volume_api, self.virt_driver)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
@@ -1538,8 +1586,11 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         bdm = fake_block_device.fake_bdm_object(self.context, no_volume_image)
         self._test_boot_from_volume_source_image_volume_type(bdm, 'fake-lvm-1')
 
+    @mock.patch.object(driver_block_device,
+                '_get_volume_create_scheduler_hints',
+                return_value=mock.sentinel.volume_scheduler_hints)
     def _test_boot_from_volume_source_snapshot_volume_type(
-            self, bdm, expected_volume_type):
+            self, bdm, expected_volume_type, mock_sched_hints):
         self.flags(cross_az_attach=False, group='cinder')
         test_bdm = self.driver_classes['volsnapshot'](bdm)
 
@@ -1563,7 +1614,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             self.volume_api.create.assert_called_once_with(
                 self.context, test_bdm.volume_size, '', '',
                 availability_zone='test-az', snapshot=snapshot,
-                volume_type=expected_volume_type)
+                volume_type=expected_volume_type,
+                scheduler_hints=mock.sentinel.volume_scheduler_hints)
             vol_attach.assert_called_once_with(
                 self.context, instance, self.volume_api, self.virt_driver)
             self.assertEqual('fake-volume-id-2', test_bdm.volume_id)
