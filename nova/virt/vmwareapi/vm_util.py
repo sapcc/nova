@@ -1543,8 +1543,7 @@ def aggregate_stats_from_cluster(host_stats):
     # or otherwise unreachable hosts is precisely what that is supposed
     # to guard against.
     total_hypervisor_count = len(host_stats)
-    previous_cpu_info = None
-    cpu_infos_equal = True
+    aggregated_cpu_info = {}
 
     for stats in six.itervalues(host_stats):
         if not stats["available"]:
@@ -1568,11 +1567,12 @@ def aggregate_stats_from_cluster(host_stats):
         total_memory_mb_reserved += memory_mb_reserved
         max_mem_mb_per_host = max(max_mem_mb_per_host,
                                   memory_mb - memory_mb_reserved)
-
-        if cpu_infos_equal and previous_cpu_info:
-            cpu_infos_equal = (previous_cpu_info == stats["cpu_info"])
-
-        previous_cpu_info = stats["cpu_info"]
+        if not aggregated_cpu_info:
+            aggregated_cpu_info = stats["cpu_info"].copy()
+        else:
+            for key, value in six.iteritems(stats["cpu_info"]):
+                if aggregated_cpu_info.get(key) != value:
+                    aggregated_cpu_info[key] = "Mismatching values"
 
     # Calculate VM-reservable memory as a ratio of total available
     # memory, depending on either the configured tolerance for failed
@@ -1596,8 +1596,7 @@ def aggregate_stats_from_cluster(host_stats):
         "memory_mb_reserved": total_memory_mb_reserved,
         "max_mem_mb_per_host": max_mem_mb_per_host,
         "vm_reservable_memory_ratio": vm_reservable_memory_ratio,
-        "cpu_info": (previous_cpu_info if cpu_infos_equal
-                     else "CPUs for this cluster have different values!")
+        "cpu_info": aggregated_cpu_info
     }
 
 
