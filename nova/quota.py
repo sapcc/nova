@@ -484,6 +484,11 @@ class DbQuotaDriver(object):
                                        user_id=user_id,
                                        project_quotas=project_quotas)
 
+        quota_data = {
+            'quotas': quotas,
+            'user_quotas': user_quotas
+        }
+
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()
@@ -498,6 +503,7 @@ class DbQuotaDriver(object):
                 )
             raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
                                       usages={}, headroom=headroom)
+        return quota_data
 
     def limit_check_project_and_user(self, context, resources,
                                      project_values=None, user_values=None,
@@ -1223,7 +1229,6 @@ class QuotaEngine(object):
                         is admin and admin wants to impact on
                         common user.
         """
-
         return self._driver.limit_check(context,
                                         self.combined_resources(context),
                                         values, project_id=project_id,

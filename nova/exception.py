@@ -1091,6 +1091,10 @@ class OverQuota(NovaException):
     msg_fmt = _("Quota exceeded for resources: %(overs)s")
 
 
+class FlavorOverQuota(NovaException):
+    msg_fmt = _("Quota exceeded for resources: %(overs)s")
+
+
 class SecurityGroupNotFound(NotFound):
     msg_fmt = _("Security group %(security_group_id)s not found.")
 

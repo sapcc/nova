@@ -337,7 +337,8 @@ class API(base.Base):
             raise exception.InvalidMetadata(reason=msg)
         num_metadata = len(metadata)
         try:
-            objects.Quotas.limit_check(context, metadata_items=num_metadata)
+            objects.Quotas.limit_check(context,
+                                            metadata_items=num_metadata)
         except exception.OverQuota as exc:
             quota_metadata = exc.kwargs['quotas']['metadata_items']
             raise exception.MetadataLimitExceeded(allowed=quota_metadata)
@@ -1073,7 +1074,6 @@ class API(base.Base):
         strategy being performed and schedule the instance(s) for
         creation.
         """
-
         # Normalize and setup some parameters
         if reservation_id is None:
             reservation_id = utils.generate_uid('r')
