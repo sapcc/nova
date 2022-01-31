@@ -643,6 +643,13 @@ try:
         def serialize(self, value, **kwargs):
             return 'NetworkInfoAsyncWrapper with {}'.format(value._gt)
 
-    serialization_manager.register(NetworkInfoAsyncWrapperSerializer)
+    # NOTE(jkulik): We cannot just use
+    # serialization_manager.register(NetworkInfoAsyncWrapperSerializer)
+    # because that would append to the list of serializers which already has
+    # the more generic IteratorSerializer in it, which would react on
+    # NetworkInfo inheriting from list. Therefore, we go through the very, very
+    # private attribute.
+    serialization_manager._SerializationManager__registry.insert(
+        0, NetworkInfoAsyncWrapperSerializer)
 except ImportError:
     pass
