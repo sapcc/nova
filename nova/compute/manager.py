@@ -2004,11 +2004,12 @@ class ComputeManager(manager.Manager):
         # NOTE(danms): We spawn here to return the RPC worker thread back to
         # the pool. Since what follows could take a really long time, we don't
         # want to tie up RPC workers.
-        self.instance_running_pool.spawn_n(_locked_do_build_and_run_instance,
-              context, instance, image, request_spec,
-              filter_properties, admin_password, injected_files,
-              requested_networks, security_groups,
-              block_device_mapping, node, limits, host_list)
+        nova.utils.pass_context(self.instance_running_pool.spawn_n,
+            _locked_do_build_and_run_instance,
+            context, instance, image, request_spec,
+            filter_properties, admin_password, injected_files,
+            requested_networks, security_groups,
+            block_device_mapping, node, limits, host_list)
 
     def _delete_allocation_for_instance(self, context, instance_uuid):
         rt = self._get_resource_tracker()
@@ -6823,7 +6824,8 @@ class ComputeManager(manager.Manager):
         # in order to be able to track and abort it in the future.
         self._waiting_live_migrations[instance.uuid] = (None, None)
         try:
-            future = self._live_migration_executor.submit(
+            future = nova.utils.pass_context(
+                self._live_migration_executor.submit,
                 self._do_live_migration, context, dest, instance,
                 block_migration, migration, migrate_data)
             self._waiting_live_migrations[instance.uuid] = (migration, future)
@@ -7975,7 +7977,9 @@ class ComputeManager(manager.Manager):
             else:
                 LOG.debug('Triggering sync for uuid %s', uuid)
                 self._syncs_in_progress[uuid] = True
-                self._sync_power_pool.spawn_n(_sync, db_instance)
+                nova.utils.pass_context(self._sync_power_pool.spawn_n,
+                                        _sync,
+                                        db_instance)
 
     def _query_driver_power_state_and_sync(self, context, db_instance):
         if db_instance.task_state is not None:
