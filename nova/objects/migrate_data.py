@@ -511,11 +511,11 @@ class VMWareLiveMigrateData(LiveMigrateData):
     # Version 1.1: Added dest_cluster_ref, is_same_vcenter,
     #              instance_already_migrated, relocate_defaults_json,
     #              vif_infos_json for cross-vcenter migration
-    VERSION = '1.1'
+    # Version 1.2: Removed datastore_regex
+    VERSION = '1.2'
 
     fields = {
         'cluster_name': fields.StringField(nullable=False),
-        'datastore_regex': fields.StringField(nullable=False),
         'dest_cluster_ref': fields.StringField(nullable=False),
         'is_same_vcenter': fields.BooleanField(default=True),
         'instance_already_migrated': fields.BooleanField(default=False),
@@ -560,3 +560,5 @@ class VMWareLiveMigrateData(LiveMigrateData):
             for k in ('is_same_vcenter', 'instance_already_migrated',
                       'relocate_defaults_json', 'vif_infos_json'):
                 primitive.pop(k, None)
+        if target_version >= (1, 2):
+            primitive.pop('datastore_regex', None)

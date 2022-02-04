@@ -778,7 +778,6 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         data.cluster_name = self._cluster_name
         data.dest_cluster_ref = vim_util.get_moref_value(self._cluster_ref)
-        data.datastore_regex = CONF.vmware.datastore_regex
         client_factory = self._session.vim.client.factory
 
         service = vm_util.create_service_locator(client_factory,
