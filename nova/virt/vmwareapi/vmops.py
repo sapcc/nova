@@ -696,7 +696,47 @@ class VMwareVMOps(object):
                             tmp_image_ds_loc.parent,
                             vi.cache_image_folder)
 
-    def _get_vm_config_info(self, instance, image_info, extra_specs):
+    def _get_hagroup_info(self, context, instance):
+        """Return hagroup regex and hagroup for the given instance
+
+        The hagroup computes from the server-group the instance is in and thus
+        this function may return (None, None) if the server isn't in a
+        server-group.
+        """
+        # this currently means the hagroup feature is disabled
+        if not self._datastore_hagroup_regex:
+            return None, None
+
+        instance_group_object = objects.instance_group.InstanceGroup
+        try:
+            server_group = instance_group_object.get_by_instance_uuid(
+                context, instance.uuid)
+        except nova.exception.InstanceGroupNotFound:
+            return None, None
+
+        # we don't handle affinity here, just anti-affinity
+        if 'anti-affinity' not in server_group.policy:
+            return None, None
+
+        # query all instances not deleted in server_group.members. this
+        # will only filter in the current cell, but that should be a big
+        # enough radius as cells are AZs in our env - except in qa-de-1
+        # TODO(jkulik): Do we need this to work across cells?
+        InstanceList = objects.instance.InstanceList
+        filters = {'uuid': server_group.members, 'deleted': False}
+        instances = InstanceList.get_by_filters(context, filters,
+                                                expected_attrs=[])
+        existing_instance_uuids = set(i.uuid for i in instances)
+        # we need to keep the order of the members here and thus filter the
+        # members by the found instances
+        not_deleted_members = [m for m in server_group.members
+                               if m in existing_instance_uuids]
+        member_index = not_deleted_members.index(instance.uuid)
+        hagroup = ['A', 'B'][member_index % 2]
+
+        return self._datastore_hagroup_regex, hagroup
+
+    def _get_vm_config_info(self, context, instance, image_info, extra_specs):
         """Captures all relevant information from the spawn parameters."""
 
         boot_from_volume = compute_utils.is_volume_backed_instance(
@@ -709,11 +749,14 @@ class VMwareVMOps(object):
                                                  reason=reason)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
             image_info.disk_type)
+        hagroup_re, hagroup = self._get_hagroup_info(context, instance)
         datastore = ds_util.get_datastore(self._session,
                                           self._cluster,
                                           self._datastore_regex,
                                           extra_specs.storage_policy,
-                                          allowed_ds_types)
+                                          allowed_ds_types,
+                                          datastore_hagroup_regex=hagroup_re,
+                                          datastore_hagroup=hagroup)
         dc_info = self.get_datacenter_ref_and_name(datastore.ref)
 
         return VirtualMachineInstanceConfigInfo(instance,
@@ -1037,7 +1080,8 @@ class VMwareVMOps(object):
                     image_info.file_size) / units.Gi /
                     templ_instance.flavor.root_gb))
 
-            vi = self._get_vm_config_info(templ_instance,
+            vi = self._get_vm_config_info(context,
+                                          templ_instance,
                                           image_info,
                                           extra_specs)
 
@@ -1173,7 +1217,7 @@ class VMwareVMOps(object):
 
         extra_specs = self._get_extra_specs(instance.flavor, image_meta)
 
-        vi = self._get_vm_config_info(instance, image_info,
+        vi = self._get_vm_config_info(context, instance, image_info,
                                       extra_specs)
 
         boot_from_volume = compute_utils.is_volume_backed_instance(
@@ -2310,10 +2354,13 @@ class VMwareVMOps(object):
         storage_policy = self._get_storage_policy(instance.flavor)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
             image_meta.properties.hw_disk_type)
+        hagroup_re, hagroup = self._get_hagroup_info(context, instance)
         datastore = ds_util.get_datastore(self._session, self._cluster,
                                           self._datastore_regex,
                                           storage_policy,
-                                          allowed_ds_types)
+                                          allowed_ds_types,
+                                          datastore_hagroup_regex=hagroup_re,
+                                          datastore_hagroup=hagroup)
         dc_info = self.get_datacenter_ref_and_name(datastore.ref)
         folder = self._get_project_folder(dc_info, instance.project_id,
                                           'Instances')
@@ -3438,7 +3485,8 @@ class VMwareVMOps(object):
 
         extra_specs = self._get_extra_specs(flavor, image_meta)
 
-        vi = self._get_vm_config_info(instance, image_info, extra_specs)
+        vi = self._get_vm_config_info(context, instance, image_info,
+                                      extra_specs)
 
         vm_folder = self._get_project_folder(vi.dc_info,
             project_id=instance.project_id, type_='Instances')
