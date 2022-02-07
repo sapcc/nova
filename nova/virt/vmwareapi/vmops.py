@@ -138,7 +138,7 @@ class VMwareVMOps(object):
     """Management class for VM-related tasks."""
 
     def __init__(self, session, virtapi, volumeops, cluster=None,
-                 datastore_regex=None):
+                 datastore_regex=None, datastore_hagroup_regex=None):
         """Initializer."""
         self.compute_api = compute.API()
         self._session = session
@@ -150,6 +150,7 @@ class VMwareVMOps(object):
         self._root_resource_pool = vm_util.get_res_pool_ref(self._session,
                                                             self._cluster)
         self._datastore_regex = datastore_regex
+        self._datastore_hagroup_regex = datastore_hagroup_regex
         self._base_folder = self._get_base_folder()
         self._tmp_folder = 'vmware_temp'
         self._datastore_browser_mapping = {}
