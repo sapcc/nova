@@ -22,6 +22,7 @@ Class for VM tasks like spawn, snapshot, suspend, resume etc.
 import collections
 import copy
 import decorator
+import itertools
 import math
 import os
 import re
@@ -698,13 +699,77 @@ class VMwareVMOps(object):
                             tmp_image_ds_loc.parent,
                             vi.cache_image_folder)
 
-    def _get_hagroup_info(self, context, instance):
+    def _get_server_group_members_for_hagroup(self, context, server_group):
+        """Return not-deleted, non-bfv members of InstanceGroup"""
+        # query all instances not deleted in server_group.members. this
+        # will only filter in the current cell, but that should be a big
+        # enough radius as cells are AZs in our env - except in qa-de-1
+        # TODO(jkulik): Do we need this to work across cells?
+        InstanceList = objects.instance.InstanceList
+        filters = {'uuid': server_group.members, 'deleted': False}
+        instances = InstanceList.get_by_filters(context, filters,
+                                                expected_attrs=[])
+        existing_instances_by_uuid = {i.uuid: i for i in instances}
+
+        # exclude boot-from-volume (BfV) instances, because Cinder manages
+        # affinity between volumes. If their config-files lie on the same
+        # datastore as another VM, they would "just" become inaccessible, but
+        # not crash. A swap-file going away could crash the VM, but we have
+        # swap on different DSs in the newer BBs anyways and thus we ignore
+        # that here.
+        # TODO(jkulik): We could introduce a setting that would define whether
+        # we have node-local swap-datastores and thus can ignore
+        # boot-from-volume here and in self._get_hagroup_info()
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuids(
+            context, list(existing_instances_by_uuid))
+
+        def bdm_sort_key(bdm):
+            if not bdm.obj_attr_is_set('instance_uuid'):
+                return None
+            return bdm.instance_uuid
+
+        bfv_instance_uuids = set()
+        sorted_bdms = sorted(bdms, key=bdm_sort_key)
+        for instance_uuid, bdms in itertools.groupby(sorted_bdms,
+                                                     key=bdm_sort_key):
+            if instance_uuid is None:
+                continue
+            instance = existing_instances_by_uuid[instance_uuid]
+            bdm_list = objects.BlockDeviceMappingList(objects=list(bdms))
+            is_bfv = compute_utils.is_volume_backed_instance(context, instance,
+                                                             bdms=bdm_list)
+            if not is_bfv:
+                continue
+            bfv_instance_uuids.add(instance_uuid)
+
+        # we need to keep the order of the members here and thus filter the
+        # members by the found instances
+        relevant_members = [m for m in server_group.members
+                            if m in existing_instances_by_uuid
+                            and m not in bfv_instance_uuids]
+        return relevant_members
+
+    def _get_hagroup_info(self, context, instance, is_bfv=None):
         """Return hagroup regex and hagroup for the given instance
 
         The hagroup computes from the server-group the instance is in and thus
         this function may return (None, None) if the server isn't in a
         server-group.
+
+        If it's already known by the calling code, if this is a
+        boot-from-volume instance, we don't want to refetch that information
+        and thus allow passing "is_bfv".
         """
+        if is_bfv is None:
+            is_bfv = compute_utils.is_volume_backed_instance(instance._context,
+                                                             instance)
+        # boot-from-volume instances have their disk affinity managed by Cinder
+        # and their config-files going missing will not take them down. The
+        # only problem they have, is a missing swap-file, but swap-files are on
+        # node-local swap datastores in our environment.
+        if is_bfv:
+            return None, None
+
         # this currently means the hagroup feature is disabled
         if not self._datastore_hagroup_regex:
             return None, None
@@ -720,19 +785,8 @@ class VMwareVMOps(object):
         if 'anti-affinity' not in server_group.policy:
             return None, None
 
-        # query all instances not deleted in server_group.members. this
-        # will only filter in the current cell, but that should be a big
-        # enough radius as cells are AZs in our env - except in qa-de-1
-        # TODO(jkulik): Do we need this to work across cells?
-        InstanceList = objects.instance.InstanceList
-        filters = {'uuid': server_group.members, 'deleted': False}
-        instances = InstanceList.get_by_filters(context, filters,
-                                                expected_attrs=[])
-        existing_instance_uuids = set(i.uuid for i in instances)
-        # we need to keep the order of the members here and thus filter the
-        # members by the found instances
-        not_deleted_members = [m for m in server_group.members
-                               if m in existing_instance_uuids]
+        not_deleted_members = self._get_server_group_members_for_hagroup(
+            context, server_group)
         member_index = not_deleted_members.index(instance.uuid)
         hagroup = ['A', 'B'][member_index % 2]
 
@@ -751,7 +805,8 @@ class VMwareVMOps(object):
                                                  reason=reason)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
             image_info.disk_type)
-        hagroup_re, hagroup = self._get_hagroup_info(context, instance)
+        hagroup_re, hagroup = self._get_hagroup_info(context, instance,
+                                                     is_bfv=boot_from_volume)
         datastore = ds_util.get_datastore(self._session,
                                           self._cluster,
                                           self._datastore_regex,
