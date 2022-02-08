@@ -3548,3 +3548,76 @@ class VMwareVMOps(object):
         result = self._session._call_method(self._session.vim, "PlaceVm",
             self._cluster, placementSpec=placement_spec)
         return result
+
+    def relocate_vm_config_and_ephemeral_disk(self, context, instance,
+                                              target_ds_ref):
+        """svMotion the instance to another datastore
+
+        Volumes attached to the instance are kept in their place, only the
+        config files and - if existing - the ephemeral disks are moved to the
+        target datastore given as moref.
+        """
+        # TODO(jkulik) maybe find out if there's currently a relocation running
+        # and don't add onto that
+
+        # get appropriate attributes for the instances from VMware
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        properties = ["summary.runtime.host",
+                      "resourcePool",
+                      "parent",
+                      "config.hardware.device"]
+        vm_props = self._session._call_method(vutil,
+                                              "get_object_properties_dict",
+                                              vm_ref,
+                                              properties)
+
+        target_host_ref = vm_props['summary.runtime.host']
+        target_folder_ref = vm_props['parent']
+        target_resource_pool_ref = vm_props['resourcePool']
+
+        # build a general relocate-spec
+        client_factory = self._session.vim.client.factory
+        relocate_spec = vm_util.relocate_vm_spec(
+            client_factory,
+            datastore=target_ds_ref,  # this moves the config files and acts
+                                      # as default
+            host=target_host_ref,
+            folder=target_folder_ref,
+            res_pool=target_resource_pool_ref)
+
+        # update relocate-spec for disk placement
+        disk_locators = []
+        devices = vim_util.get_array_items(vm_props['config.hardware.device'])
+        for device in devices:
+            if device.__class__.__name__ != "VirtualDisk":
+                continue
+
+            disk_locator = client_factory.create(
+                "ns0:VirtualMachineRelocateSpecDiskLocator")
+            disk_locator.diskId = device.key
+
+            # get the datastore from the fileName e.g.
+            # [vVOL_BB092] naa.600a0980383043367a5d4a72746b3437/516b77fd-4C...
+            m = re.match(r'\[(?P<ds>[^\]]+)\] ', device.backing.fileName)
+            device_ds = m.group('ds') if m else ''
+            is_ephemeral = self._datastore_regex.match(device_ds)
+            if is_ephemeral:
+                disk_locator.datastore = target_ds_ref
+            else:
+                # we don't have to specify profiles for the non-moving disk
+                disk_locator.datastore = device.backing.datastore
+
+            disk_locators.append(disk_locator)
+
+        relocate_spec.disk = disk_locators
+
+        # start instance relocation
+        LOG.debug('Relocating ephemeral disks and config of %s to DS %s',
+                  vutil.get_moref_value(vm_ref),
+                  vutil.get_moref_value(target_ds_ref),
+                  instance=instance)
+        vm_util.relocate_vm(self._session, vm_ref, spec=relocate_spec)
+        LOG.debug('Relocated ephemeral disks and config of %s to DS %s',
+                  vutil.get_moref_value(vm_ref),
+                  vutil.get_moref_value(target_ds_ref),
+                  instance=instance)
