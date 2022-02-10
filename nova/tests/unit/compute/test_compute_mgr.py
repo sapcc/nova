@@ -79,6 +79,23 @@ CONF = nova.conf.CONF
 fake_host_list = [mock.sentinel.host1]
 
 
+class _PropertiesChanged(object):
+    def __init__(self, obj, properties):
+        self._obj = obj
+        self._properties = properties
+
+    def __eq__(self, other):
+        if self._obj is not other:
+            return False
+        try:
+            for key, value in six.iteritems(self._properties):
+                if getattr(other, key) != value:
+                    return False
+            return True
+        except KeyError:
+            return False
+
+
 @ddt.ddt
 class ComputeManagerUnitTestCase(test.NoDBTestCase):
     def setUp(self):
@@ -1193,7 +1210,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                                       power_state.SHUTDOWN)
         mock_get_inst.return_value = 'fake-bdm'
         mock_resume.side_effect = test.TestingException
-        self.compute._init_instance('fake-context', instance)
+        self.compute._init_instance(self.context, instance)
         mock_get_power.assert_has_calls([mock.call(mock.ANY, instance),
                                          mock.call(mock.ANY, instance)])
         mock_plug.assert_called_once_with(instance, mock.ANY)
@@ -1271,7 +1288,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         with mock.patch.object(self.compute,
                                '_complete_partial_deletion') as mock_deletion:
             mock_deletion.side_effect = test.TestingException()
-            self.compute._init_instance(self, instance)
+            self.compute._init_instance(self.context, instance)
             msg = u'Failed to complete a deletion'
             mock_log.exception.assert_called_once_with(msg, instance=instance)
 
@@ -2148,8 +2165,10 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                 pass
 
         def _fake_get(ctx, filter, expected_attrs, use_slave):
+            changed_ctx = _PropertiesChanged(ctx, {'read_deleted': 'yes'},)
+
             mock_get.assert_called_once_with(
-                {'read_deleted': 'yes'},
+                changed_ctx,
                 {'deleted': True, 'soft_deleted': False, 'host': 'fake-mini',
                  'cleaned': False},
                 expected_attrs=['system_metadata'],
@@ -2163,7 +2182,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
         mock_get.side_effect = _fake_get
         mock_delete.side_effect = [True, False]
 
-        self.compute._run_pending_deletes({})
+        self.compute._run_pending_deletes(self.context)
 
         self.assertFalse(a.cleaned)
         self.assertEqual('100', a.system_metadata['clean_attempts'])

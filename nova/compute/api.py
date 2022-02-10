@@ -2454,7 +2454,8 @@ class API(base.Base):
         except exception.InvalidID:
             LOG.debug("Invalid instance id %s", instance_id)
             raise exception.InstanceNotFound(instance_id=instance_id)
-
+        context.resource_id = instance.uuid
+        context.update_store()
         return instance
 
     def get_all(self, context, search_opts=None, limit=None, marker=None,

@@ -7882,6 +7882,7 @@ class ComputeTestCase(BaseTestCase,
         admin_context = context.get_admin_context()
         instance = objects.Instance(admin_context)
         instance.id = 1
+        instance.uuid = uuids.fake
         instance.vm_state = vm_states.DELETED
         instance.deleted = False
         instance.host = self.compute.host

@@ -1818,7 +1818,7 @@ def get_vmdk_adapter_type(adapter_type):
 
 def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
     """Create VM on ESX host."""
-    LOG.debug("Creating VM on the ESX host", instance=instance)
+    LOG.debug("Creating VM on the ESX host")
     vm_create_task = session._call_method(
         session.vim,
         "CreateVM_Task", vm_folder,
@@ -1840,7 +1840,7 @@ def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
                             '\'%(ostype)s\'. An invalid os type may be '
                             'one cause of this instance creation failure',
                             {'ostype': config_spec.guestId})
-    LOG.debug("Created VM on the ESX host", instance=instance)
+    LOG.debug("Created VM on the ESX host")
     return task_info.result
 
 
@@ -1848,11 +1848,11 @@ def create_vm(session, instance, vm_folder, config_spec, res_pool_ref):
 def _destroy_vm(session, instance, vm_ref=None):
     if not vm_ref:
         vm_ref = get_vm_ref(session, instance)
-    LOG.debug("Destroying the VM", instance=instance)
+    LOG.debug("Destroying the VM")
     destroy_task = session._call_method(session.vim, "Destroy_Task",
                                         vm_ref)
     session._wait_for_task(destroy_task)
-    LOG.info("Destroyed the VM", instance=instance)
+    LOG.info("Destroyed the VM")
 
 
 def destroy_vm(session, instance, vm_ref=None):
@@ -1861,13 +1861,13 @@ def destroy_vm(session, instance, vm_ref=None):
         return _destroy_vm(session, instance, vm_ref=vm_ref)
     except vexc.VimFaultException as e:
         with excutils.save_and_reraise_exception() as ctx:
-            LOG.exception(_('Destroy VM failed'), instance=instance)
+            LOG.exception(_('Destroy VM failed'))
             # we need the `InvalidArgument` fault to bubble out of this
             # function so it can be acted upon on higher levels
             if 'InvalidArgument' not in e.fault_list:
                 ctx.reraise = False
     except Exception:
-        LOG.exception(_('Destroy VM failed'), instance=instance)
+        LOG.exception(_('Destroy VM failed'))
 
 
 def mark_vm_as_template(session, instance, vm_ref=None):
@@ -1875,11 +1875,11 @@ def mark_vm_as_template(session, instance, vm_ref=None):
     try:
         if not vm_ref:
             vm_ref = get_vm_ref(session, instance)
-        LOG.debug("Marking the VM as template", instance=instance)
+        LOG.debug("Marking the VM as template")
         session._call_method(session.vim, "MarkAsTemplate", vm_ref)
-        LOG.info("Marked the VM as template", instance=instance)
+        LOG.info("Marked the VM as template")
     except Exception:
-        LOG.exception(_('Mark VM as template failed'), instance=instance)
+        LOG.exception(_('Mark VM as template failed'))
 
 
 def create_virtual_disk(session, dc_ref, adapter_type, disk_type,
@@ -1958,15 +1958,15 @@ def power_on_instance(session, instance, vm_ref=None):
     if vm_ref is None:
         vm_ref = get_vm_ref(session, instance)
 
-    LOG.debug("Powering on the VM", instance=instance)
+    LOG.debug("Powering on the VM")
     try:
         poweron_task = session._call_method(
                                     session.vim,
                                     "PowerOnVM_Task", vm_ref)
         session._wait_for_task(poweron_task)
-        LOG.debug("Powered on the VM", instance=instance)
+        LOG.debug("Powered on the VM")
     except vexc.InvalidPowerStateException:
-        LOG.debug("VM already powered on", instance=instance)
+        LOG.debug("VM already powered on")
 
 
 def _get_vm_port_indices(session, vm_ref):
@@ -2019,14 +2019,14 @@ def power_off_instance(session, instance, vm_ref=None):
     if vm_ref is None:
         vm_ref = get_vm_ref(session, instance)
 
-    LOG.debug("Powering off the VM", instance=instance)
+    LOG.debug("Powering off the VM")
     try:
         poweroff_task = session._call_method(session.vim,
                                          "PowerOffVM_Task", vm_ref)
         session._wait_for_task(poweroff_task)
-        LOG.debug("Powered off the VM", instance=instance)
+        LOG.debug("Powered off the VM")
     except vexc.InvalidPowerStateException:
-        LOG.debug("VM already powered off", instance=instance)
+        LOG.debug("VM already powered off")
 
 
 def find_rescue_device(hardware_devices, instance):

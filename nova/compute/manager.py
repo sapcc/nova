@@ -697,9 +697,10 @@ class ComputeManager(manager.Manager):
                                      if inst.uuid in evacuations}
 
         for instance in evacuated_local_instances.values():
+            context.resource_id = instance.uuid
+            context.update_store()
             LOG.info('Destroying instance as it has been evacuated from '
-                     'this host but still exists in the hypervisor',
-                     instance=instance)
+                     'this host but still exists in the hypervisor')
             try:
                 network_info = self.network_api.get_instance_nw_info(
                     context, instance)
@@ -711,8 +712,7 @@ class ComputeManager(manager.Manager):
                 network_info = network_model.NetworkInfo()
                 bdi = {}
                 LOG.info('Instance has been marked deleted already, '
-                         'removing it from the hypervisor.',
-                         instance=instance)
+                         'removing it from the hypervisor.')
                 # always destroy disks if the instance was deleted
                 destroy_disks = True
             self.driver.destroy(context, instance,
@@ -725,6 +725,8 @@ class ComputeManager(manager.Manager):
         compute_nodes = {}
 
         for instance_uuid, migration in evacuations.items():
+            context.resource_id = instance_uuid
+            context.update_store()
             try:
                 if instance_uuid in evacuated_local_instances:
                     # Avoid the db call if we already have the instance loaded
@@ -739,8 +741,7 @@ class ComputeManager(manager.Manager):
                 continue
 
             LOG.info('Cleaning up allocations of the instance as it has been '
-                     'evacuated from this host',
-                     instance=instance)
+                     'evacuated from this host')
             if migration.source_node not in compute_nodes:
                 try:
                     cn_uuid = objects.ComputeNode.get_by_host_and_nodename(
@@ -749,7 +750,7 @@ class ComputeManager(manager.Manager):
                 except exception.ComputeHostNotFound:
                     LOG.error("Failed to clean allocation of evacuated "
                               "instance as the source node %s is not found",
-                              migration.source_node, instance=instance)
+                              migration.source_node)
                     continue
             cn_uuid = compute_nodes[migration.source_node]
 
@@ -761,7 +762,7 @@ class ComputeManager(manager.Manager):
                         context, instance, cn_uuid, self.reportclient)):
                 LOG.error("Failed to clean allocation of evacuated instance "
                           "on the source node %s",
-                          cn_uuid, instance=instance)
+                          cn_uuid)
 
             migration.status = 'completed'
             migration.save()
@@ -833,6 +834,8 @@ class ComputeManager(manager.Manager):
                          'host': instance.host})
             return
 
+        context.resource_id = instance.uuid
+        context.update_store()
         # Instances that are shut down, or in an error state can not be
         # initialized and are not attempted to be recovered. The exception
         # to this are instances that are in RESIZE_MIGRATING or DELETING,
@@ -1955,6 +1958,9 @@ class ComputeManager(manager.Manager):
 
         @utils.synchronized(instance.uuid)
         def _locked_do_build_and_run_instance(*args, **kwargs):
+            # NOTE(fwiesel): Spawned in a different thread, store the context
+            context.update_store()
+
             # NOTE(danms): We grab the semaphore with the instance uuid
             # locked because we could wait in line to build this instance
             # for a while and we want to make sure that nothing else tries
@@ -7606,6 +7612,8 @@ class ComputeManager(manager.Manager):
                     to_unrescue.append(instance)
 
             for instance in to_unrescue:
+                context.resource_id = instance.uuid
+                context.update_store()
                 self.compute_api.unrescue(context, instance)
 
     @periodic_task.periodic_task
@@ -7655,6 +7663,9 @@ class ComputeManager(manager.Manager):
                 _set_migration_to_error(migration, reason,
                                         instance=instance)
                 continue
+
+            context.resource_id = instance.uuid
+            context.update_store()
             # race condition: The instance in DELETING state should not be
             # set the migration state to error, otherwise the instance in
             # to be deleted which is in RESIZED state
@@ -7663,7 +7674,7 @@ class ComputeManager(manager.Manager):
                                        task_states.SOFT_DELETING]:
                 msg = ("Instance being deleted or soft deleted during resize "
                        "confirmation. Skipping.")
-                LOG.debug(msg, instance=instance)
+                LOG.debug(msg)
                 continue
 
             # race condition: This condition is hit when this method is
@@ -7673,7 +7684,7 @@ class ComputeManager(manager.Manager):
             if instance.task_state == task_states.RESIZE_FINISH:
                 msg = ("Instance still resizing during resize "
                        "confirmation. Skipping.")
-                LOG.debug(msg, instance=instance)
+                LOG.debug(msg)
                 continue
 
             vm_state = instance.vm_state
@@ -7691,7 +7702,7 @@ class ComputeManager(manager.Manager):
                                                 migration=migration)
             except Exception as e:
                 LOG.info("Error auto-confirming resize: %s. "
-                         "Will retry later.", e, instance=instance)
+                         "Will retry later.", e)
 
     @periodic_task.periodic_task(spacing=CONF.shelved_poll_interval)
     def _poll_shelved_instances(self, context):
@@ -7714,6 +7725,8 @@ class ComputeManager(manager.Manager):
                 to_gc.append(instance)
 
         for instance in to_gc:
+            context.resource_id = instance.uuid
+            context.update_store()
             try:
                 instance.task_state = task_states.SHELVING_OFFLOADING
                 instance.save(expected_task_state=(None,))
@@ -7950,6 +7963,9 @@ class ComputeManager(manager.Manager):
                          'num_vm_instances': num_vm_instances})
 
         def _sync(db_instance):
+            context.resource_uuid = db_instance.uuid
+            context.update_store()
+
             # NOTE(melwitt): This must be synchronized as we query state from
             #                two separate sources, the driver and the database.
             #                They are set (in stop_instance) and read, in sync.
@@ -8282,13 +8298,14 @@ class ComputeManager(manager.Manager):
             if self._deleted_old_enough(instance, interval):
                 bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                         context, instance.uuid)
-                LOG.info('Reclaiming deleted instance', instance=instance)
+                context.resource_id = instance.uuid
+                context.update_store()
+                LOG.info('Reclaiming deleted instance')
                 try:
                     self._delete_instance(context, instance, bdms)
                 except Exception as e:
                     LOG.warning("Periodic reclaim failed to delete "
-                                "instance: %s",
-                                e, instance=instance)
+                                "instance: %s", e)
 
     def _get_nodename(self, instance, refresh=False):
         """Helper method to get the name of the first available node
@@ -8743,11 +8760,12 @@ class ComputeManager(manager.Manager):
 
         for instance in instances:
             attempts = int(instance.system_metadata.get('clean_attempts', '0'))
+            context.resource_id = instance.uuid
+            context.update_store()
             LOG.debug('Instance has had %(attempts)s of %(max)s '
                       'cleanup attempts',
                       {'attempts': attempts,
-                       'max': CONF.maximum_instance_delete_attempts},
-                      instance=instance)
+                       'max': CONF.maximum_instance_delete_attempts})
             if attempts < CONF.maximum_instance_delete_attempts:
                 success = self.driver.delete_instance_files(instance)
 
@@ -8788,6 +8806,8 @@ class ComputeManager(manager.Manager):
             if instance.host != CONF.host:
                 for migration in migrations:
                     if instance.uuid == migration.instance_uuid:
+                        context.resource_id = instance.uuid
+                        context.update_store()
                         # Delete instance files if not cleanup properly either
                         # from the source or destination compute nodes when
                         # the instance is deleted during resizing.

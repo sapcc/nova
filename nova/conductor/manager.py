@@ -670,6 +670,8 @@ class ComputeTaskManager(base.Base):
 
         elevated = context.elevated()
         for (instance, host_list) in six.moves.zip(instances, host_lists):
+            context.resource_uuid = instance.uuid
+            context.update_store()
             host = host_list.pop(0)
             if is_reschedule:
                 # If this runs in the superconductor, the first instance will
@@ -775,7 +777,7 @@ class ComputeTaskManager(base.Base):
 
             alts = [(alt.service_host, alt.nodename) for alt in host_list]
             LOG.debug("Selected host: %s; Selected node: %s; Alternates: %s",
-                    host.service_host, host.nodename, alts, instance=instance)
+                    host.service_host, host.nodename, alts)
 
             self.compute_rpcapi.build_and_run_instance(context,
                     instance=instance, host=host.service_host, image=image,
@@ -1375,13 +1377,15 @@ class ComputeTaskManager(base.Base):
                 # Skip placeholders that were buried in cell0 or had their
                 # build requests deleted by the user before instance create.
                 continue
+            context.resource_uuid = instance.uuid
+            context.update_store()
             cell = cell_mapping_cache[instance.uuid]
             # host_list is a list of one or more Selection objects, the first
             # of which has been selected and its resources claimed.
             host = host_list.pop(0)
             alts = [(alt.service_host, alt.nodename) for alt in host_list]
             LOG.debug("Selected host: %s; Selected node: %s; Alternates: %s",
-                    host.service_host, host.nodename, alts, instance=instance)
+                    host.service_host, host.nodename, alts)
             filter_props = request_spec.to_legacy_filter_properties_dict()
             scheduler_utils.populate_retry(filter_props, instance.uuid)
             scheduler_utils.populate_filter_properties(filter_props,
