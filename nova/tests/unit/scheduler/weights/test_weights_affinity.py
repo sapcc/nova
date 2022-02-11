@@ -29,7 +29,8 @@ class SoftWeigherTestBase(test.NoDBTestCase):
         self.weight_handler = weights.HostWeightHandler()
         self.weighers = []
 
-    def _get_weighed_host(self, hosts, policy, group='default'):
+    def _get_weighed_host(self, hosts, policy, group='default',
+                          expected_host=None, match_host=False):
         if group == 'default':
             members = ['member1', 'member2', 'member3', 'member4', 'member5',
                 'member6', 'member7']
@@ -38,17 +39,27 @@ class SoftWeigherTestBase(test.NoDBTestCase):
         request_spec = objects.RequestSpec(
             instance_group=objects.InstanceGroup(
                 policy=policy,
-                members=members))
-        return self.weight_handler.get_weighed_objects(self.weighers,
-                                                       hosts,
-                                                       request_spec)[0]
+                members=members,
+                hosts=[h.host for h in hosts]))
+        hosts = self.weight_handler.get_weighed_objects(self.weighers,
+                                                        hosts,
+                                                        request_spec)
+        if not match_host:
+            return hosts[0]
+        else:
+            for host in hosts:
+                if host.obj.host == expected_host:
+                    return host
 
     def _get_all_hosts(self):
+        aggs1 = [objects.Aggregate(id=1, name='vc-a-1', hosts=['host1'])]
+        aggs2 = [objects.Aggregate(id=2, name='vc-a-2', hosts=['host3']),
+                 objects.Aggregate(id=2, name='vc-a-3', hosts=['host4'])]
         host_values = [
             ('host1', 'node1', {'instances': {
                 'member1': mock.sentinel,
                 'instance13': mock.sentinel
-            }}),
+            }, 'aggregates': aggs1}),
             ('host2', 'node2', {'instances': {
                 'member2': mock.sentinel,
                 'member3': mock.sentinel,
@@ -60,12 +71,12 @@ class SoftWeigherTestBase(test.NoDBTestCase):
             }}),
             ('host3', 'node3', {'instances': {
                 'instance15': mock.sentinel
-            }}),
+            }, 'aggregates': aggs2}),
             ('host4', 'node4', {'instances': {
                 'member6': mock.sentinel,
                 'member7': mock.sentinel,
                 'instance16': mock.sentinel
-            }})]
+            }, 'aggregates': aggs2})]
         return [fakes.FakeHostState(host, node, values)
                 for host, node, values in host_values]
 
@@ -105,6 +116,20 @@ class SoftAffinityWeigherTestCase(SoftWeigherTestBase):
                       expected_weight=2.0,
                       expected_host='host2')
 
+    def test_soft_affinity_weight_multiplier_same_shards(self):
+        """For host, which does not contain servers of server-group,
+        but in same shard as the servers in the server-group, weight
+        is 0.5. Due to normalization smallest weight become 0.0
+        """
+        self.flags(soft_affinity_weight_multiplier=2.0,
+                   group='filter_scheduler')
+        expected_weight = 0.0
+        hostinfo_list = self._get_all_hosts()
+        weighed_host = self._get_weighed_host(hostinfo_list,
+            policy='soft-affinity', group='default',
+            expected_host='host3', match_host=True)
+        self.assertEqual(expected_weight, weighed_host.weight)
+
     @mock.patch.object(affinity, 'LOG')
     def test_soft_affinity_weight_multiplier_negative_value(self, mock_log):
         self.flags(soft_affinity_weight_multiplier=-1.0,
@@ -116,7 +141,8 @@ class SoftAffinityWeigherTestCase(SoftWeigherTestBase):
         self._do_test(policy='soft-affinity',
                       expected_weight=0.0,
                       expected_host='host3')
-        self.assertEqual(1, mock_log.warning.call_count)
+        # one from _weigh_object() and two from weight_multiplier()
+        self.assertEqual(3, mock_log.warning.call_count)
 
     def test_running_twice(self):
         """Run the weighing twice for different groups each run

@@ -55,6 +55,7 @@ class _SoftAffinityWeigherBase(weights.BaseHostWeigher):
 class ServerGroupSoftAffinityWeigher(_SoftAffinityWeigherBase):
     policy_name = 'soft-affinity'
     warning_sent = False
+    _SHARD_PREFIX = 'vc-'
 
     def weight_multiplier(self):
         if (CONF.filter_scheduler.soft_affinity_weight_multiplier < 0 and
@@ -69,6 +70,39 @@ class ServerGroupSoftAffinityWeigher(_SoftAffinityWeigherBase):
             self.warning_sent = True
 
         return CONF.filter_scheduler.soft_affinity_weight_multiplier
+
+    def _weigh_object(self, host_state, request_spec):
+        weight = super(ServerGroupSoftAffinityWeigher, self)._weigh_object(
+            host_state, request_spec)
+
+        # if the host contained servers from the same group, return that weight
+        if weight:
+            return weight
+
+        # get shards of the host
+        host_shard_aggrs = [aggr for aggr in host_state.aggregates
+                            if aggr.name.startswith(self._SHARD_PREFIX)]
+        if not host_shard_aggrs:
+            LOG.warning('No aggregates found for host %(host)s.',
+                        {'host': host_state.host})
+            return 0
+
+        if len(host_shard_aggrs) > 1:
+            LOG.warning('More than one host aggregates found for '
+                        'host %(host)s, selecting first.',
+                        {'host': host_state.host})
+        host_shard_aggr = host_shard_aggrs[0]
+
+        group_hosts = None
+        if request_spec.instance_group and request_spec.instance_group.hosts:
+            group_hosts = set(request_spec.instance_group.hosts)
+        if not group_hosts:
+            return 0
+        # group_hosts doesn't contain our host, because otherwise we would
+        # have returned a weighed already as we would have instances
+        if group_hosts & set(host_shard_aggr.hosts):
+            return 0.5
+        return 0
 
 
 class ServerGroupSoftAntiAffinityWeigher(_SoftAffinityWeigherBase):
