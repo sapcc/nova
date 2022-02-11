@@ -1994,6 +1994,9 @@ class _ComputeAPIUnitTestMixIn(object):
             else:
                 filter_properties = {'ignore_hosts': [fake_inst['host']]}
 
+            filter_properties['scheduler_hints'] = {
+                '_nova_check_type': ['resize']}
+
             if self.cell_type == 'api':
                 mig = mock.MagicMock()
                 mock_migration.return_value = mig
@@ -2029,7 +2032,6 @@ class _ComputeAPIUnitTestMixIn(object):
 
             scheduler_hint = {
                 'filter_properties': filter_properties,
-                '_nova_check_type': ['resize'],
             }
 
         if flavor_id_passed:
