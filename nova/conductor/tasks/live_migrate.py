@@ -355,8 +355,13 @@ class LiveMigrationTask(base.TaskBase):
             This is generally at least seeded with the source host.
         :returns: nova.objects.RequestSpec object
         """
+        # NOTE(fwiesel): In order to check the compatibility
+        # between source and target-host based on the cpu-info,
+        # we need the source host/node, and the _nova_check_type ensures
+        # that all the configured filters are run
         scheduler_hints = {'source_host': [self.source],
-                           'source_node': [self.instance.node]}
+                           'source_node': [self.instance.node],
+                           '_nova_check_type': ['live_migrate']}
         filter_properties = {'ignore_hosts': attempted_hosts,
                              'scheduler_hints': scheduler_hints}
         if not self.request_spec:
@@ -377,13 +382,8 @@ class LiveMigrationTask(base.TaskBase):
             # if we want to make sure that the next destination
             # is not forced to be the original host
             request_spec.reset_forced_destinations()
-            # NOTE(jkulik): We need the instance's current host in at least one
-            # filter to make sure we don't pass vCenter boundaries, i.e. shards
-            if (not request_spec.obj_attr_is_set('scheduler_hints')
-                    or request_spec.scheduler_hints is None):
-                request_spec._from_hints(scheduler_hints)
-            else:
-                request_spec.scheduler_hints.update(scheduler_hints)
+            request_spec.update_scheduler_hints(scheduler_hints)
+
         scheduler_utils.setup_instance_group(self.context, request_spec)
 
         # We currently only support live migrating to hosts in the same

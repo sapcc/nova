@@ -3627,7 +3627,10 @@ class API(base.Base):
         instance.update(extra_instance_updates)
         instance.save(expected_task_state=[None])
 
-        filter_properties = {'ignore_hosts': []}
+        # Not to be confused with scheduler_hint (singular)
+        scheduler_hints = {'_nova_check_type': ['resize']}
+        filter_properties = {'ignore_hosts': [],
+                             'scheduler_hints': scheduler_hints}
 
         if not CONF.allow_resize_to_same_host:
             filter_properties['ignore_hosts'].append(instance.host)
@@ -3655,6 +3658,9 @@ class API(base.Base):
             request_spec = objects.RequestSpec.get_by_instance_uuid(
                 context, instance.uuid)
             request_spec.ignore_hosts = filter_properties['ignore_hosts']
+            if filter_properties.get('force_nodes'):
+                request_spec.force_nodes = filter_properties['force_nodes']
+            request_spec.update_scheduler_hints(scheduler_hints)
         except exception.RequestSpecNotFound:
             # Some old instances can still have no RequestSpec object attached
             # to them, we need to support the old way
@@ -3669,6 +3675,10 @@ class API(base.Base):
         # resource consumption for this operation is written to the database
         # by compute.
         scheduler_hint = {'filter_properties': filter_properties}
+        # Yes, that is confusing: scheduler_hint is the
+        # parameter named for the resize_instance api call,
+        # which takes has filter_properties which in turn has
+        # scheduler_hints (plural).
 
         if request_spec:
             if host_name is None:
@@ -3685,7 +3695,6 @@ class API(base.Base):
                 request_spec.requested_destination = objects.Destination(
                     host=node.host, node=node.hypervisor_hostname)
 
-        scheduler_hint['_nova_check_type'] = ['resize']
         self.compute_task_api.resize_instance(context, instance,
                 extra_instance_updates, scheduler_hint=scheduler_hint,
                 flavor=new_instance_type,
