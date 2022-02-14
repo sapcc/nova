@@ -729,6 +729,8 @@ class VMwareVCDriver(driver.ComputeDriver):
 
     def sync_server_group(self, context, sg_uuid):
         self._vmops.sync_server_group(context, sg_uuid)
+        self._vmops.update_server_group_hagroup_disk_placement(context,
+                                                               sg_uuid)
 
     def _server_group_sync_loop(self, compute_host):
         """Retrieve all groups from the cluster and from the DB and call
