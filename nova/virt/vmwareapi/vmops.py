@@ -3676,3 +3676,115 @@ class VMwareVMOps(object):
                   vutil.get_moref_value(vm_ref),
                   vutil.get_moref_value(target_ds_ref),
                   instance=instance)
+
+    def update_server_group_hagroup_disk_placement(self, context, sg_uuid):
+        """Checks and remedies a server-group's VMs' root disk placement
+
+        Should be called when a server-group gets updated through the API to
+        make sure we still adhere to at least 2 VMs having their root-disk on
+        different hagroup datastores.
+
+        To make sure there are 2 VMs on different hagroup datastores, we take
+        the first and second member of the server group and put them on hagroup
+        A and B respectively. This action is done by the host/cluster
+        responsible for these VMs.
+        """
+        # this feature is disabled as we have no way to find hagroups
+        if not self._datastore_hagroup_regex:
+            return
+
+        # try to find the server-group
+        try:
+            sg = objects.instance_group.InstanceGroup.get_by_uuid(context,
+                                                                  sg_uuid)
+        except nova.exception.InstanceGroupNotFound:
+            LOG.warning("Cannot update hagroup placement for server-group %s: "
+                        "InstanceGroup not found.", sg_uuid)
+            return
+
+        # we explicitly only handle anti-affinity
+        if 'anti-affinity' not in sg.policy:
+            return
+
+        # get the relevant instances for this server-group
+        sg_members = self._get_server_group_members_for_hagroup(context, sg)
+
+        # nothing we can do if there aren't even 2 members to take care of
+        if len(sg_members) < 2:
+            return
+
+        # check if member #1 or #2 belong to us
+        InstanceList = objects.instance.InstanceList
+        filters = {'host': self._compute_host,
+                   'uuid': [sg_members[0], sg_members[1]],
+                   'deleted': False}
+        instances = InstanceList.get_by_filters(context, filters,
+                                                expected_attrs=[])
+        if not instances:
+            return
+
+        for instance in instances:
+            hagroup = 'a' if sg_members[0] == instance.uuid else 'b'
+            LOG.debug("Checking hagroup %s disk placement of instance %s in "
+                      "server-group %s",
+                      hagroup, instance.uuid, sg_uuid)
+
+            # retrieve the currently used ephemeral datastores
+            # TODO(jkulik) implement something that checks against the
+            # swap-file, too
+            vm_ref = vm_util.get_vm_ref(self._session, instance)
+            properties = ["datastore"]
+            vm_props = self._session._call_method(vutil,
+                                                  "get_object_properties_dict",
+                                                  vm_ref,
+                                                  properties)
+            ephemeral_datastores = {
+                vutil.get_moref_value(ds.ref): ds for ds in
+                ds_util.get_available_datastores(self._session,
+                                                 self._cluster,
+                                                 self._datastore_regex)}
+
+            datastores = vim_util.get_array_items(vm_props['datastore'])
+            used_datastores = [vutil.get_moref_value(ds_ref)
+                               for ds_ref in datastores]
+
+            used_ephemeral_datastores = [
+                ephemeral_datastores[ds_ref_value]
+                for ds_ref_value in used_datastores
+                if ds_ref_value in ephemeral_datastores]
+
+            # get hagroup for the datastores and check if it matches
+            # expectations
+            for ds in used_ephemeral_datastores:
+                m = self._datastore_hagroup_regex.match(ds.name)
+                current_hagroup = '<unknown>'
+                if not m:
+                    break
+                current_hagroup = m.group('hagroup').lower()
+                if current_hagroup != hagroup:
+                    break
+            else:
+                LOG.debug("Checking hagroup %s disk placement of instance %s "
+                          "in server-group %s finished: no action necessary.",
+                          hagroup, instance.uuid, sg_uuid)
+                continue
+
+            # parts of the VM are on the wrong hagroup. we have to move it to a
+            # new datastore
+            LOG.debug("Instance %s in server-group %s resides on hagroup %s "
+                      "but should be on %s. Trying to remedy.",
+                      instance.uuid, sg_uuid, current_hagroup, hagroup)
+            storage_policy = self._get_storage_policy(instance.flavor)
+            allowed_ds_types = ds_util.get_allowed_datastore_types(
+                instance.image_meta.properties.hw_disk_type)
+            datastore = ds_util.get_datastore(self._session, self._cluster,
+                                              self._datastore_regex,
+                                              storage_policy,
+                                              allowed_ds_types,
+                                              datastore_hagroup_regex=
+                                                self._datastore_hagroup_regex,
+                                              datastore_hagroup=hagroup)
+            self.relocate_vm_config_and_ephemeral_disk(context, instance,
+                                                       datastore.ref)
+            LOG.debug("Moved instance %s in server-group %s to hagroup %s.",
+                      instance.uuid, sg_uuid, hagroup)
