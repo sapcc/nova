@@ -3586,8 +3586,8 @@ class VMwareVMOps(object):
             self._cluster, placementSpec=placement_spec)
         return result
 
-    def relocate_vm_config_and_ephemeral_disk(self, context, instance,
-                                              target_ds_ref):
+    def _relocate_vm_config_and_ephemeral_disk(self, context, instance,
+                                               target_ds_ref):
         """svMotion the instance to another datastore
 
         Volumes attached to the instance are kept in their place, only the
@@ -3658,6 +3658,20 @@ class VMwareVMOps(object):
                   vutil.get_moref_value(vm_ref),
                   vutil.get_moref_value(target_ds_ref),
                   instance=instance)
+
+    def relocate_vm_config_and_ephemeral_disk(self, context, instance,
+                                              target_ds_ref):
+
+        @utils.synchronized(instance.uuid)
+        def _locked_relocate_vm_config_and_ephemeral_disk(context,
+                                                          instance,
+                                                          target_ds_ref):
+            return self._relocate_vm_config_and_ephemeral_disk(context,
+                                                               instance,
+                                                               target_ds_ref)
+
+        return _locked_relocate_vm_config_and_ephemeral_disk(context, instance,
+                                                             target_ds_ref)
 
     def update_server_group_hagroup_disk_placement(self, context, sg_uuid):
         """Checks and remedies a server-group's VMs' root disk placement
