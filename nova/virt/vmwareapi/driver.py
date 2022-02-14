@@ -777,6 +777,8 @@ class VMwareVCDriver(driver.ComputeDriver):
                     sleep_time = random.uniform(0.5, spacing)
                     time.sleep(sleep_time)
                     self._vmops.sync_server_group(context, sg_uuid)
+                    self._vmops.update_server_group_hagroup_disk_placement(
+                        context, sg_uuid)
             except Exception as e:
                 LOG.exception("Finished server-group sync-loop with error: %s",
                               e)
