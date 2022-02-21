@@ -66,6 +66,23 @@ class StableMoRefProxy(object):
         return "StableMoRefProxy({!r})".format(self.moref)
 
 
+class MoRef(StableMoRefProxy):
+    """MoRef takes a closure to resolve the reference of a managed object
+    That closure is called again, in case we get a ManagedObjectNotFound
+    exception on said reference.
+    """
+    def __init__(self, closure, ref=None):
+        self._closure = closure
+        ref = ref or self._closure()
+        super().__init__(ref)
+
+    def fetch_moref(self, _):
+        self.moref = self._closure()
+
+    def __repr__(self):
+        return "MoRef({!r})".format(self.moref)
+
+
 class VMwareAPISession(api.VMwareAPISession):
     """Sets up a session with the VC/ESX host and handles all
     the calls made to the host.
