@@ -788,7 +788,13 @@ class VMwareVMOps(object):
         not_deleted_members = self._get_server_group_members_for_hagroup(
             context, server_group)
         member_index = not_deleted_members.index(instance.uuid)
-        hagroup = ['A', 'B'][member_index % 2]
+        # the first two  instances are hard-mapped to A and B respectively, so
+        # we can make sure we have at least one instance on either hagroup. the
+        # other instances we map basically randomly.
+        if member_index < 2:
+            hagroup = ['A', 'B'][member_index % 2]
+        else:
+            hagroup = ['A', 'B'][int(instance.uuid[0], 16) % 2]
 
         return self._datastore_hagroup_regex, hagroup
 
