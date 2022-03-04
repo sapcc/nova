@@ -1318,12 +1318,6 @@ class VmMoRefProxy(StableMoRefProxy):
             raise exception.InstanceNotFound(instance_id=self._uuid)
         vm_ref_cache_update(self._uuid, self.moref)
 
-    def __eq__(self, other):
-        try:
-            return self.moref == other.moref
-        except AttributeError:
-            return self.moref == other
-
 
 def get_vm_ref(session, instance):
     """Get reference to the VM through uuid."""
