@@ -4151,6 +4151,7 @@ class VMwareVMOps(object):
                                                        datastore.ref)
             LOG.debug("Moved instance %s in server-group %s to hagroup %s.",
                       instance.uuid, sg_uuid, hagroup)
+
     def _get_instance_config_info(self, context, instance, image_meta=None):
         """Returns VirtualMachineInstanceConfigInfo based on instance."""
         image_meta = image_meta or instance.image_meta

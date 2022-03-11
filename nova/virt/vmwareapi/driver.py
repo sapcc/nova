@@ -1012,11 +1012,6 @@ class VMwareVCDriver(driver.ComputeDriver):
             if datastore:
                 data["datastore_ref"] = vim_util.get_moref(datastore,
                                                         "Datastore")
-
-            profile_id = data.get("profile_id")
-            if profile_id:
-                data["profile_id"] = profile_id
-
             volume_infos.append(data)
         return self._volumeops.map_volumes_to_devices(instance, volume_infos)
 
