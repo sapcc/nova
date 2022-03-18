@@ -2201,8 +2201,8 @@ class VMwareVMOps(object):
                                                             vm_ref,
                                                             operation='remove')
             except Exception:
-                LOG.exception('Could not remove DRS override.',
-                              instance=instance)
+                LOG.warning('Could not remove DRS override.',
+                            instance=instance)
 
         self._clean_up_after_special_spawning(context, flavor.memory_mb,
                                               flavor)
