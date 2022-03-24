@@ -127,7 +127,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 raise error_util.DatastoreRegexUnspecified()
             try:
                 self._datastore_hagroup_regex = \
-                    re.compile(CONF.vmware.datastore_hagroup_regex)
+                    re.compile(CONF.vmware.datastore_hagroup_regex, re.I)
             except re.error:
                 raise exception.InvalidInput(reason=
                     "Invalid Regular Expression {}"

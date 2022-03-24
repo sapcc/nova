@@ -248,7 +248,7 @@ If this setting is set, datastores are split into 2 ha-groups to distribute
 anti-affin servers between them. The datastores found with the datastore_regex
 setting belong to either HA-group A or B by applying this regex onto the
 datastore name. This setting must include a matched group of the name
-"hagroup".
+"hagroup". The regex defined here is used ignoring case.
 """),
     cfg.FloatOpt('task_poll_interval',
                  default=0.5,
