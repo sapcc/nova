@@ -533,6 +533,10 @@ class VMwareVCDriver(driver.ComputeDriver):
                 }
         return result
 
+    def prepare_for_spawn(self, instance):
+        """Perform pre-checks for spawn."""
+        self._vmops.prepare_for_spawn(instance)
+
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, allocations, network_info=None,
               block_device_info=None):

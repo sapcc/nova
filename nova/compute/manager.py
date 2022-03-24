@@ -2475,6 +2475,7 @@ class ComputeManager(manager.Manager):
                 self.driver.failed_spawn_cleanup(instance)
         except (exception.UnexpectedTaskStateError,
                 exception.OverQuota, exception.InvalidBDM,
+                exception.InstanceUnacceptable,
                 exception.QuotaError) as e:
             # Make sure the async call finishes
             if network_info is not None:
