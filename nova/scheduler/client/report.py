@@ -487,7 +487,7 @@ class SchedulerReportClient(object):
         resp = self.get(url, version='1.18',
                         global_request_id=context.global_id)
         if resp.status_code == 200:
-            return resp.json()['resource_providers']
+            return resp.json()['resource_providers'] or []
 
         msg = _("[%(placement_req_id)s] Failed to retrieve sharing resource "
                 "providers associated with the following aggregates from "
