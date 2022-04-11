@@ -2884,7 +2884,8 @@ class VMwareVMOps(object):
         # This causes the folder on the datastore to be named by the
         # instance.uuid potentially with a suffix in case the source and
         # destination are on the same datastore
-        cloned_vm = self._clone_vm(vm_ref, rel_spec, name=instance.uuid)
+        cloned_vm = self._clone_vm(vm_ref, rel_spec, name=instance.uuid,
+                                   config_spec=config_spec)
         LOG.info("Cloned VM with temporary name '%s'", instance.uuid,
                  instance=instance)
         try:
