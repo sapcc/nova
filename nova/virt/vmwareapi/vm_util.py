@@ -899,7 +899,8 @@ def get_hardware_devices_by_type(session, vm_ref):
     nics = {}
     controllers = {}
     disks = {}
-    swap = []
+    cdroms = {}
+    swap = None
     ephemeral = []
     first_device = None
 
@@ -921,7 +922,7 @@ def get_hardware_devices_by_type(session, vm_ref):
             backing_type = device.backing.__class__.__name__
             if backing_type == "VirtualDiskFlatVer2BackingInfo":
                 if "swap" in device.backing.fileName:
-                    swap.append(device)
+                    swap = device
                 elif "ephemeral" in device.backing.fileName:
                     ephemeral.append(device)
                 else:
@@ -936,6 +937,8 @@ def get_hardware_devices_by_type(session, vm_ref):
                     disks[uuid.lower()] = device
             elif backing_type == "VirtualDiskRawDiskMappingVer1BackingInfo":
                 disks[device.backing.lunUuid.lower()] = device
+        elif device_type == "VirtualCdrom":
+            cdroms[device.backing.fileName] = device
 
     return {
         "nics": nics,
@@ -943,6 +946,7 @@ def get_hardware_devices_by_type(session, vm_ref):
         "swap": swap,
         "ephemeral": ephemeral,
         "disks": disks,
+        "cdroms": cdroms,
         "root_device": first_device
     }
 
