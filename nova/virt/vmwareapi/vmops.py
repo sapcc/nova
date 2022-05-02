@@ -2177,18 +2177,19 @@ class VMwareVMOps(object):
                                                     metadata=metadata)
         vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
 
-        if vm_resize_spec.version:
+        flavor_hw_version = flavor.extra_specs.get('vmware:hw_version')
+        if flavor_hw_version:
             current_version = self._session._call_method(vutil,
                 'get_object_property', vm_ref, 'config.version')
             _current = self._hw_version_to_int(current_version)
-            _required = self._hw_version_to_int(vm_resize_spec.version)
+            _required = self._hw_version_to_int(flavor_hw_version)
 
             if _current < _required:
                 LOG.debug("Upgrading vm version from %s to %s",
-                          current_version, vm_resize_spec.version,
+                          current_version, flavor_hw_version,
                           instance=instance)
                 upgrade_task = self._session._call_method(self._session.vim,
-                    "UpgradeVM_Task", vm_ref, version=vm_resize_spec.version)
+                    "UpgradeVM_Task", vm_ref, version=flavor_hw_version)
                 self._session._wait_for_task(upgrade_task)
 
         old_flavor = instance.old_flavor
@@ -4033,6 +4034,8 @@ class VMwareVMOps(object):
                                                  int(flavor.vcpus),
                                                  int(flavor.memory_mb),
                                                  extra_specs)
+        # The last mandatory field for config_spec per doc
+        config_spec.version = extra_specs.hw_version
         placement_spec.configSpec = config_spec
 
         vm_group_name = self._get_admin_group_name_for_instance(instance)
