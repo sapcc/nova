@@ -546,7 +546,6 @@ def get_vm_resize_spec(client_factory, vcpus, memory_mb, extra_specs,
     resize_spec.memoryAllocation = _get_allocation_info(
         client_factory, extra_specs.memory_limits,
         'ns0:ResourceAllocationInfo')
-    resize_spec.version = extra_specs.hw_version
     # NOTE(jkulik) We used to set this setting instead of `memoryAllocation`,
     # so we need to deconfigure it on VMs created before the patch adding
     # `memoryAllocation` support on resize.

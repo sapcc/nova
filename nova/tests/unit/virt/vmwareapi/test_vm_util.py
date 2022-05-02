@@ -407,7 +407,6 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected = fake_factory.create('ns0:VirtualMachineConfigSpec')
         expected.memoryMB = memory_mb
         expected.numCPUs = vcpus
-        expected.version = hw_version
         cpuAllocation = fake_factory.create('ns0:ResourceAllocationInfo')
         cpuAllocation.reservation = 0
         cpuAllocation.limit = -1
@@ -441,7 +440,6 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected = fake_factory.create('ns0:VirtualMachineConfigSpec')
         expected.memoryMB = memory_mb
         expected.numCPUs = vcpus
-        expected.version = None
         cpuAllocation = fake_factory.create('ns0:ResourceAllocationInfo')
         cpuAllocation.reservation = 6
         cpuAllocation.limit = 7
@@ -451,36 +449,6 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.cpuAllocation = cpuAllocation
         memoryAllocation = fake_factory.create('ns0:ResourceAllocationInfo')
         memoryAllocation.reservation = 127
-        memoryAllocation.limit = -1
-        memoryAllocation.shares = fake_factory.create('ns0:SharesInfo')
-        memoryAllocation.shares.level = 'normal'
-        memoryAllocation.shares.shares = 0
-        expected.memoryAllocation = memoryAllocation
-        expected.extraConfig = []
-        expected.memoryReservationLockedToMax = False
-
-        self.assertEqual(expected, result)
-
-    def test_get_resize_spec_with_hw_version(self):
-        vcpus = 2
-        memory_mb = 2048
-        extra_specs = vm_util.ExtraSpecs(hw_version=mock.sentinel.hw_version)
-        fake_factory = fake.FakeFactory()
-        result = vm_util.get_vm_resize_spec(fake_factory,
-                                            vcpus, memory_mb, extra_specs)
-        expected = fake_factory.create('ns0:VirtualMachineConfigSpec')
-        expected.memoryMB = memory_mb
-        expected.numCPUs = vcpus
-        expected.version = mock.sentinel.hw_version
-        cpuAllocation = fake_factory.create('ns0:ResourceAllocationInfo')
-        cpuAllocation.reservation = 0
-        cpuAllocation.limit = -1
-        cpuAllocation.shares = fake_factory.create('ns0:SharesInfo')
-        cpuAllocation.shares.level = 'normal'
-        cpuAllocation.shares.shares = 0
-        expected.cpuAllocation = cpuAllocation
-        memoryAllocation = fake_factory.create('ns0:ResourceAllocationInfo')
-        memoryAllocation.reservation = 0
         memoryAllocation.limit = -1
         memoryAllocation.shares = fake_factory.create('ns0:SharesInfo')
         memoryAllocation.shares.level = 'normal'
