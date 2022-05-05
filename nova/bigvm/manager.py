@@ -287,14 +287,18 @@ class BigVmManager(manager.Manager):
                               'find "parent" provider.',
                               {'name': rp['name'], 'rp': rp['uuid']})
                     continue
-                elif len(aggregates) > 1:
-                    LOG.error('RP %(name)s (%(rp)s) has more than one '
-                              'aggregate: %(aggs)s. Cannot find "parent" '
-                              'provider.',
+                for agg in aggregates:
+                    if agg not in vmware_hvs:
+                        continue
+                    host_rp_uuid = agg
+                    break
+                else:
+                    LOG.error('RP %(name)s (%(rp)s) has no aggregate matching '
+                              'a compute node UUID. Cannot find "parent" '
+                              'provider in %(aggs)s',
                               {'name': rp['name'], 'rp': rp['uuid'],
                                'aggs': ', '.join(aggregates)})
                     continue
-                host_rp_uuid = aggregates[0]
                 host = vmware_hvs[host_rp_uuid]
                 cell_mapping = host_mappings[host]
                 bigvm_providers[rp['uuid']] = {'rp': rp,
