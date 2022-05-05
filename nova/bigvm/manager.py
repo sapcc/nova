@@ -245,7 +245,8 @@ class BigVmManager(manager.Manager):
             with nova_context.target_cell(context, cm) as cctxt:
                 vmware_hvs.update({cn.uuid: cn.host for cn in
                     ComputeNodeList.get_by_hypervisor_type(cctxt,
-                                                           VMWARE_HV_TYPE)})
+                                                           VMWARE_HV_TYPE)
+                    if not cn.deleted})
 
         host_azs = {}
         host_vcs = {}
