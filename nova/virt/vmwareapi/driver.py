@@ -820,7 +820,7 @@ class VMwareVCDriver(driver.ComputeDriver):
                 password=CONF.vmware.host_password))
 
         data.relocate_defaults = {
-            "service": nova_vim_util.serialize_object(service, typed=True)
+            "service": vim_util.serialize_object(service, typed=True)
         }
 
         return data
@@ -836,9 +836,9 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         client_factory = self._session.vim.client.factory
         defaults = dest_check_data.relocate_defaults
-        service_locator = nova_vim_util.deserialize_object(client_factory,
-                                                           defaults["service"],
-                                                           "ServiceLocator")
+        service_locator = vim_util.deserialize_object(client_factory,
+                                                      defaults["service"],
+                                                      "ServiceLocator")
 
         dest_check_data.is_same_vcenter = (
             service_locator.instanceUuid == self._vcenter_uuid)
@@ -881,7 +881,7 @@ class VMwareVCDriver(driver.ComputeDriver):
         result = self._vmops.place_vm(context, instance)
 
         if hasattr(result, 'drsFault'):
-            LOG.error("Placement Error: %s", nova_vim_util.serialize_object(
+            LOG.error("Placement Error: %s", vim_util.serialize_object(
                 result.drsFault, typed=True), instance=instance)
 
         if (not hasattr(result, 'recommendations') or
@@ -912,7 +912,7 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         # relocate_defaults are serialized/deserialized on put/get
         defaults = migrate_data.relocate_defaults
-        spec = nova_vim_util.serialize_object(relocate_spec, typed=True)
+        spec = vim_util.serialize_object(relocate_spec, typed=True)
         defaults["relocate_spec"] = spec
         # Writing the values back
         migrate_data.relocate_defaults = defaults
