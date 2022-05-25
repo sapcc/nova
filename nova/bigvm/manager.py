@@ -780,8 +780,7 @@ class BigVmManager(manager.Manager):
 
             # add the newly-created resource-provider to the parent uuid's
             # aggregate
-            client.set_aggregates_for_provider(context, new_rp_uuid,
-                                               agg_info.aggregates)
+            client.set_aggregates_for_provider(context, new_rp_uuid, [rp_uuid])
 
             # make the newly-created resource-provider share its resources with
             # its aggregates
