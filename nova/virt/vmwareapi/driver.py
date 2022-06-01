@@ -47,6 +47,7 @@ from nova import objects
 import nova.privsep.path
 from nova import rc_fields as fields
 from nova import utils
+from nova.virt import block_device
 from nova.virt import driver
 from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
@@ -554,9 +555,9 @@ class VMwareVCDriver(driver.ComputeDriver):
                       encryption=None):
         """Detach volume storage to VM instance."""
         if not self._vmops.is_instance_in_resource_pool(instance):
+            volume_id = block_device.get_volume_id(connection_info)
             LOG.debug("Not detaching %s, vm is in different cluster",
-                connection_info["volume_id"],
-                instance=instance)
+                volume_id, instance=instance)
             return True
         # NOTE(claudiub): if context parameter is to be used in the future,
         # the _detach_instance_volumes method will have to be updated as well.
