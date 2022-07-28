@@ -199,10 +199,12 @@ def _get_allowed_datastores(datastores, datastore_regex):
         if _is_datastore_valid(propdict,
                                datastore_regex,
                                ALL_SUPPORTED_DS_TYPES):
+            capacity = propdict['summary.capacity']
+            freespace = propdict['summary.freeSpace']
             yield (ds_obj.Datastore(ref=obj_content.obj,
                                     name=propdict['summary.name'],
-                                    capacity=propdict['summary.capacity'],
-                                    freespace=propdict['summary.freeSpace']))
+                                    capacity=capacity,
+                                    freespace=min(freespace, capacity)))
 
 
 def get_available_datastores(session, cluster=None, datastore_regex=None,
