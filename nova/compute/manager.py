@@ -8867,3 +8867,29 @@ class ComputeManager(manager.Manager):
     def sync_server_group(self, context, sg_uuid):
         """Calls the driver to update the server-group in the backend"""
         self.driver.sync_server_group(context, sg_uuid)
+
+    @periodic_task.periodic_task(spacing=CONF.instance_flavor_update_interval)
+    def _update_instances_flavor_info(self, context):
+        instances = objects.InstanceList.get_by_host(context, self.host,
+                                                     expected_attrs=['flavor'],
+                                                     use_slave=True)
+        if not instances:
+            return
+        flavors = objects.FlavorList.get_all(context)
+
+        def _find_flavor(instance):
+            for flavor in flavors:
+                if instance.flavor and instance.instance_type_id == flavor.id:
+                    return flavor
+            return None
+
+        def _should_update(instance, flavor):
+            return instance.flavor.extra_specs != flavor.extra_specs
+
+        for instance in instances:
+            flavor = _find_flavor(instance)
+            if not flavor or not _should_update(instance, flavor):
+                continue
+            instance.flavor = flavor
+            instance.save()
+            LOG.info("Updated instance flavor info.", instance=instance)

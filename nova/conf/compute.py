@@ -1225,6 +1225,17 @@ Possible values:
 * A string with a list of named database columns, for example ``%(id)d``
   or ``%(uuid)s`` or ``%(hostname)s``.
 """),
+    cfg.IntOpt('instance_flavor_update_interval',
+        default=300,
+        help="""
+Interval for updating flavor-info of instances.
+
+Possible values:
+
+* 0: Will run at the default periodic interval.
+* Any value < 0: Disables the option.
+* Any positive integer in seconds.
+"""),
 ]
 
 

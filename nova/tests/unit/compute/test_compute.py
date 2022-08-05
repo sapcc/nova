@@ -8513,6 +8513,32 @@ class ComputeTestCase(BaseTestCase,
         test_utils.assert_instance_delete_notification_by_uuid(
             notify, instance.uuid, self.compute_api.notifier, self.context)
 
+    @mock.patch.object(nova.objects.Instance, 'save')
+    @mock.patch.object(nova.objects.FlavorList, 'get_all')
+    @mock.patch.object(nova.objects.InstanceList, 'get_by_host')
+    @mock.patch.object(nova.objects.Instance, 'get_by_uuid')
+    def test_update_instance_flavor_info(self, mock_get_by_uuid,
+                                         mock_get_by_host,
+                                         mock_get_flavors,
+                                         mock_save):
+        ctxt = context.get_admin_context()
+        inst1 = objects.Instance(
+            context=ctxt,
+            instance_type_id=1,
+            uuid=uuids.instance_1,
+            flavor=objects.Flavor(id=1,
+                                  extra_specs={'spec1': 'val1'}))
+        mock_get_by_uuid.return_value = inst1
+        mock_get_by_host.return_value = objects.InstanceList(
+            objects=[inst1])
+        mock_get_flavors.return_value = [
+            objects.Flavor(id=1, extra_specs={'spec1': 'val2'})]
+
+        self.compute._update_instances_flavor_info(ctxt)
+
+        self.assertEqual({'spec1': 'val2'}, inst1.flavor.extra_specs)
+        mock_save.assert_called_once_with()
+
 
 @ddt.ddt
 class ComputeAPITestCase(BaseTestCase):
