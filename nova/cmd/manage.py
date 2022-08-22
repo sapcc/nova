@@ -47,6 +47,7 @@ from sqlalchemy.engine import url as sqla_url
 from nova.api.openstack.placement.objects import consumer as consumer_obj
 from nova.cmd import common as cmd_common
 from nova.compute import api as compute_api
+from nova.compute import vm_states
 import nova.conf
 from nova import config
 from nova import context
@@ -2453,6 +2454,165 @@ class PlacementCommands(object):
         return return_code
 
 
+class SAPCommands(object):
+
+    @action_description(
+        _("Detects changes on the flavors extra_specs and syncs the flavor of"
+          "instances and request_spec with the last extra_specs. It skips "
+          "instances that are resizing."))
+    @args('--max-count', metavar='<max_count>', dest='max_count',
+          help='Maximum number of instances to process. If not specified, all '
+               'instances in each cell will be mapped in batches of 50. '
+               'If you have a large number of instances, consider specifying '
+               'a custom value and run the command until it exits with '
+               '0 or 4.')
+    @args('--verbose', action='store_true', dest='verbose', default=False,
+          help='Provide verbose output during execution.')
+    @args('--dry-run', action='store_true', dest='dry_run', default=False,
+          help='Runs the command and prints output but does not commit any '
+               'changes. The return code should be 4.')
+    @args('--instance', metavar='<instance_uuid>', dest='instance_uuid',
+          help='UUID of a specific instance to process. If specified '
+               '--max-count has no effect.')
+    def sync_instances_flavor(self, max_count=None, verbose=False,
+                              dry_run=False, instance_uuid=None):
+        output = lambda msg: None
+        if verbose:
+            output = lambda msg: print(msg)
+
+        ctxt = context.get_admin_context()
+        flavors = objects.FlavorList.get_all(ctxt)
+
+        def _find_flavor(instance):
+            for flavor in flavors:
+                if instance.flavor and instance.flavor.name == flavor.name:
+                    return flavor
+            return None
+
+        def _should_update(instance, flavor):
+            # exclude resizing instances
+            if (instance.task_state and 'resize_' in instance.task_state) \
+                    or instance.vm_state == vm_states.RESIZED:
+                return False
+
+            return instance.flavor.extra_specs != flavor.extra_specs
+
+        def _update_request_spec_flavor(instance, flavor):
+            request_spec = objects.RequestSpec.get_by_instance_uuid(
+                ctxt, instance.uuid)
+            request_spec.flavor.extra_specs = flavor.extra_specs
+            request_spec.save()
+
+        def _update_instance_flavor(cctxt, instance, dry_run=False):
+            flavor = _find_flavor(instance)
+            if not flavor or not _should_update(instance, flavor):
+                return
+            if dry_run:
+                output("Instance %s has outdated flavor extra_specs."
+                       % instance.uuid)
+                return
+            instance.flavor.extra_specs = flavor.extra_specs
+            instance.save()
+            _update_request_spec_flavor(instance, flavor)
+
+            output("Updated flavor extra_specs for instance %s. "
+                   % instance.uuid)
+
+        self._run_across_cells(_update_instance_flavor,
+                               instance_uuid=instance_uuid,
+                               expected_attrs=['flavor'],
+                               max_count=max_count,
+                               dry_run=dry_run,
+                               output=output)
+
+    def _run_across_cells(self, cb, instance_uuid=None,
+                          expected_attrs=None, filters=None,
+                          max_count=50, dry_run=False,
+                          output=print):
+
+        ctxt = context.get_admin_context()
+
+        if instance_uuid:
+            try:
+                im = objects.InstanceMapping.get_by_instance_uuid(
+                    ctxt, instance_uuid)
+                cells = objects.CellMappingList(objects=[im.cell_mapping])
+            except exception.InstanceMappingNotFound:
+                print('Unable to find cell for instance %s, is it mapped? Try '
+                      'running "nova-manage cell_v2 verify_instance" or '
+                      '"nova-manage cell_v2 map_instances".' %
+                      instance_uuid)
+                return 127
+        else:
+            cells = objects.CellMappingList.get_all(ctxt)
+            if not cells:
+                output(_('No cells to process.'))
+                return 4
+
+        for cell in cells:
+            if cell.uuid == objects.CellMapping.CELL0_UUID:
+                continue
+            output(_('Looking for instances in cell: %s') % cell.identity)
+
+            with context.target_cell(ctxt, cell) as cctxt:
+                self._run_on_instances_batch(
+                    cctxt, cb, instance_uuid=instance_uuid,
+                    expected_attrs=expected_attrs, max_count=max_count,
+                    filters=filters, dry_run=dry_run, output=output)
+
+    def _run_on_instances_batch(self, ctxt, cb, instance_uuid=None,
+                                expected_attrs=None, max_count=50,
+                                filters=None, dry_run=False, output=print):
+        if instance_uuid:
+            max_count = 1
+            unlimited = False
+        elif max_count is not None:
+            try:
+                max_count = int(max_count)
+            except ValueError:
+                max_count = -1
+            unlimited = False
+            if max_count < 1:
+                print(_('Must supply a positive integer for --max-count.'))
+                return 127
+        else:
+            max_count = 50
+            unlimited = True
+            output(_('Running batches of %i until complete') % max_count)
+
+        instance_filters = {'deleted': False}
+        if instance_uuid:
+            instance_filters['uuid'] = instance_uuid
+        if filters:
+            instance_filters.update(filters)
+
+        instances = objects.InstanceList.get_by_filters(
+            ctxt, filters=instance_filters, sort_key='created_at',
+            sort_dir='asc', limit=max_count, expected_attrs=expected_attrs)
+
+        num_processed = 0
+
+        while instances:
+            output(_('Found %s candidate instances.') % len(instances))
+
+            for instance in instances:
+                if cb(ctxt, instance, dry_run=dry_run):
+                    num_processed += 1
+
+            # Make sure we don't go over the max count.
+            if (not unlimited and num_processed == max_count) or instance_uuid:
+                return num_processed
+
+            # Use a marker to get the next page of instances in this cell.
+            marker = instances[len(instances) - 1].uuid
+            instances = objects.InstanceList.get_by_filters(
+                ctxt, filters=instance_filters, sort_key='created_at',
+                sort_dir='asc', limit=max_count, marker=marker,
+                expected_attrs=expected_attrs)
+
+        return num_processed
+
+
 CATEGORIES = {
     'api_db': ApiDbCommands,
     'cell': CellCommands,
@@ -2460,7 +2620,8 @@ CATEGORIES = {
     'db': DbCommands,
     'floating': FloatingIpCommands,
     'network': NetworkCommands,
-    'placement': PlacementCommands
+    'placement': PlacementCommands,
+    'sap': SAPCommands
 }
 
 
