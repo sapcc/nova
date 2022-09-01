@@ -112,6 +112,11 @@ class RequestContext(context.RequestContext):
                           "nova.context.RequestContext is no longer used and "
                           "will be removed in a future version.")
 
+        current = context.get_current()
+        if current:
+            kwargs.setdefault('request_id', current.request_id)
+            kwargs.setdefault('global_request_id', current.global_request_id)
+
         super(RequestContext, self).__init__(is_admin=is_admin, **kwargs)
 
         self.read_deleted = read_deleted
