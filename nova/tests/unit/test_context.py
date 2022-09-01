@@ -459,3 +459,13 @@ class ContextTestCase(test.NoDBTestCase):
         mock_scatter.assert_called_once_with(
             ctxt, [mapping1], 60, objects.InstanceList.get_by_filters, filters,
             sort_dir='foo')
+
+    def test_inherits_req_ids(self):
+        ctx1 = context.get_admin_context()
+        ctx1.global_request_id = 'grec'
+        ctx2 = context.get_admin_context()
+        ctx3 = context.RequestContext.from_dict(ctx2.to_dict())
+
+        self.assertEqual(ctx1.request_id, ctx2.request_id)
+        self.assertEqual(ctx2.request_id, ctx3.request_id)
+        self.assertEqual(ctx1.global_request_id, ctx3.global_request_id)
