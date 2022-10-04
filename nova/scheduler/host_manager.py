@@ -672,6 +672,12 @@ class HostManager(object):
                    'cells': ', '.join(
                    [c.identity for c in disabled_cells])})
 
+    def _get_required_instance_uuids_for_spec(self, spec_obj):
+        return (self.filter_handler.host_info_requiring_instance_ids(
+                    self.enabled_filters, spec_obj)
+                | self.weight_handler.host_info_requiring_instance_ids(
+                    self.weighers, spec_obj))
+
     def get_host_states_by_uuids(self, context, compute_uuids, spec_obj):
 
         if not self.cells:
@@ -690,7 +696,11 @@ class HostManager(object):
 
         compute_nodes, services = self._get_computes_for_cells(
             context, cells, compute_uuids=compute_uuids)
-        return self._get_host_states(context, compute_nodes, services)
+
+        instance_uuids = self._get_required_instance_uuids_for_spec(spec_obj)
+
+        return self._get_host_states(context, compute_nodes, services,
+                    instance_uuids=instance_uuids)
 
     def get_all_host_states(self, context):
         """Returns a generator of HostStates that represents all the hosts
@@ -701,7 +711,8 @@ class HostManager(object):
                                                                self.cells)
         return self._get_host_states(context, compute_nodes, services)
 
-    def _get_host_states(self, context, compute_nodes, services):
+    def _get_host_states(self, context, compute_nodes, services,
+                         instance_uuids=None):
         """Returns a generator over HostStates given a list of computes.
 
         Also updates the HostStates internal mapping for the HostManager.
@@ -731,10 +742,19 @@ class HostManager(object):
                 # new request comes in, because some changes on the
                 # aggregates could have been happening after setting
                 # this field for the first time
+
+                if not instance_uuids:
+                    # If no filter requires any instance information
+                    # on the host, we can skip the db query
+                    instances = {}
+                else:
+                    instances = self._get_instance_info(context, compute)
+
                 host_state.update(compute,
                                   dict(service),
                                   self._get_aggregates_info(host),
-                                  self._get_instance_info(context, compute))
+                                  instances
+                                  )
 
                 seen_nodes.add(state_key)
 
