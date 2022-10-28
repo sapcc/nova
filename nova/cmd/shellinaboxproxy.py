@@ -15,7 +15,7 @@
 import sys
 
 from os import path
-from subprocess import check_output
+from subprocess import call
 
 import nova.conf
 from nova.conf import shellinabox
@@ -36,7 +36,7 @@ def main():
 
     config.parse_args(sys.argv)
     # Run mitmproxy with shellinaboxproxy.py as an inline script
-    check_output("mitmdump -R %s --port %s --bind-address %s --script %s" % (
+    return call("mitmdump -R %s --port %s --bind-address %s --script %s" % (
                  CONF.shellinabox.proxyclient_url,
                  CONF.shellinabox.port,
                  CONF.shellinabox.host,
