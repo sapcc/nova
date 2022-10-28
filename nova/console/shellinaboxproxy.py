@@ -13,62 +13,110 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import config
-from nova.console.websocketproxy import NovaProxyRequestHandler
-from nova import context
-from nova import exception
+import hashlib
 
-STATIC_FILES_EXT = ('.js', '.css', '.html', '.ico', '.png', '.gif')
+import configparser
+from mitmproxy.models import http
+from mitmproxy.script import concurrent
+from netlib import http as netlib_http
+from netlib import version
+from sqlalchemy import create_engine
+from sqlalchemy.sql import text
+
+STATIC_FILES_EXT = (".js", ".css", ".html", ".ico", ".png", ".gif")
 
 
-class NovaShellInaBoxProxy(NovaProxyRequestHandler):
-    """Class that injects token validation routine into proxy logic."""
+def _load_dbs():
+    config = configparser.ConfigParser()
+    config.read("/etc/nova/nova.conf")
+    api_db_url = config["api_database"]["connection"]
+    api_db_engine = create_engine(api_db_url)
+    with api_db_engine.connect() as api_db:
+        for (db_url,) in api_db.execute(
+            text("SELECT database_connection FROM cell_mappings WHERE id > 1")
+        ):
+            yield create_engine(db_url)
 
-    def __init__(self):
-        self._compute_rpcapi = None
-        # NOTE(jkulik): we're explicitly not calling our superclass here,
-        # because that class extends from websockify.ProxyRequestHandler and we
-        # don't need that. We should check on upgrades, if this function still
-        # fullfills its purpose.
 
-    def path_includes_static_files(self):
-        """Returns True if requested path includes static files.
-        """
-        for extension in STATIC_FILES_EXT:
-            if extension in self.path:
+_DBS = list(_load_dbs())
+
+
+@concurrent
+def request(flow):
+    if flow.error or not flow.live:
+        return
+    request = flow.request
+
+    # We only have to validate the "initial" GET
+    # on the console path, as that one returns a session-id
+    # which is validated by the backend
+
+    if request.method == "POST":  # POST gets validated by the backend
+        return
+
+    path = request.path
+    if _path_includes_static_files(path):  # Not secret
+        return
+
+    if path in [None, "", "/"]:  # The liveness probe
+        _root_response(flow)
+        return
+
+    token = flow.request.query.pop("token", None)
+
+    if not token:
+        _access_denied(flow, b"No token provided.")
+        return
+
+    token_hash = _get_sha256_str(token)
+
+    for db in _DBS:
+        if _validate_token(db, token_hash):
+            return
+
+    _access_denied(flow, b"The token has expired or is invalid.")
+
+
+def _path_includes_static_files(path):
+    """Returns True if requested path includes static files."""
+    for extension in STATIC_FILES_EXT:
+        if path.endswith(extension):
+            return True
+
+
+def _root_response(flow):
+    http_version = flow.request.data.http_version
+    headers = netlib_http.Headers(
+        Server=version.MITMPROXY,
+        Connection="close",
+        Content_Length="0",
+    )
+
+    flow.response = http.HTTPResponse(
+        http_version, 204, b"No content", headers, b""
+    )
+
+
+def _validate_token(db_engine, token_hash):
+    with db_engine.connect() as con:
+        for (exists,) in con.execute(
+            text(
+                "SELECT EXISTS("
+                "  SELECT 1 FROM console_auth_tokens "
+                "    WHERE token_hash=:token_hash"
+                "    AND expires > UNIX_TIMESTAMP()"
+                ")"
+            ),
+            token_hash=token_hash,
+        ):
+            if exists > 0:
                 return True
-
-    def response(self, flow):
-        """Validate the token and give 403 if not found or not valid.
-        """
-        if self.method == "GET" and not self.path_includes_static_files():
-
-            if not self.token:
-                # No token found
-                flow.response.status_code = 403
-                flow.response.content = b"No token provided."
-            else:
-                # Validate the token
-                ctxt = context.get_admin_context()
-                try:
-                    super(NovaShellInaBoxProxy, self)._get_connect_info(
-                        ctxt, self.token)
-                except exception.InvalidToken:
-                    # Token not valid
-                    flow.response.status_code = 403
-                    flow.response.content = ("The token has expired "
-                                             "or invalid.")
-
-    def request(self, flow):
-        """Save the token, method and path that came with request.
-        """
-        self.token = flow.request.query.get("token", "")
-        self.method = flow.request.method
-        self.path = flow.request.path
+    return False
 
 
-def start():
-    """Entrypoint. Configures rpc first, otherwise cannot validate token.
-    """
-    config.parse_args([])  # we need this to configure rpc
-    return NovaShellInaBoxProxy()
+def _get_sha256_str(base_str):
+    return hashlib.sha256(base_str.encode("utf-8")).hexdigest()
+
+
+def _access_denied(flow, reason):
+    flow.response = http.make_error_response(403, reason)
