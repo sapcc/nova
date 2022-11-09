@@ -1892,7 +1892,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         node = result['node']
         console_info = result['console_info']
 
-        if console_info["type"] not in ("socat", "shellinabox"):
+        if console_info["type"] not in ("socat", "shellinabox", "kvm"):
             LOG.warning('Console type "%(type)s" (of ironic node '
                         '%(node)s) does not support Nova serial console',
                         {'type': console_info["type"],
@@ -1907,6 +1907,13 @@ class IronicDriver(virt_driver.ComputeDriver):
             scheme = url.scheme
             hostname = url.hostname
             port = url.port
+            path = url.path
+            if url.query:
+                path += "?"
+                path += url.query
+            if url.fragment:
+                path += "#"
+                path += url.fragment
             if not (scheme and hostname):
                 raise AssertionError()
         except (ValueError, AssertionError):
@@ -1923,15 +1930,15 @@ class IronicDriver(virt_driver.ComputeDriver):
                                               port=port)
         elif scheme == "http":
             return console_type.ConsoleSerial(host=hostname,
-                                              port=80,
-                                              internal_access_path=url.path)
+                                              port=port or 80,
+                                              internal_access_path=path)
         elif scheme == "https":
             return console_type.ConsoleSerial(host=hostname,
-                                              port=443,
-                                              internal_access_path=url.path)
+                                              port=port or 443,
+                                              internal_access_path=path)
         else:
             LOG.warning('Socat serial console only supports "tcp". '
-                        'Shellinabox only http and https. '
+                        'Shellinabox and KVM only http and https. '
                         'This URL is "%(url)s" (ironic node %(node)s).',
                         {'url': console_info["url"],
                          'node': node.uuid},
