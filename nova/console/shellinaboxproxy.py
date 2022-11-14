@@ -55,7 +55,7 @@ def request(flow):
         return
 
     path = request.path
-    if _path_includes_static_files(path):  # Not secret
+    if path.endswith(STATIC_FILES_EXT):  # Not secret
         return
 
     if path in [None, "", "/"]:  # The liveness probe
@@ -75,13 +75,6 @@ def request(flow):
             return
 
     _access_denied(flow, b"The token has expired or is invalid.")
-
-
-def _path_includes_static_files(path):
-    """Returns True if requested path includes static files."""
-    for extension in STATIC_FILES_EXT:
-        if path.endswith(extension):
-            return True
 
 
 def _root_response(flow):
