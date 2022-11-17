@@ -2271,10 +2271,10 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                 'allocation_ratio': CONF.initial_ram_allocation_ratio,
             },
             orc.DISK_GB: {   # Fix this
-                'total': 1024.0,
+                'total': 1024,
                 'reserved': 0,
                 'min_unit': 1,
-                'max_unit': 500.0,
+                'max_unit': 500,
                 'step_size': 1,
                 'allocation_ratio': CONF.initial_disk_allocation_ratio,
             },
@@ -2291,6 +2291,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         traits = self.pt.data(self.node_name).traits
         # nova with vmware only supports HW_ARCH_X86_64
         self.assertEqual(traits, {'HW_ARCH_X86_64'})
+        self.assertIsInstance(inventory[orc.DISK_GB]['total'], int)
+        self.assertIsInstance(inventory[orc.DISK_GB]['max_unit'], int)
 
     def test_invalid_datastore_regex(self):
 
