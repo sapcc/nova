@@ -3839,6 +3839,20 @@ class VMwareVMOpsTestCase(test.TestCase):
                                 extra_specs=flavor_extra_specs)
         return image_meta, flavor
 
+    def test_set_prefer_ht_on_numa_aligned_flavors(self):
+        def specced_flavor(specs):
+            specs.update({'foo': 'bar'})  # errors might occur on other keys.
+            return objects.Flavor(name='my-flavor', memory_mb=4, vcpus=1,
+                                  root_gb=64, extra_specs=specs)
+        extra_specs = self._vmops._get_extra_specs(
+            specced_flavor({'trait:CUSTOM_NUMASIZE_C48_M729': 'required'}))
+        self.assertEqual(extra_specs.numa_prefer_ht, 'TRUE')
+        extra_specs = self._vmops._get_extra_specs(specced_flavor({}))
+        self.assertEqual(extra_specs.numa_prefer_ht, '')
+        extra_specs = self._vmops._get_extra_specs(
+            specced_flavor({'trait:CUSTOM_NUMASIZE_C48_M729': 'forbidden'}))
+        self.assertEqual(extra_specs.numa_prefer_ht, '')
+
     def test_get_host_ip_addr(self):
         encoded = self._vmops.get_host_ip_addr()
         expected = '1.0|{}'.format(uuidsentinel.vcenter)
