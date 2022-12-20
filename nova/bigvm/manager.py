@@ -15,6 +15,7 @@
 """
 BigVM service
 """
+import collections
 import itertools
 
 import os_resource_classes as orc
@@ -23,6 +24,7 @@ from oslo_log import log as logging
 from oslo_messaging import exceptions as oslo_exceptions
 from oslo_service import periodic_task
 
+from nova.bigvm.exporter import bigvm_metrics
 import nova.conf
 from nova import context as nova_context
 from nova import exception
@@ -167,6 +169,7 @@ class BigVmManager(manager.Manager):
                              'max_used': CONF.bigvm_cluster_max_usage_percent,
                              'max_reserved':
                                 CONF.bigvm_cluster_max_reservation_percent})
+                bigvm_metrics.no_candidate_error(hv_size)
                 continue
 
             # filter out providers that are disabled in general or for bigVMs
@@ -184,6 +187,7 @@ class BigVmManager(manager.Manager):
                             'host for hypervisor size %(hv_size)d, because '
                             'all providers with enough space are disabled.',
                             {'hv_size': hv_size})
+                bigvm_metrics.no_candidate_error(hv_size)
                 continue
 
             candidates[hv_size] = (alloc_reqs, filtered_provider_summaries)
@@ -195,6 +199,7 @@ class BigVmManager(manager.Manager):
                                 'up a host for hypervisor size %(hv_size)d in '
                                 '%(vc)s.',
                                 {'hv_size': hv_size, 'vc': vc})
+                    bigvm_metrics.no_candidate_error(hv_size)
                     continue
                 alloc_reqs, provider_summaries = candidates[hv_size]
 
@@ -217,7 +222,7 @@ class BigVmManager(manager.Manager):
                         cm = vmware_providers[rp_uuid]['cell_mapping']
                         with nova_context.target_cell(context, cm) as cctxt:
                             if self._free_host_for_provider(cctxt, rp_uuid,
-                                                            host):
+                                                            host, vc):
                                 break
                 except oslo_exceptions.MessagingTimeout as e:
                     # we don't know if the timeout happened after we started
@@ -630,6 +635,7 @@ class BigVmManager(manager.Manager):
         """
         found_hv_sizes_per_vc = {vc: set() for vc in vcenters}
 
+        free_hosts = collections.defaultdict(int)
         for rp_uuid, rp in bigvm_providers.items():
             host_rp_uuid = rp['host_rp_uuid']
             hv_size = vmware_providers[host_rp_uuid]['hv_size']
@@ -645,16 +651,26 @@ class BigVmManager(manager.Manager):
 
                 if state == special_spawning.FREE_HOST_STATE_DONE:
                     self._add_resources_to_provider(context, rp_uuid, rp)
+                    bigvm_metrics.remove_freeing_provider(rp)
+                    free_hosts[hv_size] += 1
                 elif state == special_spawning.FREE_HOST_STATE_ERROR:
                     LOG.warning('Freeing a host for spawning failed on '
                                 '%(host)s.',
                                 {'host': rp['host']})
                     # do some cleanup, so another compute-node is used
                     found_hv_sizes_per_vc[rp['vc']].remove(hv_size)
+                    bigvm_metrics.remove_freeing_provider(rp)
+                    bigvm_metrics.error_freeing(rp)
                     self._clean_up_consumed_provider(context, rp_uuid, rp)
                 else:
                     LOG.info('Waiting for host on %(host)s to free up.',
                              {'host': rp['host']})
+                    bigvm_metrics.set_freeing_provider(rp)
+            else:
+                free_hosts[hv_size] += 1
+
+        for hv_size, count in free_hosts.items():
+            bigvm_metrics.set_free_hosts_count(hv_size, count)
 
         hv_sizes_per_vc = {
             vc: set(rp['hv_size'] for rp in vmware_providers.values()
@@ -692,7 +708,7 @@ class BigVmManager(manager.Manager):
                      'on %(host)s.',
                      {'host': rp['host']})
 
-    def _free_host_for_provider(self, context, rp_uuid, host):
+    def _free_host_for_provider(self, context, rp_uuid, host, vc):
         """Takes care of creating a child resource provider in placement to
         "claim" a resource-provider/host for freeing up a host. Then calls the
         driver to actually free up the host in the cluster.
@@ -764,17 +780,18 @@ class BigVmManager(manager.Manager):
 
             # find a host and let DRS free it up
             state = self.special_spawn_rpc.free_host(context, host)
-
+            new_rp = {'host': host,
+                      'vc': vc,
+                      'rp': {'name': new_rp_name},
+                      'host_rp_uuid': rp_uuid}
             if state == special_spawning.FREE_HOST_STATE_DONE:
                 # there were free resources available immediately
                 needs_cleanup = False
-                new_rp = {'host': host,
-                          'rp': {'name': new_rp_name},
-                          'host_rp_uuid': rp_uuid}
                 self._add_resources_to_provider(context, new_rp_uuid, new_rp)
             elif state == special_spawning.FREE_HOST_STATE_STARTED:
                 # it started working on it. we have to check back later
                 # if it's done
+                bigvm_metrics.set_freeing_provider(new_rp)
                 needs_cleanup = False
         finally:
             # clean up placement, if something went wrong
