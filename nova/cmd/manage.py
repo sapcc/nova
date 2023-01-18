@@ -2483,6 +2483,23 @@ class SAPCommands(object):
         ctxt = context.get_admin_context()
         flavors = objects.FlavorList.get_all(ctxt)
 
+        if instance_uuid:
+            max_count = 1
+            unlimited = False
+        elif max_count is not None:
+            try:
+                max_count = int(max_count)
+            except ValueError:
+                max_count = -1
+            unlimited = False
+            if max_count < 1:
+                print(_('Must supply a positive integer for --max-count.'))
+                return 127
+        else:
+            max_count = 50
+            unlimited = True
+            output(_('Running batches of %i until complete') % max_count)
+
         def _find_flavor(instance):
             for flavor in flavors:
                 if instance.flavor and instance.flavor.name == flavor.name:
@@ -2518,16 +2535,17 @@ class SAPCommands(object):
             output("Updated flavor extra_specs for instance %s. "
                    % instance.uuid)
 
-        self._run_across_cells(_update_instance_flavor,
-                               instance_uuid=instance_uuid,
-                               expected_attrs=['flavor'],
-                               max_count=max_count,
-                               dry_run=dry_run,
-                               output=output)
+        return self._run_across_cells(_update_instance_flavor,
+                                      instance_uuid=instance_uuid,
+                                      expected_attrs=['flavor'],
+                                      unlimited=unlimited,
+                                      max_count=max_count,
+                                      dry_run=dry_run,
+                                      output=output)
 
     def _run_across_cells(self, cb, instance_uuid=None,
-                          expected_attrs=None, filters=None,
-                          max_count=50, dry_run=False,
+                          expected_attrs=None, unlimited=False,
+                          filters=None, max_count=50, dry_run=False,
                           output=print):
 
         ctxt = context.get_admin_context()
@@ -2549,36 +2567,28 @@ class SAPCommands(object):
                 output(_('No cells to process.'))
                 return 4
 
+        num_processed = 0
         for cell in cells:
             if cell.uuid == objects.CellMapping.CELL0_UUID:
                 continue
             output(_('Looking for instances in cell: %s') % cell.identity)
 
+            limit_per_cell = max_count
+            if not unlimited:
+                # Adjust the limit for the next cell. For example, if the user
+                # only wants to process a total of 100 instances and we did
+                # 75 in cell1, then we only need 25 more from cell2 and so on.
+                limit_per_cell = max_count - num_processed
+
             with context.target_cell(ctxt, cell) as cctxt:
-                self._run_on_instances_batch(
-                    cctxt, cb, instance_uuid=instance_uuid,
-                    expected_attrs=expected_attrs, max_count=max_count,
+                num_processed += self._run_on_cell(
+                    cctxt, cb, unlimited, limit_per_cell,
+                    instance_uuid=instance_uuid, expected_attrs=expected_attrs,
                     filters=filters, dry_run=dry_run, output=output)
 
-    def _run_on_instances_batch(self, ctxt, cb, instance_uuid=None,
-                                expected_attrs=None, max_count=50,
-                                filters=None, dry_run=False, output=print):
-        if instance_uuid:
-            max_count = 1
-            unlimited = False
-        elif max_count is not None:
-            try:
-                max_count = int(max_count)
-            except ValueError:
-                max_count = -1
-            unlimited = False
-            if max_count < 1:
-                print(_('Must supply a positive integer for --max-count.'))
-                return 127
-        else:
-            max_count = 50
-            unlimited = True
-            output(_('Running batches of %i until complete') % max_count)
+    def _run_on_cell(self, ctxt, cb, unlimited, max_count,
+                     instance_uuid=None, expected_attrs=None,
+                     filters=None, dry_run=False, output=print):
 
         instance_filters = {'deleted': False}
         if instance_uuid:
@@ -2596,15 +2606,15 @@ class SAPCommands(object):
             output(_('Found %s candidate instances.') % len(instances))
 
             for instance in instances:
-                if cb(ctxt, instance, dry_run=dry_run):
-                    num_processed += 1
+                cb(ctxt, instance, dry_run=dry_run)
+                num_processed += 1
 
             # Make sure we don't go over the max count.
             if (not unlimited and num_processed == max_count) or instance_uuid:
                 return num_processed
 
             # Use a marker to get the next page of instances in this cell.
-            marker = instances[len(instances) - 1].uuid
+            marker = instances[-1].uuid
             instances = objects.InstanceList.get_by_filters(
                 ctxt, filters=instance_filters, sort_key='created_at',
                 sort_dir='asc', limit=max_count, marker=marker,
