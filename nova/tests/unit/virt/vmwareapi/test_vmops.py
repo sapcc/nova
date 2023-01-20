@@ -1075,8 +1075,10 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'get_vm_ref',
                        return_value=mock.sentinel.vm_ref)
     @mock.patch.object(cluster_util, 'update_cluster_drs_vm_override')
-    def test_resize_vm_bigvm_upsize(self, fake_drs_override, fake_get_vm_ref,
-                                    fake_resize_spec, fake_reconfigure,
+    @mock.patch.object(cluster_util, 'update_cluster_das_vm_override')
+    def test_resize_vm_bigvm_upsize(self, fake_das_override, fake_drs_override,
+                                    fake_get_vm_ref, fake_resize_spec,
+                                    fake_reconfigure,
                                     fake_cleanup_after_special_spawning,
                                     fake_get_extra_specs, fake_get_metadata):
         vm_ref = fake_get_vm_ref.return_value
@@ -1096,6 +1098,12 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                   vm_ref,
                                                   operation='add',
                                                   behavior=behavior)
+        priority = constants.DAS_RESTART_PRIORITY_HIGH
+        fake_das_override.assert_called_once_with(self._session,
+                                                  self._cluster.obj,
+                                                  vm_ref,
+                                                  operation='add',
+                                                  restart_priority=priority)
         expected = (self._context, int(flavor.memory_mb), flavor)
         fake_cleanup_after_special_spawning.assert_called_once_with(*expected)
 
@@ -1108,7 +1116,9 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'get_vm_ref',
                        return_value=mock.sentinel.vm_ref)
     @mock.patch.object(cluster_util, 'update_cluster_drs_vm_override')
-    def test_resize_vm_bigvm_downsize(self, fake_drs_override, fake_get_vm_ref,
+    @mock.patch.object(cluster_util, 'update_cluster_das_vm_override')
+    def test_resize_vm_bigvm_downsize(self, fake_das_override,
+                                      fake_drs_override, fake_get_vm_ref,
                                       fake_resize_spec, fake_reconfigure,
                                       fake_cleanup_after_special_spawning,
                                       fake_get_extra_specs, fake_get_metadata):
@@ -1125,6 +1135,10 @@ class VMwareVMOpsTestCase(test.TestCase):
         instance.old_flavor.memory_mb = CONF.bigvm_mb
         self._vmops._resize_vm(self._context, instance, vm_ref, flavor, None)
         fake_drs_override.assert_called_once_with(self._session,
+                                                  self._cluster.obj,
+                                                  vm_ref,
+                                                  operation='remove')
+        fake_das_override.assert_called_once_with(self._session,
                                                   self._cluster.obj,
                                                   vm_ref,
                                                   operation='remove')
