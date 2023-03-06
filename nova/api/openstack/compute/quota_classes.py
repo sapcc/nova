@@ -131,6 +131,7 @@ class QuotaClassSetsController(wsgi.Controller):
             except exception.QuotaClassNotFound:
                 objects.Quotas.create_class(context, quota_class, key, value)
 
+        QUOTAS.update_resources_from_quota_classes()
         values = QUOTAS.get_class_quotas(context, quota_class)
         return self._format_quota_set(None, values, filtered_quotas,
                                       exclude_server_groups)
