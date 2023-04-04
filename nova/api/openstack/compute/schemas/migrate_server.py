@@ -69,9 +69,19 @@ migrate_live_v2_30 = copy.deepcopy(migrate_live_v2_25)
 migrate_live_v2_30['properties']['os-migrateLive']['properties'][
     'force'] = parameter_types.boolean
 
+host_ref = {
+    'pattern': '^host-[0-9]+$',
+    'type': ['string', 'null'],
+}
+migrate_live_v2_34 = copy.deepcopy(migrate_live_v2_30)
+migrate_live_v2_34['properties']['os-migrateLive']['properties'][
+    'host_ref'] = host_ref
+
 # v2.68 removes the 'force' parameter added in v2.30, meaning it is identical
-# to v2.25
+# to v2.25 + SAP's custom host_ref attribute
 migrate_live_v2_68 = copy.deepcopy(migrate_live_v2_25)
+migrate_live_v2_68['properties']['os-migrateLive']['properties'][
+    'host_ref'] = host_ref
 
 migrate_response = {
     'type': 'null',
