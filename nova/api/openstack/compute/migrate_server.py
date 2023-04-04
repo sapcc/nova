@@ -92,7 +92,8 @@ class MigrateServerController(wsgi.Controller):
     @wsgi.action('os-migrateLive')
     @validation.schema(schema.migrate_live, "2.0", "2.24")
     @validation.schema(schema.migrate_live_v2_25, "2.25", "2.29")
-    @validation.schema(schema.migrate_live_v2_30, "2.30", "2.67")
+    @validation.schema(schema.migrate_live_v2_30, "2.30", "2.33")
+    @validation.schema(schema.migrate_live_v2_34, "2.34", "2.67")
     @validation.schema(schema.migrate_live_v2_68, "2.68")
     @validation.response_body_schema(schema.migrate_live_response)
     def _migrate_live(self, req, id, body):
@@ -109,6 +110,13 @@ class MigrateServerController(wsgi.Controller):
                     target={'project_id': instance.project_id})
 
         host = body["os-migrateLive"]["host"]
+        host_ref = None
+        if api_version_request.is_supported(req, min_version='2.34'):
+            # we might get a host_ref passed in addition to a host
+            host_ref = body["os-migrateLive"].get("host_ref")
+            if not host and host_ref:
+                msg = "Passing 'host_ref' requires passing 'host'"
+                raise exc.HTTPBadRequest(explanation=msg)
         block_migration = body["os-migrateLive"]["block_migration"]
         force = None
         async_ = api_version_request.is_supported(req, min_version='2.34')
@@ -132,7 +140,7 @@ class MigrateServerController(wsgi.Controller):
         try:
             self.compute_api.live_migrate(context, instance, block_migration,
                                           disk_over_commit, host, force,
-                                          async_)
+                                          async_, host_ref=host_ref)
         except (exception.NoValidHost,
                 exception.ComputeServiceUnavailable,
                 exception.InvalidHypervisorType,
