@@ -8776,6 +8776,111 @@ class ComputeAPITestCase(BaseTestCase):
         self.assertEqual(1, len(reqspec.security_groups))
         self.assertEqual(group.name, reqspec.security_groups[0].name)
 
+    def _test_create_instance_enforced_bfv(self, request_bdm,
+                                           expected_bdm_len, legacy_bdm=False):
+        # Tests that boot from volume is enforced via flavor and the other
+        # block_device_mapping(s) specified by the user are preserved.
+        with test.nested(
+                mock.patch.object(self.compute_api.compute_task_api,
+                                  'schedule_and_build_instances'),
+                mock.patch.object(self.compute_api.compute_task_api,
+                                  'build_instances')
+        ) as (mock_sbi, mock_build):
+            instance_type = flavors.get_default_flavor()
+            instance_type.extra_specs.update({'boot_from_volume': 'true'})
+
+            (ref, resv_id) = self.compute_api.create(
+                self.context,
+                instance_type=instance_type,
+                block_device_mapping=request_bdm,
+                image_href=uuids.image_href_id,
+                legacy_bdm=legacy_bdm)
+
+            if CONF.cells.enable:
+                build_call = mock_build.call_args_list[0]
+            else:
+                build_call = mock_sbi.call_args_list[0]
+            bdm = build_call[1]['block_device_mapping']
+
+        self.assertEqual(len(bdm), expected_bdm_len)
+
+        root_bdm = bdm.root_bdm()
+        self.assertEqual(root_bdm.source_type, 'image')
+        self.assertEqual(root_bdm.destination_type, 'volume')
+        self.assertEqual(root_bdm.image_id, uuids.image_href_id)
+        self.assertEqual(root_bdm.volume_size, instance_type.get('root_gb'))
+
+    def test_create_instance_enforced_bfv(self):
+        request_bdm = [
+            block_device.BlockDeviceDict({'source_type': 'blank',
+                                          'destination_type': 'volume',
+                                          'volume_size': 10})]
+        self._test_create_instance_enforced_bfv(request_bdm, 2)
+
+    def test_create_instance_enforced_bfv_legacy_bdm(self):
+        request_bdm = [{'no_device': True, 'volume_size': 10}]
+        self._test_create_instance_enforced_bfv(request_bdm, 2,
+                                                legacy_bdm=True)
+
+    def test_create_instance_enforced_bfv_local_disk_forbidden(
+            self, legacy_bdm=False, bdm=None):
+        # Tests that a user is not allowed to enforce a local (ephemeral)
+        # boot device via the API, if the flavor enforces boot-from-volume.
+        instance_type = flavors.get_default_flavor()
+        instance_type.extra_specs.update({'boot_from_volume': 'true'})
+        request_bdm = bdm or [
+            block_device.BlockDeviceDict({'source_type': 'image',
+                                          'image_id': uuids.image_href_id,
+                                          'boot_index': 0,
+                                          'destination_type': 'local'})
+        ]
+        self.assertRaises(exception.InvalidRequest,
+                          self.compute_api.create,
+                          self.context,
+                          instance_type=instance_type,
+                          block_device_mapping=request_bdm,
+                          image_href=uuids.image_href_id,
+                          legacy_bdm=False)
+
+    def test_create_instance_enforced_bfv_already_defined(self):
+        # Tests that if a user already defines e root volume, we won't
+        # add the enforced block_device_mapping.
+        with test.nested(
+                mock.patch.object(self.compute_api.compute_task_api,
+                                  'schedule_and_build_instances'),
+                mock.patch.object(self.compute_api.compute_task_api,
+                                  'build_instances')
+        ) as (mock_sbi, mock_build):
+            instance_type = flavors.get_default_flavor()
+            instance_type.extra_specs.update({'boot_from_volume': 'true'})
+            request_bdm = [
+                block_device.BlockDeviceDict({'source_type': 'image',
+                                              'destination_type': 'volume',
+                                              'boot_index': 0,
+                                              'volume_size': 512,
+                                              'image_id': uuids.image_href_id})
+            ]
+            (ref, resv_id) = self.compute_api.create(
+                self.context,
+                instance_type=instance_type,
+                block_device_mapping=request_bdm,
+                image_href=uuids.image_href_id,
+                legacy_bdm=False)
+
+            if CONF.cells.enable:
+                build_call = mock_build.call_args_list[0]
+            else:
+                build_call = mock_sbi.call_args_list[0]
+            bdm = build_call[1]['block_device_mapping']
+
+        self.assertEqual(len(bdm), 1)
+
+        root_bdm = bdm.root_bdm()
+        self.assertEqual(root_bdm.source_type, 'image')
+        self.assertEqual(root_bdm.destination_type, 'volume')
+        self.assertEqual(root_bdm.image_id, uuids.image_href_id)
+        self.assertEqual(root_bdm.volume_size, 512)
+
     def test_create_instance_with_invalid_security_group_raises(self):
         instance_type = flavors.get_default_flavor()
 
@@ -12793,6 +12898,26 @@ class DisabledInstanceTypesTestCase(BaseTestCase):
                        fake_get_flavor_by_flavor_id)
 
         self.assertRaises(exception.FlavorNotFound,
+            self.compute_api.resize, self.context, instance, '4')
+
+    def test_cannot_resize_from_ephemeral_to_volume_backed_flavor(self):
+        instance = self._create_fake_instance_obj()
+        orig_get_flavor_by_flavor_id = \
+                flavors.get_flavor_by_flavor_id
+
+        def fake_get_flavor_by_flavor_id(flavor_id, ctxt=None,
+                                                read_deleted="yes"):
+            instance_type = orig_get_flavor_by_flavor_id(flavor_id,
+                                                                ctxt,
+                                                                read_deleted)
+            instance_type['disabled'] = False
+            instance_type['extra_specs']['boot_from_volume'] = 'true'
+            return instance_type
+
+        self.stub_out('nova.compute.flavors.get_flavor_by_flavor_id',
+                       fake_get_flavor_by_flavor_id)
+
+        self.assertRaises(exception.ResizeError,
             self.compute_api.resize, self.context, instance, '4')
 
 

@@ -695,6 +695,32 @@ class API(base.Base):
                 [bdm for bdm in overridable_mappings
                  if bdm['device_name'] not in device_names])
 
+    def _flavor_enforces_boot_from_volume(self, flavor):
+        """Determines whether boot-from-volume is enforced by flavor"""
+        return (flavor.get('extra_specs', {})
+                .get('boot_from_volume', 'false') == 'true')
+
+    def _enforce_boot_from_volume(self, image_meta, flavor,
+                                  block_device_mapping, legacy_bdm):
+        """Adds boot-from-volume block device mapping if not already set."""
+        if any(bdm for bdm in block_device_mapping
+               if bdm.get('destination_type') == 'local'):
+            msg = _("Ephemeral storage is not supported with this "
+                    "flavor. Every storage device must be a volume.")
+            raise exception.InvalidRequest(msg)
+
+        if block_device.get_root_bdm(block_device_mapping):
+            return
+
+        bdm = block_device.BlockDeviceDict(boot_index=0,
+                                           image_id=image_meta.get('id'),
+                                           source_type='image',
+                                           destination_type='volume',
+                                           volume_size=flavor.get('root_gb'),
+                                           delete_on_termination=True)
+
+        block_device_mapping.insert(0, bdm)
+
     def _check_and_transform_bdm(self, context, base_options, instance_type,
                                  image_meta, min_count, max_count,
                                  block_device_mapping, legacy_bdm):
@@ -719,9 +745,11 @@ class API(base.Base):
             block_device.get_root_bdm(image_defined_bdms) is not None)
 
         if legacy_bdm:
+            no_root = (root_in_image_bdms or
+                       self._flavor_enforces_boot_from_volume(instance_type))
             block_device_mapping = block_device.from_legacy_mapping(
                 block_device_mapping, image_ref, root_device_name,
-                no_root=root_in_image_bdms)
+                no_root=no_root)
         elif root_in_image_bdms:
             # NOTE (ndipanov): client will insert an image mapping into the v2
             # block_device_mapping, but if there is a bootable device in image
@@ -742,6 +770,9 @@ class API(base.Base):
         block_device_mapping = self._merge_bdms_lists(
             image_defined_bdms, block_device_mapping)
 
+        if self._flavor_enforces_boot_from_volume(instance_type):
+            self._enforce_boot_from_volume(image_meta, instance_type,
+                                           block_device_mapping, legacy_bdm)
         if min_count > 1 or max_count > 1:
             if any(map(lambda bdm: bdm['source_type'] == 'volume',
                        block_device_mapping)):
@@ -3593,6 +3624,13 @@ class API(base.Base):
                     instance)):
                 reason = _('Resize to zero disk flavor is not allowed.')
                 raise exception.CannotResizeDisk(reason=reason)
+
+            if self._flavor_enforces_boot_from_volume(new_instance_type) != \
+                    self._flavor_enforces_boot_from_volume(
+                        current_instance_type):
+                reason = _('Cannot resize from a volume-backed flavor to a '
+                           'flavor with ephemeral storage or vice-versa.')
+                raise exception.ResizeError(reason=reason)
 
         if not new_instance_type:
             raise exception.FlavorNotFound(flavor_id=flavor_id)
