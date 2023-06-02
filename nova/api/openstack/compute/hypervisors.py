@@ -28,6 +28,7 @@ from nova.api.openstack.compute.views import hypervisors as hyper_view
 from nova.api.openstack import wsgi
 from nova.api import validation
 from nova.compute import api as compute
+import nova.conf
 from nova import exception
 from nova.i18n import _
 from nova.policies import hypervisors as hv_policies
@@ -35,6 +36,10 @@ from nova import servicegroup
 from nova import utils
 
 LOG = logging.getLogger(__name__)
+
+CONF = nova.conf.CONF
+
+UUID_FOR_ID_MIN_VERSION = '2.53'
 
 
 class HypervisorsController(wsgi.Controller):
@@ -103,7 +108,7 @@ class HypervisorsController(wsgi.Controller):
             uptime = None
             if "stats" in hypervisor and "uptime" in hypervisor.stats:
                 uptime = hypervisor.stats.get("uptime")
-            else:
+            elif not CONF.api.disable_hypervisor_uptime_detail:
                 try:
                     uptime = self.host_api.get_host_uptime(
                         req.environ['nova.context'], hypervisor.host)
