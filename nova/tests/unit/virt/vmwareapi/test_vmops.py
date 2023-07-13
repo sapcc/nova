@@ -4387,3 +4387,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops._resize_vm(self._context, instance, vm_ref, flavor, None)
         fake_apply_evc_mode.assert_called_once_with(
             self._session, mock.sentinel.vm_ref, None)
+
+    @mock.patch.object(vm_util, 'trigger_crash_dump')
+    def test_trigger_crash_dump(self, mock_trigger_crash_dump):
+        self._vmops.trigger_crash_dump(self._instance)
+        mock_trigger_crash_dump.assert_called_once_with(self._session,
+                                                        self._instance)
