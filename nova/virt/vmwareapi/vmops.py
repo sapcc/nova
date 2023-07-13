@@ -2202,6 +2202,9 @@ class VMwareVMOps(object):
         vm_util.power_on_instance(self._session, instance)
         self.update_cached_instances()
 
+    def trigger_crash_dump(self, instance):
+        vm_util.trigger_crash_dump(self._session, instance)
+
     def _update_instance_progress(self, context, instance, step, total_steps):
         """Update instance progress percent to reflect current step number
         """

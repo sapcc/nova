@@ -751,6 +751,9 @@ class VMwareVCDriver(driver.ComputeDriver):
         """Power on the specified instance."""
         self._vmops.power_on(instance)
 
+    def trigger_crash_dump(self, instance):
+        self._vmops.trigger_crash_dump(instance)
+
     def poll_rebooting_instances(self, timeout, instances):
         """Poll for rebooting instances."""
         self._vmops.poll_rebooting_instances(timeout, instances)
