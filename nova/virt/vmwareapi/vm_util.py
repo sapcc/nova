@@ -2072,6 +2072,19 @@ def power_on_instance(session, instance, vm_ref=None):
         LOG.debug("VM already powered on", instance=instance)
 
 
+def trigger_crash_dump(session, instance, vm_ref=None):
+    """Trigger a crashdump by sending an NMI"""
+    if vm_ref is None:
+        vm_ref = get_vm_ref(session, instance)
+
+    LOG.debug("Sending NMI to VM", instance=instance)
+    try:
+        session._call_method(session.vim, "SendNMI", vm_ref)
+        LOG.debug("NMI sent to VM", instance=instance)
+    except vexc.InvalidPowerStateException:
+        LOG.info("VM is powered off", instance=instance)
+
+
 def _get_vm_port_indices(session, vm_ref):
     extra_config = session._call_method(vutil,
                                         'get_object_property',

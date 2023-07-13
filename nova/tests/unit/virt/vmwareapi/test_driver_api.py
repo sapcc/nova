@@ -1596,6 +1596,12 @@ class VMwareAPIVMTestCase(test.TestCase,
         info = self._get_info()
         self._check_vm_info(info, power_state.SHUTDOWN)
 
+    @mock.patch.object(vmops.VMwareVMOps, 'trigger_crash_dump')
+    def test_trigger_crash_dump(self, mock_trigger_crash_dump):
+        self._create_vm()
+        self.conn.trigger_crash_dump(self.instance)
+        mock_trigger_crash_dump.assert_called_once_with(self.instance)
+
     def test_power_off_non_existent(self):
         self._create_instance()
         self.assertRaises(exception.InstanceNotFound, self.conn.power_off,
