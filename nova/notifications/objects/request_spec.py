@@ -26,10 +26,12 @@ class RequestSpecPayload(base.NotificationPayloadBase):
     # Version 1.1: Add force_hosts, force_nodes, ignore_hosts, image_meta,
     #              instance_group, requested_destination, retry,
     #              scheduler_hints and security_groups fields
-    VERSION = '1.1'
+    # Version 1.2: Add ignore_nodes field
+    VERSION = '1.2'
 
     SCHEMA = {
         'ignore_hosts': ('request_spec', 'ignore_hosts'),
+        'ignore_nodes': ('request_spec', 'ignore_nodes'),
         'instance_uuid': ('request_spec', 'instance_uuid'),
         'project_id': ('request_spec', 'project_id'),
         'user_id': ('request_spec', 'user_id'),
@@ -47,6 +49,7 @@ class RequestSpecPayload(base.NotificationPayloadBase):
         'force_hosts': fields.StringField(nullable=True),
         'force_nodes': fields.StringField(nullable=True),
         'ignore_hosts': fields.ListOfStringsField(nullable=True),
+        'ignore_nodes': fields.ListOfStringsField(nullable=True),
         'image_meta': fields.ObjectField('ImageMetaPayload', nullable=True),
         'instance_group': fields.ObjectField('ServerGroupPayload',
             nullable=True),

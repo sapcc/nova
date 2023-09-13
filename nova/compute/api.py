@@ -5475,15 +5475,13 @@ class API:
         # the pre-v2.29 API microversion, which wouldn't set force
         if force is False and host:
             nodes = objects.ComputeNodeList.get_all_by_host(context, host)
-            # NOTE(sbauza): Unset the host to make sure we call the scheduler
-            host = None
-            # FIXME(sbauza): Since only Ironic driver uses more than one
-            # compute per service but doesn't support evacuations,
-            # let's provide the first one.
-            target = nodes[0]
+            if len(nodes) == 1:
+                node = nodes[0].hypervisor_hostname
+            else:
+                node = None
             destination = objects.Destination(
-                host=target.host,
-                node=target.hypervisor_hostname
+                host=host,
+                node=node
             )
             request_spec.requested_destination = destination
 
@@ -5497,7 +5495,8 @@ class API:
                        bdms=None,
                        recreate=True,
                        on_shared_storage=on_shared_storage,
-                       host=host,
+                       # NOTE(sbauza): To make sure we call the scheduler
+                       host=None,
                        request_spec=request_spec,
                        )
 

@@ -4,6 +4,7 @@
         "availability_zone": null,
         "flavor": {"$ref": "FlavorPayload.json#"},
         "ignore_hosts": null,
+        "ignore_nodes": null,
         "image": {"$ref": "ImageMetaPayload.json#"},
         "instance_uuid": "d5e6a7b7-80e5-4166-85a3-cd6115201082",
         "num_instances": 1,

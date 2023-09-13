@@ -178,7 +178,6 @@ class VMwareVCDriver(driver.ComputeDriver):
                                       self._nodename,
                                       self._cluster_ref,
                                       self._datastore_regex)
-                                        self._vc_state,
         self._vmops = vmops.VMwareVMOps(self._session,
                                         virtapi,
                                         self._volumeops,
@@ -498,6 +497,8 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         if CONF.vmware.hypervisor_mode == 'cluster':
             return [self._nodename]
+
+        return hosts.keys()
 
     def update_provider_tree(self, provider_tree, nodename, allocations=None):
         """Update a ProviderTree object with current resource provider,

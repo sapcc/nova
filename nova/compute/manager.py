@@ -8002,8 +8002,10 @@ class ComputeManager(manager.Manager):
 
     def _get_compute_info(self, host, nodename=None):
         if not nodename:
-            return objects.ComputeNode.get_first_node_by_host_for_old_compat(
-                self.context, host)
+            nodes = objects.ComputeNodeList.get_all_by_host(self.context, host)
+            if len(nodes) != 1:
+                raise exception.ComputeHostNotFound(host=host)
+            return nodes[0]
 
         return objects.ComputeNode.get_by_host_and_nodename(
             self.context, host, nodename)
@@ -8069,7 +8071,7 @@ class ComputeManager(manager.Manager):
         src_compute_info = obj_base.obj_to_primitive(
             self._get_compute_info(ctxt, instance.host, instance.node))
         dst_compute_info = obj_base.obj_to_primitive(
-            self._get_compute_info(ctxt, self.host))
+            self._get_compute_info(ctxt, self.host, migration.dest_node))
         dest_check_data = self.driver.check_can_live_migrate_destination(ctxt,
             instance, src_compute_info, dst_compute_info,
             block_migration, disk_over_commit)

@@ -73,6 +73,8 @@ class RequestSpec(base.NovaObject):
         'num_instances': fields.IntegerField(default=1),
         # NOTE(alex_xu): This field won't be persisted.
         'ignore_hosts': fields.ListOfStringsField(nullable=True),
+        # NOTE(fabianw): This field won't be persisted
+        'ignore_nodes': fields.ListOfStringsField(nullable=True),
         # NOTE(mriedem): In reality, you can only ever have one
         # host in the force_hosts list. The fact this is a list
         # is a mistake perpetuated over time.
@@ -347,6 +349,7 @@ class RequestSpec(base.NovaObject):
         spec._from_flavor(flavor)
         # Hydrate now from filter_properties
         spec.ignore_hosts = filter_properties.get('ignore_hosts')
+        spec.ignore_nodes = filter_properties.get('ignore_nodes')
         spec.force_hosts = filter_properties.get('force_hosts')
         spec.force_nodes = filter_properties.get('force_nodes')
         retry = filter_properties.get('retry', {})
@@ -460,6 +463,8 @@ class RequestSpec(base.NovaObject):
         filt_props = {}
         if self.obj_attr_is_set('ignore_hosts') and self.ignore_hosts:
             filt_props['ignore_hosts'] = self.ignore_hosts
+        if self.obj_attr_is_set('ignore_nodes') and self.ignore_nodes:
+            filt_props['ignore_nodes'] = self.ignore_nodes
         if self.obj_attr_is_set('force_hosts') and self.force_hosts:
             filt_props['force_hosts'] = self.force_hosts
         if self.obj_attr_is_set('force_nodes') and self.force_nodes:
@@ -527,6 +532,7 @@ class RequestSpec(base.NovaObject):
         spec_obj._from_instance_pci_requests(pci_requests)
         spec_obj._from_instance_numa_topology(numa_topology)
         spec_obj.ignore_hosts = filter_properties.get('ignore_hosts')
+        spec_obj.ignore_nodes = filter_properties.get('ignore_nodes')
         spec_obj.force_hosts = filter_properties.get('force_hosts')
         spec_obj.force_nodes = filter_properties.get('force_nodes')
         spec_obj._from_retry(filter_properties.get('retry', {}))
@@ -619,10 +625,11 @@ class RequestSpec(base.NovaObject):
                 # None and we'll lose what is set (but not persisted) on the
                 # object.
                 continue
-            elif key in ('retry', 'ignore_hosts'):
+            elif key in ('retry', 'ignore_hosts', 'ignore_nodes'):
                 # NOTE(takashin): Do not override the 'retry' or 'ignore_hosts'
                 # fields which are not persisted. They are not lazy-loadable
                 # fields. If they are not set, set None.
+                # NOTE(fabianw): Same with 'ignore_nodes'
                 if not spec.obj_attr_is_set(key):
                     setattr(spec, key, None)
             elif key == "numa_topology":
@@ -704,7 +711,8 @@ class RequestSpec(base.NovaObject):
                 spec.instance_group.hosts = None
             # NOTE(mriedem): Don't persist these since they are per-request
             for excluded in ('retry', 'requested_destination',
-                             'requested_resources', 'ignore_hosts'):
+                             'requested_resources', 'ignore_hosts',
+                             'ignore_nodes'):
                 if excluded in spec and getattr(spec, excluded):
                     setattr(spec, excluded, None)
             # NOTE(stephenfin): Don't persist network metadata since we have
