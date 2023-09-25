@@ -1055,7 +1055,7 @@ object_data = {
     'CellMapping': '1.1-5d652928000a5bc369d79d5bde7e497d',
     'CellMappingList': '1.1-496ef79bb2ab41041fff8bcb57996352',
     'ComputeNode': '1.19-af6bd29a6c3b225da436a0d8487096f2',
-    'ComputeNodeList': '1.17-52f3b0962b1c86b98590144463ebb192',
+    'ComputeNodeList': '1.17-bb54e3fd5415be274c5515577acafe3d',
     'ConsoleAuthToken': '1.1-8da320fb065080eb4d3c2e5c59f8bf52',
     'CpuDiagnostics': '1.0-d256f2e442d1b837735fd17dfe8e3d47',
     'Destination': '1.4-3b440d29459e2c98987ad5b25ad1cb2c',

@@ -16,7 +16,6 @@ import time
 
 import mock
 
-from nova.db.main import api as main_db_api
 from nova import objects
 from nova.scheduler.filters import shard_filter
 from nova import test
@@ -84,6 +83,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs'],
                 extra_specs=extra_specs))
@@ -102,6 +102,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='bar',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
         self._assert_passes(host, spec_obj, False)
@@ -116,6 +117,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 
@@ -130,6 +132,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 
@@ -144,6 +147,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 
@@ -158,6 +162,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 
@@ -172,6 +177,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 
@@ -186,6 +192,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 
@@ -205,6 +212,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']),
             scheduler_hints=dict(_nova_check_type=['resize'],
@@ -227,6 +235,7 @@ class TestShardFilter(test.NoDBTestCase):
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']),
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             scheduler_hints=dict(_nova_check_type=['resize'],
                                  source_host=['host2']))
 
@@ -245,6 +254,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='baz',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
         self._assert_passes(host, spec_obj, True)
@@ -261,6 +271,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='baz',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
         self._assert_passes(host, spec_obj, True)
@@ -287,7 +298,7 @@ class TestShardFilter(test.NoDBTestCase):
 
         gather_host.assert_called_once_with(
             get_context.return_value,
-            main_db_api.get_k8s_hosts_by_instances_tag,
+            objects.ComputeNodeList.get_k8s_hosts_by_instances_tag,
             'kubernikus:kluster-example',
             filters={'hv_type': 'VMware vCenter Server',
                      'availability_zone': 'az-2'})
@@ -321,7 +332,7 @@ class TestShardFilter(test.NoDBTestCase):
 
         gather_host.assert_called_once_with(
             get_context.return_value,
-            main_db_api.get_k8s_hosts_by_instances_metadata,
+            objects.ComputeNodeList.get_k8s_hosts_by_instances_metadata,
             gardener_cluster, '1',
             filters={'hv_type': 'VMware vCenter Server',
                      'availability_zone': 'az-2'})
@@ -351,7 +362,7 @@ class TestShardFilter(test.NoDBTestCase):
 
         gather_host.assert_called_once_with(
             get_context.return_value,
-            main_db_api.get_k8s_hosts_by_instances_metadata,
+            objects.ComputeNodeList.get_k8s_hosts_by_instances_metadata,
             gardener_cluster, '1',
             filters={'hv_type': 'VMware vCenter Server',
                      'availability_zone': 'az-2'})
@@ -467,6 +478,7 @@ class TestShardFilter(test.NoDBTestCase):
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
             instance_uuid=self.fake_build_req.instance_uuid,
+            availability_zone=None,
             flavor=fake_flavor.fake_flavor_obj(
                 mock.sentinel.ctx, expected_attrs=['extra_specs']))
 

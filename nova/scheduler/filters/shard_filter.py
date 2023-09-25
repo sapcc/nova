@@ -12,21 +12,17 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-from collections import defaultdict
-
 from oslo_log import log as logging
 
 import nova.conf
 from nova import context as nova_context
-from nova.db.main import api as main_db_api
-from nova import exception
-from nova.objects.aggregate import AggregateList
 from nova.objects.build_request import BuildRequest
 from nova.objects.instance import Instance
 from nova.scheduler import filters
 from nova.scheduler.mixins import ProjectTagMixin
 from nova.scheduler import utils
 from nova import utils as nova_utils
+from nova.virt.vmwareapi import shard_util
 
 LOG = logging.getLogger(__name__)
 
@@ -97,63 +93,13 @@ class ShardFilter(filters.BaseHostFilter, ProjectTagMixin):
                         "for the uuid %s", spec_obj.instance_uuid)
             return
 
-        kks_tag = next((t.tag for t in _get_tags()
-                        if t.tag.startswith(KKS_PREFIX)), None)
-        gardener_meta = None
-        if not kks_tag:
-            gardener_meta = \
-                {k: v for k, v in _get_metadata().items()
-                 if k.startswith(GARDENER_PREFIX)}
+        k8s_shard_aggrs = shard_util.get_sorted_k8s_shard_aggregates(
+            elevated, _get_metadata(), _get_tags(), spec_obj.availability_zone)
 
-        if not kks_tag and not gardener_meta:
+        if not k8s_shard_aggrs:
             return None
 
-        q_filters = {'hv_type': VMWARE_HV_TYPE}
-        if spec_obj.availability_zone:
-            q_filters['availability_zone'] = spec_obj.availability_zone
-
-        results = None
-        if kks_tag:
-            results = nova_context.scatter_gather_skip_cell0(
-                elevated, main_db_api.get_k8s_hosts_by_instances_tag,
-                kks_tag, filters=q_filters)
-        elif gardener_meta:
-            (meta_key, meta_value) = next(iter(gardener_meta.items()))
-            results = nova_context.scatter_gather_skip_cell0(
-                elevated, main_db_api.get_k8s_hosts_by_instances_metadata,
-                meta_key, meta_value, filters=q_filters)
-
-        if not results:
-            return None
-
-        # hosts with count of instances from this K8S cluster
-        # {host: <count>}
-        k8s_hosts = defaultdict(lambda: 0)
-
-        for cell_uuid, cell_result in results.items():
-            if nova_context.is_cell_failure_sentinel(cell_result):
-                raise exception.NovaException(
-                    "Unable to schedule the K8S instance because "
-                    "cell %s is not responding." % cell_uuid)
-            cell_hosts = dict(cell_result)
-            for h, c in cell_hosts.items():
-                k8s_hosts[h] += c
-
-        if not k8s_hosts:
-            return None
-
-        all_shard_aggrs = [agg for agg in AggregateList.get_all(elevated)
-                           if agg.name.startswith(self._SHARD_PREFIX)]
-        if not all_shard_aggrs:
-            return None
-
-        shard_aggr = sorted(
-            all_shard_aggrs,
-            reverse=True,
-            key=lambda aggr: sum(i for h, i in k8s_hosts.items()
-                                 if h in aggr.hosts))[0]
-
-        return shard_aggr.name
+        return k8s_shard_aggrs[0].name
 
     def filter_all(self, filter_obj_list, spec_obj):
         # Only VMware
@@ -213,8 +159,8 @@ class ShardFilter(filters.BaseHostFilter, ProjectTagMixin):
 
         if k8s_shard:
             if k8s_shard not in host_shard_names:
-                LOG.debug("%(host_state)s is not part of the requested "
-                          "K8S cluster shard '%(k8s_shard)s'",
+                LOG.debug("%(host_state)s is not part of the K8S "
+                          "cluster's shard '%(k8s_shard)s'",
                           {'host_state': host_state,
                            'k8s_shard': k8s_shard})
                 return False

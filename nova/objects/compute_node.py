@@ -506,6 +506,17 @@ class ComputeNodeList(base.ObjectListBase, base.NovaObject):
         return base.obj_make_list(context, cls(context), objects.ComputeNode,
                                   db_computes)
 
+    @base.remotable_classmethod
+    def get_k8s_hosts_by_instances_metadata(cls, context, meta_key, meta_value,
+                                            filters=None):
+        return db.get_k8s_hosts_by_instances_metadata(
+            context, meta_key, meta_value, filters=filters)
+
+    @base.remotable_classmethod
+    def get_k8s_hosts_by_instances_tag(cls, context, tag, filters=None):
+        return db.get_k8s_hosts_by_instances_tag(
+            context, tag, filters=filters)
+
 
 def _get_node_empty_ratio(context, max_count):
     """Query the DB for non-deleted compute_nodes with 0.0/None alloc ratios

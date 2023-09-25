@@ -1733,6 +1733,15 @@ class ComputeManager(manager.Manager):
 
         _do_validation(context, instance, group)
 
+    def _validate_driver_instance_group_policy(self, context, instance):
+        lock_id = "driver-instance-group-validation-%s" % instance.uuid
+
+        @utils.synchronized(lock_id)
+        def _do_validation(context, instance):
+            self.driver.validate_instance_group_policy(context, instance)
+
+        _do_validation(context, instance)
+
     def _log_original_error(self, exc_info, instance_uuid):
         LOG.error('Error: %s', exc_info[1], instance_uuid=instance_uuid,
                   exc_info=exc_info)
@@ -2407,6 +2416,8 @@ class ComputeManager(manager.Manager):
                 # the host is set on the instance.
                 self._validate_instance_group_policy(context, instance,
                                                      scheduler_hints)
+                self._validate_driver_instance_group_policy(context,
+                                                            instance)
                 image_meta = objects.ImageMeta.from_dict(image)
 
                 with self._build_resources(context, instance,

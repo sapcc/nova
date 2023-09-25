@@ -2159,6 +2159,11 @@ def _handle_k8s_hosts_query_filters(query, filters=None):
         query = query.filter(
             models.Instance.availability_zone == availability_zone)
 
+    skip_instance_uuid = filters.get('skip_instance_uuid')
+    if skip_instance_uuid:
+        query.filter(
+            models.Instance.uuid != skip_instance_uuid)
+
     return query
 
 

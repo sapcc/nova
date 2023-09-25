@@ -1319,3 +1319,6 @@ class VMwareVCDriver(driver.ComputeDriver):
                   vim_util.get_moref_value(current_host_ref),
                   vim_util.get_moref_value(host_ref),
                   instance=instance)
+
+    def validate_instance_group_policy(self, context, instance):
+        self._vmops._check_k8s_shard(instance)

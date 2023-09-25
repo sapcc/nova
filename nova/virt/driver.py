@@ -1807,6 +1807,14 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def validate_instance_group_policy(self, context, instance):
+        """Validates that the instance meets driver-specific grouping policy
+
+        The driver can raise exception.RescheduledException to reject and
+        trigger rescheduling of the instance to a different host.
+        """
+        pass
+
 
 def load_compute_driver(virtapi, compute_driver=None):
     """Load a compute driver module.

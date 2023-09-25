@@ -74,6 +74,7 @@ from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import imagecache
 from nova.virt.vmwareapi import images
 from nova.virt.vmwareapi.rpc import VmwareRpcApi
+from nova.virt.vmwareapi import shard_util
 from nova.virt.vmwareapi import special_spawning
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
@@ -1357,6 +1358,28 @@ class VMwareVMOps(object):
             reason = _("Memory size is not multiple of 4")
             raise exception.InstanceUnacceptable(instance_id=instance.uuid,
                                                  reason=reason)
+
+    def _check_k8s_shard(self, instance):
+        """Handles race condition when spawning K8S instances in parallel.
+
+        If the instance is part of a K8S cluster, ensures that this host
+        is part of any shard bound to that cluster, otherwise we should
+        reschedule the instance.
+        """
+        k8s_shard_aggrs = shard_util.get_sorted_k8s_shard_aggregates(
+            nova_context.get_admin_context(), instance.metadata, instance.tags,
+            instance.availability_zone, skip_instance_uuid=instance.uuid)
+
+        if k8s_shard_aggrs:
+            matches = any(self._compute_host in aggr.hosts
+                          for aggr in k8s_shard_aggrs)
+            if not matches:
+                msg = ("Host %(host)s rejected K8S instance %(instance_uuid)s "
+                       "because the K8S cluster is not part to this shard."
+                       % ({"host": self._compute_host,
+                           "instance_uuid": instance.uuid}))
+                raise exception.RescheduledException(
+                    instance_uuid=instance.uuid, reason=msg)
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info, block_device_info=None):
