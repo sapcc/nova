@@ -13,12 +13,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 """
-Prefer resize to same shard weigher. Resizing an instance gives the current
-shard aggregate a higher priority.
+Prefer same shard weigher. Resizing/live-migrating an instance gives the
+current shard aggregate a higher priority.
 
-This weigher ignores any instances which are:
- * new instances (or unshelving)
- * not resizing (a.k.a. migrating or rebuilding)
+We split the functionality by action taken on the instance, so we can apply
+different weights per action.
 """
 from oslo_log import log as logging
 
@@ -31,21 +30,36 @@ LOG = logging.getLogger(__name__)
 CONF = nova.conf.CONF
 
 
-class PreferSameShardOnResizeWeigher(weights.BaseHostWeigher):
+class _SameShardWeigherBase(weights.BaseHostWeigher):
     minval = 0
     _SHARD_PREFIX = 'vc-'
+    _TYPE = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self._TYPE is None:
+            raise NotImplementedError(
+                'Children of _SameShardWeigherBase need to set _TYPE')
 
     def weight_multiplier(self, host_state):
         """Override the weight multiplier."""
+        name = f"prefer_same_shard_{self._TYPE}_weight_multiplier"
         return utils.get_weight_multiplier(
-            host_state, 'prefer_same_host_resize_weight_multiplier',
-            CONF.filter_scheduler.prefer_same_shard_resize_weight_multiplier)
+            host_state, name,
+            getattr(CONF.filter_scheduler, name))
 
     def _weigh_object(self, host_state, request_spec):
-        """Return 1 for about-to-be-resized instances where the shard is the
+        """Return 1 for instances scheduled for _TYPE where the shard is the
         instance's current shard. Return 0 otherwise.
         """
-        if not utils.request_is_resize(request_spec):
+        # check the type of the request matches the class' _TYPE
+        check_type_fn_name = f"request_is_{self._TYPE}"
+        check_type_fn = getattr(utils, check_type_fn_name, None)
+        if check_type_fn is None:
+            raise NotImplementedError(
+                f"nova.scheduler.utils.{check_type_fn_name}() does not exist "
+                f"for {self.__class__} with _TYPE {self._TYPE}")
+        if not check_type_fn(request_spec):
             return 0.0
 
         if utils.is_non_vmware_spec(request_spec):
@@ -70,3 +84,15 @@ class PreferSameShardOnResizeWeigher(weights.BaseHostWeigher):
         if instance_host in host_shard_aggr.hosts:
             return 1.0
         return 0.0
+
+
+class PreferSameShardOnResizeWeigher(_SameShardWeigherBase):
+    _TYPE = 'resize'
+
+
+class PreferSameShardOnLiveMigrateWeigher(_SameShardWeigherBase):
+    _TYPE = 'live_migrate'
+
+
+class PreferSameShardOnMigrateWeigher(_SameShardWeigherBase):
+    _TYPE = 'migrate'
