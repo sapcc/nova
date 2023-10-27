@@ -4143,7 +4143,10 @@ class API:
                     validate_pci=True)
 
         # Not to be confused with scheduler_hint (singular)
-        scheduler_hints = {'_nova_check_type': ['resize']}
+        if same_flavor:
+            scheduler_hints = {'_nova_check_type': ['migrate']}
+        else:
+            scheduler_hints = {'_nova_check_type': ['resize']}
         filter_properties = {'ignore_hosts': [],
                              'scheduler_hints': scheduler_hints}
 
