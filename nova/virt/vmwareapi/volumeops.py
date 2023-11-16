@@ -831,6 +831,9 @@ class VMwareVolumeOps(object):
         for disk in block_device_mapping:
             connection_info = disk["connection_info"]
             try:
+                driver_type = connection_info['driver_volume_type']
+                if driver_type == constants.DISK_FORMAT_FCD:
+                    continue
                 data = connection_info["data"]
                 volume_ref = self._get_volume_ref(data)
                 destroy_task = session._call_method(session.vim,
