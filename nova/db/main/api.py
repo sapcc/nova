@@ -2087,6 +2087,86 @@ def instance_get_active_by_window_joined(context, begin, end=None,
     return _instances_fill_metadata(context, query.all(), manual_joins)
 
 
+@require_context
+@pick_context_manager_reader_allow_async
+def get_k8s_hosts_by_instances_tag(context, tag, filters=None):
+    """Get the list of K8S hosts and the number of instances associated to
+    the K8S cluster running on that host, querying by instances tags.
+
+    Returns a list of tuple
+    [(host1, 3), (host2, 1)]
+    """
+    count_label = func.count('*').label('count')
+    query = context.session.query(models.Instance.host, count_label). \
+        join(models.Instance.tags)
+    query = _handle_k8s_hosts_query_filters(query, filters)
+    query = query.filter(models.Instance.deleted == 0,
+                         models.Tag.tag == tag)
+
+    query = query.group_by(models.Instance.host). \
+        order_by(sql.desc(count_label))
+
+    return query.all()
+
+
+@require_context
+@pick_context_manager_reader_allow_async
+def get_k8s_hosts_by_instances_metadata(context, meta_key, meta_value,
+                                        filters=None):
+    """Get the list of K8S hosts and the number of instances associated to
+    the K8S cluster running on that host, querying by instances metadata.
+
+    Returns a list of tuple
+    [(host1, 3), (host2, 1)]
+    """
+    count_label = func.count('*').label('count')
+    query = context.session.query(models.Instance.host, count_label). \
+        join(models.InstanceMetadata,
+             models.InstanceMetadata.instance_uuid == models.Instance.uuid)
+    query = _handle_k8s_hosts_query_filters(query, filters)
+    query = query.filter(models.Instance.deleted == 0,
+                         models.InstanceMetadata.deleted == 0,
+                         models.InstanceMetadata.key == meta_key,
+                         models.InstanceMetadata.value == meta_value)
+    query = query.group_by(models.Instance.host). \
+        order_by(sql.desc(count_label))
+
+    return query.all()
+
+
+def _handle_k8s_hosts_query_filters(query, filters=None):
+    """Applies filters to the K8S related queries.
+
+    Supported filters:
+    filters = {
+        'hv_type': 'The hypervisor_type',
+        'availability_zone': 'The availability zone'
+    }
+    """
+    if not filters:
+        return query
+    hv_type = filters.get('hv_type')
+    if hv_type:
+        query = query.join(
+            models.ComputeNode,
+            sql.and_(
+                models.ComputeNode.deleted == 0,
+                models.ComputeNode.hypervisor_hostname == models.Instance.node,
+                models.ComputeNode.hypervisor_type == hv_type))
+
+    availability_zone = filters.get('availability_zone')
+    if availability_zone:
+        query = query.filter(
+            models.Instance.availability_zone == availability_zone)
+
+    skip_instance_uuid = filters.get('skip_instance_uuid')
+    if skip_instance_uuid:
+        query.filter(
+            models.Instance.uuid != skip_instance_uuid)
+
+    return query
+
+
 def _instance_get_all_query(context, project_only=False, joins=None):
     if joins is None:
         joins = ['info_cache', 'security_groups']
