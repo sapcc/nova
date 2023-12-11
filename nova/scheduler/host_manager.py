@@ -49,6 +49,7 @@ HOST_INSTANCE_SEMAPHORE = "host_instance"
 
 class ReadOnlyDict(IterableUserDict):
     """A read-only dict."""
+
     def __init__(self, source=None):
         self.data = {}
         if source:
@@ -497,6 +498,16 @@ class HostManager(object):
             ignored_hosts_str = ', '.join(ignored_hosts)
             LOG.info('Host filter ignoring hosts: %s', ignored_hosts_str)
 
+        def _strip_ignore_nodes(host_map, nodes_to_ignore):
+            ignored_nodes = []
+            for node in nodes_to_ignore:
+                for (hostname, nodename) in list(host_map.keys()):
+                    if node.lower() == nodename.lower():
+                        del host_map[(hostname, nodename)]
+                        ignored_nodes.append(node)
+            ignored_nodes_str = ', '.join(ignored_nodes)
+            LOG.info('Host filter ignoring nodes: %s', ignored_nodes_str)
+
         def _match_forced_hosts(host_map, hosts_to_force):
             forced_hosts = []
             lowered_hosts_to_force = [host.lower() for host in hosts_to_force]
@@ -567,6 +578,7 @@ class HostManager(object):
             return iter(requested_nodes)
 
         ignore_hosts = spec_obj.ignore_hosts or []
+        ignore_nodes = spec_obj.ignore_nodes or []
         force_hosts = spec_obj.force_hosts or []
         force_nodes = spec_obj.force_nodes or []
         requested_node = spec_obj.requested_destination
@@ -576,12 +588,16 @@ class HostManager(object):
             # possible to any requested destination nodes before passing the
             # list to the filters
             hosts = _get_hosts_matching_request(hosts, requested_node)
-        if ignore_hosts or force_hosts or force_nodes:
+        if ignore_hosts or ignore_nodes or force_hosts or force_nodes:
             # NOTE(deva): we can't assume "host" is unique because
             #             one host may have many nodes.
             name_to_cls_map = {(x.host, x.nodename): x for x in hosts}
             if ignore_hosts:
                 _strip_ignore_hosts(name_to_cls_map, ignore_hosts)
+                if not name_to_cls_map:
+                    return []
+            if ignore_nodes:
+                _strip_ignore_nodes(name_to_cls_map, ignore_nodes)
                 if not name_to_cls_map:
                     return []
             # NOTE(deva): allow force_hosts and force_nodes independently

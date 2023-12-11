@@ -8000,9 +8000,15 @@ class ComputeManager(manager.Manager):
             action=fields.NotificationAction.INTERFACE_DETACH,
             phase=fields.NotificationPhase.END)
 
-    def _get_compute_info(self, context, host):
-        return objects.ComputeNode.get_first_node_by_host_for_old_compat(
-            context, host)
+    def _get_compute_info(self, host, nodename=None):
+        if not nodename:
+            nodes = objects.ComputeNodeList.get_all_by_host(self.context, host)
+            if len(nodes) != 1:
+                raise exception.ComputeHostNotFound(host=host)
+            return nodes[0]
+
+        return objects.ComputeNode.get_by_host_and_nodename(
+            self.context, host, nodename)
 
     @wrap_exception()
     def check_instance_shared_storage(self, ctxt, data):
@@ -8063,9 +8069,9 @@ class ComputeManager(manager.Manager):
             raise exception.MigrationPreCheckError(reason=msg)
 
         src_compute_info = obj_base.obj_to_primitive(
-            self._get_compute_info(ctxt, instance.host))
+            self._get_compute_info(ctxt, instance.host, instance.node))
         dst_compute_info = obj_base.obj_to_primitive(
-            self._get_compute_info(ctxt, self.host))
+            self._get_compute_info(ctxt, self.host, migration.dest_node))
         dest_check_data = self.driver.check_can_live_migrate_destination(ctxt,
             instance, src_compute_info, dst_compute_info,
             block_migration, disk_over_commit)
@@ -9019,12 +9025,19 @@ class ComputeManager(manager.Manager):
                           'destination host.', instance=instance)
         finally:
             # Restore instance state and update host
-            current_power_state = self._get_power_state(instance)
-            node_name = None
             prev_host = instance.host
             try:
-                compute_node = self._get_compute_info(context, self.host)
-                node_name = compute_node.hypervisor_hostname
+                vm_info = self.driver.get_info(instance, use_cache=False)
+                current_power_state = vm_info.power_state
+                node_name = vm_info.node
+            except exception.InstanceNotFound:
+                current_power_state = power_state.NOSTATE
+                node_name = None
+
+            try:
+                if not node_name:
+                    compute_node = self._get_compute_info(context, self.host)
+                    node_name = compute_node.hypervisor_hostname
             except exception.ComputeHostNotFound:
                 LOG.exception('Failed to get compute_info for %s', self.host)
             finally:
@@ -9832,11 +9845,17 @@ class ComputeManager(manager.Manager):
         try:
             vm_instance = self.driver.get_info(db_instance)
             vm_power_state = vm_instance.state
+            vm_node = vm_instance.node
         except exception.InstanceNotFound:
             vm_power_state = power_state.NOSTATE
+            vm_node = None
         # Note(maoy): the above get_info call might take a long time,
         # for example, because of a broken libvirt driver.
         try:
+            self._sync_instance_node(context,
+                                     db_instance,
+                                     vm_node,
+                                     use_slave=True)
             self._sync_instance_power_state(context,
                                             db_instance,
                                             vm_power_state,
@@ -9883,6 +9902,65 @@ class ComputeManager(manager.Manager):
                 # For example, there might be another task scheduled.
                 LOG.exception("error during stop() in sync_power_state.",
                               instance=db_instance)
+
+    def _sync_instance_node(self, context, instance, new_node,
+                            use_slave=False):
+        """Align the instance node between the database and hypervisor
+
+        If the instance is found on a different hypervisor the allocations
+        will be moved accordingly
+        """
+        if not new_node:
+            return
+
+        # We re-query the DB to get the latest instance info to minimize
+        # (not eliminate) race condition.
+        instance.refresh(use_slave=use_slave)
+
+        if self.host != instance.host:
+            return
+
+        source_node = instance.node
+        if new_node == instance.node:
+            return
+
+        rt = self._get_resource_tracker()
+        rc = self.scheduler_client.reportclient
+        try:
+            source_cn_uuid = rt.get_node_uuid(source_node)
+            cn_uuid = rt.get_node_uuid(new_node)
+
+            LOG.info("Moving instance from %s (%s) to %s (%s)",
+                        source_node, source_cn_uuid,
+                        new_node, cn_uuid,
+                        instance=instance)
+
+            allocs = rc.get_allocations_for_consumer(context, instance.uuid)
+            if not allocs:
+                LOG.warning("Failed to get existing resources")
+                return
+
+            if cn_uuid in allocs:
+                LOG.info("Instance has already allocations for %s",
+                        cn_uuid, instance=instance)
+            else:
+                LOG.debug(allocs, instance=instance)
+                resources = allocs.values()[0]['resources']
+                res = rc.set_and_clear_allocations(context, cn_uuid,
+                                         instance.uuid,
+                                         resources, instance.project_id,
+                                         instance.user_id)
+                if not res:
+                    LOG.warning("Failed to update allocations",
+                        instance=instance)
+                    return
+                LOG.debug("Updated allocations", instance=instance)
+
+            instance.node = new_node
+            instance.save()
+            self._update_scheduler_instance_info(context, instance)
+        except Exception:
+            LOG.exception("Failed to move instance to new node")
 
     def _sync_instance_power_state(self, context, db_instance, vm_power_state,
                                    use_slave=False):

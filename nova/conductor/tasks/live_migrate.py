@@ -62,10 +62,12 @@ class LiveMigrationTask(base.TaskBase):
                  request_spec=None):
         super(LiveMigrationTask, self).__init__(context, instance)
         self.destination = destination
+        self.dest_node = None
         self.block_migration = block_migration
         self.disk_over_commit = disk_over_commit
         self.migration = migration
         self.source = instance.host
+        self.source_node = instance.node
         self.migrate_data = None
         self.limits = None
 
@@ -97,7 +99,8 @@ class LiveMigrationTask(base.TaskBase):
             # wants the scheduler to pick a destination host, or a host was
             # specified but is not forcing it, so they want the scheduler
             # filters to run on the specified host, like a scheduler hint.
-            self.destination, dest_node, self.limits = self._find_destination()
+            self.destination, self.dest_node, self.limits = \
+                self._find_destination()
         else:
             # This is the case that the user specified the 'force' flag when
             # live migrating with a specific destination host so the scheduler
@@ -108,7 +111,7 @@ class LiveMigrationTask(base.TaskBase):
             self._check_destination_has_enough_memory()
             source_node, dest_node = (
                 self._check_compatible_with_source_hypervisor(
-                    self.destination))
+                    self.destination, self.dest_node))
             # TODO(mriedem): Call select_destinations() with a
             # skip_filters=True flag so the scheduler does the work of claiming
             # resources on the destination in Placement but still bypass the
@@ -315,7 +318,7 @@ class LiveMigrationTask(base.TaskBase):
                     instance_id=self.instance.uuid, host=self.destination)
 
     def _check_destination_has_enough_memory(self):
-        compute = self._get_compute_info(self.destination)
+        compute = self._get_compute_info(self.destination, self.dest_node)
         free_ram_mb = compute.free_ram_mb
         total_ram_mb = compute.memory_mb
         mem_inst = self.instance.memory_mb
@@ -336,13 +339,21 @@ class LiveMigrationTask(base.TaskBase):
                     instance_uuid=instance_uuid, dest=dest, avail=avail,
                     mem_inst=mem_inst))
 
-    def _get_compute_info(self, host):
-        return objects.ComputeNode.get_first_node_by_host_for_old_compat(
-            self.context, host)
+    def _get_compute_info(self, host, nodename=None):
+        if not nodename:
+            nodes = objects.ComputeNodeList.get_all_by_host(self.context, host)
+            if len(nodes) != 1:
+                raise exception.ComputeHostNotFound(host=host)
+            return nodes[0]
 
-    def _check_compatible_with_source_hypervisor(self, destination):
-        source_info = self._get_compute_info(self.source)
-        destination_info = self._get_compute_info(destination)
+        return objects.ComputeNode.get_by_host_and_nodename(
+            self.context, host, nodename)
+
+    def _check_compatible_with_source_hypervisor(self, dest_host, dest_node):
+        migration = self.migration
+        source_info = self._get_compute_info(migration.source_compute,
+                                             migration.source_node)
+        destination_info = self._get_compute_info(dest_host, dest_node)
 
         source_type = source_info.hypervisor_type
         destination_type = destination_info.hypervisor_type
@@ -461,14 +472,12 @@ class LiveMigrationTask(base.TaskBase):
                 reason=(_('Unable to determine in which cell '
                           'destination host %s lives.') % self.destination))
 
-    def _get_request_spec_for_select_destinations(self, attempted_hosts=None):
+    def _get_request_spec_for_select_destinations(self):
         """Builds a RequestSpec that can be passed to select_destinations
 
         Used when calling the scheduler to pick a destination host for live
         migrating the instance.
 
-        :param attempted_hosts: List of host names to ignore in the scheduler.
-            This is generally at least seeded with the source host.
         :returns: nova.objects.RequestSpec object
         """
         # NOTE(fwiesel): In order to check the compatibility
@@ -522,14 +531,13 @@ class LiveMigrationTask(base.TaskBase):
 
     def _find_destination(self):
         # TODO(johngarbutt) this retry loop should be shared
-        attempted_hosts = [self.source]
-        request_spec = self._get_request_spec_for_select_destinations(
-            attempted_hosts)
+        attempted_nodes = [self.source_node]
+        request_spec = self._get_request_spec_for_select_destinations()
 
         host = None
         while host is None:
-            self._check_not_over_max_retries(attempted_hosts)
-            request_spec.ignore_hosts = attempted_hosts
+            self._check_not_over_max_retries(attempted_nodes)
+            request_spec.ignore_nodes = attempted_nodes
             try:
                 selection_lists = self.query_client.select_destinations(
                         self.context, request_spec, [self.instance.uuid],
@@ -538,6 +546,7 @@ class LiveMigrationTask(base.TaskBase):
                 # only one instance, and we don't care about any alternates.
                 selection = selection_lists[0][0]
                 host = selection.service_host
+                node = selection.nodename
             except messaging.RemoteError as ex:
                 # TODO(ShaoHe Feng) There maybe multi-scheduler, and the
                 # scheduling algorithm is R-R, we can let other scheduler try.
@@ -560,17 +569,18 @@ class LiveMigrationTask(base.TaskBase):
                         self.context, self.report_client,
                         self.instance.pci_requests.requests, provider_mapping)
             try:
-                self._check_compatible_with_source_hypervisor(host)
+                self._check_compatible_with_source_hypervisor(host, node)
                 self._call_livem_checks_on_host(host, provider_mapping)
             except (exception.Invalid, exception.MigrationPreCheckError) as e:
-                LOG.debug("Skipping host: %(host)s because: %(e)s",
-                    {"host": host, "e": e})
-                attempted_hosts.append(host)
+                LOG.debug("Skipping node: %(host)s/%(node)s because: %(e)s",
+                    {"host": host, "node": node, "e": e})
+                attempted_nodes.append(node)
                 # The scheduler would have created allocations against the
                 # selected destination host in Placement, so we need to remove
                 # those before moving on.
                 self._remove_host_allocations(selection.compute_node_uuid)
                 host = None
+                node = None
         # TODO(artom) We should probably just return the whole selection object
         # at this point.
         return (selection.service_host, selection.nodename, selection.limits)
@@ -587,11 +597,11 @@ class LiveMigrationTask(base.TaskBase):
         self.report_client.remove_provider_tree_from_instance_allocation(
             self.context, self.instance.uuid, compute_node_uuid)
 
-    def _check_not_over_max_retries(self, attempted_hosts):
+    def _check_not_over_max_retries(self, attempted_nodes):
         if CONF.migrate_max_retries == -1:
             return
 
-        retries = len(attempted_hosts) - 1
+        retries = len(attempted_nodes) - 1
         if retries > CONF.migrate_max_retries:
             if self.migration:
                 self.migration.status = 'failed'

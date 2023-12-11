@@ -240,15 +240,17 @@ def get_number_of_serial_ports(flavor, image_meta):
 
 class InstanceInfo(object):
 
-    def __init__(self, state, internal_id=None):
+    def __init__(self, state, internal_id=None, node=None):
         """Create a new Instance Info object
 
         :param state: Required. The running state, one of the power_state codes
         :param internal_id: Optional. A unique ID for the instance. Need not be
                             related to the Instance.uuid.
+        :param node: Optional. The name of the compute node. See Instance.node
         """
         self.state = state
         self.internal_id = internal_id
+        self.node = node
 
     def __eq__(self, other):
         return (self.__class__ == other.__class__ and

@@ -204,20 +204,26 @@ class HostController(wsgi.Controller):
         return self._host_power_action(req, host_name=id, action="reboot")
 
     @staticmethod
-    def _get_total_resources(host_name, compute_node):
+    def _get_total_resources(host_name, compute_nodes):
         return {'resource': {'host': host_name,
                              'project': '(total)',
-                             'cpu': compute_node.vcpus,
-                             'memory_mb': compute_node.memory_mb,
-                             'disk_gb': compute_node.local_gb}}
+                             'cpu': sum(cn.vcpus
+                                        for cn in compute_nodes),
+                             'memory_mb': sum(cn.memory_mb
+                                              for cn in compute_nodes),
+                             'disk_gb': sum(cn.local_gb
+                                            for cn in compute_nodes)}}
 
     @staticmethod
-    def _get_used_now_resources(host_name, compute_node):
+    def _get_used_now_resources(host_name, compute_nodes):
         return {'resource': {'host': host_name,
                              'project': '(used_now)',
-                             'cpu': compute_node.vcpus_used,
-                             'memory_mb': compute_node.memory_mb_used,
-                             'disk_gb': compute_node.local_gb_used}}
+                             'cpu': sum(cn.vcpus_used
+                                        for cn in compute_nodes),
+                             'memory_mb': sum(cn.memory_mb_used
+                                              for cn in compute_nodes),
+                             'disk_gb': sum(cn.local_gb_used
+                                            for cn in compute_nodes)}}
 
     @staticmethod
     def _get_resource_totals_from_instances(host_name, instances):
@@ -272,16 +278,15 @@ class HostController(wsgi.Controller):
         try:
             mapping = objects.HostMapping.get_by_host(context, host_name)
             nova_context.set_target_cell(context, mapping.cell_mapping)
-            compute_node = (
-                objects.ComputeNode.get_first_node_by_host_for_old_compat(
-                    context, host_name))
+            compute_nodes = objects.ComputeNodeList.get_all_by_host(
+                    context, host_name)
             instances = self.api.instance_get_all_by_host(context, host_name)
         except (exception.ComputeHostNotFound,
                 exception.HostMappingNotFound) as e:
             raise webob.exc.HTTPNotFound(explanation=e.format_message())
-        resources = [self._get_total_resources(host_name, compute_node)]
+        resources = [self._get_total_resources(host_name, compute_nodes)]
         resources.append(self._get_used_now_resources(host_name,
-                                                      compute_node))
+                                                      compute_nodes))
         resources.append(self._get_resource_totals_from_instances(host_name,
                                                                   instances))
         by_proj_resources = self._get_resources_by_project(host_name,

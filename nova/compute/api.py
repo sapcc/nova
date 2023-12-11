@@ -4015,14 +4015,13 @@ class API:
                 raise exception.ComputeHostNotFound(host=host_name)
 
             with nova_context.target_cell(context, hm.cell_mapping) as cctxt:
-                node = objects.ComputeNode.\
-                    get_first_node_by_host_for_old_compat(
-                        cctxt, host_name, use_slave=True)
+                nodes = objects.ComputeNodeList.get_all_by_host(
+                    cctxt, host_name, use_slave=True)
         else:
-            node = objects.ComputeNode.get_first_node_by_host_for_old_compat(
+            nodes = objects.ComputeNodeList.get_all_by_host(
                 context, host_name, use_slave=True)
 
-        return node
+        return nodes
 
     # TODO(stephenfin): This logic would be so much easier to grok if we
     # finally split resize and cold migration into separate code paths
@@ -4050,8 +4049,10 @@ class API:
             context, instance)
 
         if host_name is not None:
-            node = self._validate_host_for_cold_migrate(
+            nodes = self._validate_host_for_cold_migrate(
                 context, instance, host_name, allow_cross_cell_resize)
+        else:
+            nodes = None
 
         self._check_auto_disk_config(
             instance, auto_disk_config=auto_disk_config)
@@ -4076,9 +4077,8 @@ class API:
             if CONF.always_resize_on_same_host:
                 LOG.info('Setting resize to the same host')
                 host_name = instance.host
-                node = (
-                    objects.ComputeNode.get_first_node_by_host_for_old_compat(
-                        context, host_name, use_slave=True))
+                nodes = objects.ComputeNodeList.get_all_by_host(
+                            context, host_name, use_slave=True)
             new_flavor = flavors.get_flavor_by_flavor_id(
                 flavor_id, read_deleted="no")
             # NOTE(wenping): We use this instead of the 'block_accelerator'
@@ -4189,20 +4189,16 @@ class API:
         # which takes has filter_properties which in turn has
         # scheduler_hints (plural).
 
-        if host_name is None:
-            # If 'host_name' is not specified,
-            # clear the 'requested_destination' field of the RequestSpec
-            # except set the allow_cross_cell_move flag since conductor uses
-            # it prior to scheduling.
-            request_spec.requested_destination = objects.Destination(
-                allow_cross_cell_move=allow_cross_cell_resize)
+        if nodes and len(nodes) == 1:
+            node_name = nodes[0].hypervisor_hostname
         else:
-            # Set the host and the node so that the scheduler will
-            # validate them.
-            request_spec.requested_destination = objects.Destination(
-                host=node.host, node=node.hypervisor_hostname,
-                allow_cross_cell_move=allow_cross_cell_resize)
+            node_name = None
 
+        # Set the host and the node so that the scheduler will either
+        # validate them, or select one matching host and potentially node
+        request_spec.requested_destination = objects.Destination(
+            host=host_name, node=node_name,
+            allow_cross_cell_move=allow_cross_cell_resize)
         # Asynchronously RPC cast to conductor so the response is not blocked
         # during scheduling. If something fails the user can find out via
         # instance actions.
@@ -5479,15 +5475,13 @@ class API:
         # the pre-v2.29 API microversion, which wouldn't set force
         if force is False and host:
             nodes = objects.ComputeNodeList.get_all_by_host(context, host)
-            # NOTE(sbauza): Unset the host to make sure we call the scheduler
-            host = None
-            # FIXME(sbauza): Since only Ironic driver uses more than one
-            # compute per service but doesn't support evacuations,
-            # let's provide the first one.
-            target = nodes[0]
+            if len(nodes) == 1:
+                node = nodes[0].hypervisor_hostname
+            else:
+                node = None
             destination = objects.Destination(
-                host=target.host,
-                node=target.hypervisor_hostname
+                host=host,
+                node=node
             )
             request_spec.requested_destination = destination
 
@@ -5501,7 +5495,8 @@ class API:
                        bdms=None,
                        recreate=True,
                        on_shared_storage=on_shared_storage,
-                       host=host,
+                       # NOTE(sbauza): To make sure we call the scheduler
+                       host=None,
                        request_spec=request_spec,
                        )
 
