@@ -697,12 +697,6 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
     @base.remotable_classmethod
     def get_by_id(cls, context, ids):
 
-        def is_baremetal(extra_specs):
-            for spec in extra_specs:
-                if spec.key == 'quota:separate' and spec.value == 'true':
-                    return True
-            return False
-
         query = Flavor._flavor_get_query_from_db(context).\
             filter_by(disabled=False).\
             filter(api_models.Flavors.id.in_(ids))
@@ -710,5 +704,5 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
         res = {}
         for x in query:
             res.update({x.id: {'name': 'instances_' + x.name,
-                               'baremetal': is_baremetal(x.extra_specs)}})
+                               'baremetal': utils.is_baremetal_flavor(x)}})
         return res

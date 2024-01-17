@@ -1579,10 +1579,9 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             flavor_info = jsonutils.loads(db_flavor[0])
             flavor = objects.Flavor.obj_from_primitive(
                                                 flavor_info['cur'])
-            separate = flavor.extra_specs.get('quota:separate')
             instance_types[flavor.id] = {
                 'name': 'instances_' + flavor.name,
-                'baremetal': separate == 'true'
+                'baremetal': utils.is_baremetal_flavor(flavor)
             }
 
     @staticmethod
@@ -1602,7 +1601,7 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             # Bad hack, but works
             instance_types[old_flavor.id] = {
                 'name': 'instances_' + old_flavor.name,
-                'baremetal': len(old_flavor.extra_specs) > 0
+                'baremetal': utils.is_baremetal_flavor(old_flavor)
             }
 
     @staticmethod
