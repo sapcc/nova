@@ -490,7 +490,7 @@ def _filter_datastores_matching_storage_policy(session, datastores,
     ref_to_oc = {}
     for oc in datastores:
         ds_mors.append(oc.obj)
-        ref_to_oc[vim_util.get_moref_value(oc.obj)] = oc
+        ref_to_oc[vutil.get_moref_value(oc.obj)] = oc
 
     hubs = pbm.convert_datastores_to_hubs(factory, ds_mors)
     matching_hubs = pbm.filter_hubs_by_profile(session, hubs,
