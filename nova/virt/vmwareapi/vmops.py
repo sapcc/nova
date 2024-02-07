@@ -653,9 +653,10 @@ class VMwareVMOps(object):
 
     def _cache_vm_image_from_template(self, vi, templ_vm_ref):
         LOG.debug("Caching VDMK from template VM", instance=vi.instance)
-        vm_name = self._get_image_template_vm_name(vi.ii.image_id,
-                                                   vi.datastore.name)
-        vmdk = vm_util.get_vmdk_info(self._session, templ_vm_ref, vm_name)
+        vmdk = vm_util.get_vmdk_info(self._session, templ_vm_ref)
+        if not images.ensure_valid_template_vm(
+                self._session, templ_vm_ref, vmdk.capacity_in_bytes):
+            return False
         # The size of the image is different from the size of the virtual disk.
         # We want to use the latter. On vSAN this is the only way to get this
         # size because there is no VMDK descriptor.
@@ -756,6 +757,11 @@ class VMwareVMOps(object):
             tmp_vi.datastore = ds
             other_templ_vm_ref = self._find_image_template_vm(tmp_vi)
             if other_templ_vm_ref:
+                vmdk = vm_util.get_vmdk_info(self._session, other_templ_vm_ref)
+                if not images.ensure_valid_template_vm(
+                        self._session, other_templ_vm_ref,
+                        vmdk.capacity_in_bytes):
+                    continue
                 rel_spec = vm_util.relocate_vm_spec(
                     client_factory,
                     res_pool=self._root_resource_pool,
@@ -793,6 +799,21 @@ class VMwareVMOps(object):
                 return templ_vm_ref
 
     def _fetch_image_if_missing(self, context, vi):
+        max_attempts = 3
+        image_available = None
+        for i in range(max_attempts):
+            try:
+                image_available = self._do_fetch_image_if_missing(context, vi)
+                if image_available:
+                    return
+            except vexc.ImageTransferException:
+                LOG.exception("Image download attempt failed (%s / %s)",
+                              i + 1, max_attempts)
+
+        if not image_available:
+            raise exception.ImageUnacceptable(reason="Incomplete download")
+
+    def _do_fetch_image_if_missing(self, context, vi):
         image_prepare, image_fetch, image_cache = self._get_image_callbacks(vi)
         LOG.debug("Processing image %s", vi.ii.image_id, instance=vi.instance)
 
@@ -807,6 +828,14 @@ class VMwareVMOps(object):
                 ds_browser,
                 vi.cache_image_folder,
                 vi.cache_image_path.basename)
+            if (image_available and
+                    ds_util.file_size(self._session, ds_browser,
+                        vi.cache_image_folder, vi.cache_image_path.basename
+                    ) == images.INVALID_VMDK_SIZE):
+                LOG.warning("Deleting invalid VMDK %s", vi.cache_image_path)
+                ds_util.file_delete(self._session, vi.cache_image_path,
+                                    vi.dc_info.ref)
+                image_available = False
 
             if not image_available:
                 LOG.debug("Trying to find template VM", instance=vi.instance)
@@ -841,11 +870,14 @@ class VMwareVMOps(object):
                 if tmp_dir_loc:
                     self._delete_datastore_file(str(tmp_dir_loc),
                                                 vi.dc_info.ref)
+                image_available = True
 
             # The size of the sparse image is different from the size of the
             # virtual disk. We want to use the latter.
             if vi.ii.disk_type == constants.DISK_TYPE_SPARSE:
                 self._update_image_size(vi)
+
+            return image_available
 
     def _create_and_attach_thin_disk(self, instance, vm_ref, dc_info, size,
                                      adapter_type, path):
@@ -2030,8 +2062,7 @@ class VMwareVMOps(object):
         # need to relocate the VM here since we are running on the dest_compute
         if migration.source_compute != migration.dest_compute:
             # Get the root disk vmdk object's adapter type
-            vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
-                                         uuid=instance.uuid)
+            vmdk = vm_util.get_vmdk_info(self._session, vm_ref)
             adapter_type = vmdk.adapter_type
 
             self._detach_volumes(instance, block_device_info)
@@ -2058,8 +2089,7 @@ class VMwareVMOps(object):
         # 3.Reconfigure the VM and disk
         self._resize_vm(context, instance, vm_ref, flavor, image_meta)
         if not boot_from_volume and resize_instance:
-            vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
-                                         uuid=instance.uuid)
+            vmdk = vm_util.get_vmdk_info(self._session, vm_ref)
             self._resize_disk(instance, vm_ref, vmdk, flavor)
         self._update_instance_progress(context, instance,
                                        step=3,
