@@ -703,21 +703,9 @@ class VMwareVolumeOps(object):
             if state != power_state.SHUTDOWN:
                 raise exception.Invalid(_('%s does not support disk '
                                           'hotplug.') % adapter_type)
-        cf = self._session.vim.client.factory
-        fcd_id = data['id']
-        ds_ref_val = data['ds_ref_val']
-        disk_id = vm_util._create_fcd_id_obj(cf, fcd_id)
-        vstorage_mgr = self._session.vim.service_content.vStorageObjectManager
-        fcd_obj = self._session.invoke_api(
-            self._session.vim,
-            'RetrieveVStorageObject',
-            vstorage_mgr,
-            id=disk_id,
-            datastore=ds_ref_val)
-        vmdk_path = fcd_obj.config.backing.filePath
+        volume_uuid = data['volume_id']
         hw_devs = vm_util.get_hardware_devices(self._session, vm_ref)
-        device = vm_util.get_vmdk_volume_disk(hw_devs, vmdk_path)
-        volume_uuid = fcd_obj.config.name.replace('volume-', '')
+        device = self._get_vmdk_backed_disk_device(vm_ref, data)
         self.detach_disk_from_vm(vm_ref, instance, device,
                                  volume_uuid=volume_uuid)
 
