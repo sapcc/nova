@@ -1713,6 +1713,8 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                 'name': flavor.name,
                 'separate': separate == 'true',
                 'instance_only': instance_only == 'true',
+                'hw_version':
+                    flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY),
             }
 
     @staticmethod
@@ -1779,7 +1781,18 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                 counts[t_name] = counts.get(t_name, 0) + instance_count
             else:
                 counts['instances'] += instance_count
-            if not itype or not itype.get('instance_only', False):
+
+            # only count cores/ram if we do not explicitly disable it by
+            # QUOTA_INSTANCE_ONLY_KEY
+            if itype and itype.get('instance_only', False):
+                continue
+
+            if itype and (hw_version := itype.get('hw_version')):
+                cores_name = f"hw_version_{hw_version}_cores"
+                counts[cores_name] = counts.get(cores_name, 0) + int(cores)
+                ram_name = f"hw_version_{hw_version}_ram"
+                counts[ram_name] = counts.get(ram_name, 0) + int(ram)
+            else:
                 counts['cores'] += int(cores)
                 counts['ram'] += int(ram)
 
