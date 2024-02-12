@@ -718,6 +718,7 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
                 'instance_only':
                     extra_specs_dict.get(
                         utils.QUOTA_INSTANCE_ONLY_KEY) == 'true',
+                'hw_version': extra_specs_dict.get(utils.QUOTA_HW_VERSION_KEY),
             }
             res[x.id] = flavor_info
         return res
