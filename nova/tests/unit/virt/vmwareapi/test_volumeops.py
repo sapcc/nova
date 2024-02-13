@@ -469,6 +469,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             with mock.patch.object(self._volumeops, '_session') as session, \
                     mock.patch.object(self._volumeops, 'detach_disk_from_vm') \
                         as detach_disk_from_vm:
+                disk_to_detach = mock.sentinel.device
+                session.invoke_api.return_value = [disk_to_detach]
                 self._volumeops._detach_volume_fcd(connection_info, instance)
                 detach_fcd.assert_not_called()
                 detach_disk_from_vm.assert_called_once_with(vm_ref, instance,
