@@ -455,8 +455,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         ds_ref_val = mock.sentinel.ds_ref_val
         connection_info = {'data': {'id': fcd_id,
                                     'ds_ref_val': ds_ref_val,
-                                    'volume_id': 'volume-fake-id',
-                                    'adapter_type': adapter_type}}
+                                    'adapter_type': adapter_type},
+                           'volume_id': 'volume-fake-id'}
         instance = mock.sentinel.instance
 
         if adapter_type == constants.ADAPTER_TYPE_IDE and not powered_off:

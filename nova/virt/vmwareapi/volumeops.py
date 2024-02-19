@@ -703,7 +703,7 @@ class VMwareVolumeOps(object):
             if state != power_state.SHUTDOWN:
                 raise exception.Invalid(_('%s does not support disk '
                                           'hotplug.') % adapter_type)
-        volume_uuid = data['volume_id']
+        volume_uuid = connection_info['volume_id']
         device = self._get_vmdk_backed_disk_device(vm_ref, data)
         self.detach_disk_from_vm(vm_ref, instance, device,
                                  volume_uuid=volume_uuid)
