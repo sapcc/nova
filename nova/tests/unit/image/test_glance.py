@@ -589,6 +589,25 @@ class TestDownloadNoDirectUri(test.NoDBTestCase):
 
     @mock.patch('builtins.open')
     @mock.patch('nova.image.glance.GlanceImageServiceV2.show')
+    def test_download_no_data_no_dest_path_iterator_v2(
+            self, show_mock, open_mock):
+        glance_iterable = mock.MagicMock(spec=io.BytesIO)
+        fake_img_data = ['A', 'B', 'C']
+        glance_iterable.__iter__.return_value = fake_img_data
+        iterable = glanceclient.common.utils.IterableWithLength(
+                iterable=glance_iterable, length=len(fake_img_data))
+        client = mock.MagicMock()
+        client.call.return_value = fake_glance_response(iterable)
+        ctx = mock.sentinel.ctx
+        service = glance.GlanceImageServiceV2(client)
+        res = service.download(ctx, mock.sentinel.image_id)
+        self.assertFalse(show_mock.called)
+        self.assertFalse(open_mock.called)
+        self.assertEqual(iterable, res)
+        self.assertFalse(glance_iterable.close.called)
+
+    @mock.patch('builtins.open')
+    @mock.patch('nova.image.glance.GlanceImageServiceV2.show')
     def test_download_data_no_dest_path_v2(self, show_mock, open_mock):
         client = mock.MagicMock()
         client.call.return_value = fake_glance_response([1, 2, 3])
@@ -999,7 +1018,7 @@ class TestDownloadSignatureVerification(test.NoDBTestCase):
                           service.download,
                           context=None, image_id=None,
                           data=None, dst_path=None)
-        self.assertEqual(mock_log.error.call_count, 2)
+        self.assertEqual(mock_log.error.call_count, 1)
 
     @mock.patch('nova.image.glance.LOG')
     @mock.patch('nova.image.glance.GlanceImageServiceV2.show')
@@ -1069,13 +1088,12 @@ class TestDownloadSignatureVerification(test.NoDBTestCase):
             glanceclient.common.utils.IterableWithLength(
                 iterable=glance_iterable, length=len(self.fake_img_data)))
         service = glance.GlanceImageServiceV2(self.client)
-        mock_get_verifier.side_effect = \
-            cursive_exception.SignatureVerificationError
+        mock_get_verifier.return_value = self.BadVerifier()
         mock_dest = mock.MagicMock()
         mock_open.return_value = mock_dest
         mock_show.return_value = self.fake_img_props
         fake_path = 'FAKE_PATH'
-        self.assertRaises(cursive_exception.SignatureVerificationError,
+        self.assertRaises(cryptography.exceptions.InvalidSignature,
                           service.download,
                           context=None, image_id=None,
                           data=None, dst_path=fake_path)
