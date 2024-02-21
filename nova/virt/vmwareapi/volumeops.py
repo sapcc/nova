@@ -26,6 +26,7 @@ from nova.compute import power_state
 import nova.conf
 from nova import exception
 from nova.i18n import _
+from nova.virt import block_device
 from nova.virt import driver
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
@@ -703,7 +704,7 @@ class VMwareVolumeOps(object):
             if state != power_state.SHUTDOWN:
                 raise exception.Invalid(_('%s does not support disk '
                                           'hotplug.') % adapter_type)
-        volume_uuid = connection_info['volume_id']
+        volume_uuid = block_device.get_volume_id(connection_info)
         # Copy the volume_id to data, as we need this for device search
         data['volume_id'] = volume_uuid
         device = self._get_vmdk_backed_disk_device(vm_ref, data)
