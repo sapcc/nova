@@ -80,6 +80,7 @@ SM_SKIP_KEYS = (
 
 QUOTA_SEPARATE_KEY = 'quota:separate'
 QUOTA_INSTANCE_ONLY_KEY = 'quota:instance_only'
+QUOTA_HW_VERSION_KEY = 'quota:hw_version'
 
 # Custom resource for reservable memory
 MEMORY_RESERVABLE_MB_RESOURCE = 'CUSTOM_MEMORY_RESERVABLE_MB'
