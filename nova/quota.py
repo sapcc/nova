@@ -1106,7 +1106,9 @@ class SAPQuotaEngine(QuotaEngine):
 
     We extend the resources dynamically on startup based on information in
     flavors' extra_specs. Through that, we create instance-type quota of the
-    form "instances_<flavor name>".
+    form "instances_<flavor name>" and also quota for different hardware
+    versions for cores/ram of the form "hw_version_<hw_version>_cores"/
+    "hw_version_<hw_version>_ram".
 
     Since an update to the DB should update our view, we have to re-build the
     resources regularly. Therefore, we use a cache. Depending on the cache
@@ -1140,7 +1142,8 @@ class SAPQuotaEngine(QuotaEngine):
         """Update the resources dict to contain flavor based resources
 
         Flavors can contain properties in their extra_specs which define that
-        we need custom quota resources for them e.g. separate instances quota.
+        we need custom quota resources for them e.g. separate instances quota
+        or separate hardware versioned cores/ram quota.
         """
         additional_resources = set()
         ctx = nova_context.get_admin_context()
@@ -1149,6 +1152,10 @@ class SAPQuotaEngine(QuotaEngine):
 
             if extra_specs.get(utils.QUOTA_SEPARATE_KEY) == 'true':
                 additional_resources.add(f"instances_{flavor.name}")
+
+            if hw_version := extra_specs.get(utils.QUOTA_HW_VERSION_KEY):
+                additional_resources.add(f"hw_version_{hw_version}_cores")
+                additional_resources.add(f"hw_version_{hw_version}_ram")
 
         for resource_name in additional_resources:
             resources[resource_name] = SAPCustomResource(resource_name,
