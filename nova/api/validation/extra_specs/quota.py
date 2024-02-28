@@ -210,6 +210,18 @@ EXTRA_SPEC_VALIDATORS.extend([
             'type': bool,
         },
     ),
+    base.ExtraSpecValidator(
+        name=utils.QUOTA_HW_VERSION_KEY,
+        description=(
+            "Consume hardware version specific cores/ram quota i.e. "
+            "hw_version_{hw_version}_cores and hw_version_{hw_version}_ram. "
+            "if unset, unspecific cores/ram are consumed "
+        ),
+        value={
+            'type': int,
+            'min': 1,
+        }
+    )
 ])
 
 
