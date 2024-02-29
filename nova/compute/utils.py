@@ -19,6 +19,7 @@ import functools
 import inspect
 import itertools
 import math
+import operator
 import traceback
 
 import netifaces
@@ -1119,26 +1120,49 @@ def upsize_quota_delta(new_flavor, old_flavor):
     return deltas
 
 
+def _get_key_from_deltas(deltas, resource):
+    """Find the best-matching key in deltas that belongs to resource
+
+    We have instances and instances_{flavor_name}, but we also need to support
+    cores and hw_version_{hw_version}_cores and the same for ram and maybe at
+    some point instances.
+
+    If we do not find a matching key, the resource name is returned.
+    """
+    # sorted(reverse=True) to get the one with the higher value e.g. if we have
+    # instances=0 and instances_blubb=5 we need the instances_blubb
+    return next(
+        (k for k, v in sorted(deltas.items(), key=operator.itemgetter(1, 0),
+                              reverse=True)
+         if k == resource or k.startswith(f"{resource}_") or
+            k.endswith(f"_{resource}")),
+        resource)
+
+
 def get_headroom(quotas, usages, deltas):
     headroom = {res: quotas[res] - usages.get(res, 0)
                 for res in quotas.keys()}
+    quota_instances_key = _get_key_from_deltas(deltas, 'instances')
+    quota_cores_key = _get_key_from_deltas(deltas, 'cores')
+    quota_ram_key = _get_key_from_deltas(deltas, 'ram')
+
     # If quota_cores is unlimited [-1]:
     # - set cores headroom based on instances headroom:
-    if quotas.get('cores') == -1:
-        if deltas.get('cores'):
-            hc = headroom.get('instances', 1) * deltas['cores']
-            headroom['cores'] = hc / deltas.get('instances', 1)
+    if quotas.get(quota_cores_key) == -1:
+        if deltas.get(quota_cores_key):
+            hc = headroom.get(quota_instances_key, 1) * deltas[quota_cores_key]
+            headroom[quota_cores_key] = hc / deltas.get(quota_instances_key, 1)
         else:
-            headroom['cores'] = headroom.get('instances', 1)
+            headroom[quota_cores_key] = headroom.get(quota_instances_key, 1)
 
     # If quota_ram is unlimited [-1]:
     # - set ram headroom based on instances headroom:
-    if quotas.get('ram') == -1:
-        if deltas.get('ram'):
-            hr = headroom.get('instances', 1) * deltas['ram']
-            headroom['ram'] = hr / deltas.get('instances', 1)
+    if quotas.get(quota_ram_key) == -1:
+        if deltas.get(quota_ram_key):
+            hr = headroom.get(quota_instances_key, 1) * deltas[quota_ram_key]
+            headroom[quota_ram_key] = hr / deltas.get(quota_instances_key, 1)
         else:
-            headroom['ram'] = headroom.get('instances', 1)
+            headroom[quota_ram_key] = headroom.get(quota_instances_key, 1)
 
     return headroom
 
