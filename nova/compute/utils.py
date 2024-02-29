@@ -1062,24 +1062,47 @@ def upsize_quota_delta(new_flavor, old_flavor):
     :param new_flavor: the target instance type
     :param old_flavor: the original instance type
     """
-    def _quota_delta(resource):
+    def _quota_delta(resource, default_quota_name):
+        """Return the difference and quota key for resource/quota_name
+
+        This function considers QUOTA_INSTANCE_ONLY_KEY and
+        QUOTA_HW_VERSION_KEY extra_specs of the new/old flavor as both can set
+        the count for a resource to 0.  Since we have to compute the quota name
+        for the hardware version, we also return it for usage in the deltas.
+        """
+        new_quota_key = default_quota_name
         if new_flavor.extra_specs.get(utils.QUOTA_INSTANCE_ONLY_KEY) == 'true':
             new_count = 0
         else:
             new_count = new_flavor[resource]
+            hw_version = new_flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY)
+            if hw_version:
+                new_quota_key = f"hw_version_{hw_version}_{default_quota_name}"
 
+        old_quota_key = default_quota_name
         if old_flavor.extra_specs.get(utils.QUOTA_INSTANCE_ONLY_KEY) == 'true':
             old_count = 0
         else:
-            old_count = old_flavor[resource]
+            hw_version = old_flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY)
+            if hw_version:
+                old_quota_key = f"hw_version_{hw_version}_{default_quota_name}"
 
-        return (new_count - old_count)
+            # if the old flavor used a different quota, the full amount of the
+            # new flavor's resource belong into the delta -> we subtract 0
+            if old_quota_key == new_quota_key:
+                old_count = old_flavor[resource]
+            else:
+                old_count = 0
+
+        return ((new_count - old_count), new_quota_key)
 
     deltas = {}
-    if _quota_delta('vcpus') > 0:
-        deltas['cores'] = _quota_delta('vcpus')
-    if _quota_delta('memory_mb') > 0:
-        deltas['ram'] = _quota_delta('memory_mb')
+    cores_quota_delta, cores_quota_key = _quota_delta('vcpus', 'cores')
+    if cores_quota_delta > 0:
+        deltas[cores_quota_key] = cores_quota_delta
+    ram_quota_delta, ram_quota_key = _quota_delta('memory_mb', 'ram')
+    if ram_quota_delta > 0:
+        deltas[ram_quota_key] = ram_quota_delta
 
     # NOTE(jkulik): We need to add the instances_* resource only if we resize
     # towards a QUOTA_SEPARATE_KEY flavor, as we're interested in positive
