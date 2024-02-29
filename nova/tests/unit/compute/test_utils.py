@@ -1506,6 +1506,80 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
         deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
         self.assertEqual(expected_deltas, deltas)
 
+    def test_upsize_quota_delta_towards_hw_version(self):
+        """Resizing from not having a hw_version towards a hw_version
+        needs all resources in addition
+        """
+        old_flavor = objects.Flavor(vcpus=4, memory_mb=1024, extra_specs={})
+        new_flavor = objects.Flavor(
+            vcpus=5, memory_mb=2048,
+            extra_specs={utils.QUOTA_HW_VERSION_KEY: '2'})
+
+        expected_deltas = {
+            'hw_version_2_cores': new_flavor['vcpus'],
+            'hw_version_2_ram': new_flavor['memory_mb']
+        }
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_towards_different_hw_version(self):
+        """Resizing from one hw_version towards another hw_version
+        needs all resources in addition
+        """
+        old_flavor = objects.Flavor(
+            vcpus=4, memory_mb=1024,
+            extra_specs={utils.QUOTA_HW_VERSION_KEY: '3'})
+        new_flavor = objects.Flavor(
+            vcpus=5, memory_mb=2048,
+            extra_specs={utils.QUOTA_HW_VERSION_KEY: '2'})
+
+        expected_deltas = {
+            'hw_version_2_cores': new_flavor['vcpus'],
+            'hw_version_2_ram': new_flavor['memory_mb']
+        }
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_towards_different_hw_version_less(self):
+        """Resizing from one hw_version towards another hw_version
+        needs all resources in addition
+        """
+        old_flavor = objects.Flavor(
+            vcpus=4, memory_mb=1024,
+            extra_specs={utils.QUOTA_HW_VERSION_KEY: '3'})
+        new_flavor = objects.Flavor(
+            vcpus=2, memory_mb=512,
+            extra_specs={utils.QUOTA_HW_VERSION_KEY: '2'})
+
+        expected_deltas = {
+            'hw_version_2_cores': new_flavor['vcpus'],
+            'hw_version_2_ram': new_flavor['memory_mb']
+        }
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_from_hw_version(self):
+        """Resizing from a hw_version towards no hw_version
+        needs all resources in addition
+        """
+        old_flavor = objects.Flavor(
+            vcpus=4, memory_mb=1024,
+            extra_specs={utils.QUOTA_HW_VERSION_KEY: '247'})
+        new_flavor = objects.Flavor(
+            vcpus=5, memory_mb=2048,
+            extra_specs={})
+
+        expected_deltas = {
+            'cores': new_flavor['vcpus'],
+            'ram': new_flavor['memory_mb']
+        }
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
     @mock.patch('nova.objects.Quotas.count_as_dict')
     def test_check_instance_quota_exceeds_with_multiple_resources(self,
                                                                   mock_count):
