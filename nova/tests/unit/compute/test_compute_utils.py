@@ -1437,7 +1437,7 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
                                usages={'instances': 1, 'cores': 1, 'ram': 512},
                                overs=overs)
         e = exception.OverQuota(**over_quota_args)
-        fake_flavor = objects.Flavor(vcpus=1, memory_mb=512)
+        fake_flavor = objects.Flavor(vcpus=1, memory_mb=512, extra_specs={})
         instance_num = 1
         proj_count = {'instances': 1, 'cores': 1, 'ram': 512}
         user_count = proj_count.copy()
@@ -1464,7 +1464,7 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
         # Return no per-user quota.
         mock_get.return_value = {'project_id': self.context.project_id,
                                  'user_id': self.context.user_id}
-        fake_flavor = objects.Flavor(vcpus=1, memory_mb=512)
+        fake_flavor = objects.Flavor(vcpus=1, memory_mb=512, extra_specs={})
         compute_utils.check_num_instances_quota(
             self.context, fake_flavor, 1, 1)
         deltas = {'instances': 1, 'cores': 1, 'ram': 512}
@@ -1484,7 +1484,8 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
             mock_get.return_value = {'project_id': self.context.project_id,
                                      'user_id': self.context.user_id,
                                      resource: 5}
-            fake_flavor = objects.Flavor(vcpus=1, memory_mb=512)
+            fake_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+                                         extra_specs={})
             compute_utils.check_num_instances_quota(
                 self.context, fake_flavor, 1, 1)
             deltas = {'instances': 1, 'cores': 1, 'ram': 512}
