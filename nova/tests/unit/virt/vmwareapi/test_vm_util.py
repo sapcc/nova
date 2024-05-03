@@ -100,6 +100,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                      maintenance_mode=False,
                                      failover_policy=None,
                                      failover_hosts_filtered=0,
+                                     failover_policy_disabled=False,
                                      expected_stats=None):
         ManagedObjectRefs = [fake.ManagedObjectReference("HostSystem",
                                                          "host1"),
@@ -112,6 +113,10 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         if failover_policy:
             k = 'configuration.dasConfig.admissionControlPolicy'
             prop_dict[k] = failover_policy
+
+        if failover_policy_disabled:
+            k = 'configuration.dasConfig.admissionControlEnabled'
+            prop_dict[k] = False
 
         hardware = fake.HostSystem.create_summary_hardware()
         hardware.memorySize = 4 * units.Gi
@@ -214,6 +219,17 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         policy.failoverHosts = [host]
         self._test_get_stats_from_cluster(failover_policy=policy,
                                           failover_hosts_filtered=1)
+
+    def test_get_stats_from_cluster_failover_host_matches_disabled(self):
+        policy = fake.DataObject('ClusterFailoverHostAdmissionControlPolicy')
+        # it looks like a moref, but it's called a FailoverHosts object
+        host = fake.DataObject('failoverHosts')
+        host.value = 'host1'
+        host._type = 'HostSystem'
+        policy.failoverHosts = [host]
+        self._test_get_stats_from_cluster(failover_policy=policy,
+                                          failover_hosts_filtered=0,
+                                          failover_policy_disabled=True)
 
     def test_get_stats_from_cluster_failover_host_no_matches(self):
         policy = fake.DataObject('ClusterFailoverHostAdmissionControlPolicy')
