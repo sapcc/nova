@@ -179,7 +179,8 @@ def get_client(context, admin=False):
     client_args = dict(session=session,
                        auth=auth_plugin,
                        global_request_id=context.global_id,
-                       connect_retries=CONF.neutron.http_retries)
+                       connect_retries=CONF.neutron.http_retries,
+                       status_code_retries=CONF.neutron.http_retries)
 
     if CONF.neutron.url:
         # TODO(efried): Remove in Rocky

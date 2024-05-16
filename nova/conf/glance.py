@@ -52,6 +52,20 @@ Enable glance operation retries.
 Specifies the number of retries when uploading / downloading
 an image to / from glance. 0 means no retries.
 """),
+    cfg.IntOpt('http_retries',
+               default=3,
+               min=0,
+               help="""
+Number of times glanceclient should retry on any failed http call.
+
+0 means connection is attempted only once. Setting it to any positive integer
+means that on failure connection is retried that many times e.g. setting it
+to 3 means total attempts to connect will be 4.
+
+Possible values:
+
+* Any integer value. 0 means connection is attempted only once
+"""),
     cfg.ListOpt('allowed_direct_url_schemes',
         default=[],
         deprecated_for_removal=True,
