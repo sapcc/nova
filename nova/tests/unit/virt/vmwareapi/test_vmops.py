@@ -4076,3 +4076,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         extra_specs = self._vmops._get_extra_specs(
             specced_flavor({'trait:CUSTOM_NUMASIZE_C48_M729': 'forbidden'}))
         self.assertEqual(extra_specs.numa_prefer_ht, '')
+
+    @mock.patch.object(vm_util, 'trigger_crash_dump')
+    def test_trigger_crash_dump(self, mock_trigger_crash_dump):
+        self._vmops.trigger_crash_dump(self._instance)
+        mock_trigger_crash_dump.assert_called_once_with(self._session,
+                                                        self._instance)

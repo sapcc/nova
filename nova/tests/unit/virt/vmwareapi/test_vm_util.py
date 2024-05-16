@@ -1817,6 +1817,43 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
             fake_wait_for_task.assert_called_once_with('fake-task')
             self.assertFalse(fake_get_ref.called)
 
+    @mock.patch.object(vm_util, "get_vm_ref")
+    def test_trigger_crash_dump(self, fake_get_ref):
+        session = fake.FakeSession()
+        with test.nested(
+            mock.patch.object(session, '_call_method'),
+        ) as (fake_call_method,):
+            vm_util.trigger_crash_dump(session, self._instance, 'fake-vm-ref')
+            fake_call_method.assert_called_once_with(session.vim,
+                                                     "SendNMI",
+                                                     'fake-vm-ref')
+            self.assertFalse(fake_get_ref.called)
+
+    @mock.patch.object(vm_util, "get_vm_ref", return_value="fake-vm-ref")
+    def test_trigger_crash_dump_no_vm_ref(self, fake_get_ref):
+        session = fake.FakeSession()
+        with test.nested(
+            mock.patch.object(session, '_call_method')
+        ) as (fake_call_method,):
+            vm_util.trigger_crash_dump(session, self._instance)
+            fake_get_ref.assert_called_once_with(session, self._instance)
+            fake_call_method.assert_called_once_with(session.vim,
+                                                     "SendNMI",
+                                                     'fake-vm-ref')
+
+    @mock.patch.object(vm_util, "get_vm_ref")
+    def test_trigger_crash_dump_power_state_exception(self, fake_get_ref):
+        session = fake.FakeSession()
+        with test.nested(
+            mock.patch.object(session, '_call_method',
+                              side_effect=vexc.InvalidPowerStateException),
+        ) as (fake_call_method, ):
+            vm_util.trigger_crash_dump(session, self._instance, 'fake-vm-ref')
+            fake_call_method.assert_called_once_with(session.vim,
+                                                     "SendNMI",
+                                                     'fake-vm-ref')
+            self.assertFalse(fake_get_ref.called)
+
     def test_get_vm_create_spec_updated_hw_version(self):
         extra_specs = vm_util.ExtraSpecs(hw_version='vmx-08')
         result = vm_util.get_vm_create_spec(fake.FakeFactory(),
