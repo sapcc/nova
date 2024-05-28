@@ -103,6 +103,7 @@ class LimitsControllerTestV21(BaseLimitTestSuite):
                 "rate": [],
                 "absolute": {},
                 "absolutePerFlavor": {},
+                "absolutePerHwVersion": {},
             },
         }
         body = jsonutils.loads(response.body)
@@ -148,6 +149,7 @@ class LimitsControllerTestV21(BaseLimitTestSuite):
                     "totalSecurityGroupsUsed": 5,
                     },
                 "absolutePerFlavor": {},
+                "absolutePerHwVersion": {},
             },
         }
 
@@ -297,6 +299,31 @@ class LimitsControllerTestV21(BaseLimitTestSuite):
         self.assertNotIn('totalRAMUsed', abs_limits)
         self.assertEqual(1, self.mock_get_project_quotas.call_count)
 
+    def test_hw_versioned_usage(self):
+        fake_req = self._get_index_request()
+
+        expected_limits = {
+            "2": {"maxTotalCores": 10, "totalCoresUsed": 2,
+                  "maxTotalRAMSize": 512, "totalRAMUsed": 256}
+        }
+
+        def _get_project_quotas(context, project_id, usages=True):
+            return {'hw_version_2_ram': {'limit': 512, 'in_use': 256},
+                    'hw_version_2_cores': {'limit': 10, 'in_use': 2}}
+
+        self.mock_get_project_quotas.side_effect = _get_project_quotas
+
+        res = fake_req.get_response(self.controller)
+        body = jsonutils.loads(res.body)
+        per_hw_limits = body['limits']['absolutePerHwVersion']
+        self.assertThat(per_hw_limits,
+            matchers.DictMatches(expected_limits))
+        self.assertIn('2', per_hw_limits)
+        v2_hw_limits = per_hw_limits['2']
+        self.assertIn('totalRAMUsed', v2_hw_limits)
+        self.assertEqual(256, v2_hw_limits['totalRAMUsed'])
+        self.assertEqual(1, self.mock_get_project_quotas.call_count)
+
 
 class FakeHttplibSocket(object):
     """Fake `httplib.HTTPResponse` replacement."""
@@ -361,14 +388,16 @@ class LimitsViewBuilderTest(test.NoDBTestCase):
                              "maxImageMeta": 1,
                              "maxPersonality": 5,
                              "maxPersonalitySize": 5},
-                "absolutePerFlavor": {}}}
+                "absolutePerFlavor": {},
+                "absolutePerHwVersion": {}}}
 
         output = self.view_builder.build(self.req, self.absolute_limits)
         self.assertThat(output, matchers.DictMatches(expected_limits))
 
     def test_build_limits_empty_limits(self):
         expected_limits = {"limits": {"rate": [],
-                           "absolute": {}, "absolutePerFlavor": {}}}
+                           "absolute": {}, "absolutePerFlavor": {},
+                           "absolutePerHwVersion": {}}}
 
         quotas = {}
         output = self.view_builder.build(self.req, quotas)
@@ -414,6 +443,7 @@ class LimitsControllerTestV236(BaseLimitTestSuite):
                     "totalInstancesUsed": 2,
                 },
                 "absolutePerFlavor": {},
+                "absolutePerHwVersion": {},
             },
         }
         self.assertEqual(expected_response, response)
@@ -448,6 +478,7 @@ class LimitsControllerTestV239(BaseLimitTestSuite):
                     "maxServerMeta": 1,
                 },
                 "absolutePerFlavor": {},
+                "absolutePerHwVersion": {},
             },
         }
         self.assertEqual(expected_response, response)
@@ -523,6 +554,7 @@ class NoopLimitsControllerTest(test.NoDBTestCase):
                     'totalServerGroupsUsed': -1,
                 },
                 'absolutePerFlavor': {},
+                'absolutePerHwVersion': {},
             },
         }
         self.assertEqual(expected_response, response)
@@ -550,6 +582,7 @@ class NoopLimitsControllerTest(test.NoDBTestCase):
                     'totalServerGroupsUsed': -1,
                 },
                 'absolutePerFlavor': {},
+                'absolutePerHwVersion': {},
             },
         }
         self.assertEqual(expected_response, response)
@@ -605,6 +638,7 @@ class UnifiedLimitsControllerTest(NoopLimitsControllerTest):
                     'totalServerGroupsUsed': 9,
                 },
                 'absolutePerFlavor': {},
+                'absolutePerHwVersion': {},
             },
         }
         self.assertEqual(expected_response, response)
@@ -639,6 +673,7 @@ class UnifiedLimitsControllerTest(NoopLimitsControllerTest):
                     'totalServerGroupsUsed': 9,
                 },
                 'absolutePerFlavor': {},
+                'absolutePerHwVersion': {},
             },
         }
         self.assertEqual(expected_response, response)
