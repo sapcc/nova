@@ -651,6 +651,8 @@ class ClusterComputeResource(ManagedObject):
         policy = None
         configuration.dasConfig.admissionControlPolicy = policy
         self.set("configuration.dasConfig.admissionControlPolicy", policy)
+        configuration.dasConfig.admissionControlEnabled = True
+        self.set("configuration.dasConfig.admissionControlEnabled", True)
 
         vm_list = DataObject()
         vm_list.ManagedObjectReference = []

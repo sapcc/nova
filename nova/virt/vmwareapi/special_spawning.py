@@ -190,8 +190,9 @@ class _SpecialVmSpawningServer(object):
         group = self._get_group(cluster_config)
 
         failover_hosts = []
+        enabled = cluster_config.dasConfig.admissionControlEnabled
         policy = cluster_config.dasConfig.admissionControlPolicy
-        if policy and hasattr(policy, 'failoverHosts'):
+        if enabled and policy and hasattr(policy, 'failoverHosts'):
             failover_hosts = set(vutil.get_moref_value(h)
                                  for h in policy.failoverHosts)
 
