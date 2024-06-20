@@ -2066,8 +2066,12 @@ class _ComputeAPIUnitTestMixIn(object):
             else:
                 filter_properties = {'ignore_hosts': [fake_inst['host']]}
 
-            filter_properties['scheduler_hints'] = {
-                '_nova_check_type': ['resize']}
+            if flavor_id_passed:
+                filter_properties['scheduler_hints'] = {
+                    '_nova_check_type': ['resize']}
+            else:
+                filter_properties['scheduler_hints'] = {
+                    '_nova_check_type': ['migrate']}
 
             if request_spec:
                 fake_spec = objects.RequestSpec()
