@@ -114,7 +114,7 @@ class ExtraSpecs(object):
                  vif_limits=None, hv_enabled=None, firmware=None,
                  hw_video_ram=None, numa_prefer_ht=None,
                  numa_vcpu_max_per_virtual_node=None,
-                 migration_data_timeout=None):
+                 migration_data_timeout=None, evc_mode_key=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -129,6 +129,7 @@ class ExtraSpecs(object):
         self.numa_prefer_ht = numa_prefer_ht
         self.numa_vcpu_max_per_virtual_node = numa_vcpu_max_per_virtual_node
         self.migration_data_timeout = migration_data_timeout
+        self.evc_mode_key = evc_mode_key
 
 
 class HistoryCollectorItems(six.Iterator):
@@ -2389,4 +2390,19 @@ def detach_fcd(session, vm_ref, fcd_id):
               {'fcd_id': fcd_id, 'vm_ref': vutil.get_moref_value(vm_ref)})
     task = session._call_method(
         session.vim, "DetachDisk_Task", vm_ref, diskId=disk_id)
+    session._wait_for_task(task)
+
+
+def apply_evc_mode(session, vm_ref, evc_mode):
+    """Applies the EVCMode identified by the given EvcMode object
+
+    Passing `None` for evc_mode will clear the current EVC mode.
+    """
+    if evc_mode is None:
+        feature_masks = []
+    else:
+        feature_masks = evc_mode.featureMask
+
+    task = session._call_method(session.vim, "ApplyEvcModeVM_Task", vm_ref,
+                                mask=feature_masks)
     session._wait_for_task(task)
