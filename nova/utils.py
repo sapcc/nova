@@ -91,6 +91,7 @@ BIGVM_EXCLUSIVE_TRAIT = 'CUSTOM_HANA_EXCLUSIVE_HOST'
 
 QUOTA_SEPARATE_KEY = 'quota:separate'
 QUOTA_INSTANCE_ONLY_KEY = 'quota:instance_only'
+QUOTA_HW_VERSION_KEY = 'quota:hw_version'
 
 _FILE_CACHE = {}
 

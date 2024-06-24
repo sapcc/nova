@@ -698,12 +698,14 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
     @base.remotable_classmethod
     def get_by_id(cls, context, ids):
 
-        def is_separate(extra_specs):
-            for spec in extra_specs:
-                if spec.key == utils.QUOTA_SEPARATE_KEY \
-                        and spec.value == 'true':
-                    return True
-            return False
+        def get_info_from_extra_specs(extra_specs):
+            extra_specs_dict = {x['key']: x['value'] for x in extra_specs}
+            return {
+                'separate':
+                    extra_specs_dict.get(utils.QUOTA_SEPARATE_KEY) == 'true',
+                'hw_version':
+                    extra_specs_dict.get(utils.QUOTA_HW_VERSION_KEY)
+            }
 
         query = Flavor._flavor_get_query_from_db(context).\
             filter_by(disabled=False).\
@@ -711,6 +713,7 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
 
         res = {}
         for x in query:
-            res.update({x.id: {'name': x.name,
-                               'separate': is_separate(x.extra_specs)}})
+            flavor_info = get_info_from_extra_specs(x.extra_specs)
+            flavor_info['name'] = x.name
+            res[x.id] = flavor_info
         return res
