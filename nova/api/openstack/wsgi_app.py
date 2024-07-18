@@ -12,11 +12,13 @@
 """WSGI application initialization for Nova APIs."""
 
 import os
+import signal
 import sys
 
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_service import _options as service_opts
+from oslo_reports import guru_meditation_report as gmr
 from paste import deploy
 
 from nova import config
@@ -25,6 +27,7 @@ from nova import exception
 from nova import objects
 from nova import service
 from nova import utils
+from nova import version
 
 CONF = cfg.CONF
 
@@ -117,6 +120,9 @@ def init_application(name):
     # global data separately and decorate the method to run only once in a
     # python interpreter instance.
     init_global_data(conf_files)
+
+    gmr.TextGuruMeditation.setup_autorun(version=version.version_string,
+                                         signum=signal.SIGWINCH)
 
     try:
         _setup_service(CONF.host, name)
