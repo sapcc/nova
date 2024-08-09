@@ -4813,3 +4813,42 @@ class VMwareVMOps(object):
                 raise exception.MigrationPreCheckError(
                         reason=("Found non-configdrive CD-ROM. "
                                 "Can only migrate configdrive"))
+
+    def get_available_memory_per_host(self, per_host_stats):
+        """Retrieves per-host available RAM.
+
+        The value is calculated by subtracting the total configured
+        memory_mb of the instances residing on that host from the
+        total memory size of the host.
+
+        Returns a dict containing available RAM information per host.
+        {
+            "host-ref-value": 1024
+        }
+        """
+        mem_per_host = {}
+
+        for host_ref_value, host_stats in per_host_stats.items():
+            if not host_stats["available"]:
+                continue
+            total_mem_mb = host_stats.get('memory_mb', 0)
+            reserved_mem_mb = host_stats.get('memory_mb_reserved', 0)
+            mem_per_host[host_ref_value] = total_mem_mb - reserved_mem_mb
+
+        props = ['config.hardware.memoryMB', 'runtime.host']
+        vms = self._list_instances_in_cluster(additional_properties=props)
+
+        for (vm_uuid, vm_props) in vms:
+            host_obj = vm_props.get('runtime.host')
+            if not host_obj:
+                continue
+            host_ref_value = vutil.get_moref_value(host_obj)
+            if host_ref_value not in mem_per_host:
+                continue
+
+            vm_mb = vm_props.get('config.hardware.memoryMB', 0)
+            # make sure the minimum available memory >= 0
+            mem_per_host[host_ref_value] = \
+                max(mem_per_host[host_ref_value] - vm_mb, 0)
+
+        return mem_per_host

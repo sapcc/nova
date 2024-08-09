@@ -1749,8 +1749,7 @@ def _process_host_stats(obj, host_reservations_map):
     mem_mb = getattr(hardware_summary, "memorySize", 0) // units.Mi
 
     stats = {
-        "available": (not runtime_summary.inMaintenanceMode and
-                      runtime_summary.connectionState == "connected"),
+        "available": is_host_available(runtime_summary),
         "name": host_props["name"],
         "vcpus": threads,
         "vcpus_used": 0,
@@ -2423,3 +2422,8 @@ def apply_evc_mode(session, vm_ref, evc_mode):
     task = session._call_method(session.vim, "ApplyEvcModeVM_Task", vm_ref,
                                 mask=feature_masks)
     session._wait_for_task(task)
+
+
+def is_host_available(runtime_summary):
+    return (not runtime_summary.inMaintenanceMode and
+            runtime_summary.connectionState == "connected")

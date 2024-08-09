@@ -19,6 +19,7 @@ import nova.conf
 from nova.scheduler import filters
 from nova.scheduler import utils
 from nova.utils import BIGVM_EXCLUSIVE_TRAIT
+from nova.utils import HANA_MANUAL_SCHEDULING_TRAIT
 
 LOG = logging.getLogger(__name__)
 
@@ -39,6 +40,15 @@ class HANAMemoryMaxUnitFilter(filters.BaseHostFilter):
         extra_specs = spec_obj.flavor.extra_specs
         if extra_specs.get(trait) != "required":
             return True
+
+        if (host_state.traits and
+                HANA_MANUAL_SCHEDULING_TRAIT in host_state.traits):
+            LOG.debug("Manual scheduling for HANA was enabled by trait "
+                      "%(trait)s for the host %(host_state)s",
+                      {"trait": HANA_MANUAL_SCHEDULING_TRAIT,
+                       "host_state": host_state})
+        else:
+            return False
 
         memory_mb_max_unit = utils.get_memory_mb_max_unit(host_state)
 

@@ -28,6 +28,7 @@ from nova import rpc
 from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import vim_util
+from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi.vm_util import propset_dict
 
 LOG = logging.getLogger(__name__)
@@ -255,9 +256,8 @@ class _SpecialVmSpawningServer(object):
                     host_props = propset_dict(obj.propSet)
                     runtime_summary = host_props['summary.runtime']
                     moref_value = vutil.get_moref_value(obj.obj)
-                    host_states[moref_value] = (
-                        runtime_summary.inMaintenanceMode is False and
-                        runtime_summary.connectionState == "connected")
+                    host_states[moref_value] = \
+                        vm_util.is_host_available(runtime_summary)
 
             vms_per_host = {h: vms for h, vms in vms_per_host.items()
                             if host_states[h]}
@@ -313,8 +313,7 @@ class _SpecialVmSpawningServer(object):
 
             runtime_summary = self._session._call_method(
                 vutil, "get_object_property", host_ref, 'summary.runtime')
-            if (runtime_summary.inMaintenanceMode is True or
-                    runtime_summary.connectionState != "connected"):
+            if not vm_util.is_host_available(runtime_summary):
                 LOG.warning('Host destined for spawning was set to '
                             'maintenance or became disconnected.')
                 return FREE_HOST_STATE_ERROR
