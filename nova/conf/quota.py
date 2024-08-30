@@ -380,6 +380,15 @@ Related options:
 * ``unified_limits_resource_strategy``: This must be set to ``require`` or
   ``ignore``
 """),
+    cfg.IntOpt('sap_resources_cache_time',
+        min=0,
+        default=600,
+        help="""
+Time in seconds to cache the resources dict
+
+This option configures how often we re-read the flavors from DB to update our
+quota resources based on their `extra_specs` properties.
+"""),
 ]
 
 

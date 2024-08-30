@@ -21,6 +21,9 @@ update = {
         'quota_class_set': {
             'type': 'object',
             'properties': quota_sets.quota_resources,
+            'patternProperties': {
+                '^instances_': quota_sets.common_quota
+            },
             'additionalProperties': False,
         },
     },
@@ -52,3 +55,5 @@ show_query = {
     'properties': {},
     'additionalProperties': True,
 }
+
+create = copy.deepcopy(update)
