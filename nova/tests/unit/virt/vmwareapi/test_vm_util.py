@@ -426,6 +426,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.memoryAllocation = memoryAllocation
         expected.extraConfig = []
         expected.memoryReservationLockedToMax = False
+        expected.migrateEncryption = None
 
         self.assertEqual(expected, result)
 
@@ -459,6 +460,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.memoryAllocation = memoryAllocation
         expected.extraConfig = []
         expected.memoryReservationLockedToMax = False
+        expected.migrateEncryption = None
 
         self.assertEqual(expected, result)
 
@@ -883,6 +885,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         spec.name = self._instance.uuid
         spec.instanceUuid = self._instance.uuid
         spec.deviceChange = []
+        spec.migrateEncryption = None
         spec.numCPUs = 2
 
         spec.version = None
@@ -963,6 +966,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                             extra_specs)
         expected = fake_factory.create('ns0:VirtualMachineConfigSpec')
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.guestId = constants.DEFAULT_OS_TYPE
         expected.instanceUuid = self._instance.uuid
         expected.memoryMB = self._instance.memory_mb
@@ -1018,6 +1022,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.instanceUuid = self._instance.uuid
         expected.name = self._instance.uuid
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.extraConfig = []
 
         extra_config = fake_factory.create("ns0:OptionValue")
@@ -1072,6 +1077,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.instanceUuid = self._instance.uuid
         expected.name = self._instance.uuid
         expected.deviceChange = []
+        expected.migrateEncryption = None
 
         expected.extraConfig = []
         extra_config = fake_factory.create('ns0:OptionValue')
@@ -1125,6 +1131,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.instanceUuid = self._instance.uuid
         expected.name = self._instance.uuid
         expected.deviceChange = []
+        expected.migrateEncryption = None
 
         expected.extraConfig = []
         extra_config = fake_factory.create('ns0:OptionValue')
@@ -1173,6 +1180,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.name = self._instance.uuid
         expected.instanceUuid = self._instance.uuid
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.numCPUs = 2
 
         expected.version = None
@@ -1216,6 +1224,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.name = self._instance.uuid
         expected.instanceUuid = self._instance.uuid
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.numCPUs = 2
 
         expected.version = None
@@ -2058,6 +2067,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         expected.name = self._instance.uuid
         expected.instanceUuid = self._instance.uuid
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.numCPUs = 2
 
         expected.version = None
@@ -2102,6 +2112,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                             extra_specs)
         expected = fake_factory.create('ns0:VirtualMachineConfigSpec')
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.guestId = 'otherGuest'
         expected.instanceUuid = self._instance.uuid
         expected.memoryMB = self._instance.memory_mb
@@ -2147,6 +2158,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                             extra_specs)
         expected = fake_factory.create('ns0:VirtualMachineConfigSpec')
         expected.deviceChange = []
+        expected.migrateEncryption = None
         expected.guestId = 'otherGuest'
         expected.instanceUuid = self._instance.uuid
         expected.memoryMB = self._instance.memory_mb

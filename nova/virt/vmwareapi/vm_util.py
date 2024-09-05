@@ -114,7 +114,8 @@ class ExtraSpecs(object):
                  vif_limits=None, hv_enabled=None, firmware=None,
                  hw_video_ram=None, numa_prefer_ht=None,
                  numa_vcpu_max_per_virtual_node=None,
-                 migration_data_timeout=None, evc_mode_key=None):
+                 migration_data_timeout=None, evc_mode_key=None,
+                 vmotion_encryption=None):
         """ExtraSpecs object holds extra_specs for the instance."""
         self.cpu_limits = cpu_limits or Limits()
         self.memory_limits = memory_limits or Limits()
@@ -130,6 +131,7 @@ class ExtraSpecs(object):
         self.numa_vcpu_max_per_virtual_node = numa_vcpu_max_per_virtual_node
         self.migration_data_timeout = migration_data_timeout
         self.evc_mode_key = evc_mode_key
+        self.vmotion_encryption = vmotion_encryption
 
     def get_capped_evc_mode(self, evc_modes, evc_mode_sort_keys,
                             max_evc_mode_key):
@@ -439,6 +441,8 @@ def get_vm_create_spec(client_factory, instance, data_store_name,
 
     config_spec.deviceChange = devices
 
+    config_spec.migrateEncryption = extra_specs.vmotion_encryption
+
     # add vm-uuid and iface-id.x values for Neutron
     extra_config = []
     opt = client_factory.create('ns0:OptionValue')
@@ -631,6 +635,8 @@ def get_vm_resize_spec(client_factory, vcpus, memory_mb, extra_specs,
         extra_config.append(opt)
 
     resize_spec.extraConfig = extra_config
+
+    resize_spec.migrateEncryption = extra_specs.vmotion_encryption
 
     if metadata:
         resize_spec.annotation = metadata

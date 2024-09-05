@@ -530,6 +530,15 @@ class VMwareVMOps(object):
             raise error_util.EvcModeDoesNotExist(evc_mode=evc_mode_key)
         extra_specs.evc_mode_key = evc_mode_key
 
+        vmotion_encryption = flavor.extra_specs.get(
+            "vmware:vmotion_encryption", "required")
+        if vmotion_encryption in ["disabled", "opportunistic", "required"]:
+            extra_specs.vmotion_encryption = vmotion_encryption
+        else:
+            LOG.warning("Invalid vmware:vmotion_encryption value: %s. "
+                        "Using default value: required", vmotion_encryption)
+            extra_specs.vmotion_encryption = "required"
+
         return extra_specs
 
     def _get_storage_policy(self, flavor):
