@@ -2612,10 +2612,13 @@ class VMwareAPIVMTestCase(test.TestCase,
     def test_resize_to_smaller_disk(self, mock_update_cached_instances):
         self._create_vm(flavor='m1.large')
         flavor = self._get_flavor_by_name('m1.small')
-        fake_dest = '1.0|vcenter-uuid'
+        migration = objects.Migration(
+            dest_host='1.0|vcenter-uuid'
+        )
+
         self.assertRaises(exception.InstanceFaultRollback,
                           self.conn.migrate_disk_and_power_off, self.context,
-                          self.instance, fake_dest, flavor, None)
+                          self.instance, migration, flavor, None)
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cached_instances')
     def test_spawn_attach_volume_vmdk(self, mock_update_cached_instances):
