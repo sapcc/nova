@@ -3429,9 +3429,7 @@ class VMwareVMOps(object):
         disks = driver.block_device_info_get_mapping(block_device_info)
         # Detach the volumes in reverse order, so if we roll it back
         # that the device order will still be preserved
-        for disk in sorted(disks,
-                           reverse=True,
-                           key=itemgetter('mount_device')):
+        for disk in self._sort_disks(disks, reverse=True):
             try:
                 self._volumeops.detach_volume(disk['connection_info'],
                                               instance)
@@ -3443,14 +3441,22 @@ class VMwareVMOps(object):
                         existing_disks=None):
         disks = driver.block_device_info_get_mapping(block_device_info)
         # make sure the disks are attached by the device_name order
-        for disk in sorted(disks,
-                           key=itemgetter('mount_device')):
+        for disk in self._sort_disks(disks):
             if existing_disks and disk['volume_id'] in existing_disks:
                 continue
 
             adapter_type = disk.get('disk_bus') or adapter_type
             self._volumeops.attach_volume(disk['connection_info'], instance,
                                           adapter_type)
+
+    def _sort_disks(self, disks, reverse=False):
+        """Since mount_device can be controlled from outside, we want to
+        make sure the boot disk is always at the top of the list.
+        """
+        return sorted(
+            disks,
+            key=lambda d: (d.get('boot_index') != 0, d.get('mount_device')),
+            reverse=reverse)
 
     def _find_esx_host(self, cluster_ref, ds_ref):
         """Find ESX host in the specified cluster which is also connected to
