@@ -1269,17 +1269,45 @@ class VMwareVMOpsTestCase(test.TestCase):
     def test_attach_volumes(self, fake_attach_volume):
         block_device_info = {
             'block_device_mapping': [
-                {'mount_device': '/dev/sda', 'connection_info': {'id': 'c'}},
+                {'mount_device': '/dev/sda', 'connection_info': {'id': 'a'}},
                 {'mount_device': '/dev/sdb', 'connection_info': {'id': 'b'}},
-                {'mount_device': '/dev/sdc', 'connection_info': {'id': 'a'}},
+                {'mount_device': '/dev/sdc', 'connection_info': {'id': 'c'}},
+                {'mount_device': '/dev/sdd', 'boot_index': 1,
+                 'connection_info': {'id': 'd'}},
+                {'mount_device': '/dev/sde', 'boot_index': 0,
+                 'connection_info': {'id': 'e'}},
             ]
         }
         self._vmops._attach_volumes(self._instance, block_device_info,
                                     mock.sentinel.adapter_type)
         fake_attach_volume.assert_has_calls([
-            mock.call({'id': 'c'}, self._instance, mock.sentinel.adapter_type),
-            mock.call({'id': 'b'}, self._instance, mock.sentinel.adapter_type),
+            mock.call({'id': 'e'}, self._instance, mock.sentinel.adapter_type),
+            mock.call({'id': 'd'}, self._instance, mock.sentinel.adapter_type),
             mock.call({'id': 'a'}, self._instance, mock.sentinel.adapter_type),
+            mock.call({'id': 'b'}, self._instance, mock.sentinel.adapter_type),
+            mock.call({'id': 'c'}, self._instance, mock.sentinel.adapter_type),
+        ])
+
+    @mock.patch.object(volumeops.VMwareVolumeOps, 'detach_volume')
+    def test_detach_volumes(self, fake_attach_volume):
+        block_device_info = {
+            'block_device_mapping': [
+                {'mount_device': '/dev/sda', 'connection_info': {'id': 'a'}},
+                {'mount_device': '/dev/sdb', 'connection_info': {'id': 'b'}},
+                {'mount_device': '/dev/sdc', 'connection_info': {'id': 'c'}},
+                {'mount_device': '/dev/sdd', 'boot_index': 1,
+                 'connection_info': {'id': 'd'}},
+                {'mount_device': '/dev/sde', 'boot_index': 0,
+                 'connection_info': {'id': 'e'}},
+            ]
+        }
+        self._vmops._detach_volumes(self._instance, block_device_info)
+        fake_attach_volume.assert_has_calls([
+            mock.call({'id': 'c'}, self._instance),
+            mock.call({'id': 'b'}, self._instance),
+            mock.call({'id': 'a'}, self._instance),
+            mock.call({'id': 'd'}, self._instance),
+            mock.call({'id': 'e'}, self._instance),
         ])
 
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata')
