@@ -52,6 +52,10 @@ def main():
 
     gmr.TextGuruMeditation.setup_autorun(version, conf=CONF)
 
+    LOG = logging.getLogger(__name__)
+    me = 'i748122'
+    LOG.info("hello from '%s'", me)
+
     # disable database access for this service
     nova.db.main.api.DISABLE_DB_ACCESS = True
     objects_base.NovaObject.indirection_api = conductor_rpcapi.ConductorAPI()
