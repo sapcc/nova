@@ -1147,3 +1147,17 @@ class API(object):
                           {'id': attachment_id,
                            'msg': str(ex),
                            'code': getattr(ex, 'code', None)})
+
+    @translate_attachment_exception
+    def attachment_list(self, context, instance_id):
+        try:
+            return cinderclient(
+                context, '3.44', skip_version_check=True).attachments.index(
+                instance_id=instance_id)
+        except cinder_exception.ClientException as ex:
+            with excutils.save_and_reraise_exception():
+                LOG.error('List attachments failed for instance_id '
+                          '%(id)s. Error: %(msg)s Code: %(code)s',
+                          {'id': instance_id,
+                           'msg': str(ex),
+                           'code': getattr(ex, 'code', None)})

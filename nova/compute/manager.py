@@ -950,11 +950,9 @@ class ComputeManager(manager.Manager):
                 )
                 raise exception.InvalidConfiguration(msg)
 
-    def _reset_live_migration(self, context, instance):
+    def _reset_live_migration(self, context, instance, migration):
         migration = None
         try:
-            migration = objects.Migration.get_by_instance_and_status(
-                                      context, instance.uuid, 'running')
             if migration:
                 self.live_migration_abort(context, instance, migration.id)
         except Exception:
@@ -1195,7 +1193,14 @@ class ComputeManager(manager.Manager):
         if instance.task_state == task_states.MIGRATING:
             # Live migration did not complete, but instance is on this
             # host. Abort ongoing migration if still running and reset state.
-            self._reset_live_migration(context, instance)
+            migration = objects.Migration.get_by_instance_and_status(
+                                      context, instance.uuid, 'running')
+
+
+            if migration:
+                self._finish_live_migration(context, instance, migration)
+
+            self._reset_live_migration(context, instance, migration)
 
         db_state = instance.power_state
         drv_state = self._get_power_state(instance)
@@ -10981,6 +10986,35 @@ class ComputeManager(manager.Manager):
                 instance.save(
                     expected_task_state=[task_states.IN_CLUSTER_VMOTION])
         do_in_cluster_vmotion()
+
+    def _finish_live_migration(self, ctxt, instance, migration):
+        migrate_data = self.compute_rpcapi.check_can_live_migrate_destination(
+            ctxt, instance, migration.dest_compute,
+            False, False, migration, None)
+
+        if ('instance_already_migrated' in migrate_data and
+                migrate_data.instance_already_migrated):
+
+            attachments = self.volume_api.attachment_list(instance.uuid)
+            bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+                ctxt, instance.uuid)
+
+            source_bdms = []
+            for bdm in bdms:
+                for attachment in attachments:
+                    # Find the initial attachment_id to be deleted
+                    # once the live-migration finishes.
+                    if (attachment['volume_id'] == bdm['volume_id']
+                            and attachment['status'] == 'detached'
+                            and bdm['attachment_id'] != attachment['id']):
+                        bdm['attachment_id'] = attachment['id']
+                        source_bdms.append(bdm)
+                        break
+
+            self._post_live_migration(ctxt, instance, migration.dest,
+                                      block_migration=False,
+                                      migrate_data=migrate_data,
+                                      source_bdms=source_bdms)
 
 
 # TODO(sbauza): Remove this proxy class in the X release once we drop the 5.x
