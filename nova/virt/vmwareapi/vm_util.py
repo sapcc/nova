@@ -1817,7 +1817,9 @@ def get_stats_from_cluster_per_host(session, cluster):
 def get_hosts_and_reservations_for_cluster(session, cluster):
     # Get the Host and Resource Pool Managed Object Refs
     admission_policy_key = "configuration.dasConfig.admissionControlPolicy"
-    props = ["host", "resourcePool", admission_policy_key]
+    admission_enabled_key = "configuration.dasConfig.admissionControlEnabled"
+    props = ["host", "resourcePool", admission_policy_key,
+             admission_enabled_key]
     if CONF.vmware.hostgroup_reservations_json_file:
         props.append("configurationEx")
     prop_dict = session._call_method(vutil,
@@ -1828,8 +1830,9 @@ def get_hosts_and_reservations_for_cluster(session, cluster):
         return None, None
 
     failover_hosts = []
+    enabled = prop_dict.get(admission_enabled_key, True)
     policy = prop_dict.get(admission_policy_key)
-    if policy and hasattr(policy, 'failoverHosts'):
+    if enabled and policy and hasattr(policy, 'failoverHosts'):
         failover_hosts = set(h.value for h in policy.failoverHosts)
 
     group_ret = getattr(prop_dict.get('configurationEx'), 'group', None)
