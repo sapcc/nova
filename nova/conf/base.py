@@ -195,6 +195,12 @@ Compare the values of conf.vmware.memory_reservation_cluster_hosts_max_fail and
 conf.vmware.memory_reservation_max_ratio_fallback to see how much of total
 memory is actually reservable.
 """),
+    cfg.IntOpt(
+        'bigvm_exporter_listen_port',
+        default=9847,
+        help="""
+Port on which the BigVM prometheus exporter listens for HTTP requests.
+"""),
 ]
 
 metrics_opts = [

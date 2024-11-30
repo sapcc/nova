@@ -21,6 +21,7 @@ from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
 
+from nova.bigvm.exporter import start_bigvm_exporter
 import nova.conf
 from nova import config
 from nova import objects
@@ -38,6 +39,8 @@ def main():
     objects.Service.enable_min_version_cache()
 
     gmr.TextGuruMeditation.setup_autorun(version, conf=CONF)
+
+    start_bigvm_exporter()
 
     server = service.Service.create(binary='nova-bigvm')
     service.serve(server)
