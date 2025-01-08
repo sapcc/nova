@@ -67,7 +67,7 @@ class VMwareVolumeOps(object):
                           disk_size=None, linked_clone=False,
                           device_name=None, disk_io_limits=None,
                           volume_uuid=None, backing_uuid=None,
-                          profile_id=None):
+                          profile_id=None, key_id=None):
         """Attach disk to VM by reconfiguration.
 
         If volume_uuid and backing_uuid are given, also store the uuid of the
@@ -85,9 +85,17 @@ class VMwareVolumeOps(object):
                                     client_factory, disk_type, vmdk_path,
                                     disk_size, linked_clone, controller_key,
                                     unit_number, device_name, disk_io_limits,
-                                    profile_id=profile_id)
+                                    profile_id=profile_id, key_id=key_id)
         if controller_spec:
             vmdk_attach_config_spec.deviceChange.append(controller_spec)
+
+        if key_id:
+            vm_key_id = vm_util.get_vm_crypto_key_id(self._session, vm_ref)
+            if not vm_key_id:
+                vmdk_attach_config_spec.crypto = vm_util.get_encrypt_spec(
+                    client_factory, key_id)
+                vmdk_attach_config_spec.vmProfile = [
+                    vm_util.get_vm_profile_spec(client_factory, profile_id)]
 
         if volume_uuid and backing_uuid:
             LOG.debug("Adding volume details for %s to attach config spec.",
@@ -374,6 +382,7 @@ class VMwareVolumeOps(object):
                   instance=instance)
         data = connection_info['data']
         volume_ref = self._get_volume_ref(data)
+        key_id = vm_util.get_vm_crypto_key_id(self._session, volume_ref)
 
         # Get details required for adding disk device such as
         # adapter_type, disk_type
@@ -393,7 +402,8 @@ class VMwareVolumeOps(object):
                                vmdk_path=vmdk.path,
                                volume_uuid=data['volume_id'],
                                backing_uuid=vmdk.device.backing.uuid,
-                               profile_id=data['profile_id'])
+                               profile_id=data['profile_id'],
+                               key_id=key_id)
 
         LOG.debug("Attached VMDK: %s", connection_info, instance=instance)
 
@@ -474,7 +484,8 @@ class VMwareVolumeOps(object):
                                vmdk_path=vmdk_path,
                                volume_uuid=volume_uuid,
                                backing_uuid=backing_uuid,
-                               profile_id=profile_id)
+                               profile_id=profile_id,
+                               key_id=fcd_obj.config.backing.keyId)
 
     def _attach_volume_fcd(self, connection_info, instance):
         """Attach fcd volume storage to VM instance."""
