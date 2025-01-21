@@ -2547,6 +2547,17 @@ class API:
                         context.elevated(), instance.host)
                     is_local_delete = not self.servicegroup_api.service_is_up(
                         service)
+                    # compute service is down and nova is configured to throw
+                    # an error in this case
+                    if is_local_delete and CONF.api.disable_db_only_delete:
+                        # reset task state to None so that the instance won't
+                        # get deleted once the compute service is up again
+                        instance.task_state = None
+                        instance.save()
+                        msg = _("The server's hypervisor is not available at "
+                                "the moment. Please try again later.")
+                        raise exception.ComputeServiceUnavailable(
+                            host=instance.host, message=msg)
                 if not is_local_delete:
                     if original_task_state in (task_states.DELETING,
                                                   task_states.SOFT_DELETING):
