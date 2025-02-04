@@ -3877,7 +3877,7 @@ class ComputeManager(manager.Manager):
                                bad_volumes_callback=bad_volumes_callback)
 
         except Exception as error:
-            with excutils.save_and_reraise_exception() as ctxt:
+            with excutils.save_and_reraise_exception():
                 exc_info = sys.exc_info()
                 # if the reboot failed but the VM is running don't
                 # put it into an error state
@@ -3895,7 +3895,6 @@ class ComputeManager(manager.Manager):
                         phase=fields.NotificationPhase.ERROR,
                         exception=error, bdms=bdms
                     )
-                    ctxt.reraise = False
                 else:
                     LOG.error('Cannot reboot instance: %s', error,
                               instance=instance)
