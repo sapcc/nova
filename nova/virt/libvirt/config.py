@@ -1000,6 +1000,7 @@ class LibvirtConfigGuestSysinfo(LibvirtConfigObject):
         self.system_serial = None
         self.system_uuid = None
         self.system_family = None
+        self.chassis_asset = None
 
     def format_dom(self):
         sysinfo = super(LibvirtConfigGuestSysinfo, self).format_dom()
@@ -1008,6 +1009,7 @@ class LibvirtConfigGuestSysinfo(LibvirtConfigObject):
 
         bios = etree.Element("bios")
         system = etree.Element("system")
+        chassis = etree.Element("chassis")
 
         if self.bios_vendor is not None:
             bios.append(self._text_node("entry", self.bios_vendor,
@@ -1041,11 +1043,18 @@ class LibvirtConfigGuestSysinfo(LibvirtConfigObject):
             system.append(self._text_node("entry", self.system_family,
                                           name="family"))
 
+        if self.chassis_asset is not None:
+            chassis.append(self._text_node("entry", self.chassis_asset,
+                                           name="asset"))
+
         if len(list(bios)) > 0:
             sysinfo.append(bios)
 
         if len(list(system)) > 0:
             sysinfo.append(system)
+
+        if len(list(chassis)) > 0:
+            sysinfo.append(chassis)
 
         return sysinfo
 
