@@ -4348,3 +4348,83 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops._resize_vm(self._context, instance, vm_ref, flavor, None)
         fake_apply_evc_mode.assert_called_once_with(
             self._session, mock.sentinel.vm_ref, None)
+
+    @ddt.unpack
+    @ddt.data(
+        # test 1
+        ([
+             {'host': dict(memory_size=1024),
+              'instances_mem': [512]},
+             {'host': dict(memory_size=4096,
+                           in_maintenance_mode=True),
+              'instances_mem': []},
+             {'host': dict(memory_size=8192,
+                           connection_state='N/A'),
+              'instances_mem': []}
+         ],
+         # available memory per host
+         # expect only hosts in valid state to be returned
+         [512]),
+
+        # test 2
+        ([
+             {'host': dict(memory_size=1024),
+              'instances_mem': [256, 256, 256]},
+             {'host': dict(memory_size=1024),
+              'instances_mem': [512, 512, 512]}
+         ],
+         # available memory per host
+         # second host is over-provisioned, but we should still
+         # return 0 available memory MB.
+         [256, 0])
+
+    )
+    def test_get_available_memory_per_host(self,
+                                           hosts_with_instances,
+                                           expected_results):
+        def _fake_host(in_maintenance_mode=False,
+                       connection_state="connected",
+                       memory_size=0):
+            host = vmwareapi_fake.HostSystem()
+            host.set("summary.runtime", mock.Mock(
+                inMaintenanceMode=in_maintenance_mode,
+                connectionState=connection_state))
+            host.set("summary.hardware", mock.Mock(
+                memorySize=memory_size * units.Mi))
+            return host
+
+        hosts = []
+        instances_ret = []
+
+        for hi in hosts_with_instances:
+            host = _fake_host(**hi['host'])
+            hosts.append(host)
+            for mem in hi['instances_mem']:
+                instances_ret.append(
+                    (uuidutils.generate_uuid(),
+                     {'runtime.host': host.mo_id,
+                      'config.hardware.memoryMB': mem}))
+
+        hosts_ret = (
+            [h.mo_id for h in hosts],
+            None
+        )
+
+        def _mock_with_ret(vim, ret_res):
+            return mock.Mock(__enter__=mock.Mock(return_value=ret_res),
+                             __exit__=mock.Mock(return_value=None))
+
+        with test.nested(
+                mock.patch.object(self._session, "_call_method",
+                                  return_value=hosts),
+                mock.patch.object(vutil, 'WithRetrieval', _mock_with_ret),
+                mock.patch.object(self._vmops, '_list_instances_in_cluster',
+                                  return_value=instances_ret),
+                mock.patch.object(vm_util,
+                                  'get_hosts_and_reservations_for_cluster',
+                                  return_value=hosts_ret)
+        ) as (mock_call_method, mock_with_retrieval, mock_list_instances,
+              mock_get_hosts_and_res):
+
+            result = self._vmops.get_available_memory_per_host()
+            self.assertEqual(list(result.values()), expected_results)

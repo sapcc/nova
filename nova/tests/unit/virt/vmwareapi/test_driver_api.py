@@ -2382,8 +2382,8 @@ class VMwareAPIVMTestCase(test.TestCase,
                 stats['supported_instances'])
         memory_mbmax_unit = stats['stats']['memory_mb_max_unit']
         vcpus_max_unit = stats['stats']['vcpus_max_unit']
-        # memory_mb_used = fake.HostSystem.overallMemoryUsage = 500
-        self.assertEqual(memory_mbmax_unit, 1024 - 500)
+        # memory_mb_used = fake.HostSystem.hardware.memorySize = 1024
+        self.assertEqual(memory_mbmax_unit, 1024)
         # vcpus_max_unit = fake.HostSystem.summary.hardware.numCpuThreads
         self.assertEqual(vcpus_max_unit, 16)
 
@@ -2915,3 +2915,24 @@ class VMwareAPIVMTestCase(test.TestCase,
             self.assertEqual(2, mock_save.call_count)
             self.assertFalse(service.disabled)
             self.assertFalse(self.conn._vc_state._auto_service_disabled)
+
+    @mock.patch.object(vmops.VMwareVMOps,
+                       'get_available_memory_per_host')
+    def test_get_cluster_stats(self, mock_get_mem_per_host):
+        mem_per_host = {
+            'host-1': 1024,
+            'host-2': 4096,
+            'host-3': 0,
+        }
+        mock_get_mem_per_host.return_value = mem_per_host
+
+        host_stats = {
+            'node-001': {'vcpus': 8},
+            'node-002': {'vcpus': 16},
+            self.conn._nodename: {'vcpus': 24}
+        }
+
+        result = self.conn._get_cluster_stats(host_stats)
+
+        self.assertEqual(16, result['vcpus_max_unit'])
+        self.assertEqual(4096, result['memory_mb_max_unit'])

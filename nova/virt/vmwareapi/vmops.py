@@ -4871,3 +4871,56 @@ class VMwareVMOps(object):
                 raise exception.MigrationPreCheckError(
                         reason=("Found non-configdrive CD-ROM. "
                                 "Can only migrate configdrive"))
+
+    def get_available_memory_per_host(self):
+        """Retrieves per-host available RAM.
+
+        The value is calculated by subtracting the total configured
+        memory_mb of the instances residing on that host from the
+        total memory size of the host.
+
+        Returns a dict containing available RAM information per host.
+        {
+            "host-ref-value": 1024
+        }
+        """
+        (host_mors, _) = vm_util.get_hosts_and_reservations_for_cluster(
+                            self._session, self._cluster)
+
+        ram_per_host = {}
+        # initialize ram_per_host with the hosts in the expected state
+        # and their total memorySize.
+        result = self._session._call_method(vim_util,
+                            "get_properties_for_a_collection_of_objects",
+                            "HostSystem", host_mors,
+                            ["summary.runtime", "summary.hardware"])
+        with vutil.WithRetrieval(self._session.vim, result) as objects:
+            for obj in objects:
+                host_props = vutil.propset_dict(obj.propSet)
+                runtime_summary = host_props['summary.runtime']
+                if (runtime_summary.inMaintenanceMode or
+                        runtime_summary.connectionState != "connected"):
+                    continue
+                host_ref_value = vutil.get_moref_value(obj.obj)
+                hardware_summary = host_props.get("summary.hardware")
+                mem_size = getattr(hardware_summary, "memorySize", 0)
+                ram_per_host[host_ref_value] = mem_size // units.Mi
+
+        props = ['config.hardware.memoryMB', 'runtime.host']
+        vms = self._list_instances_in_cluster(additional_properties=props)
+
+        for (vm_uuid, vm_props) in vms:
+            host_obj = vm_props.get('runtime.host')
+            if not host_obj:
+                continue
+            host_ref_value = vutil.get_moref_value(host_obj)
+            if host_ref_value not in ram_per_host:
+                continue
+
+            vm_mb = vm_props.get('config.hardware.memoryMB', 0)
+
+            # make sure the minimum available memory >= 0
+            ram_per_host[host_ref_value] = \
+                max(ram_per_host[host_ref_value] - vm_mb, 0)
+
+        return ram_per_host
