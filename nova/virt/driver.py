@@ -688,7 +688,7 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
-    def migrate_disk_and_power_off(self, context, instance, dest,
+    def migrate_disk_and_power_off(self, context, instance, migration,
                                    flavor, network_info,
                                    block_device_info=None,
                                    timeout=0, retry_interval=0):
@@ -697,8 +697,8 @@ class ComputeDriver(object):
 
         :param nova.objects.instance.Instance instance:
             The instance whose disk should be migrated.
-        :param str dest:
-            The IP address of the destination host.
+        :param nova.objects.migration.Migration migration:
+            The migration to be executed
         :param nova.objects.flavor.Flavor flavor:
             The flavor of the instance whose disk get migrated.
         :param nova.network.model.NetworkInfo network_info:
@@ -709,6 +709,8 @@ class ComputeDriver(object):
             The time in seconds to wait for the guest OS to shutdown.
         :param int retry_interval:
             How often to signal guest while waiting for it to shutdown.
+        :param str dest_compute:
+            The name of the destination compute-host
 
         :return: A list of disk information dicts in JSON format.
         :rtype: str

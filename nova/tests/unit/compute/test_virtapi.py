@@ -56,6 +56,12 @@ class VirtAPIBaseTest(test.NoDBTestCase, test.APICoverage):
                             nova_context.get_admin_context(), uuids.rp_uuid,
                             enabled=False)
 
+    def test_is_instance_storage_shared(self):
+        self.assertExpected('is_instance_storage_shared',
+                            nova_context.get_admin_context(),
+                            mock.sentinel.instance,
+                            mock.sentinel.host)
+
 
 class FakeVirtAPITest(VirtAPIBaseTest):
 
@@ -74,6 +80,8 @@ class FakeVirtAPITest(VirtAPIBaseTest):
             self.virtapi.exit_wait_early(*args, **kwargs)
         elif method == 'update_compute_provider_status':
             self.virtapi.update_compute_provider_status(*args, **kwargs)
+        elif method == 'is_instance_storage_shared':
+            self.virtapi.is_instance_storage_shared(*args, **kwargs)
         else:
             self.fail("Unhandled FakeVirtAPI method: %s" % method)
 
@@ -115,6 +123,9 @@ class FakeCompute(object):
         m.wait.side_effect = self._event_waiter
         self._events.append(m)
         return m
+
+    def _is_instance_storage_shared(self, context, instance, host):
+        return
 
 
 class ComputeVirtAPITest(VirtAPIBaseTest):
@@ -230,3 +241,15 @@ class ComputeVirtAPITest(VirtAPIBaseTest):
         self.virtapi.update_compute_provider_status(
             ctxt, uuids.rp_uuid, enabled=True)
         self.assertEqual(set(), self.compute.provider_traits[uuids.rp_uuid])
+
+    def test_is_instance_storage_shared(self):
+        ctxt = nova_context.get_admin_context()
+
+        with mock.patch.object(self.compute,
+                                '_is_instance_storage_shared') as mock_shared:
+            self.virtapi.is_instance_storage_shared(ctxt,
+                                                    mock.sentinel.instance,
+                                                    host=mock.sentinel.host)
+            mock_shared.assert_called_once_with(ctxt,
+                                                mock.sentinel.instance,
+                                                host=mock.sentinel.host)
