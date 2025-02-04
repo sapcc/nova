@@ -1581,7 +1581,9 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             separate = flavor.extra_specs.get(utils.QUOTA_SEPARATE_KEY)
             instance_types[flavor.id] = {
                 'name': flavor.name,
-                'separate': separate == 'true'
+                'separate': separate == 'true',
+                'hw_version':
+                    flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY),
             }
 
     @staticmethod
@@ -1640,6 +1642,12 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             if itype and itype.get('separate', False):
                 t_name = f"instances_{itype['name']}"
                 counts[t_name] = counts.get(t_name, 0) + instance_count
+            elif itype and (hw_version := itype.get('hw_version')):
+                counts['instances'] += instance_count
+                cores_name = f"hw_version_{hw_version}_cores"
+                counts[cores_name] = counts.get(cores_name, 0) + int(cores)
+                ram_name = f"hw_version_{hw_version}_ram"
+                counts[ram_name] = counts.get(ram_name, 0) + int(ram)
             else:
                 counts['instances'] += instance_count
                 counts['cores'] += int(cores)

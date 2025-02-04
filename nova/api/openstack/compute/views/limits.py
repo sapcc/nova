@@ -42,6 +42,7 @@ class ViewBuilder(object):
             quotas, filtered_limits,
             max_image_meta=max_image_meta)
         per_flavor_limits = self._build_per_flavor_limits(quotas)
+        per_hw_version_limits = self._build_per_hw_version_limits(quotas)
 
         used_limits = self._build_used_limits(
             request, quotas, filtered_limits)
@@ -52,6 +53,7 @@ class ViewBuilder(object):
                 "rate": [],
                 "absolute": absolute_limits,
                 "absolutePerFlavor": per_flavor_limits,
+                "absolutePerHwVersion": per_hw_version_limits,
             },
         }
 
@@ -104,4 +106,21 @@ class ViewBuilder(object):
                     'totalInstancesUsed': value['in_use'],
                 }
 
+        return limits
+
+    def _build_per_hw_version_limits(self, quotas):
+        quota_map = {
+            'cores': {'limit': 'maxTotalCores', 'in_use': 'totalCoresUsed'},
+            'ram': {'limit': 'maxTotalRAMSize', 'in_use': 'totalRAMUsed'},
+        }
+        limits = {}
+        for name, value in quotas.items():
+            if not name.startswith('hw_version_'):
+                continue
+
+            # e.g. hw_version_v2_cores -> v2, cores
+            hw_version, name = name[len('hw_version_'):].split('_', 1)
+            resource_limits = limits.setdefault(hw_version, {})
+            for quota_key, limit_key in quota_map[name].items():
+                resource_limits[limit_key] = value[quota_key]
         return limits

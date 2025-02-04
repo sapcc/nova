@@ -19,6 +19,7 @@ import functools
 import inspect
 import itertools
 import math
+import operator
 import traceback
 
 import netifaces
@@ -1062,24 +1063,47 @@ def upsize_quota_delta(new_flavor, old_flavor):
     :param new_flavor: the target instance type
     :param old_flavor: the original instance type
     """
-    def _quota_delta(resource):
+    def _quota_delta(resource, default_quota_name):
+        """Return the difference and quota key for resource/quota_name
+
+        This function considers QUOTA_INSTANCE_ONLY_KEY and
+        QUOTA_HW_VERSION_KEY extra_specs of the new/old flavor as both can set
+        the count for a resource to 0.  Since we have to compute the quota name
+        for the hardware version, we also return it for usage in the deltas.
+        """
+        new_quota_key = default_quota_name
         if new_flavor.extra_specs.get(utils.QUOTA_INSTANCE_ONLY_KEY) == 'true':
             new_count = 0
         else:
             new_count = new_flavor[resource]
+            hw_version = new_flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY)
+            if hw_version:
+                new_quota_key = f"hw_version_{hw_version}_{default_quota_name}"
 
+        old_quota_key = default_quota_name
         if old_flavor.extra_specs.get(utils.QUOTA_INSTANCE_ONLY_KEY) == 'true':
             old_count = 0
         else:
-            old_count = old_flavor[resource]
+            hw_version = old_flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY)
+            if hw_version:
+                old_quota_key = f"hw_version_{hw_version}_{default_quota_name}"
 
-        return (new_count - old_count)
+            # if the old flavor used a different quota, the full amount of the
+            # new flavor's resource belong into the delta -> we subtract 0
+            if old_quota_key == new_quota_key:
+                old_count = old_flavor[resource]
+            else:
+                old_count = 0
+
+        return ((new_count - old_count), new_quota_key)
 
     deltas = {}
-    if _quota_delta('vcpus') > 0:
-        deltas['cores'] = _quota_delta('vcpus')
-    if _quota_delta('memory_mb') > 0:
-        deltas['ram'] = _quota_delta('memory_mb')
+    cores_quota_delta, cores_quota_key = _quota_delta('vcpus', 'cores')
+    if cores_quota_delta > 0:
+        deltas[cores_quota_key] = cores_quota_delta
+    ram_quota_delta, ram_quota_key = _quota_delta('memory_mb', 'ram')
+    if ram_quota_delta > 0:
+        deltas[ram_quota_key] = ram_quota_delta
 
     # NOTE(jkulik): We need to add the instances_* resource only if we resize
     # towards a QUOTA_SEPARATE_KEY flavor, as we're interested in positive
@@ -1096,26 +1120,49 @@ def upsize_quota_delta(new_flavor, old_flavor):
     return deltas
 
 
+def _get_key_from_deltas(deltas, resource):
+    """Find the best-matching key in deltas that belongs to resource
+
+    We have instances and instances_{flavor_name}, but we also need to support
+    cores and hw_version_{hw_version}_cores and the same for ram and maybe at
+    some point instances.
+
+    If we do not find a matching key, the resource name is returned.
+    """
+    # sorted(reverse=True) to get the one with the higher value e.g. if we have
+    # instances=0 and instances_blubb=5 we need the instances_blubb
+    return next(
+        (k for k, v in sorted(deltas.items(), key=operator.itemgetter(1, 0),
+                              reverse=True)
+         if k == resource or k.startswith(f"{resource}_") or
+            k.endswith(f"_{resource}")),
+        resource)
+
+
 def get_headroom(quotas, usages, deltas):
     headroom = {res: quotas[res] - usages.get(res, 0)
                 for res in quotas.keys()}
+    quota_instances_key = _get_key_from_deltas(deltas, 'instances')
+    quota_cores_key = _get_key_from_deltas(deltas, 'cores')
+    quota_ram_key = _get_key_from_deltas(deltas, 'ram')
+
     # If quota_cores is unlimited [-1]:
     # - set cores headroom based on instances headroom:
-    if quotas.get('cores') == -1:
-        if deltas.get('cores'):
-            hc = headroom.get('instances', 1) * deltas['cores']
-            headroom['cores'] = hc / deltas.get('instances', 1)
+    if quotas.get(quota_cores_key) == -1:
+        if deltas.get(quota_cores_key):
+            hc = headroom.get(quota_instances_key, 1) * deltas[quota_cores_key]
+            headroom[quota_cores_key] = hc / deltas.get(quota_instances_key, 1)
         else:
-            headroom['cores'] = headroom.get('instances', 1)
+            headroom[quota_cores_key] = headroom.get(quota_instances_key, 1)
 
     # If quota_ram is unlimited [-1]:
     # - set ram headroom based on instances headroom:
-    if quotas.get('ram') == -1:
-        if deltas.get('ram'):
-            hr = headroom.get('instances', 1) * deltas['ram']
-            headroom['ram'] = hr / deltas.get('instances', 1)
+    if quotas.get(quota_ram_key) == -1:
+        if deltas.get(quota_ram_key):
+            hr = headroom.get(quota_instances_key, 1) * deltas[quota_ram_key]
+            headroom[quota_ram_key] = hr / deltas.get(quota_instances_key, 1)
         else:
-            headroom['ram'] = headroom.get('instances', 1)
+            headroom[quota_ram_key] = headroom.get(quota_instances_key, 1)
 
     return headroom
 
@@ -1140,19 +1187,28 @@ def check_num_instances_quota(
     # Determine requested cores and ram
     req_cores = max_count * flavor.vcpus
     req_ram = max_count * flavor.memory_mb
-    deltas = {'instances': max_count, 'cores': req_cores, 'ram': req_ram}
 
+    # default quota names when using neither QUOTA_SEPARATE_KEY nor
+    # QUOTA_HW_VERSION_KEY
     quota_key_instances = 'instances'
-    if flavor.get('extra_specs', {}).get(utils.QUOTA_SEPARATE_KEY) == 'true':
-        quota_key_instances = 'instances_' + flavor.name
-        deltas[quota_key_instances] = max_count
-        deltas['instances'] = 0
-        deltas['cores'] = 0
-        deltas['ram'] = 0
-    reserve_cpu_ram = flavor.get('extra_specs', {}).get(
-        utils.QUOTA_INSTANCE_ONLY_KEY) != 'true'
-    if reserve_cpu_ram:
-        deltas.update(cores=req_cores, ram=req_ram)
+    quota_key_cores = 'cores'
+    quota_key_ram = 'ram'
+    # default deltas every function expects to find. we need to keep them even
+    # if the flavor doesn't use them
+    deltas = {'instances': 0, 'cores': 0, 'ram': 0}
+
+    if flavor.extra_specs.get(utils.QUOTA_SEPARATE_KEY) == 'true':
+        quota_key_instances = f"instances_{flavor.name}"
+    if flavor.extra_specs.get(utils.QUOTA_INSTANCE_ONLY_KEY) == 'true':
+        req_cores = 0
+        req_ram = 0
+    if hw_version := flavor.extra_specs.get(utils.QUOTA_HW_VERSION_KEY):
+        quota_key_cores = f"hw_version_{hw_version}_cores"
+        quota_key_ram = f"hw_version_{hw_version}_ram"
+
+    deltas[quota_key_instances] = max_count
+    deltas[quota_key_cores] = req_cores
+    deltas[quota_key_ram] = req_ram
 
     try:
         objects.Quotas.check_deltas(context, deltas,
@@ -1168,9 +1224,9 @@ def check_num_instances_quota(
             # orig_num_req is the original number of instances requested in the
             # case of a recheck quota, for use in the over quota exception.
             requested = {quota_key_instances: orig_num_req}
-            if reserve_cpu_ram:
-                requested['cores'] = orig_num_req * flavor.vcpus
-                requested['ram'] = orig_num_req * flavor.memory_mb
+            if flavor.extra_specs.get(utils.QUOTA_INSTANCE_ONLY_KEY) != 'true':
+                requested[quota_key_cores] = orig_num_req * flavor.vcpus
+                requested[quota_key_ram] = orig_num_req * flavor.memory_mb
             (overs, reqs, total_alloweds, useds) = get_over_quota_detail(
                 deltas, overs, quotas, requested)
             msg = "Cannot run any more instances of this type."
@@ -1186,10 +1242,10 @@ def check_num_instances_quota(
 
         allowed = headroom.get(quota_key_instances, 1)
         # Reduce 'allowed' instances in line with the cores & ram headroom
-        if flavor.vcpus and 'cores' in headroom:
-            allowed = min(allowed, headroom['cores'] // flavor.vcpus)
-        if flavor.memory_mb and 'ram' in headroom:
-            allowed = min(allowed, headroom['ram'] // flavor.memory_mb)
+        if flavor.vcpus and quota_key_cores in headroom:
+            allowed = min(allowed, headroom[quota_key_cores] // flavor.vcpus)
+        if flavor.memory_mb and quota_key_ram in headroom:
+            allowed = min(allowed, headroom[quota_key_ram] // flavor.memory_mb)
 
         # Convert to the appropriate exception message
         if allowed <= 0:
@@ -1204,9 +1260,9 @@ def check_num_instances_quota(
 
         num_instances = (str(min_count) if min_count == max_count else
             "%s-%s" % (min_count, max_count))
-        requested = {quota_key_instances: num_instances}
-        if reserve_cpu_ram:
-            requested.update(cores=req_cores, ram=req_ram)
+        requested = {quota_key_instances: num_instances,
+                     quota_key_cores: req_cores,
+                     quota_key_ram: req_ram}
         (overs, reqs, total_alloweds, useds) = get_over_quota_detail(
             headroom, overs, quotas, requested)
         params = {'overs': overs, 'pid': project_id,
