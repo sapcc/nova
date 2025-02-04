@@ -691,7 +691,8 @@ class ComputeDriver(object):
     def migrate_disk_and_power_off(self, context, instance, dest,
                                    flavor, network_info,
                                    block_device_info=None,
-                                   timeout=0, retry_interval=0):
+                                   timeout=0, retry_interval=0,
+                                   dest_compute=None):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
 
@@ -709,6 +710,8 @@ class ComputeDriver(object):
             The time in seconds to wait for the guest OS to shutdown.
         :param int retry_interval:
             How often to signal guest while waiting for it to shutdown.
+        :param str dest_compute:
+            The name of the destination compute-host
 
         :return: A list of disk information dicts in JSON format.
         :rtype: str
