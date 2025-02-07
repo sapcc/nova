@@ -1419,6 +1419,22 @@ class VMwareVMOpsTestCase(test.TestCase):
         self.assertEqual(specs.memory_limits.reservation,
                          self._instance.flavor.memory_mb)
 
+    def _test_vmotion_encryption(self, encryption, expected=None):
+        if encryption is not None:
+            self._instance.flavor.extra_specs.update({
+                "vmware:vmotion_encryption": encryption})
+        specs = self._vmops._get_extra_specs(self._instance.flavor,
+                                             self._image_meta)
+        self.assertEqual(specs.vmotion_encryption, expected)
+
+    def test_vmotion_encryption_values(self):
+        self._test_vmotion_encryption("required", "required")
+        self._test_vmotion_encryption("opportunistic", "opportunistic")
+        self._test_vmotion_encryption("disabled", "disabled")
+        self._test_vmotion_encryption("INVALID", "required")
+        # no extra_specs entry at all:
+        self._test_vmotion_encryption(None, "required")
+
     @mock.patch.object(vmops.VMwareVMOps, '_extend_virtual_disk')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
     @mock.patch.object(ds_util, 'disk_move')
