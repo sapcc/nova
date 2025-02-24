@@ -4191,6 +4191,26 @@ class API:
         host_name can be set in the cold migration case only.
         """
 
+        # get all volumes attached to the instance and check if they are in a
+        # valid state for resize
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+                context, instance.uuid)
+        for bdm in bdms:
+            if not bdm.volume_id:
+                continue
+            volume = self.volume_api.get(context, bdm.volume_id)
+            migration_status_valid = volume['migration_status'] != 'migrating'
+            status_and_attach_status_valid = (
+                 (volume['status'] == "in-use" and
+                  volume['attach_status'] == 'attached') or
+                 (volume['status'] == "available" and
+                  volume['attach_status'] == 'detached'))
+            if not (migration_status_valid and
+                    status_and_attach_status_valid):
+                msg = _("Volume %s is not in a valid state for resize.") \
+                      % volume['id']
+                raise exception.InvalidVolume(reason=msg)
+
         allow_cross_cell_resize = self._allow_cross_cell_resize(
             context, instance)
 
