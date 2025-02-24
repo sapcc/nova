@@ -4230,6 +4230,32 @@ class API:
         min_comp_ver = objects.service.get_minimum_version_all_cells(
             context, ["nova-compute"])
 
+        # get all volumes attached to the instance and check if they are in a
+        # valid state for resize
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+                context, instance.uuid)
+
+        if bdms:
+            admin_context = nova_context.get_admin_context()
+
+        for bdm in bdms:
+            if not bdm.volume_id:
+                continue
+            # We need an admin context, as the migration status may be
+            # hidden to the normal user
+            volume = self.volume_api.get(admin_context, bdm.volume_id)
+            migration_status_valid = volume['migration_status'] != 'migrating'
+            status_and_attach_status_valid = (
+                 (volume['status'] == "in-use" and
+                  volume['attach_status'] == 'attached') or
+                 (volume['status'] == "available" and
+                  volume['attach_status'] == 'detached'))
+            if not (migration_status_valid and
+                    status_and_attach_status_valid):
+                msg = _("Volume %s is not in a valid state for resize.") \
+                      % volume['id']
+                raise exception.InvalidVolume(reason=msg)
+
         allow_cross_cell_resize = self._allow_cross_cell_resize(
             context, instance, min_comp_ver)
 
