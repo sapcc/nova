@@ -79,6 +79,7 @@ class MigrateServerController(wsgi.Controller):
             exception.CannotMigrateToSameHost,
             exception.ForbiddenPortsWithAccelerator,
             exception.ExtendedResourceRequestOldCompute,
+            exception.InvalidVolume,
         ) as e:
             raise exc.HTTPBadRequest(explanation=e.format_message())
         except (
