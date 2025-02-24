@@ -2017,7 +2017,8 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
     @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host')
-    def _test_resize(self, mock_get_all_by_host,
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def _test_resize(self, bdm_get_by_instance_uuid, mock_get_all_by_host,
                      mock_get_by_instance_uuid, mock_get_flavor, mock_upsize,
                      mock_inst_save, mock_count, mock_limit, mock_record,
                      mock_migration, mock_validate, mock_is_vol_backed,
@@ -2031,7 +2032,11 @@ class _ComputeAPIUnitTestMixIn(object):
                      host_name=None,
                      request_spec=True,
                      requested_destination=False,
-                     allow_cross_cell_resize=False):
+                     allow_cross_cell_resize=False,
+                     bdms=None):
+        if bdms is None:
+            bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
 
         self.flags(allow_resize_to_same_host=allow_same_host)
         mock_allow_resize_to_same_host.return_value = allow_same_host
@@ -2230,6 +2235,62 @@ class _ComputeAPIUnitTestMixIn(object):
     def test_resize_same_host_and_not_allowed(self):
         self._test_resize(same_host=True, allow_same_host=False)
 
+    @ddt.data({'status': 'in-use', 'attach_status': 'attached',
+               'migration_status': None},
+              {'status': 'available', 'attach_status': 'detached',
+               'migration_status': None},
+              {'status': 'in-use', 'attach_status': 'attached',
+               'migration_status': 'success'},
+              {'status': 'available', 'attach_status': 'detached',
+               'migration_status': 'error'},)
+    def test_resize_with_volume_in_valid_state(self, fake_volume):
+        bdms = objects.BlockDeviceMappingList(objects=[
+                objects.BlockDeviceMapping(volume_id=uuids.volume_id)],)
+        fake_volume['id'] = uuids.volume_id
+        with mock.patch.object(self.compute_api.volume_api, 'get',
+                               return_value=fake_volume):
+            self._test_resize(bdms=bdms)
+
+    @ddt.data({'status': 'in-use', 'attach_status': 'detached',
+               'migration_status': None},
+              {'status': 'available', 'attach_status': 'attached',
+               'migration_status': None},
+              {'status': 'error', 'attach_status': 'detached',
+               'migration_status': None},
+              {'status': 'reserved', 'attach_status': 'detached',
+               'migration_status': None},
+              {'status': 'in-use', 'attach_status': 'attached',
+               'migration_status': 'migrating'},
+              {'status': 'available', 'attach_status': 'detached',
+               'migration_status': 'migrating'},)
+    def test_resize_with_volume_in_invalid_state(self, fake_volume):
+        bdms = objects.BlockDeviceMappingList(objects=[
+                objects.BlockDeviceMapping(volume_id=uuids.volume_id)])
+        fake_volume['id'] = uuids.volume_id
+        with mock.patch.object(self.compute_api.volume_api, 'get',
+                               return_value=fake_volume):
+            self.assertRaises(exception.InvalidVolume,
+                              self._test_resize, bdms=bdms)
+
+    def test_resize_with_2_volumes(self):
+        bdms = objects.BlockDeviceMappingList(objects=[
+                objects.BlockDeviceMapping(volume_id=uuids.volume_id),
+                objects.BlockDeviceMapping(volume_id=uuids.volume_id2)])
+        fake_vol1 = {'status': "in-use", 'attach_status': 'attached',
+                     'migration_status': None}
+        fake_vol2 = {'status': "available", 'attach_status': 'detached',
+                     'migration_status': None}
+        # side_effect returns the values in the iterable on consecutive calls
+        with mock.patch.object(self.compute_api.volume_api, 'get',
+                               side_effect=(fake_vol1, fake_vol2)) as vol_get:
+            self._test_resize(bdms=bdms)
+            # make sure volume_api.get is getting called 2 times with 2
+            # different uuids
+            self.assertEqual(vol_get.call_count, 2)
+            expected_calls = [mock.call(mock.ANY, uuids.volume_id),
+                              mock.call(mock.ANY, uuids.volume_id2)]
+            vol_get.assert_has_calls(expected_calls)
+
     def test_resize_different_project_id(self):
         self._test_resize(project_id='different')
 
@@ -2246,7 +2307,11 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.compute.flavors.get_flavor_by_flavor_id')
     @mock.patch('nova.objects.Quotas.count_as_dict')
     @mock.patch('nova.objects.Quotas.limit_check_project_and_user')
-    def test_resize_quota_check(self, mock_check, mock_count, mock_get):
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_quota_check(self, bdm_get_by_instance_uuid, mock_check,
+                                mock_count, mock_get):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         self.flags(cores=1, group='quota')
         self.flags(ram=2048, group='quota')
         proj_count = {'instances': 1, 'cores': 1, 'ram': 1024}
@@ -2279,9 +2344,13 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.compute.utils.is_volume_backed_instance',
                 new=mock.Mock(return_value=False))
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
-    def test_resize__with_accelerator(self, mock_get_flavor):
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize__with_accelerator(self, bdm_get_by_instance_uuid,
+                                      mock_get_flavor):
         """Ensure resizes are rejected if either flavor requests accelerator.
         """
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         fake_inst = self._create_instance_obj()
         new_flavor = self._create_flavor(
             id=200, flavorid='new-flavor-id', name='new_flavor',
@@ -2348,7 +2417,11 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(objects.ComputeNodeList, 'get_all_by_host',
                        side_effect=exception.ComputeHostNotFound(
                            host='nonexistent_host'))
-    def test_migrate_nonexistent_host(self, mock_get_all_by_host):
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_migrate_nonexistent_host(self, bdm_get_by_instance_uuid,
+                                      mock_get_all_by_host):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         fake_inst = self._create_instance_obj()
         self.assertRaises(exception.ComputeHostNotFound,
                           self.compute_api.resize, self.context,
@@ -2361,8 +2434,12 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(quotas_obj.Quotas, 'limit_check_project_and_user')
     @mock.patch.object(quotas_obj.Quotas, 'count_as_dict')
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
-    def test_resize_invalid_flavor_fails(self, mock_get_flavor, mock_count,
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_invalid_flavor_fails(self, bdm_get_by_instance_uuid,
+                                         mock_get_flavor, mock_count,
                                          mock_limit, mock_record, mock_save):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         mock_resize = self.useFixture(fixtures.MockPatchObject(
             self.compute_api.compute_task_api, 'resize_instance')).mock
 
@@ -2388,8 +2465,12 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(quotas_obj.Quotas, 'limit_check_project_and_user')
     @mock.patch.object(quotas_obj.Quotas, 'count_as_dict')
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
-    def test_resize_disabled_flavor_fails(self, mock_get_flavor, mock_count,
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_disabled_flavor_fails(self, bdm_get_by_instance_uuid,
+                                          mock_get_flavor, mock_count,
                                           mock_limit, mock_record, mock_save):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         mock_resize = self.useFixture(fixtures.MockPatchObject(
             self.compute_api.compute_task_api, 'resize_instance')).mock
 
@@ -2412,7 +2493,11 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.servicegroup.api.API.service_is_up',
                 new=mock.Mock(return_value=True))
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
-    def test_resize_to_zero_disk_flavor_fails(self, get_flavor_by_flavor_id):
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_to_zero_disk_flavor_fails(self, bdm_get_by_instance_uuid,
+                                              get_flavor_by_flavor_id):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         fake_inst = self._create_instance_obj()
         fake_flavor = self._create_flavor(id=200, flavorid='flavor-id',
                             name='foo', root_gb=0)
@@ -2432,12 +2517,16 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.compute.api.API._record_action_start')
     @mock.patch('nova.conductor.conductor_api.ComputeTaskAPI.resize_instance')
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_to_zero_disk_flavor_volume_backed(self,
+                                                      bdm_get_by_instance_uuid,
                                                       get_flavor_by_flavor_id,
                                                       resize_instance_mock,
                                                       record_mock,
                                                       get_by_inst,
                                                       validate_mock):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         params = dict(image_ref='')
         fake_inst = self._create_instance_obj(params=params)
 
@@ -2467,9 +2556,13 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(quotas_obj.Quotas, 'count_as_dict')
     @mock.patch.object(compute_utils, 'upsize_quota_delta')
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
-    def test_resize_quota_exceeds_fails(self, mock_get_flavor, mock_upsize,
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_quota_exceeds_fails(self, bdm_get_by_instance_uuid,
+                                        mock_get_flavor, mock_upsize,
                                         mock_count, mock_limit, mock_record,
                                         mock_save):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         mock_resize = self.useFixture(fixtures.MockPatchObject(
             self.compute_api.compute_task_api, 'resize_instance')).mock
 
@@ -2524,8 +2617,13 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(compute_utils, 'upsize_quota_delta')
     @mock.patch.object(quotas_obj.Quotas, 'count_as_dict')
     @mock.patch.object(quotas_obj.Quotas, 'limit_check_project_and_user')
-    def test_resize_quota_exceeds_fails_instance(self, mock_check, mock_count,
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_quota_exceeds_fails_instance(self,
+                                                 bdm_get_by_instance_uuid,
+                                                 mock_check, mock_count,
                                                  mock_upsize, mock_flavor):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         fake_inst = self._create_instance_obj()
         fake_flavor = self._create_flavor(id=200, flavorid='flavor-id',
                             name='foo', disabled=False)
@@ -2552,8 +2650,12 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
     @mock.patch.object(objects.Quotas, 'count_as_dict')
     @mock.patch.object(objects.Quotas, 'limit_check_project_and_user')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_instance_quota_exceeds_with_multiple_resources(
-            self, mock_check, mock_count, mock_get_flavor):
+            self, bdm_get_by_instance_uuid, mock_check, mock_count,
+            mock_get_flavor):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         quotas = {'cores': 1, 'ram': 512}
         overs = ['cores', 'ram']
         over_quota_args = dict(quotas=quotas,
@@ -2586,8 +2688,11 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.servicegroup.api.API.service_is_up',
                 new=mock.Mock(return_value=True))
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_instance_quota_exceeds_with_multiple_resources_ul(
-            self, mock_get_flavor, mock_enforce):
+            self, bdm_get_by_instance_uuid, mock_get_flavor, mock_enforce):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         self.flags(driver="nova.quota.UnifiedLimitsDriver", group="quota")
         mock_enforce.side_effect = limit_exceptions.ProjectOverLimit(
             self.context.project_id, [limit_exceptions.OverLimitInfo(
@@ -2616,11 +2721,15 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(utils, 'get_image_from_system_metadata')
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_mixed_instance_compute_version_low_fails(
-            self, mock_get_flavor, mock_image, mock_spec):
+            self, bdm_get_by_instance_uuid, mock_get_flavor, mock_image,
+            mock_spec):
         """Check resizing an mixed policy instance fails if some
         nova-compute node is not upgraded to Victory yet.
         """
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         numa_topology = objects.InstanceNUMATopology(cells=[
             objects.InstanceNUMACell(
                 id=0, cpuset=set(), pcpuset=set([0, 1, 2, 3]), memory=1024,
@@ -3906,7 +4015,12 @@ class _ComputeAPIUnitTestMixIn(object):
 
     @mock.patch('nova.servicegroup.api.API.service_is_up',
                 new=mock.Mock(return_value=True))
-    def test_resize_with_disabled_auto_disk_config_fails(self):
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_with_disabled_auto_disk_config_fails(
+            self,
+            bdm_get_by_instance_uuid):
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
         fake_inst = self._create_instance_with_disabled_disk_config(
             object=True)
 
