@@ -104,7 +104,7 @@ Related options:
 """),
     cfg.StrOpt('virt_type',
                default='kvm',
-               choices=('kvm', 'lxc', 'qemu', 'parallels'),
+               choices=('kvm', 'lxc', 'qemu', 'parallels', 'ch'),
                help="""
 Describes the virtualization type (or so called domain type) libvirt should
 use.
