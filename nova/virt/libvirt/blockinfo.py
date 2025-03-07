@@ -97,6 +97,7 @@ SUPPORTED_DEVICE_BUSES = {
     'qemu': ['virtio', 'scsi', 'ide', 'usb', 'fdc', 'sata'],
     'kvm': ['virtio', 'scsi', 'ide', 'usb', 'fdc', 'sata'],
     'lxc': ['lxc'],
+    'ch': ['virtio'],
     'parallels': ['ide', 'scsi'],
     # we no longer support UML or Xen, but we keep track of their bus types so
     # we can reject them for other virt types
@@ -278,6 +279,8 @@ def get_disk_bus_for_device_type(instance,
             return "ide"
         elif device_type == "disk":
             return "scsi"
+    elif virt_type == "ch":
+        return "virtio"
     else:
         # If virt-type not in list then it is unsupported
         raise exception.UnsupportedVirtType(virt=virt_type)
