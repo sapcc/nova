@@ -1236,6 +1236,19 @@ Related options:
 * ``maximum_instance_delete_attempts`` from instance_cleaning_opts
   group.
 """),
+    cfg.IntOpt('instances_stuck_in_deleting_cleanup_interval',
+        default=300,
+        help="""
+Interval between two cleanup jobs.
+
+This option sets the interval for the periodic task that cleans up instances
+stuck in ``DELETING`` task state.
+
+Possible values:
+
+* Any value <= 0: Disables the option.
+* Any positive integer in seconds.
+"""),
     cfg.IntOpt('block_device_allocate_retries_interval',
         default=3,
         min=0,
