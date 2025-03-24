@@ -80,22 +80,32 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         self.assertIn('Calling external scheduler API with ', log)
 
     @patch('requests.post')
-    @patch('nova.scheduler.external.LOG.warning')
-    def test_enabled_api_empty_response(self, mock_warn_log, mock_post):
+    @patch('nova.scheduler.external.LOG.error')
+    def test_enabled_api_empty_response(self, mock_err_log, mock_post):
         mock_response = MagicMock()
         mock_response.status_code = 200
+        # Response with no hosts (all hosts filtered out).
         mock_response.json.return_value = {'hosts': []}
         mock_post.return_value = mock_response
+
+        log = ""
+
+        def append_log(msg, data):
+            nonlocal log
+            log += msg % data
+        mock_err_log.side_effect = append_log
 
         hosts = call_external_scheduler_api(
             self.example_hosts,
             self.example_weights,
             self.example_spec,
         )
-        self.assertEqual([], hosts)
-        mock_warn_log.assert_called_with(
-            'External scheduler filtered out all hosts.'
+        # Should revert back to the original host list.
+        self.assertEqual(
+            ['host1', 'host2', 'host3'],
+            [h.host for h in hosts]
         )
+        self.assertIn('External scheduler filtered out all hosts.', log)
 
     @patch('requests.post')
     @patch('nova.scheduler.external.LOG.error')

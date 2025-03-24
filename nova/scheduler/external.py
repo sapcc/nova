@@ -99,11 +99,13 @@ def call_external_scheduler_api(weighed_hosts, weights, spec_obj):
         LOG.error("External scheduler response is invalid: %s", e)
         return weighed_hosts
 
-    # The list of host names can also be empty. In this case, we trust
-    # the external scheduler decision and return an empty list.
+    # The external scheduler should not filter out all hosts. If it does,
+    # we should fall back to the original host list. This will prevent the
+    # external scheduler from blocking all scheduling requests.
     if not (host_names := response_json["hosts"]):
-        # If this case happens often, it may indicate an issue.
-        LOG.warning("External scheduler filtered out all hosts.")
+        errmsg = "External scheduler filtered out all hosts."
+        LOG.error("External scheduler response is invalid: %s", errmsg)
+        return weighed_hosts
 
     # Reorder the weighed hosts based on the list of host names returned
     # by the external scheduler api.
