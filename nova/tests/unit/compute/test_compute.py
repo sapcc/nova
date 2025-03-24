@@ -29,6 +29,7 @@ from cinderclient import exceptions as cinder_exception
 import ddt
 from keystoneclient import exceptions as keystone_exception
 from neutronclient.common import exceptions as neutron_exceptions
+from oslo_concurrency import lockutils
 from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import base64
@@ -8168,6 +8169,47 @@ class ComputeTestCase(BaseTestCase,
         mock_delete_inst.assert_has_calls([
             mock.call(ctxt, instance1, []),
             mock.call(ctxt, instance2, [])])
+
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    @mock.patch.object(objects.InstanceList, 'get_by_filters')
+    @mock.patch.object(compute_manager.ComputeManager, '_delete_instance')
+    def test_cleanup_instances_stuck_in_deleting(
+            self, mock_delete_instance,
+            mock_get_by_filters, mock_get_by_instance_uuid):
+        # Create a fake instance in DELETING state
+        instance = fake_instance.fake_instance_obj(
+                self.context, task_state=task_states.DELETING)
+        mock_get_by_filters.return_value = [instance]
+
+        # Mock the bdms
+        bdms = block_device_obj.block_device_make_list(self.context, [])
+        mock_get_by_instance_uuid.return_value = bdms
+
+        # Create lock for something else.
+        with lockutils.lock("another-uuid", lock_file_prefix="nova-"):
+            # Call the method
+            self.compute._cleanup_instances_stuck_in_deleting(self.context)
+            # Verify that terminate_instance was called for the instance
+            mock_delete_instance.assert_called_once_with(
+                    self.context, instance, bdms)
+
+    @mock.patch.object(objects.InstanceList, 'get_by_filters')
+    @mock.patch.object(compute_manager.ComputeManager, '_delete_instance')
+    def test_cleanup_instances_in_deleting_state_but_not_stuck(
+            self, mock_delete_instance,
+            mock_get_by_filters):
+        # Create a fake instance in DELETING state
+        instance = fake_instance.fake_instance_obj(
+                self.context, task_state=task_states.DELETING)
+        mock_get_by_filters.return_value = [instance]
+
+        # Create Lock using the instance uuid
+        with lockutils.lock(instance.uuid, lock_file_prefix="nova-"):
+            # Call the method
+            self.compute._cleanup_instances_stuck_in_deleting(self.context)
+
+            # Verify that terminate_instance was not called for the instance
+            mock_delete_instance.assert_not_called()
 
     @mock.patch.object(fake.FakeDriver, 'get_info')
     @mock.patch.object(compute_manager.ComputeManager,

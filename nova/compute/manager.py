@@ -47,6 +47,7 @@ import eventlet.timeout
 import futurist
 from keystoneauth1 import exceptions as keystone_exception
 import os_traits
+from oslo_concurrency import lockutils
 from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
@@ -10679,6 +10680,54 @@ class ComputeManager(manager.Manager):
                     LOG.warning("Periodic reclaim failed to delete "
                                 "instance: %s",
                                 e, instance=instance)
+
+    @periodic_task.periodic_task(
+            spacing=CONF.instances_stuck_in_deleting_cleanup_interval)
+    def _cleanup_instances_stuck_in_deleting(self, context):
+        """Get instances stuck in DELETING state, but not really destroyed,
+        and retrigger terminate_instance for them.
+        """
+        filters = {'task_state': task_states.DELETING,
+                   'host': self.host}
+        instances = objects.InstanceList.get_by_filters(
+            context, filters,
+            expected_attrs=objects.instance.INSTANCE_DEFAULT_FIELDS,
+             use_slave=True)
+        for instance in instances:
+            # Check if the instance has a process lock
+            try:
+                with lockutils.lock(instance.uuid,
+                                    lock_file_prefix="nova-",
+                                    external=False, blocking=False):
+                    LOG.info(
+                            "Cleanup instance found in DELETING state but "
+                            "has no process lock", instance=instance)
+                    try:
+                        bdms = (objects.BlockDeviceMappingList.
+                                        get_by_instance_uuid(context,
+                                                             instance.uuid))
+                    except Exception as e:
+                        LOG.info("Failed to get bdms of the instance "
+                                 "to delete: %s %s", e, instance=instance)
+                        continue
+
+                    try:
+                        self._delete_instance(context, instance, bdms)
+                    except exception.InstanceNotFound:
+                        LOG.info("Instance disappeared during terminate",
+                                 instance=instance)
+                    except Exception as e:
+                        LOG.warning("Failed to delete instance: %s %s",
+                                    e, instance=instance)
+            except lockutils.AcquireLockFailedException:
+                # as we are acquiring a non-blocking lock this means another
+                # thread is running and already acquired the lock
+                continue
+            except Exception as e:
+                LOG.warning("Failed while acquiring lock for instance "
+                            "in deleting: %s %s",
+                            e, instance=instance)
+                continue
 
     def _get_nodename(self, instance, refresh=False):
         """Helper method to get the name of the first available node
