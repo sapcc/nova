@@ -654,6 +654,8 @@ class ClusterComputeResource(ManagedObject):
         policy = None
         configuration.dasConfig.admissionControlPolicy = policy
         self.set("configuration.dasConfig.admissionControlPolicy", policy)
+        configuration.dasConfig.admissionControlEnabled = True
+        self.set("configuration.dasConfig.admissionControlEnabled", True)
 
     def _add_root_resource_pool(self, r_pool):
         if r_pool:
