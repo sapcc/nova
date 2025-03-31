@@ -419,7 +419,7 @@ class SchedulerManager(manager.Manager):
             # Reset the field so it's not persisted accidentally.
             spec_obj.obj_reset_changes(['instance_uuid'])
 
-            hosts = self._get_sorted_hosts(spec_obj, hosts, num)
+            hosts = self._get_sorted_hosts(context, spec_obj, hosts, num)
             if not hosts:
                 # NOTE(jaypipes): If we get here, that means not all instances
                 # in instance_uuids were able to be matched to a selected host.
@@ -490,6 +490,7 @@ class SchedulerManager(manager.Manager):
         # claimed allocation request. Now we need to find alternates for each
         # host.
         return self._get_alternate_hosts(
+            context,
             claimed_hosts,
             spec_obj,
             hosts,
@@ -564,7 +565,7 @@ class SchedulerManager(manager.Manager):
                 spec_obj.instance_uuid = instance_uuid
                 spec_obj.obj_reset_changes(['instance_uuid'])
 
-            hosts = self._get_sorted_hosts(spec_obj, hosts, num)
+            hosts = self._get_sorted_hosts(context, spec_obj, hosts, num)
             if not hosts:
                 # No hosts left, so break here, and the
                 # _ensure_sufficient_hosts() call below will handle this.
@@ -584,7 +585,7 @@ class SchedulerManager(manager.Manager):
         # representing the selected host along with zero or more alternates
         # from the same cell.
         return self._get_alternate_hosts(
-            selected_hosts, spec_obj, hosts, num, num_alts)
+            context, selected_hosts, spec_obj, hosts, num, num_alts)
 
     @staticmethod
     def _consume_selected_host(selected_host, spec_obj, instance_uuid=None):
@@ -608,7 +609,7 @@ class SchedulerManager(manager.Manager):
                     uuid=instance_uuid)
 
     def _get_alternate_hosts(
-        self, selected_hosts, spec_obj, hosts, index, num_alts,
+        self, context, selected_hosts, spec_obj, hosts, index, num_alts,
         alloc_reqs_by_rp_uuid=None, allocation_request_version=None,
         selected_alloc_reqs=None,
     ):
@@ -631,7 +632,7 @@ class SchedulerManager(manager.Manager):
             # The selected_hosts have all had resources 'claimed' via
             # _consume_selected_host, so we need to filter/weigh and sort the
             # hosts again to get an accurate count for alternates.
-            hosts = self._get_sorted_hosts(spec_obj, hosts, index)
+            hosts = self._get_sorted_hosts(context, spec_obj, hosts, index)
 
         # This is the overall list of values to be returned. There will be one
         # item per instance, and each item will be a list of Selection objects
@@ -698,7 +699,7 @@ class SchedulerManager(manager.Manager):
 
         return selections_to_return
 
-    def _get_sorted_hosts(self, spec_obj, host_states, index):
+    def _get_sorted_hosts(self, context, spec_obj, host_states, index):
         """Returns a list of HostState objects that match the required
         scheduling constraints for the request spec object and have been sorted
         according to the weighers.
@@ -740,7 +741,7 @@ class SchedulerManager(manager.Manager):
         # Call an external service that can modify `weighed_hosts` once more.
         # This service may filter out some hosts, or it may re-order them.
         weighed_hosts = call_external_scheduler_api(
-            weighed_hosts, weights, spec_obj)
+            context, weighed_hosts, weights, spec_obj)
         if not weighed_hosts:
             return []
 
