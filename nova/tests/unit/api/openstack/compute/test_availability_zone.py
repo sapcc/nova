@@ -206,6 +206,7 @@ class ServersControllerCreateTestV21(test.TestCase):
         def _populate_instance_for_create(*args, **kwargs):
             instance = args[2]
             instance.uuid = FAKE_UUID
+            instance.system_metadata['domain_name'] = "fake-domain3"
             return instance
 
         self.useFixture(fixtures.GlanceFixture(self))

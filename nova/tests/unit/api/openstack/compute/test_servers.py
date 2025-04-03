@@ -4336,6 +4336,8 @@ class ServerStatusTest(test.TestCase):
         self.assertEqual(response['server']['status'], 'SHUTOFF')
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class _ServersControllerCreateTest(test.TestCase):
     image_uuid = '76fa36fc-c930-4bf3-8c8a-ea2a2420deb6'
     flavor_ref = 'http://localhost/123/flavors/3'
@@ -4418,6 +4420,8 @@ class _ServersControllerCreateTest(test.TestCase):
         self.controller.create(self.req, body=self.body).obj['server']
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ServersControllerCreateTest(_ServersControllerCreateTest):
 
     def _invalid_server_create(self, body):
@@ -6187,6 +6191,7 @@ class ServersControllerCreateTest(_ServersControllerCreateTest):
         def _populate_instance_for_create(*args, **kwargs):
             instance = args[2]
             self.instance_cache_by_uuid[instance.uuid] = instance
+            instance.system_metadata['domain_name'] = "fake-domain2"
             return instance
 
         self.stub_out('nova.compute.api.API._populate_instance_for_create',
@@ -6220,6 +6225,7 @@ class ServersControllerCreateTest(_ServersControllerCreateTest):
         def _populate_instance_for_create(*args, **kwargs):
             instance = args[2]
             self.instance_cache_by_uuid[instance.uuid] = instance
+            instance.system_metadata['domain_name'] = "fake-domain2"
             return instance
 
         self.stub_out('nova.compute.api.API._populate_instance_for_create',
@@ -6239,6 +6245,7 @@ class ServersControllerCreateTest(_ServersControllerCreateTest):
         def _populate_instance_for_create(*args, **kwargs):
             instance = args[2]
             self.instance_cache_by_uuid[instance.uuid] = instance
+            instance.system_metadata['domain_name'] = "fake-domain2"
             return instance
 
         self.stub_out('nova.compute.api.API._populate_instance_for_create',
@@ -6370,6 +6377,7 @@ class ServersControllerCreateTest(_ServersControllerCreateTest):
         def _populate_instance_for_create(*args, **kwargs):
             instance = args[2]
             self.instance_cache_by_uuid[instance.uuid] = instance
+            instance.system_metadata['domain_name'] = "fake-domain2"
             return instance
 
         self.stub_out('nova.compute.api.API._populate_instance_for_create',
@@ -6692,6 +6700,8 @@ class ServersControllerCreateTest(_ServersControllerCreateTest):
         self._test_create_extra(params)
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ServersControllerCreateTestV219(_ServersControllerCreateTest):
 
     def _create_instance_req(self, set_desc, desc=None):
@@ -7007,6 +7017,8 @@ class ServersControllerCreateTestV257(test.NoDBTestCase):
         self.assertIn('personality', str(ex))
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 @mock.patch('nova.compute.utils.check_num_instances_quota',
             new=lambda *args, **kwargs: 1)
 class ServersControllerCreateTestV260(test.NoDBTestCase):
@@ -7065,6 +7077,8 @@ class ServersControllerCreateTestV260(test.NoDBTestCase):
                       'compute API version 2.60', str(ex))
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ServersControllerCreateTestV263(_ServersControllerCreateTest):
     def _create_instance_req(self, certs=None):
         self.body['server']['trusted_image_certificates'] = certs
@@ -7163,6 +7177,8 @@ class ServersControllerCreateTestV263(_ServersControllerCreateTest):
         self.assertIn('test cert validation error', str(ex))
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ServersControllerCreateTestV267(_ServersControllerCreateTest):
     def setUp(self):
         super(ServersControllerCreateTestV267, self).setUp()
@@ -7336,6 +7352,8 @@ class ServersControllerCreateTestV274(_ServersControllerCreateTest):
         pass
 
 
+@mock.patch.object(nova_utils, 'get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ServersControllerCreateTestV290(_ServersControllerCreateTest):
 
     def _generate_req(self, hostname=None, api_version='2.90'):
