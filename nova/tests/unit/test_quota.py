@@ -54,6 +54,8 @@ def _get_fake_get_usages(updates=None):
     return fake_get_usages
 
 
+@mock.patch('nova.utils.get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class QuotaIntegrationTestCase(test.TestCase):
 
     REQUIRES_LOCKING = True
