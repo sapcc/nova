@@ -12,6 +12,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from unittest import mock
+
 from oslo_serialization import jsonutils
 
 from nova.api.openstack.compute import servers as servers_v21
@@ -24,6 +26,8 @@ v4_key = "accessIPv4"
 v6_key = "accessIPv6"
 
 
+@mock.patch('nova.utils.get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class AccessIPsAPIValidationTestV21(test.TestCase):
     validation_error = exception.ValidationError
 

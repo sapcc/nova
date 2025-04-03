@@ -32,6 +32,7 @@ import warnings
 import eventlet
 import fixtures
 import futurist
+from keystoneauth1.adapter import Adapter
 from openstack.cloud import _utils
 from openstack import service_description
 from oslo_concurrency import lockutils
@@ -760,6 +761,42 @@ class DefaultFlavorsFixture(fixtures.Fixture):
                 flavor.create()
 
 
+class KeystoneFixture(fixtures.Fixture):
+    """Stub the Keystone identity service for functional tests.
+
+    Two code paths reach Keystone identity during a server boot:
+    nova.api.openstack.identity.verify_project_id() and (SAP)
+    nova.utils.get_domain_name() -- both via utils.get_ksa_adapter('identity').
+    Functional tests have no Keystone, so we stub the identity adapter to
+    return canned /projects/<id> and /domains/<id> responses. Only the
+    'identity' service_type is stubbed; every other service keeps its real
+    adapter (those are stubbed by their own fixtures / PlacementFixture).
+    """
+
+    domain_name = 'fake-domain'
+
+    def setUp(self):
+        super(KeystoneFixture, self).setUp()
+        real_get_ksa_adapter = utils.get_ksa_adapter
+        adap = mock.create_autospec(Adapter, instance=True)
+
+        def _get(path, *args, **kwargs):
+            resp = mock.Mock(status_code=200)
+            if path.startswith('/domains/'):
+                resp.json.return_value = {
+                    'domain': {'name': self.domain_name}}
+            return resp
+        adap.get.side_effect = _get
+
+        def _get_ksa_adapter(service_type, **kwargs):
+            if service_type == 'identity':
+                return adap
+            return real_get_ksa_adapter(service_type, **kwargs)
+
+        self.useFixture(fixtures.MockPatch(
+            'nova.utils.get_ksa_adapter', side_effect=_get_ksa_adapter))
+
+
 class RPCFixture(fixtures.Fixture):
     def __init__(self, *exmods):
         super(RPCFixture, self).__init__()
@@ -1095,6 +1132,12 @@ class OSAPIFixture(fixtures.Fixture):
 
         self.useFixture(fixtures.MonkeyPatch(
             'nova.api.auth.NovaKeystoneContext._create_context', fake_ctx))
+
+        # Stub out the Keystone identity service. nova.api.openstack.identity
+        # (verify_project_id) and, for SAP, nova.utils.get_domain_name reach
+        # Keystone's identity endpoint during request handling; there is no
+        # Keystone in functional tests, so fake the identity adapter.
+        self.useFixture(KeystoneFixture())
 
 
 class OSMetadataServer(fixtures.Fixture):

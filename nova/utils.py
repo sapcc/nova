@@ -32,6 +32,7 @@ import weakref
 
 import eventlet
 from eventlet import tpool
+from keystoneauth1 import exceptions as kse
 from keystoneauth1 import loading as ks_loading
 import netaddr
 from openstack import connection
@@ -98,6 +99,10 @@ _FILE_CACHE = {}
 _SERVICE_TYPES = service_types.ServiceTypes()
 
 DEFAULT_GREEN_POOL = None
+
+# Cache of domain id to name mapping. This should never change, so we don't
+# expire this
+DOMAIN_NAMES = {}
 
 
 def _get_default_green_pool():
@@ -1378,3 +1383,36 @@ def vm_needs_special_spawning(memory_mb, flavor):
         return True
 
     return False
+
+
+def get_domain_name(context, domain_id: str) -> str:
+    """Look up the domain name for a domain in Keystone"""
+    if domain_id not in DOMAIN_NAMES:
+        adap = get_ksa_adapter(
+            'identity', ksa_auth=context.get_auth_plugin(),
+            min_version=(3, 0), max_version=(3, 'latest'))
+
+        try:
+            resp = adap.get('/domains/%s' % domain_id)
+        except kse.EndpointNotFound:
+            LOG.error(
+                "Keystone identity service version 3.0 was not found. This "
+                "might be caused by Nova misconfiguration or Keystone "
+                "problems.")
+            msg = _("Nova was unable to find Keystone service endpoint.")
+            raise exception.KeystoneConnectionFailed(msg)
+        except kse.ClientException as e:
+            LOG.exception(e)
+            raise exception.KeystoneConnectionFailed(str(e))
+
+        if resp.status_code != 200:
+            msg = (
+                f"Getting domain {domain_id} from Keystone failed "
+                f"with {resp.status_code}")
+            LOG.error(msg)
+            raise exception.KeystoneConnectionFailed(msg)
+
+        data = resp.json()
+        DOMAIN_NAMES[domain_id] = data['domain']['name']
+
+    return DOMAIN_NAMES[domain_id]
