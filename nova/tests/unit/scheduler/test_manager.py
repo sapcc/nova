@@ -416,7 +416,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
 
         visited_instances = set([])
 
-        def fake_get_sorted_hosts(_spec_obj, host_states, index):
+        def fake_get_sorted_hosts(context, _spec_obj, host_states, index):
             # Keep track of which instances are passed to the filters.
             visited_instances.add(_spec_obj.instance_uuid)
             return all_host_states
@@ -432,7 +432,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         mock_get_all_states.assert_called_once_with(
             ctx.elevated.return_value, spec_obj,
             mock.sentinel.provider_summaries)
-        mock_get_hosts.assert_called_once_with(spec_obj, all_host_states, 0)
+        mock_get_hosts.assert_called_once_with(
+            ctx, spec_obj, all_host_states, 0)
 
         self.assertEqual(len(selected_hosts), 1)
         self.assertEqual(expected_hosts, selected_hosts)
@@ -488,7 +489,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         )
         all_host_states = [host_state]
         mock_get_all_states.return_value = all_host_states
-        mock_get_hosts.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_get_hosts.side_effect = lambda ctx, spec_obj, hosts, num: list(
+            hosts)
 
         instance_uuids = None
         ctx = mock.Mock()
@@ -498,7 +500,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         mock_get_all_states.assert_called_once_with(
             ctx.elevated.return_value, spec_obj,
             mock.sentinel.provider_summaries)
-        mock_get_hosts.assert_called_once_with(spec_obj, all_host_states, 0)
+        mock_get_hosts.assert_called_once_with(
+            ctx, spec_obj, all_host_states, 0)
 
         self.assertEqual(len(selected_hosts), 1)
         expected_host = objects.Selection.from_host_state(host_state)
@@ -548,7 +551,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         all_host_states = [host_state]
         mock_get_all_states.return_value = all_host_states
         # simulate that every host passes the filtering
-        mock_get_hosts.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_get_hosts.side_effect = lambda ctx, spec_obj, hosts, num: list(
+            hosts)
         mock_claim.return_value = True
 
         instance_uuids = [uuids.instance]
@@ -623,7 +627,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         )
         all_host_states = [host_state]
         mock_get_all_states.return_value = all_host_states
-        mock_get_hosts.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_get_hosts.side_effect = lambda ctx, spec_obj, hosts, num: list(
+            hosts)
         mock_claim.return_value = False
 
         instance_uuids = [uuids.instance]
@@ -640,7 +645,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         mock_get_all_states.assert_called_once_with(
             ctx.elevated.return_value, spec_obj,
             mock.sentinel.provider_summaries)
-        mock_get_hosts.assert_called_once_with(spec_obj, mock.ANY, 0)
+        mock_get_hosts.assert_called_once_with(
+            ctx, spec_obj, mock.ANY, 0)
         mock_claim.assert_called_once_with(ctx.elevated.return_value,
                 self.manager.placement_client, spec_obj, uuids.instance,
                 alloc_reqs_by_rp_uuid[uuids.cn1][0],
@@ -690,7 +696,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
 
         calls = []
 
-        def fake_get_sorted_hosts(spec_obj, hosts, num):
+        def fake_get_sorted_hosts(context, spec_obj, hosts, num):
             c = len(calls)
             calls.append(1)
             # first instance: return all the hosts (only one)
@@ -775,7 +781,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         all_host_states = [host_state0, host_state1, host_state2]
         mock_get_all_states.return_value = all_host_states
         # simulate that every host passes the filtering
-        mock_get_hosts.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_get_hosts.side_effect = lambda ctx, spec_obj, hosts, num: list(
+            hosts)
         mock_claim.return_value = True
 
         instance_uuids = [uuids.instance0]
@@ -864,7 +871,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         all_host_states = [host_state0, host_state1, host_state2]
         mock_get_all_states.return_value = all_host_states
         # simulate that every host passes the filtering
-        mock_get_hosts.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_get_hosts.side_effect = lambda ctx, spec_obj, hosts, num: list(
+            hosts)
         mock_claim.return_value = True
 
         instance_uuids = [uuids.instance0]
@@ -966,7 +974,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         visited_instances = set([])
         get_sorted_hosts_called_with_host_states = []
 
-        def fake_get_sorted_hosts(_spec_obj, host_states, index):
+        def fake_get_sorted_hosts(context, _spec_obj, host_states, index):
             # Keep track of which instances are passed to the filters.
             visited_instances.add(_spec_obj.instance_uuid)
             if index % 2:
@@ -1002,8 +1010,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         # second time, we pass it the hosts that were returned from
         # _get_sorted_hosts() the first time
         sorted_host_calls = [
-            mock.call(spec_obj, mock.ANY, 0),
-            mock.call(spec_obj, mock.ANY, 1),
+            mock.call(ctx, spec_obj, mock.ANY, 0),
+            mock.call(ctx, spec_obj, mock.ANY, 1),
         ]
         mock_get_hosts.assert_has_calls(sorted_host_calls)
         self.assertEqual(
@@ -1052,8 +1060,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
                     self.assertIsInstance(weighed_host, weights.WeighedHost)
         debug.side_effect = fake_debug
 
-        results = self.manager._get_sorted_hosts(mock.sentinel.spec,
-            all_host_states, mock.sentinel.index)
+        results = self.manager._get_sorted_hosts(mock.sentinel.ctx,
+            mock.sentinel.spec, all_host_states, mock.sentinel.index)
         debug.assert_called()
 
         mock_filt.assert_called_once_with(all_host_states, mock.sentinel.spec,
@@ -1084,8 +1092,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         mock_weighed.return_value = [
             weights.WeighedHost(hs1, 1.0), weights.WeighedHost(hs2, 1.0),
         ]
-        _ = self.manager._get_sorted_hosts(mock.sentinel.spec,
-            [hs1, hs2], mock.sentinel.index)
+        _ = self.manager._get_sorted_hosts(mock.sentinel.ctx,
+            mock.sentinel.spec, [hs1, hs2], mock.sentinel.index)
         mock_post.assert_not_called()
 
     @mock.patch('random.choice', side_effect=lambda x: x[0])
@@ -1107,8 +1115,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
             weights.WeighedHost(hs1, 1.0), weights.WeighedHost(hs2, 1.0),
         ]
 
-        results = self.manager._get_sorted_hosts(mock.sentinel.spec,
-            all_host_states, mock.sentinel.index)
+        results = self.manager._get_sorted_hosts(mock.sentinel.ctx,
+            mock.sentinel.spec, all_host_states, mock.sentinel.index)
 
         mock_filt.assert_called_once_with(all_host_states, mock.sentinel.spec,
             mock.sentinel.index)
@@ -1139,8 +1147,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
             weights.WeighedHost(hs1, 1.0), weights.WeighedHost(hs2, 1.0),
         ]
 
-        results = self.manager._get_sorted_hosts(mock.sentinel.spec,
-            all_host_states, mock.sentinel.index)
+        results = self.manager._get_sorted_hosts(mock.sentinel.ctx,
+            mock.sentinel.spec, all_host_states, mock.sentinel.index)
 
         mock_filt.assert_called_once_with(all_host_states, mock.sentinel.spec,
             mock.sentinel.index)
@@ -1177,8 +1185,8 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
             weights.WeighedHost(hs4, 0.5),
         ]
 
-        results = self.manager._get_sorted_hosts(mock.sentinel.spec,
-            all_host_states, mock.sentinel.index)
+        results = self.manager._get_sorted_hosts(mock.sentinel.ctx,
+            mock.sentinel.spec, all_host_states, mock.sentinel.index)
 
         mock_filt.assert_called_once_with(all_host_states, mock.sentinel.spec,
             mock.sentinel.index)
@@ -1342,7 +1350,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
 
         calls = []
 
-        def fake_get_sorted_hosts(spec_obj, hosts, num):
+        def fake_get_sorted_hosts(context, spec_obj, hosts, num):
             c = len(calls)
             calls.append(1)
             if c == 0:
@@ -1381,7 +1389,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
             alloc_reqs[hs.uuid] = [{}]
 
         mock_get_all_hosts.return_value = all_host_states
-        mock_sorted.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_sorted.side_effect = lambda ctx, spec_obj, hosts, num: list(hosts)
         mock_claim.return_value = True
         total_returned = num_alternates + 1
         self.flags(max_attempts=total_returned, group="scheduler")
@@ -1452,7 +1460,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
         # instance and then once again before picking alternates.
         calls = []
 
-        def fake_get_sorted_hosts(spec_obj, hosts, num):
+        def fake_get_sorted_hosts(context, spec_obj, hosts, num):
             c = len(calls)
             calls.append(1)
             if c == 0:
@@ -1513,7 +1521,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
             alloc_reqs[hs.uuid] = [{}]
 
         mock_get_all_hosts.return_value = all_host_states
-        mock_sorted.side_effect = lambda spec_obj, hosts, num: list(hosts)
+        mock_sorted.side_effect = lambda ctx, spec_obj, hosts, num: list(hosts)
         mock_claim.return_value = True
         # Set the total returned to more than the number of available hosts
         self.flags(max_attempts=max_attempts, group="scheduler")
