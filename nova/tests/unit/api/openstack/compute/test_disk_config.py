@@ -170,6 +170,8 @@ class DiskConfigTestCaseV21(test.TestCase):
             if image_dict['id'] in (6, 7):
                 self.assertDiskConfig(image_dict, expected)
 
+    @mock.patch('nova.utils.get_domain_name',
+                new=mock.Mock(return_value='fake-domain'))
     def test_create_server_override_auto(self):
         req = fakes.HTTPRequest.blank('/%s/servers' % self.project_id)
         req.method = 'POST'
@@ -186,6 +188,8 @@ class DiskConfigTestCaseV21(test.TestCase):
         server_dict = jsonutils.loads(res.body)['server']
         self.assertDiskConfig(server_dict, 'AUTO')
 
+    @mock.patch('nova.utils.get_domain_name',
+                new=mock.Mock(return_value='fake-domain'))
     def test_create_server_override_manual(self):
         req = fakes.HTTPRequest.blank('/%s/servers' % self.project_id)
         req.method = 'POST'
@@ -202,6 +206,8 @@ class DiskConfigTestCaseV21(test.TestCase):
         server_dict = jsonutils.loads(res.body)['server']
         self.assertDiskConfig(server_dict, 'MANUAL')
 
+    @mock.patch('nova.utils.get_domain_name',
+                new=mock.Mock(return_value='fake-domain'))
     def test_create_server_detect_from_image(self):
         """If user doesn't pass in diskConfig for server, use image metadata
         to specify AUTO or MANUAL.
@@ -234,6 +240,8 @@ class DiskConfigTestCaseV21(test.TestCase):
         server_dict = jsonutils.loads(res.body)['server']
         self.assertDiskConfig(server_dict, 'AUTO')
 
+    @mock.patch('nova.utils.get_domain_name',
+                new=mock.Mock(return_value='fake-domain'))
     def test_create_server_detect_from_image_disabled_goes_to_manual(self):
         req = fakes.HTTPRequest.blank('/%s/servers' % self.project_id)
         req.method = 'POST'
@@ -264,6 +272,8 @@ class DiskConfigTestCaseV21(test.TestCase):
         res = req.get_response(self.app)
         self.assertEqual(res.status_int, 400)
 
+    @mock.patch('nova.utils.get_domain_name',
+                new=mock.Mock(return_value='fake-domain'))
     def test_create_server_when_disabled_and_manual(self):
         req = fakes.HTTPRequest.blank('/%s/servers' % self.project_id)
         req.method = 'POST'
@@ -363,6 +373,8 @@ class DiskConfigTestCaseV21(test.TestCase):
                }}
         old_create = compute_api.API.create
 
+        @mock.patch('nova.utils.get_domain_name',
+                    new=mock.Mock(return_value='fake-domain'))
         def create(*args, **kwargs):
             self.assertIn('auto_disk_config', kwargs)
             self.assertTrue(kwargs['auto_disk_config'])
