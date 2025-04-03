@@ -16,10 +16,10 @@
 
 from unittest.mock import MagicMock
 from unittest.mock import patch
-from unittest.mock import sentinel
 
 import requests
 
+from nova import context
 from nova import objects
 from nova.scheduler.external import call_external_scheduler_api
 from nova import test
@@ -43,14 +43,51 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             'host2': 0.5,
             'host3': 0.0,
         }
+        self.example_ctx = context.RequestContext(
+            user_id='fake_user',
+            project_id='fake_project',
+            is_admin=False,
+            read_deleted='no',
+            global_request_id='fake_global_request_id',
+        )
         self.example_spec = objects.RequestSpec(
-            context=sentinel.ctx,
+            context=self.example_ctx,
             flavor=objects.Flavor(
                 name='small',
                 vcpus=4,
                 memory_mb=1024,
                 extra_specs={},
             ),
+        )
+
+    @patch('requests.post')
+    def test_context_included_in_request(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'hosts': ['host1', 'host3']}
+        mock_post.return_value = mock_response
+
+        call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+
+        # Check that the context is serialized and included in the request
+        _, kwargs = mock_post.call_args
+        self.assertIn(
+            'context', kwargs['json'],
+            'Context should be included in the request'
+        )
+        self.assertIn(
+            'global_request_id', kwargs['json']['context'],
+            'Global request ID should be included in the context'
+        )
+        self.assertEqual(
+            self.example_ctx.to_dict(),
+            kwargs['json']['context'],
+            'Context should be serialized correctly'
         )
 
     @patch('requests.post')
@@ -69,6 +106,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         mock_debug_log.side_effect = append_log
 
         hosts = call_external_scheduler_api(
+            self.example_ctx,
             self.example_hosts,
             self.example_weights,
             self.example_spec,
@@ -88,6 +126,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         mock_post.return_value = mock_response
 
         hosts = call_external_scheduler_api(
+            self.example_ctx,
             self.example_hosts,
             self.example_weights,
             self.example_spec,
@@ -110,6 +149,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         mock_err_log.side_effect = append_log
 
         hosts = call_external_scheduler_api(
+            self.example_ctx,
             self.example_hosts,
             self.example_weights,
             self.example_spec,
@@ -145,6 +185,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             mock_post.return_value = mock_response
 
             hosts = call_external_scheduler_api(
+                self.example_ctx,
                 self.example_hosts,
                 self.example_weights,
                 self.example_spec,
@@ -173,6 +214,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         mock_post.return_value = mock_response
 
         hosts = call_external_scheduler_api(
+            self.example_ctx,
             self.example_hosts,
             self.example_weights,
             self.example_spec,
@@ -197,6 +239,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         mock_err_log.side_effect = append_log
 
         hosts = call_external_scheduler_api(
+            self.example_ctx,
             self.example_hosts,
             self.example_weights,
             self.example_spec,

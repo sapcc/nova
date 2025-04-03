@@ -48,8 +48,14 @@ response_schema = {
 }
 
 
-def call_external_scheduler_api(weighed_hosts, weights, spec_obj):
-    """Reorder and filter hosts using an external scheduler service."""
+def call_external_scheduler_api(context, weighed_hosts, weights, spec_obj):
+    """Reorder and filter hosts using an external scheduler service.
+
+    :param context: The RequestContext object containing request id, user, etc.
+    :param weighed_hosts: List of hosts to send to the external scheduler.
+    :param weights: A dictionary of host names and their corresponding weights.
+    :param spec_obj: The RequestSpec object with the vm specification.
+    """
     if not weighed_hosts:
         return weighed_hosts
     if not (url := CONF.filter_scheduler.external_scheduler_api_url):
@@ -59,6 +65,9 @@ def call_external_scheduler_api(weighed_hosts, weights, spec_obj):
 
     json_data = {
         "spec": spec_obj.obj_to_primitive(),
+        # Also serialize the request context, which contains the global request
+        # id and other information helpful for logging and request tracing.
+        "context": context.to_dict(),
         # Extract some flags from the spec to indicate the type of
         # request. This will allow the external scheduler to quickly
         # decide if it wants to handle the request or not.
