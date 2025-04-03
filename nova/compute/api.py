@@ -1480,6 +1480,8 @@ class API:
                     context, instance, boot_meta, idx,
                     security_groups, flavor,
                     num_instances, shutdown_terminate)
+                req_spec.update_scheduler_hints(
+                    {'domain_name': instance.system_metadata['domain_name']})
 
                 block_device_mapping = (
                     self._bdm_validate_set_size_and_instance(context,
@@ -2135,6 +2137,8 @@ class API:
 
         system_meta['owner_user_name'] = context.user_name
         system_meta['owner_project_name'] = context.project_name
+        domain_name = utils.get_domain_name(context, context.project_domain_id)
+        system_meta['domain_name'] = domain_name
 
         instance.system_metadata.update(system_meta)
 

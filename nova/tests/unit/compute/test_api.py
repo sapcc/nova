@@ -5431,7 +5431,9 @@ class _ComputeAPIUnitTestMixIn(object):
         fake_rs = fake_request_spec.fake_spec_obj()
         fake_rs.requested_resources = prev_request_groups
         mock_rs.return_value = fake_rs
-        do_test()
+        with mock.patch.object(fake_rs, 'update_scheduler_hints',
+                return_value=None):
+            do_test()
         return mock_get_dp, fake_rs
 
     def test_provision_instances_with_accels_ok(self):
@@ -5552,6 +5554,8 @@ class _ComputeAPIUnitTestMixIn(object):
                         port_resource_requests=mock.sentinel.resource_reqs,
                         request_level_params=mock.sentinel.req_lvl_params
                     ),
+                    mock.call().update_scheduler_hints(
+                        {'domain_name': 'fake-domain'})
                 ] * 2
             )
 
@@ -7519,6 +7523,8 @@ class _ComputeAPIUnitTestMixIn(object):
 
 # TODO(stephenfin): The separation of the mixin is a hangover from cells v1
 # days and should be removed
+@mock.patch('nova.utils.get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
     def setUp(self):
         super(ComputeAPIUnitTestCase, self).setUp()
