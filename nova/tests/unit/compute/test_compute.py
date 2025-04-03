@@ -8628,6 +8628,8 @@ class ComputeTestCase(BaseTestCase,
 
 
 @ddt.ddt
+@mock.patch('nova.utils.get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class ComputeAPITestCase(BaseTestCase):
     def setUp(self):
         super(ComputeAPITestCase, self).setUp()
@@ -13459,6 +13461,8 @@ class ComputeAPIAggrCallsSchedulerTestCase(test.NoDBTestCase):
             self.context, agg.uuid, 'fakehost')
 
 
+@mock.patch('nova.utils.get_domain_name',
+            new=mock.Mock(return_value='fake-domain'))
 class DisabledInstanceTypesTestCase(BaseTestCase):
     """Some instance-types are marked 'disabled' which means that they will not
     show up in customer-facing listings. We do, however, want those

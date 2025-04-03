@@ -202,7 +202,27 @@ actual aliased flavor will be shown/used respectively.
 The 'x_' prefix in the default sorts aliased flavors towards the end of the
 flavor list (when sorting by flavorid, which is the API default). This
 decreases visibility for aliased flavors.
-""")
+"""),
+    cfg.ListOpt("external_customer_domain_name_prefixes",
+        default=[],
+        help="""
+List of prefixes for domain names to identify an external customer
+
+External customer VMs have to be spawned on specially-prepared hosts. To
+identify that a VM is spawning for an external customer, we check the prefix of
+the domain name against this list.
+
+In the scheduler, if a domain matches, we add an additional trait - the one
+defined in nova.utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT - to the request for
+allocations candidates towards Placement.
+
+In the vmwareapi driver, if a domain matches, we make sure that the VM ends up
+on the right hosts.
+
+If kept empty, the trait will not be added to any VM-build request and the
+vmwareapi driver will not consider assigning VMs to HostGroups and will not run
+its sync-loop that ensures the assignment.
+"""),
 ]
 
 metrics_opts = [
