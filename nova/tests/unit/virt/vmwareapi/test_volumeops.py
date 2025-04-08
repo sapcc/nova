@@ -611,30 +611,20 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             allocate_controller_key_and_unit_number.assert_called_once_with(
                 session.vim.client.factory, devices, adapter_type)
 
-    @mock.patch.object(volumeops.VMwareVolumeOps,
-                       '_get_controller_key_and_unit')
+    @ddt.data(None, constants.ADAPTER_TYPE_PARAVIRTUAL)
+    @mock.patch.object(vm_util, 'get_vmdk_info')
     @mock.patch.object(vm_util, 'get_vm_ref')
     @mock.patch.object(ds_util, 'get_dc_info')
     @mock.patch.object(vm_util, '_create_fcd_id_obj')
-    @mock.patch.object(vm_util, 'reconfigure_vm')
     def _test_attach_fcd(
-            self, reconfigure_vm, _create_fcd_id_obj, get_dc_info, get_vm_ref,
-            get_controller_key_and_unit, existing_controller=True):
-        key = mock.sentinel.key
-        unit = mock.sentinel.unit
-        spec = mock.sentinel.spec
-        if existing_controller:
-            get_controller_key_and_unit.return_value = (key, unit, None)
-        else:
-            get_controller_key_and_unit.side_effect = [(None, None, spec),
-                                                       (key, unit, None)]
+            self, adapter_type, _create_fcd_id_obj, get_dc_info, get_vm_ref,
+            get_vmdk_info):
         instance = mock.sentinel.instance
-        vm_ref = vmwareapi_fake.ManagedObjectReference(
-            value=mock.sentinel.vm_ref_val)
         vm_ref = mock.sentinel.vm_ref
         get_vm_ref.return_value = vm_ref
         dc_info = mock.Mock(spec=['ref'])
         get_dc_info.return_value = dc_info
+        get_vmdk_info.return_value = mock.Mock(adapter_type='fake-adapter')
 
         _create_fcd_id_obj.return_value = mock.sentinel.disk_id
 
@@ -658,17 +648,18 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
 
             session.invoke_api.side_effect = _invoke_api
 
-            adapter_type = mock.sentinel.adapter_type
             fcd_id = mock.sentinel.fcd_id
             ds_ref_val = mock.sentinel.ds_ref_val
             self._volumeops._attach_fcd(
                 instance, adapter_type, fcd_id, ds_ref_val)
 
+            expected_adapter = adapter_type or 'fake-adapter'
             attach_disk_to_vm.assert_called_once_with(
-                vm_ref, instance, adapter_type, mock.sentinel.disk_type,
+                vm_ref, instance, expected_adapter, mock.sentinel.disk_type,
                 vmdk_path=mock.sentinel.filepath, volume_uuid=uuids.volume,
                 backing_uuid=uuids.backing, profile_id=None)
             get_dc_info.assert_called_once()
+            get_vmdk_info.assert_called_once_with(session, vm_ref)
             exp_calls = [
                 mock.call(session.vim, 'RetrieveVStorageObject',
                           session.vim.service_content.vStorageObjectManager,
@@ -677,23 +668,6 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
                           session.vim.service_content.virtualDiskManager,
                           name=mock.sentinel.filepath, datacenter=dc_info.ref)]
             session.invoke_api.assert_has_calls(exp_calls)
-            if existing_controller:
-                get_controller_key_and_unit.assert_called_once_with(
-                    vm_ref, adapter_type)
-                reconfigure_vm.assert_not_called()
-            else:
-                exp_calls = [mock.call(vm_ref, adapter_type),
-                             mock.call(vm_ref, adapter_type)]
-                get_controller_key_and_unit.assert_has_calls(exp_calls)
-                self.assertEqual([spec], config_spec.deviceChange)
-                reconfigure_vm.assert_called_once_with(
-                    session, vm_ref, config_spec)
-
-    def test_attach_fcd_using_existing_controller(self):
-        self._test_attach_fcd()
-
-    def test_attach_fcd_using_new_controller(self):
-        self._test_attach_fcd(existing_controller=False)
 
     @mock.patch.object(vm_util, 'get_vm_ref')
     @mock.patch.object(vm_util, 'get_vm_state')
@@ -711,18 +685,18 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         fcd_id = mock.sentinel.fcd_id
         ds_ref_val = mock.sentinel.ds_ref_val
         connection_info = {'data': {'id': fcd_id,
-                                    'ds_ref_val': ds_ref_val,
-                                    'adapter_type': adapter_type}}
+                                    'ds_ref_val': ds_ref_val}}
         instance = mock.sentinel.instance
 
         if adapter_type == constants.ADAPTER_TYPE_IDE and not powered_off:
             self.assertRaises(exception.Invalid,
                               self._volumeops._attach_volume_fcd,
                               connection_info,
-                              instance)
+                              instance, adapter_type)
             attach_fcd.assert_not_called()
         else:
-            self._volumeops._attach_volume_fcd(connection_info, instance)
+            self._volumeops._attach_volume_fcd(connection_info, instance,
+                                               adapter_type)
             attach_fcd.assert_called_once_with(
                 instance, adapter_type, fcd_id, ds_ref_val, None)
 
@@ -744,7 +718,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
         connection_info = {'driver_volume_type': constants.DISK_FORMAT_FCD}
         instance = mock.sentinel.instance
         self._volumeops.attach_volume(connection_info, instance)
-        attach_volume_fcd.assert_called_once_with(connection_info, instance)
+        attach_volume_fcd.assert_called_once_with(connection_info, instance,
+                                                  None)
 
     def test_attach_volume_iscsi(self):
         for adapter_type in (None, constants.DEFAULT_ADAPTER_TYPE,
