@@ -440,17 +440,8 @@ class VMwareVolumeOps(object):
     def _attach_fcd(self, instance, adapter_type, fcd_id,
                     ds_ref_val, profile_id=None):
         vm_ref = vm_util.get_vm_ref(self._session, instance)
-        (_, _, controller_spec) = self._get_controller_key_and_unit(
-            vm_ref, adapter_type)
-
-        if controller_spec:
-            # No controller available to attach, create one first.
-            config_spec = self._session.vim.client.factory.create(
-                'ns0:VirtualMachineConfigSpec')
-            config_spec.deviceChange = [controller_spec]
-            vm_util.reconfigure_vm(self._session, vm_ref, config_spec)
-            (_, _, controller_spec) = self._get_controller_key_and_unit(
-                vm_ref, adapter_type)
+        instance_root_vmdk_info = vm_util.get_vmdk_info(self._session, vm_ref)
+        adapter_type = adapter_type or instance_root_vmdk_info.adapter_type
         vstorage_mgr = self._session.vim.service_content.vStorageObjectManager
         virtual_dmgr = self._session.vim.service_content.virtualDiskManager
         cf = self._session.vim.client.factory
@@ -480,11 +471,10 @@ class VMwareVolumeOps(object):
                                backing_uuid=backing_uuid,
                                profile_id=profile_id)
 
-    def _attach_volume_fcd(self, connection_info, instance):
+    def _attach_volume_fcd(self, connection_info, instance, adapter_type):
         """Attach fcd volume storage to VM instance."""
         LOG.debug("_attach_volume_fcd: %s", connection_info, instance=instance)
         data = connection_info['data']
-        adapter_type = data['adapter_type']
 
         if adapter_type == constants.ADAPTER_TYPE_IDE:
             state = vm_util.get_vm_state(self._session, instance)
@@ -507,7 +497,7 @@ class VMwareVolumeOps(object):
         elif driver_type == constants.DISK_FORMAT_ISCSI:
             self._attach_volume_iscsi(connection_info, instance, adapter_type)
         elif driver_type == constants.DISK_FORMAT_FCD:
-            self._attach_volume_fcd(connection_info, instance)
+            self._attach_volume_fcd(connection_info, instance, adapter_type)
         else:
             raise exception.VolumeDriverNotFound(driver_type=driver_type)
 
