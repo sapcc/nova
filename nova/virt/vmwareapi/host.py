@@ -22,12 +22,14 @@ from oslo_log import log as logging
 from oslo_utils import units
 from oslo_utils import versionutils
 from oslo_vmware import exceptions as vexc
+from oslo_vmware import vim_util as vutil
 
 import nova.conf
 from nova import context
 from nova import exception
 from nova import objects
 from nova.objects import fields as obj_fields
+from nova.virt.vmwareapi import cluster_util
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
@@ -98,6 +100,9 @@ class VCState(object):
             # Get cpu, memory stats from the cluster
             per_host_stats = vm_util.get_stats_from_cluster_per_host(
                 self._session, self._cluster)
+
+            cluster_hostgroups = cluster_util.fetch_cluster_groups(
+                self._session, self._cluster, group_type="host")
         except (vexc.VimConnectionException, vexc.VimAttributeException) as ex:
             # VimAttributeException is thrown when vpxd service is down
             LOG.warning("Failed to connect with %(node)s. "
@@ -133,10 +138,29 @@ class VCState(object):
         data[self._cluster_node_name] = self._merge_stats(
             self._cluster_node_name, cluster_stats, defaults)
 
+        data[self._cluster_node_name]['hostgroups'] = {}
+        for hg in cluster_hostgroups.values():
+            # ignore empty hostgroups
+            if not getattr(hg, 'host', None):
+                continue
+
+            data[self._cluster_node_name]['hostgroups'][hg.name] = [
+                vutil.get_moref_value(h_ref) for h_ref in hg.host]
+            for h_ref in hg.host:
+                host_ref_value = vutil.get_moref_value(h_ref)
+                if host_ref_value not in per_host_stats:
+                    continue
+                h_name = per_host_stats[host_ref_value]["name"]
+                data[h_name].setdefault('hostgroups', []).append(hg.name)
+
         self._stats = data
         if self._auto_service_disabled:
             self._set_host_enabled(True)
         return data
+
+    @property
+    def hostgroups(self):
+        return self._stats[self._cluster_node_name].get('hostgroups', {})
 
     def _merge_stats(self, host, stats, defaults):
         result = deepcopy(defaults)
