@@ -611,6 +611,40 @@ class VMwareVCDriver(driver.ComputeDriver):
         # where cpu traits are added. In the vmware world, this is where we
         # would add nested providers representing tenant VDC and similar.
 
+        self._update_provider_tree_for_external_customers(
+            provider_tree, nodename, stats['hostgroups'])
+
+    def _update_provider_tree_for_external_customers(self, provider_tree,
+                                                     nodename, hostgroups):
+        existing_traits = {
+            t for t in provider_tree.data(nodename).traits
+            if t.startswith(tuple(
+                utils.EXTERNAL_CUSTOMER_DOMAIN_TRAIT.format(
+                    prefix.upper().removesuffix('-').replace('-', '_'))
+                for prefix in CONF.external_customer_domain_name_prefixes)) or
+               t == utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT}
+
+        wanted_traits = set()
+        # we can have generic host groups and special ones per domain
+        for prefix in CONF.external_customer_domain_name_prefixes:
+            hg_prefix = prefix.removesuffix('-')
+
+            for hg_name in hostgroups:
+                if not hg_name.startswith(hg_prefix):
+                    continue
+
+                trait = utils.EXTERNAL_CUSTOMER_DOMAIN_TRAIT.format(
+                    hg_name.upper().replace('-', '_'))
+                wanted_traits.add(trait)
+
+        if wanted_traits:
+            wanted_traits.add(utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT)
+
+        traits_to_add = wanted_traits - existing_traits
+        provider_tree.add_traits(nodename, *traits_to_add)
+        traits_to_remove = existing_traits - wanted_traits
+        provider_tree.remove_traits(nodename, *traits_to_remove)
+
     def prepare_for_spawn(self, instance):
         """Perform pre-checks for spawn."""
         self._vmops.prepare_for_spawn(instance)
