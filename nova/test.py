@@ -338,6 +338,10 @@ class TestCase(base.BaseTestCase):
         # Reset the global endpoint
         nova.limit.utils.ENDPOINT = None
 
+        # Disable the cache of SAPQuotaEngine for more deterministic test
+        # behaviour
+        self.useFixture(nova_fixtures.DisableSAPQuotaEngineCacheFixture())
+
     def _setup_cells(self):
         """Setup a normal cellsv2 environment.
 
