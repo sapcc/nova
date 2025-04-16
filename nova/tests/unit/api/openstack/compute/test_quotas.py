@@ -557,33 +557,43 @@ class QuotaSetsTestV236(test.NoDBTestCase):
         for filtered in self.filtered_quotas:
             self.assertIn(filtered, res_dict['quota_set'])
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch('nova.quota.QUOTAS.get_project_quotas')
-    def test_quotas_show_filtered(self, mock_quotas):
+    def test_quotas_show_filtered(self, mock_quotas, mock_flavors):
         mock_quotas.return_value = self.quotas
         self._ensure_filtered_quotas_existed_in_old_api()
         res_dict = self.controller.show(self.req, 1234)
         for filtered in self.filtered_quotas:
             self.assertNotIn(filtered, res_dict['quota_set'])
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch('nova.quota.QUOTAS.get_defaults')
     @mock.patch('nova.quota.QUOTAS.get_project_quotas')
-    def test_quotas_default_filtered(self, mock_quotas, mock_defaults):
+    def test_quotas_default_filtered(self, mock_quotas,
+                                     mock_defaults,
+                                     mock_flavors):
         mock_quotas.return_value = self.quotas
         self._ensure_filtered_quotas_existed_in_old_api()
         res_dict = self.controller.defaults(self.req, 1234)
         for filtered in self.filtered_quotas:
             self.assertNotIn(filtered, res_dict['quota_set'])
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch('nova.quota.QUOTAS.get_project_quotas')
-    def test_quotas_detail_filtered(self, mock_quotas):
+    def test_quotas_detail_filtered(self, mock_quotas, mock_flavors):
         mock_quotas.return_value = self.quotas
         self._ensure_filtered_quotas_existed_in_old_api()
         res_dict = self.controller.detail(self.req, 1234)
         for filtered in self.filtered_quotas:
             self.assertNotIn(filtered, res_dict['quota_set'])
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch('nova.quota.QUOTAS.get_project_quotas')
-    def test_quotas_update_input_filtered(self, mock_quotas):
+    def test_quotas_update_input_filtered(self, mock_quotas, mock_flavors):
         mock_quotas.return_value = self.quotas
         self._ensure_filtered_quotas_existed_in_old_api()
         for filtered in self.filtered_quotas:
@@ -591,11 +601,13 @@ class QuotaSetsTestV236(test.NoDBTestCase):
                 self.controller.update, self.req, 1234,
                 body={'quota_set': {filtered: 100}})
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch('nova.objects.Quotas.create_limit')
     @mock.patch('nova.quota.QUOTAS.get_settable_quotas')
     @mock.patch('nova.quota.QUOTAS.get_project_quotas')
     def test_quotas_update_output_filtered(self, mock_quotas, mock_settable,
-                                           mock_create_limit):
+                                           mock_create_limit, mock_flavors):
         mock_quotas.return_value = self.quotas
         mock_settable.return_value = {'cores': {'maximum': -1, 'minimum': 0}}
         self._ensure_filtered_quotas_existed_in_old_api()
@@ -616,6 +628,8 @@ class QuotaSetsTestV257(QuotaSetsTestV236):
 class QuotaSetsTestV275(QuotaSetsTestV257):
     microversion = '2.75'
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch('nova.objects.Quotas.destroy_all_by_project')
     @mock.patch('nova.objects.Quotas.create_limit')
     @mock.patch('nova.quota.QUOTAS.get_settable_quotas')
@@ -623,7 +637,8 @@ class QuotaSetsTestV275(QuotaSetsTestV257):
     def test_quota_additional_filter_older_version(self, mock_quotas,
                                                    mock_settable,
                                                    mock_create_limit,
-                                                   mock_destroy):
+                                                   mock_destroy,
+                                                   mock_flavors):
         mock_quotas.return_value = self.quotas
         mock_settable.return_value = {'cores': {'maximum': -1, 'minimum': 0}}
         query_string = 'additional_filter=2'
@@ -674,7 +689,9 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
         self.stub_out('nova.api.openstack.identity.verify_project_id',
                       lambda ctx, project_id: True)
 
-    def test_show_v21(self):
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
+    def test_show_v21(self, mock_flavors):
         req = fakes.HTTPRequest.blank("")
         response = self.controller.show(req, uuids.project_id)
         expected_response = {
@@ -698,7 +715,9 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
         }
         self.assertEqual(expected_response, response)
 
-    def test_show_v257(self):
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
+    def test_show_v257(self, mock_flavors):
         req = fakes.HTTPRequest.blank("", version='2.57')
         response = self.controller.show(req, uuids.project_id)
         expected_response = {
@@ -713,7 +732,9 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
                 'server_groups': -1}}
         self.assertEqual(expected_response, response)
 
-    def test_detail_v21(self):
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
+    def test_detail_v21(self, mock_flavors):
         req = fakes.HTTPRequest.blank("")
         response = self.controller.detail(req, uuids.project_id)
 
@@ -738,7 +759,9 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
         }
         self.assertEqual(expected_response, response)
 
-    def test_detail_v21_user(self):
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
+    def test_detail_v21_user(self, mock_flavor):
         req = fakes.HTTPRequest.blank("?user_id=42")
         response = self.controller.detail(req, uuids.project_id)
         expected_response = {
@@ -769,8 +792,10 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
         self.assertRaises(exception.ValidationError, self.controller.update,
                           req, uuids.project_id, body=body)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(objects.Quotas, "create_limit")
-    def test_update_v21(self, mock_create):
+    def test_update_v21(self, mock_create, mock_flavors):
         req = fakes.HTTPRequest.blank("")
         body = {'quota_set': {'server_groups': 2}}
         response = self.controller.update(req, uuids.project_id, body=body)
@@ -797,8 +822,10 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
                                             uuids.project_id, "server_groups",
                                             2, user_id=None)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(objects.Quotas, "create_limit")
-    def test_update_v21_user(self, mock_create):
+    def test_update_v21_user(self, mock_create, mock_flavors):
         req = fakes.HTTPRequest.blank("?user_id=42")
         body = {'quota_set': {'key_pairs': 52}}
         response = self.controller.update(req, uuids.project_id, body=body)
@@ -825,7 +852,9 @@ class NoopQuotaSetsTest(test.NoDBTestCase):
                                             uuids.project_id, "key_pairs", 52,
                                             user_id="42")
 
-    def test_defaults_v21(self):
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
+    def test_defaults_v21(self, mock_flavors):
         req = fakes.HTTPRequest.blank("")
         response = self.controller.defaults(req, uuids.project_id)
         expected_response = {
@@ -881,8 +910,10 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         self.limit_fixture = self.useFixture(
             limit_fixture.LimitFixture(reglimits, {}))
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_project_limits")
-    def test_show_v21(self, mock_proj):
+    def test_show_v21(self, mock_proj, mock_flavors):
         mock_proj.return_value = {"instances": 1, "cores": 2, "ram": 3}
         req = fakes.HTTPRequest.blank("")
         response = self.controller.show(req, uuids.project_id)
@@ -907,8 +938,10 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         }
         self.assertEqual(expected_response, response)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_project_limits")
-    def test_show_v257(self, mock_proj):
+    def test_show_v257(self, mock_proj, mock_flavors):
         mock_proj.return_value = {"instances": 1, "cores": 2, "ram": 3}
         req = fakes.HTTPRequest.blank("", version='2.57')
         response = self.controller.show(req, uuids.project_id)
@@ -924,10 +957,15 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
                 'server_groups': 12}}
         self.assertEqual(expected_response, response)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_counts")
     @mock.patch.object(placement_limit, "get_legacy_project_limits")
     @mock.patch.object(objects.InstanceGroupList, "get_counts")
-    def test_detail_v21(self, mock_count, mock_proj, mock_kcount):
+    def test_detail_v21(self, mock_count,
+                        mock_proj,
+                        mock_kcount,
+                        mock_flavors):
         mock_proj.return_value = {"instances": 1, "cores": 2, "ram": 3}
         mock_kcount.return_value = {"instances": 4, "cores": 5, "ram": 6}
         mock_count.return_value = {'project': {'server_groups': 9}}
@@ -964,10 +1002,15 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         }
         self.assertEqual(expected_response, response)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_counts")
     @mock.patch.object(placement_limit, "get_legacy_project_limits")
     @mock.patch.object(objects.InstanceGroupList, "get_counts")
-    def test_detail_v21_user(self, mock_count, mock_proj, mock_kcount):
+    def test_detail_v21_user(self, mock_count,
+                             mock_proj,
+                             mock_kcount,
+                             mock_flavors):
         mock_proj.return_value = {"instances": 1, "cores": 2, "ram": 3}
         mock_kcount.return_value = {"instances": 4, "cores": 5, "ram": 6}
         mock_count.return_value = {'project': {'server_groups': 9}}
@@ -1004,9 +1047,11 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         }
         self.assertEqual(expected_response, response)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_project_limits")
     @mock.patch.object(objects.Quotas, "create_limit")
-    def test_update_v21(self, mock_create, mock_proj):
+    def test_update_v21(self, mock_create, mock_proj, mock_flavors):
         mock_proj.return_value = {"instances": 1, "cores": 2, "ram": 3}
         req = fakes.HTTPRequest.blank("")
         # TODO(johngarbutt) still need to implement get_settable_quotas
@@ -1033,9 +1078,11 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         self.assertEqual(expected_response, response)
         self.assertEqual(0, mock_create.call_count)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_project_limits")
     @mock.patch.object(objects.Quotas, "create_limit")
-    def test_update_v21_user(self, mock_create, mock_proj):
+    def test_update_v21_user(self, mock_create, mock_proj, mock_flavors):
         mock_proj.return_value = {"instances": 1, "cores": 2, "ram": 3}
         req = fakes.HTTPRequest.blank("?user_id=42")
         body = {'quota_set': {'key_pairs': 52}}
@@ -1061,8 +1108,10 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         self.assertEqual(expected_response, response)
         self.assertEqual(0, mock_create.call_count)
 
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
     @mock.patch.object(placement_limit, "get_legacy_default_limits")
-    def test_defaults_v21(self, mock_default):
+    def test_defaults_v21(self, mock_default, mock_flavors):
         mock_default.return_value = {"instances": 1, "cores": 2, "ram": 3}
         req = fakes.HTTPRequest.blank("")
         response = self.controller.defaults(req, uuids.project_id)
@@ -1087,7 +1136,9 @@ class UnifiedLimitsQuotaSetsTest(NoopQuotaSetsTest):
         }
         self.assertEqual(expected_response, response)
 
-    def test_defaults_v21_different_limit_values(self):
+    @mock.patch('nova.objects.FlavorList.get_all',
+                return_value=objects.FlavorList())
+    def test_defaults_v21_different_limit_values(self, mock_flavors):
         reglimits = {local_limit.SERVER_METADATA_ITEMS: 7,
                      local_limit.INJECTED_FILES: 6,
                      local_limit.INJECTED_FILES_CONTENT: 4,
