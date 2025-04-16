@@ -325,6 +325,10 @@ class TestCase(base.BaseTestCase):
         # the currently running test to fail.
         self.useFixture(nova_fixtures.GreenThreadPoolShutdownWait())
 
+        # Disable the cache of SAPQuotaEngine for more deterministic test
+        # behaviour
+        self.useFixture(nova_fixtures.DisableSAPQuotaEngineCacheFixture())
+
     def _setup_cells(self):
         """Setup a normal cellsv2 environment.
 
