@@ -205,6 +205,24 @@ class StandardLogging(fixtures.Fixture):
         self.logger._output.truncate(0)
 
 
+class DisableSAPQuotaEngineCacheFixture(fixtures.Fixture):
+    class FakeCache:
+        def get(self, key):
+            return None
+
+        def set(self, key, resources):
+            return None
+
+        def delete(self, key):
+            return None
+
+    def setUp(self):
+        super(DisableSAPQuotaEngineCacheFixture, self).setUp()
+        self.useFixture(fixtures.MonkeyPatch(
+            'nova.quota.SAPQuotaEngine._cache',
+            DisableSAPQuotaEngineCacheFixture.FakeCache()))
+
+
 class DatabasePoisonFixture(fixtures.Fixture):
     def setUp(self):
         super(DatabasePoisonFixture, self).setUp()
