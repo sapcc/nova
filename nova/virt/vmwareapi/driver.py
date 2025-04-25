@@ -260,6 +260,8 @@ class VMwareVCDriver(driver.ComputeDriver):
         LOG.debug("Starting green server-group sync-loop thread")
         utils.spawn(self._server_group_sync_loop, host)
         utils.spawn(self._custom_traits_sync_loop, host)
+        utils.spawn(self._external_customer_drs_rules_sync_loop)
+        utils.spawn(self._external_customer_vm_groups_sync_loop)
 
     def get_nodenames_by_uuid(self, refresh=False):
         """Overwritten method to return a locally-cached node UUID
@@ -1014,6 +1016,61 @@ class VMwareVCDriver(driver.ComputeDriver):
                 LOG.debug('Finished custom traits sync-loop')
 
             time.sleep(CONF.vmware.custom_traits_sync_loop_spacing)
+
+    def _external_customer_drs_rules_sync_loop(self):
+        """Clean up and validate DRS rules for external customers HostGroups
+
+        While during normal operations we already ensure that DRS rules get
+        created appropriately, we do not clean up no-longer-necessary ones.
+        This sync loop will ensure DRS rules and clean up, too.
+        """
+        # we create a context here, so we can follow the logs for the sync-loop
+        # more easily
+        context = nova_context.get_admin_context()  # noqa:F841
+
+        while CONF.vmware.external_customer_drs_rules_sync_loop_spacing >= 0:
+            LOG.debug('Starting external customer DRS rules sync-loop')
+            try:
+                self._vmops.sync_external_customer_drs_rules(do_cleanup=True)
+            except Exception as e:
+                LOG.exception("Finished external customer DRS rules sync-loop "
+                              "with error: %s", e)
+            else:
+                LOG.debug('Finished external customer DRS rules sync-loop')
+
+            time.sleep(CONF.
+                       vmware.external_customer_drs_rules_sync_loop_spacing)
+
+    def _external_customer_vm_groups_sync_loop(self):
+        """Sync the instances of this host into members for VmGroups
+
+        We pick the list of existing VmGroup objects from the cluster and sync
+        the members for them. _external_customer_drs_rules_sync_loop() takes
+        care of creating/deleting VmGroup objects for existing HostGroups.
+        """
+        context = nova_context.get_admin_context()
+
+        while CONF.vmware.external_customer_vm_groups_sync_loop_spacing >= 0:
+            LOG.debug('Starting external customer VmGroup sync-loop')
+            try:
+                drs_prefix = constants.DRS_EXT_CUSTOMER_PREFIX
+
+                vm_groups = cluster_util.fetch_cluster_groups(
+                    self._session, self._cluster_ref, group_type='vm')
+                vm_group_names = [vm_group_name for vm_group_name in vm_groups
+                    if vm_group_name.startswith(drs_prefix)]
+
+                for vm_group_name in vm_group_names:
+                    self._vmops.sync_external_customer_vm_group(context,
+                                                                vm_group_name)
+            except Exception as e:
+                LOG.exception("Finished external customer VmGroup sync-loop "
+                              "with error: %s", e)
+            else:
+                LOG.debug('Finished external customer VmGroup sync-loop')
+
+            time.sleep(CONF.
+                       vmware.external_customer_vm_groups_sync_loop_spacing)
 
     def check_can_live_migrate_destination(self, context, instance,
                                            src_compute_info, dst_compute_info,
