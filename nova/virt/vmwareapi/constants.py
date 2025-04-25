@@ -249,6 +249,8 @@ POWER_STATES = {'poweredOff': power_state.SHUTDOWN,
 # distinguish between what has been automatically created and what is
 # admin-created.
 DRS_PREFIX = 'NOVA_'
+# DRS rule prefix for external customer HostGroup affinity rules
+DRS_EXT_CUSTOMER_PREFIX = f"{DRS_PREFIX}external_customer_"
 
 
 # Prefix for custom attributes (CustomFieldDef names) that's used by Nova to
