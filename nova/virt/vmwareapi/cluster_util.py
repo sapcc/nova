@@ -20,6 +20,7 @@ from oslo_vmware import vim_util
 from nova import exception
 from nova.i18n import _
 from nova import utils
+from nova.virt.vmwareapi import error_util
 
 LOG = logging.getLogger(__name__)
 
@@ -218,6 +219,35 @@ def update_vm_group_membership(session, cluster, vm_group_name, vm_ref,
     config_spec.groupSpec = [group_spec]
 
     reconfigure_cluster(session, cluster, config_spec)
+
+
+def set_vm_group_members(session, cluster_ref, vm_group_name, vm_refs):
+    """Replace current members of the VmGroup with the given list
+
+    The VmGroup has to exist.
+    """
+
+    @utils.synchronized(f"set-vm-group-members-{vm_group_name}")
+    def _set_vm_group_members(session, cluster_ref, vm_group_name, vm_refs):
+        """local function to add vmgroup name to lock"""
+        cluster_config = session._call_method(
+            vim_util, "get_object_property", cluster_ref, "configurationEx")
+
+        client_factory = session.vim.client.factory
+        config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+
+        group = _get_vm_group(cluster_config, vm_group_name)
+        if not group:
+            raise error_util.VmGroupDoesNotExist(vm_group_name=vm_group_name)
+
+        group.vm = vm_refs
+
+        group_spec = create_group_spec(client_factory, group, 'edit')
+        config_spec.groupSpec = [group_spec]
+
+        reconfigure_cluster(session, cluster_ref, config_spec)
+
+    return _set_vm_group_members(session, cluster_ref, vm_group_name, vm_refs)
 
 
 def create_vm_rule(client_factory, name, vm_refs, policy='affinity',
