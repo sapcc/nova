@@ -4013,9 +4013,22 @@ class VMwareVMOps(object):
         """Called by the driver on init_host() so we know the compute host"""
         self._compute_host = compute_host
 
-    def sync_server_group(self, context, sg_uuid):
-        """Sync a server group by its uuid for the current host/cluster
+    def _filter_instances_for_drs(self, context, instance_uuids, sg_uuid=None,
+            vm_group_name=None):
+        """Filter the given Instance UUIDs down to DRS-applicable ones
+
+        We cannot use all instances when configuring DRS rules/groups, because
+        with some instances race against other, parallel tasks. This method
+        filters down the given instance UUIDs to the ones we should be able to
+        safely use with DRS.
+
+        We return a dictionary mapping the remaining instance UUIDs to MoRefs.
         """
+        if (sg_uuid, vm_group_name) == (None, None):
+            raise ValueError(
+                "Either `sg_uuid` or `vm_group_name` is required for "
+                "`VMwareVMOps._filter_instances_for_drs()`.")
+
         # we have to ignore instances currently in a volatitle state, where
         # either VMware cannot support them being in a DRS rule or we expect
         # them to go away during the syncing process, which could lead to
@@ -4028,6 +4041,99 @@ class VMwareVMOps(object):
             task_states.REBUILDING,
             task_states.REBUILD_BLOCK_DEVICE_MAPPING,
         ]
+
+        # First we check for all instances, which have ongoing migrations
+        # on the given host, either as source or destination
+
+        # Decision matrix for migrations:
+        # Mig-Status Action/Host
+        #            Source  Dest
+        # Preparing  Remove  N/A
+        # Running    Remove  Add
+        # (Other states are consistent with default behaviour)
+        #
+        # So the Instance.host will always be the source of the migration,
+        # and we want to remove the rules.
+        # We only need to handle specially the case a running migration
+        # on the destination host, and add it
+
+        MigrationList = objects.migration.MigrationList
+        filters = {
+            "host": self._compute_host,
+            "instance_uuid": instance_uuids,
+            "status": ["preparing", "running"],
+        }
+
+        expected_members = {}
+
+        migrations_by_instance_uuid = {}
+        for migration in MigrationList.get_by_filters(context, filters):
+            instance_uuid = migration.instance_uuid
+            if migration.source_compute == self._compute_host:
+                # The host is the source of a migration
+                # That means the instance will be part of the instance list
+                # So we have to remember that instance to be removed from
+                # the DRS rule-set
+                migrations_by_instance_uuid[instance_uuid] = \
+                    migration
+            else:
+                # We now handle the destination side
+                if migration.status == "preparing":
+                    # Not even started, we can ignore that one
+                    continue
+
+                # Polling the cache, as vm_util.get_vm_ref is very slow
+                # for the negative search.
+                # We just have to ensure, that the cache holds a value
+                # before syncing the server group on the destination host
+                # Race conditions are averted by the calling function's lock
+                moref = vm_util.vm_ref_cache_get(instance_uuid)
+                if moref:
+                    expected_members[instance_uuid] = moref
+
+        # retrieve the instances, because sg.members contains all members
+        # and we need to filter them for our host
+        InstanceList = objects.instance.InstanceList
+        filters = {'host': self._compute_host, 'uuid': instance_uuids,
+                   'deleted': False}
+        instances = InstanceList.get_by_filters(context, filters,
+                                                expected_attrs=[])
+
+        if sg_uuid:
+            msg_prefix = "Excluding member %s of server-group %s, "
+            msg_value = sg_uuid
+        elif vm_group_name:
+            msg_prefix = "Excluding instance %s from VmGroup %s, "
+            msg_value = vm_group_name
+
+        for instance in instances:
+            task_state = instance.task_state
+            if task_state in STATES_EXCLUDING_MEMBERS_FROM_DRS_RULES:
+                LOG.debug(msg_prefix + "because it's in task_state %s.",
+                          instance.uuid, msg_value, task_state)
+                continue
+
+            migration = migrations_by_instance_uuid.get(instance.uuid)
+            if migration:
+                LOG.debug(msg_prefix + "due to being on the source side of "
+                          "ongoing migration %s.",
+                          instance.uuid, msg_value, migration.uuid)
+                continue
+
+            try:
+                moref = vm_util.get_vm_ref(self._session, instance)
+            except exception.InstanceNotFound:
+                LOG.warning(msg_prefix + "because we could not find "
+                            "a moref for it",
+                            instance.uuid, msg_value)
+                continue
+            expected_members[instance.uuid] = moref
+
+        return expected_members
+
+    def sync_server_group(self, context, sg_uuid):
+        """Sync a server group by its uuid for the current host/cluster
+        """
         LOG.debug('Starting sync for server-group %s', sg_uuid)
 
         @utils.synchronized('vmware-server-group-{}'.format(sg_uuid))
@@ -4052,87 +4158,8 @@ class VMwareVMOps(object):
                 LOG.debug('Sync for server-group %s done', sg_uuid)
                 return
 
-            # First we check for all instances, which have ongoing migrations
-            # on the given host, either as source or destination
-
-            # Decision matrix for migrations:
-            # Mig-Status Action/Host
-            #            Source  Dest
-            # Preparing  Remove  N/A
-            # Running    Remove  Add
-            # (Other states are consistent with default behaviour)
-            #
-            # So the Instance.host will always be the source of the migration,
-            # and we want to remove the rules.
-            # We only need to handle specially the case a running migration
-            # on the destination host, and add it
-
-            MigrationList = objects.migration.MigrationList
-            filters = {
-                "host": self._compute_host,
-                "instance_uuid": sg.members,
-                "status": ["preparing", "running"],
-            }
-
-            expected_members = {}
-
-            migrations_by_instance_uuid = {}
-            for migration in MigrationList.get_by_filters(context, filters):
-                instance_uuid = migration.instance_uuid
-                if migration.source_compute == self._compute_host:
-                    # The host is the source of a migration
-                    # That means the instance will be part of the instance list
-                    # So we have to remember that instance to be removed from
-                    # the DRS rule-set
-                    migrations_by_instance_uuid[instance_uuid] = \
-                        migration
-                else:
-                    # We now handle the destination side
-                    if migration.status == "preparing":
-                        # Not even started, we can ignore that one
-                        continue
-
-                    # Polling the cache, as vm_util.get_vm_ref is very slow
-                    # for the negative search.
-                    # We just have to ensure, that the cache holds a value
-                    # before syncing the server group on the destination host
-                    # Race conditions are averted by this functions lock
-                    moref = vm_util.vm_ref_cache_get(instance_uuid)
-                    if moref:
-                        expected_members[instance_uuid] = moref
-
-            # retrieve the instances, because sg.members contains all members
-            # and we need to filter them for our host
-            InstanceList = objects.instance.InstanceList
-            filters = {'host': self._compute_host, 'uuid': sg.members,
-                       'deleted': False}
-            instances = InstanceList.get_by_filters(context, filters,
-                                                    expected_attrs=[])
-
-            for instance in instances:
-                task_state = instance.task_state
-                if task_state in STATES_EXCLUDING_MEMBERS_FROM_DRS_RULES:
-                    LOG.debug("Excluding member %s of server-group %s, "
-                              "because it's in task_state %s.",
-                              instance.uuid, sg.uuid, task_state)
-                    continue
-
-                migration = migrations_by_instance_uuid.get(instance.uuid)
-                if migration:
-                    LOG.debug("Excluding member %s of server-group %s, "
-                              "due to being on the source side of "
-                              "ongoing migration %s.",
-                              instance.uuid, sg.uuid, migration.uuid)
-                    continue
-
-                try:
-                    moref = vm_util.get_vm_ref(self._session, instance)
-                except exception.InstanceNotFound:
-                    LOG.warning('Could not find moref for instance %s. '
-                                'Ignoring member of server-group %s',
-                                instance.uuid, sg.uuid)
-                    continue
-                expected_members[instance.uuid] = moref
+            expected_members = self._filter_instances_for_drs(
+                context, sg.members, sg_uuid=sg_uuid)
 
             rule_members_by_name = {}
             if sg.policy == 'soft-anti-affinity':
