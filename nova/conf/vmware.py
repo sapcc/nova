@@ -519,6 +519,34 @@ Possible values:
  * integer >= time in seconds to sleep between runs
  * intger < 0: disable the sync-loop
 """),
+    cfg.IntOpt('external_customer_drs_rules_sync_loop_spacing',
+               default=1800,
+               help="""
+Amount of time in seconds to wait between external customer DRS rules
+sync-loop runs
+
+The sync-loop thread for external customer DRS rules runs continuously,
+sleeping after ensuring all necessary DRS rules exist and cleaning up
+no-longer-necessary ones. This setting defines how long to sleep between runs.
+
+Possible values:
+ * integer >= 0: time in seconds to sleep between runs
+ * intger < 0: disable the sync-loop
+"""),
+    cfg.IntOpt('external_customer_vm_groups_sync_loop_spacing',
+               default=1800,
+               help="""
+Amount of time in seconds to wait between external customer VmGroup
+sync-loop runs
+
+The sync-loop thread for external customer VmGroups runs continuously,
+sleeping after updating the members of the VmGroups found in the cluster and
+matching a certain prefix. This setting defines how long to sleep between runs.
+
+Possible values:
+ * integer >= 0: time in seconds to sleep between runs
+ * intger < 0: disable the sync-loop
+"""),
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +
