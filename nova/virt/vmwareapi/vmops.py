@@ -19,6 +19,7 @@
 Class for VM tasks like spawn, snapshot, suspend, resume etc.
 """
 
+from collections import defaultdict
 import contextlib
 import copy
 import itertools
@@ -1241,6 +1242,8 @@ class VMwareVMOps(object):
     def update_cluster_placement(self, context, instance, remove=False):
         self.sync_instance_server_group(context, instance)
         self.update_admin_vm_group_membership(instance, remove=remove)
+        self.update_external_customer_placement(context, instance,
+                                                remove=remove)
 
     def sync_instance_server_group(self, context, instance):
         try:
@@ -1272,6 +1275,241 @@ class VMwareVMOps(object):
         cluster_util.update_vm_group_membership(self._session, self._cluster,
                                                 vm_group_name, vm_ref,
                                                 remove=remove)
+
+    def _get_external_customer_vm_group_for_instance(self, instance,
+                                                     hostgroups):
+        """Return the VmGroup name for the specific instance"""
+        domain_name = instance.system_metadata['domain_name']
+        prefixes = tuple(CONF.external_customer_domain_name_prefixes)
+        drs_prefix = constants.DRS_EXT_CUSTOMER_PREFIX
+
+        vm_group_name = None
+        if domain_name in hostgroups:
+            vm_group_name = f"{drs_prefix}{domain_name}"
+        elif not domain_name.startswith(prefixes):
+            vm_group_name = f"{drs_prefix}internal_workload"
+        else:
+            prefixes_and_hg_names = [(prefix, prefix.removesuffix('-'))
+                                     for prefix in prefixes]
+            for prefix, hg_name in prefixes_and_hg_names:
+                if not domain_name.startswith(prefix):
+                    continue
+
+                if hg_name not in hostgroups:
+                    continue
+
+                vm_group_name = f"{drs_prefix}{hg_name}"
+                break
+            else:
+                LOG.error("Could not find hostgroup for instance %s in "
+                          "domain %s in the existing hostgroups %s",
+                          instance.uuid, domain_name, hostgroups)
+
+        return vm_group_name
+
+    def _get_instances_by_external_customer_vm_group(self, context):
+        """Get Instances assigned to this host grouped by VmGroup name"""
+        InstanceList = objects.instance.InstanceList
+        filters = {'host': self._compute_host, 'deleted': False}
+        instances = InstanceList.get_by_filters(
+            context, filters, expected_attrs=['system_metadata'])
+
+        hostgroups = self._vc_state.hostgroups
+
+        grouped_instances = defaultdict(list)
+        for instance in instances:
+            vm_group_name = self._get_external_customer_vm_group_for_instance(
+                instance, hostgroups)
+            grouped_instances[vm_group_name].append(instance.uuid)
+
+        return grouped_instances
+
+    def update_external_customer_placement(self, context, instance,
+                                           remove=False):
+        """Ensure DRS rules and VmGroup assignment for the instance"""
+        hg_prefixes = tuple(prefix.removesuffix('-')
+            for prefix in CONF.external_customer_domain_name_prefixes)
+        hostgroups = [hg_name for hg_name in self._vc_state.hostgroups
+                      if hg_name.startswith(hg_prefixes)]
+
+        if not hostgroups:
+            # This cluster does not manage external customer VMs.
+            return
+
+        self.sync_external_customer_drs_rules()
+
+        vm_group_name = self._get_external_customer_vm_group_for_instance(
+            instance, hostgroups)
+        if vm_group_name is None:
+            if remove:
+                # For removals we do not require a VmGroup because the VM would
+                # not be managed by the cluster soon anyways.
+                return
+            # FIXME build a VMware exception for this
+            raise exception.NovaException('')
+        self.sync_external_customer_vm_group(context, vm_group_name)
+
+    def sync_external_customer_vm_group(self, context, vm_group_name):
+        LOG.debug('Starting sync for external customer VmGroup %s',
+                  vm_group_name)
+
+        # Since this is an admin group it can contain instances from more than
+        # the current project. Therefore, we need to be able to query all
+        # projects and not just to user-scoped one.
+        context = context.elevated()
+
+        @utils.synchronized("vmware-external-customer-vm-group-"
+                            f"{vm_group_name}")
+        def _sync_vm_group(context, vm_group_name):
+            vg_instances = \
+                self._get_instances_by_external_customer_vm_group(context)
+            if vm_group_name not in vg_instances:
+                LOG.info("Sync for external customer VmGroup %s done: "
+                         "No instances assigned.", vm_group_name)
+                return
+
+            instance_uuids = vg_instances[vm_group_name]
+
+            expected_members = self._filter_instances_for_drs(
+                context, instance_uuids, vm_group_name=vm_group_name)
+
+            LOG.debug('Updating external customer VmGroup %s with %s members',
+                      vm_group_name, len(expected_members))
+            cluster_util.set_vm_group_members(
+                self._session, self._cluster, vm_group_name,
+                list(expected_members.values()))
+
+            LOG.debug('Sync for external customer VmGroup %s done',
+                      vm_group_name)
+
+        _sync_vm_group(context, vm_group_name)
+
+    @utils.synchronized('sync-external-customers-drs-rules')
+    def sync_external_customer_drs_rules(self, do_cleanup=False):
+        """Ensure DRS rules for anti-/affinity to HostGroups exist
+
+        We delete any DRS rules matching the naming scheme but referencing a
+        non-existing HostGroup to keep the cluster clean.
+
+        For each HostGroup there are 2 rules. Configured with affinity to the
+        HostGroup, we have a rule referencing a VmGroup named after the
+        HostGroup. To keep internal workload away from the HostGroup, a second
+        rule configured with anti-affinity referencing the pre-defined internal
+        workload VmGroup exists.
+
+        :param:do_cleanup:  If set to `False`, no remove operations for groups
+                            and rules are executed. Can be useful outside the
+                            sync-loop to reduce possible cluster
+                            reconfiguration calls which can hang on the cluster
+                            lock waiting for vCenter-external live-migrations.
+        """
+        LOG.debug("Syncing external customer DRS rules")
+        drs_prefix = constants.DRS_EXT_CUSTOMER_PREFIX
+
+        client_factory = self._session.vim.client.factory
+        config_spec = client_factory.create('ns0:ClusterConfigSpecEx')
+        config_spec.groupSpec = []
+        config_spec.rulesSpec = []
+
+        # fetch the existing Group objects and split them into HostGroup and
+        # VmGroup objects, filtering for HostGroups that contain hosts
+        _existing_groups = cluster_util.fetch_cluster_groups(self._session,
+            self._cluster)
+
+        hg_prefixes = tuple(prefix.removesuffix('-')
+            for prefix in CONF.external_customer_domain_name_prefixes)
+        existing_hostgroups = {g.name for g in _existing_groups.values()
+            if getattr(g, 'host', None) and g.name.startswith(hg_prefixes)}
+        existing_vm_groups = {g.name: g for g in _existing_groups.values()
+                     if g.name.startswith(drs_prefix)}
+
+        # fetch the existing rules and deduplicate them
+        _existing_rules = sorted(cluster_util.get_rules_by_prefix(
+            self._session, self._cluster, drs_prefix),
+                                 key=attrgetter('name'))
+        existing_rules = {}
+        for rule_name, rules in itertools.groupby(_existing_rules,
+                                                  key=attrgetter('name')):
+            rules = list(rules)
+            existing_rules[rule_name] = rules[0]
+            # any additional rules are duplicates and have to be deleted
+            for rule in rules[1:]:
+                config_spec.rulesSpec.append(
+                    cluster_util.create_rule_spec(
+                        client_factory, rule, 'remove'))
+
+        expected_vm_group_names = {
+            f"{drs_prefix}{hg_name}" for hg_name in existing_hostgroups}
+        if existing_hostgroups:
+            # If there are no hostgroups we have to take care of, it means our
+            # cluster doesn't handle external workload and we also don't need
+            # the internal_workload groups.
+            expected_vm_group_names.add(f"{drs_prefix}internal_workload")
+
+        # Create missing VmGroup objects so we can create rules for them
+        missing_vm_group_names = \
+            expected_vm_group_names - existing_vm_groups.keys()
+        for vm_group_name in missing_vm_group_names:
+            group = cluster_util.create_vm_group(client_factory,
+                vm_group_name, [])
+            config_spec.groupSpec.append(
+                cluster_util.create_group_spec(
+                    client_factory, group, 'add'))
+
+        expected_rule_names = set()
+        # NOTE: Experiments have shown that we can create VmGroup objects in
+        # the same call that we create a rule that uses them.
+        for hg_name in existing_hostgroups:
+            for affinity, vm_group_name in (
+                    ('affinity', f"{drs_prefix}{hg_name}"),
+                    ('anti-affinity', f"{drs_prefix}internal_workload")):
+                rule_name = f"{drs_prefix}{hg_name}_{affinity}"
+                expected_rule_names.add(rule_name)
+                if rule := existing_rules.get(rule_name):
+                    # Make sure our existing rule is enabled
+                    if not rule.enabled:
+                        rule.enabled = True
+                        config_spec.rulesSpec.append(
+                            cluster_util.create_rule_spec(
+                                client_factory, rule, 'edit'))
+                else:
+                    # Since we ensure that VmGroups we expect exist/get
+                    # created, we don't have to handle non-existing VmGroups
+                    # here.
+                    rule = cluster_util.create_vm_host_rule(client_factory,
+                        rule_name, hg_name, vm_group_name, policy=affinity)
+                    config_spec.rulesSpec.append(
+                        cluster_util.create_rule_spec(
+                            client_factory, rule, 'add'))
+
+        # Clean up no longer necessary DRS rules
+        if do_cleanup:
+            for rule_name in existing_rules.keys() - expected_rule_names:
+                config_spec.rulesSpec.append(
+                    cluster_util.create_rule_spec(
+                        client_factory, existing_rules[rule_name], 'remove'))
+
+            superfluous_vm_group_names = \
+                existing_vm_groups.keys() - expected_vm_group_names
+            for vm_group_name in superfluous_vm_group_names:
+                config_spec.groupSpec.append(
+                    cluster_util.create_group_spec(
+                        client_factory, existing_vm_groups[vm_group_name],
+                        'remove'))
+
+        if not config_spec.rulesSpec and not config_spec.groupSpec:
+            return
+
+        rule_changes = [str((rs.info.name, rs.operation))
+                        for rs in config_spec.rulesSpec]
+        group_changes = [str((gs.info.name, gs.operation))
+                         for gs in config_spec.groupSpec]
+        LOG.info('Updating external customer DRS rules and groups: %s and %s',
+                 ', '.join(rule_changes), ', '.join(group_changes))
+        cluster_util.reconfigure_cluster(self._session, self._cluster,
+                                         config_spec)
+        LOG.info('Updated external customer DRS rules and groups: %s and %s',
+                 ', '.join(rule_changes), ', '.join(group_changes))
 
     def _build_template_vm_inventory_path(self, vi):
         vm_folder_name = self._session._call_method(vutil,
