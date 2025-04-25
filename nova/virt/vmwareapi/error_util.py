@@ -54,3 +54,7 @@ class EvcModeDoesNotExist(exception.Invalid):
 
 class InClustervMotionCheckError(exception.Invalid):
     msg_fmt = _("in cluster migration failed: %(reason)s")
+
+
+class VmGroupDoesNotExist(exception.Invalid):
+    msg_fmt = _("VmGroup %(vm_group_name)s does not exist")
