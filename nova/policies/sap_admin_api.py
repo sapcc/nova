@@ -56,6 +56,17 @@ sap_admin_api_policies = [
         ],
         scope_types=['system', 'project']),
     policy.DocumentedRuleDefault(
+        name=POLICY_ROOT % 'all-instance-uuids',
+        check_str=base.RULE_ADMIN_API,
+        description="Get all instance uuids",
+        operations=[
+            {
+                'method': 'GET',
+                'path': '/sap/all_instance_uuids'
+            }
+        ],
+        scope_types=['system', 'project']),
+    policy.DocumentedRuleDefault(
         name=POLICY_ROOT % 'usage-by-az',
         check_str=base.RULE_ADMIN_API,
         description="Show project usages split by availability-zone",
