@@ -22,6 +22,8 @@ from nova.api import validation
 from nova.compute import api as compute
 import nova.conf
 from nova import context as nova_context
+from nova.db.main import api as main_db_api
+from nova.db.main import models
 from nova import exception
 from nova.i18n import _
 from nova import objects
@@ -93,6 +95,30 @@ class SAPAdminApiController(wsgi.Controller):
         except exception.InstanceInvalidState as state_error:
             common.raise_http_conflict_for_instance_invalid_state(
                 state_error, 'in_cluster_vmotion', server_id)
+
+    @_register_endpoint('GET')
+    def all_instance_uuids(self, req):
+        """Get all instance uuids"""
+        context = req.environ['nova.context']
+        context.can(sap_policies.POLICY_ROOT % 'all-instance-uuids')
+
+        @main_db_api.pick_context_manager_reader
+        def _fetch_uuids(context):
+            query = main_db_api.model_query(context,
+                                            models.Instance,
+                                            args=(models.Instance.uuid,),
+                                            read_deleted="no")
+            return [row[0] for row in query.all()]
+
+        results = nova_context.scatter_gather_skip_cell0(context, _fetch_uuids)
+        instance_uuids = []
+        for cell_name, result in results.items():
+            if nova_context.is_cell_failure_sentinel(result):
+                raise exc.HTTPServiceUnavailable(
+                    _('Could not reach cell {}'.format(cell_name))
+                )
+            instance_uuids.extend(result)
+        return {"instance_uuids": instance_uuids}
 
     @wsgi.expected_errors((503,))
     @validation.query_schema(sap_admin_api.usage_by_az_query_params)
