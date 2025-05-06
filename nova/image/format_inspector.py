@@ -752,8 +752,11 @@ class VMDKInspector(FileInspector):
             return False
 
         try:
-            # Descriptor is padded to 512 bytes
-            desc_data = self.region('descriptor').data.rstrip(b'\x00')
+            # Descriptor is null-padded to 512 bytes. Find the first one and
+            # use it as the end of the text string.
+            desc_data = self.region('descriptor').data
+            pad_idx = desc_data.index(b'\x00')
+            desc_data = desc_data[:pad_idx]
             # Descriptor is actually case-insensitive ASCII text
             desc_text = desc_data.decode('ascii').lower()
         except UnicodeDecodeError:
