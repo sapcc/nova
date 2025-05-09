@@ -4871,8 +4871,15 @@ class API:
         volume_backed = compute_utils.is_volume_backed_instance(
             context, instance, bdms)
 
-        allow_bfv_rescue &= 'hw_rescue_bus' in image_meta.properties and \
-            'hw_rescue_device' in image_meta.properties
+        # NOTE(jkulik): We use the flavor to decide here, because we do not
+        # have access to the compute-node and it's capabilities here. For
+        # vmwareapi, we do not need the attributes. They are only required for
+        # libvirt.
+        hv_type = \
+            instance.flavor.extra_specs.get('capabilities:hypervisor_type')
+        if hv_type != 'VMware vCenter Server':
+            allow_bfv_rescue &= 'hw_rescue_bus' in image_meta.properties and \
+                'hw_rescue_device' in image_meta.properties
 
         if volume_backed and allow_bfv_rescue:
             cn = objects.ComputeNode.get_by_host_and_nodename(
