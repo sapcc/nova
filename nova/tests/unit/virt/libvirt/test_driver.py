@@ -13247,6 +13247,53 @@ class LibvirtConnTestCase(test.NoDBTestCase,
 
     @mock.patch.object(host.Host, 'has_min_version', return_value=True)
     @mock.patch.object(fakelibvirt.virDomain, "migrateToURI3")
+    @mock.patch('nova.virt.libvirt.migration.get_updated_guest_xml',
+                return_value='')
+    @mock.patch('nova.virt.libvirt.guest.Guest.get_xml_desc', return_value='')
+    def test_parallel_live_migration(
+            self, mock_old_xml, mock_new_xml,
+            mock_migrateToURI3, mock_min_version):
+        self.flags(live_migration_with_native_tls=True, group='libvirt')
+        self.flags(live_migration_parallel_connections=4, group='libvirt')
+        target_connection = None
+
+        params = {
+            'bandwidth': 0,
+            'parallel.connections':
+                CONF.libvirt.live_migration_parallel_connections,
+        }
+
+        # Start test
+        migrate_data = objects.LibvirtLiveMigrateData(
+            graphics_listen_addr_vnc='0.0.0.0',
+            graphics_listen_addr_spice='0.0.0.0',
+            serial_listen_addr='127.0.0.1',
+            serial_listen_ports=[1234],
+            target_connect_addr=target_connection,
+            bdms=[],
+            block_migration=False)
+
+        dom = fakelibvirt.virDomain
+        guest = libvirt_guest.Guest(dom)
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        drvr._parse_migration_flags()
+        instance = objects.Instance(**self.test_instance)
+        drvr._live_migration_operation(self.context, instance,
+                                       target_connection, False, migrate_data,
+                                       guest, [])
+
+        expected_flags = (fakelibvirt.VIR_MIGRATE_UNDEFINE_SOURCE |
+                          fakelibvirt.VIR_MIGRATE_PERSIST_DEST |
+                          fakelibvirt.VIR_MIGRATE_PEER2PEER |
+                          fakelibvirt.VIR_MIGRATE_TLS |
+                          fakelibvirt.VIR_MIGRATE_LIVE |
+                          fakelibvirt.VIR_MIGRATE_PARALLEL)
+        mock_migrateToURI3.assert_called_once_with(
+            drvr._live_migration_uri(target_connection),
+            params=params, flags=expected_flags)
+
+    @mock.patch.object(host.Host, 'has_min_version', return_value=True)
+    @mock.patch.object(fakelibvirt.virDomain, "migrateToURI3")
     @mock.patch('nova.virt.libvirt.guest.Guest.get_xml_desc',
                 return_value='<xml/>')
     def test_live_migration_raises_exception(self, mock_xml,

@@ -318,6 +318,17 @@ If set to 0, the hypervisor will choose a suitable default. Some hypervisors
 do not support this feature and will return an error if bandwidth is not 0.
 Please refer to the libvirt documentation for further details.
 """),
+    cfg.IntOpt('live_migration_parallel_connections',
+               default=1,
+               min=1,
+               help="""
+Number of parallel connections to be used during migration.
+
+Some hypervisors do not support this feature and will return an error if
+live_migration_parallel_connections is not 1.
+Please refer to the libvirt documentation for further details.
+"""),
+
     cfg.IntOpt('live_migration_downtime',
                default=500,
                min=100,
