@@ -604,7 +604,8 @@ class Guest(object):
         self._domain.suspend()
 
     def migrate(self, destination, migrate_uri=None, migrate_disks=None,
-                destination_xml=None, flags=0, bandwidth=0):
+                destination_xml=None, flags=0, bandwidth=0,
+                parallel_connections=0):
         """Migrate guest object from its current host to the destination
 
         :param destination: URI of host destination where guest will be migrate
@@ -633,6 +634,8 @@ class Guest(object):
            VIR_MIGRATE_POSTCOPY Tell libvirt to enable post-copy migration
            VIR_MIGRATE_TLS Use QEMU-native TLS
         :param bandwidth: The maximum bandwidth in MiB/s
+        :param parallel_connections: number of connections used during parallel
+                                     migration
         """
         params = {}
         # In migrateToURI3 these parameters are extracted from the
@@ -646,6 +649,9 @@ class Guest(object):
             params['migrate_disks'] = migrate_disks
         if migrate_uri:
             params['migrate_uri'] = migrate_uri
+        if parallel_connections > 1:
+            params['parallel.connections'] = parallel_connections
+            flags |= libvirt.VIR_MIGRATE_PARALLEL
 
         # Due to a quirk in the libvirt python bindings,
         # VIR_MIGRATE_NON_SHARED_INC with an empty migrate_disks is
