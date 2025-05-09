@@ -591,6 +591,23 @@ class GuestTestCase(test.NoDBTestCase):
                                            'persistent_xml': '</xml>',
                                            'bandwidth': 2})
 
+    def test_migrate_v3_parallel(self):
+        flags = 1
+        self.guest.migrate('an-uri', flags=flags, migrate_uri='dest-uri',
+                           migrate_disks='disk1',
+                           destination_xml='</xml>',
+                           bandwidth=2,
+                           parallel_connections=4)
+        expected_flags = flags + fakelibvirt.VIR_MIGRATE_PARALLEL
+        self.domain.migrateToURI3.assert_called_once_with(
+                'an-uri', flags=expected_flags, params={
+                    'migrate_uri': 'dest-uri',
+                    'migrate_disks': 'disk1',
+                    'destination_xml': '</xml>',
+                    'persistent_xml': '</xml>',
+                    'bandwidth': 2,
+                    'parallel.connections': 4})
+
     def test_abort_job(self):
         self.guest.abort_job()
         self.domain.abortJob.assert_called_once_with()
