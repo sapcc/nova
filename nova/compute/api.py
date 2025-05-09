@@ -4199,7 +4199,8 @@ class API:
             if not bdm.volume_id:
                 continue
             volume = self.volume_api.get(context, bdm.volume_id)
-            migration_status_valid = volume['migration_status'] != 'migrating'
+            migration_status_valid = (volume.get('migration_status') !=
+                                      'migrating')
             status_and_attach_status_valid = (
                  (volume['status'] == "in-use" and
                   volume['attach_status'] == 'attached') or
