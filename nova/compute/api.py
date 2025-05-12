@@ -4195,10 +4195,16 @@ class API:
         # valid state for resize
         bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                 context, instance.uuid)
+
+        if bdms:
+            admin_context = nova_context.get_admin_context()
+
         for bdm in bdms:
             if not bdm.volume_id:
                 continue
-            volume = self.volume_api.get(context, bdm.volume_id)
+            # We need an admin context, as the migration status may be
+            # hidden to the normal user
+            volume = self.volume_api.get(admin_context, bdm.volume_id)
             migration_status_valid = volume['migration_status'] != 'migrating'
             status_and_attach_status_valid = (
                  (volume['status'] == "in-use" and
