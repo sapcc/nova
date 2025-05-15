@@ -657,7 +657,7 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             attach_disk_to_vm.assert_called_once_with(
                 vm_ref, instance, expected_adapter, mock.sentinel.disk_type,
                 vmdk_path=mock.sentinel.filepath, volume_uuid=uuids.volume,
-                backing_uuid=uuids.backing, profile_id=None)
+                backing_uuid=uuids.backing, profile_id=None, key_id=None)
             get_dc_info.assert_called_once()
             get_vmdk_info.assert_called_once_with(session, vm_ref)
             exp_calls = [
@@ -698,7 +698,8 @@ class VMwareVolumeOpsTestCase(test.NoDBTestCase):
             self._volumeops._attach_volume_fcd(connection_info, instance,
                                                adapter_type)
             attach_fcd.assert_called_once_with(
-                instance, adapter_type, fcd_id, ds_ref_val, None)
+                instance, adapter_type, fcd_id, ds_ref_val, profile_id=None,
+                key_id=None)
 
     @ddt.data(
         constants.ADAPTER_TYPE_BUSLOGIC, constants.ADAPTER_TYPE_IDE,
