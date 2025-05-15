@@ -16,8 +16,6 @@
 """
 Management class for Storage-related functions (attach, detach, etc).
 """
-import uuid
-
 from oslo_log import log as logging
 from oslo_vmware import exceptions as oslo_vmw_exceptions
 from oslo_vmware import vim_util as vutil
@@ -67,7 +65,7 @@ class VMwareVolumeOps(object):
                           disk_size=None, linked_clone=False,
                           device_name=None, disk_io_limits=None,
                           volume_uuid=None, backing_uuid=None,
-                          profile_id=None):
+                          profile_id=None, key_id=None):
         """Attach disk to VM by reconfiguration.
 
         If volume_uuid and backing_uuid are given, also store the uuid of the
@@ -85,9 +83,17 @@ class VMwareVolumeOps(object):
                                     client_factory, disk_type, vmdk_path,
                                     disk_size, linked_clone, controller_key,
                                     unit_number, device_name, disk_io_limits,
-                                    profile_id=profile_id)
+                                    profile_id=profile_id, key_id=key_id)
         if controller_spec:
             vmdk_attach_config_spec.deviceChange.append(controller_spec)
+
+        if key_id:
+            vm_key_id = vm_util.get_vm_crypto_key_id(self._session, vm_ref)
+            if not vm_key_id:
+                vmdk_attach_config_spec.crypto = vm_util.get_encrypt_spec(
+                    client_factory, key_id)
+                vmdk_attach_config_spec.vmProfile = [
+                    vm_util.get_vm_profile_spec(client_factory, profile_id)]
 
         if volume_uuid and backing_uuid:
             LOG.debug("Adding volume details for %s to attach config spec.",
@@ -438,7 +444,7 @@ class VMwareVolumeOps(object):
             client_factory, devices, adapter_type)
 
     def _attach_fcd(self, instance, adapter_type, fcd_id,
-                    ds_ref_val, profile_id=None):
+                    ds_ref_val, profile_id=None, key_id=None):
         vm_ref = vm_util.get_vm_ref(self._session, instance)
         instance_root_vmdk_info = vm_util.get_vmdk_info(self._session, vm_ref)
         adapter_type = adapter_type or instance_root_vmdk_info.adapter_type
@@ -460,7 +466,7 @@ class VMwareVolumeOps(object):
             virtual_dmgr,
             name=vmdk_path,
             datacenter=ds_util.get_dc_info(self._session, ds_ref).ref)
-        backing_uuid = str(uuid.UUID(uuid_hex.replace(' ', '')))
+        backing_uuid = uuid_hex.replace(' ', '-')
 
         volume_uuid = fcd_obj.config.name.replace('volume-', '')
         disk_type = fcd_obj.config.backing.provisioningType
@@ -469,7 +475,8 @@ class VMwareVolumeOps(object):
                                vmdk_path=vmdk_path,
                                volume_uuid=volume_uuid,
                                backing_uuid=backing_uuid,
-                               profile_id=profile_id)
+                               profile_id=profile_id,
+                               key_id=key_id)
 
     def _attach_volume_fcd(self, connection_info, instance, adapter_type):
         """Attach fcd volume storage to VM instance."""
@@ -484,7 +491,8 @@ class VMwareVolumeOps(object):
 
         self._attach_fcd(instance, adapter_type, data['id'],
                          data['ds_ref_val'],
-                         data.get('profile_id'))
+                         profile_id=data.get('profile_id'),
+                         key_id=data.get('kmip_key_id'))
         LOG.debug("Attached fcd: %s", connection_info, instance=instance)
 
     def attach_volume(self, connection_info, instance, adapter_type=None):

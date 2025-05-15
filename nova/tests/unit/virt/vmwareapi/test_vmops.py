@@ -958,9 +958,16 @@ class VMwareVMOpsTestCase(test.TestCase):
                                 self._instance.flavor.root_gb * units.Gi,
                                 'fake-device')
         fake_get_vmdk_info.return_value = vmdk
+        block_device_info = {
+            'block_device_mapping': [
+                {'mount_device': '/dev/sda', 'connection_info': {'id': 'c'}},
+                {'mount_device': '/dev/sdb', 'connection_info': {'id': 'b'}},
+                {'mount_device': '/dev/sdc', 'connection_info': {'id': 'a'}},
+            ]
+        }
         self._vmops.finish_revert_migration(self._context, self._instance,
                                             mock.sentinel.network_info,
-                                            mock.sentinel.block_device_info,
+                                            block_device_info,
                                             power_on=True)
         fake_migration_get.assert_called_once_with(self._context, 101,
                                                    self._instance.uuid)
@@ -974,7 +981,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                 self._session, vm_ref, mock.sentinel.networking_spec
             )
             fake_attach_volumes.assert_called_once_with(
-                self._instance, mock.sentinel.block_device_info,
+                self._instance, block_device_info,
                 constants.DEFAULT_ADAPTER_TYPE,
                 existing_disks={})
             fake_get_vm_networking_spec.assert_called_once_with(
@@ -1744,10 +1751,9 @@ class VMwareVMOpsTestCase(test.TestCase):
         migration.source_compute = uuids.vcenter
         fake_migration_get.return_value = migration
 
-        fake_wait_for_task.side_effect = [mock.Mock(result='fake-cloned-ref'),
-                                          None]
-
         if remote:
+            fake_wait_for_task.side_effect = \
+                [None, mock.Mock(result='fake-cloned-ref'), None]
             rpc_api = mock.Mock()
             remote_relocate_spec = rpc_api.get_relocate_spec.return_value
             remote_relocate_spec.folder = folder_ref
@@ -1761,6 +1767,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                                              dest, self._flavor)
 
         else:
+            fake_wait_for_task.side_effect = \
+                [mock.Mock(result='fake-cloned-ref'), None]
             self._vmops._do_migrate_disk(self._context, vm_ref, self._instance,
                                          dest, mock.sentinel.flavor)
         # Migration is fetched from the DB
@@ -1768,7 +1776,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             migration_context.migration_id, self._instance.uuid)
 
         # VM is cloned with CloneVM_Task
-        _, args, kwargs = fake_call_method.mock_calls[0]
+        _, args, kwargs = fake_call_method.mock_calls[3 if remote else 0]
         self.assertEqual('CloneVM_Task', args[1])
         self.assertEqual(vm_ref, args[2])
         self.assertEqual(folder_ref, kwargs['folder'])
