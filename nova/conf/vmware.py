@@ -562,6 +562,15 @@ Possible values:
  * integer >= 0: time in seconds to sleep between runs
  * integer < 0: disable the sync-loop
 """),
+    cfg.BoolOpt('enable_encrypted_vm_live_migration',
+                default=True,
+                help="""
+Feature toggle enabling live-migration for encrypted VMs.
+
+A False value will prohibit live-migrations at the pre-live-migration
+checks if the VM is encrypted, setting the live-migration to error.
+"""),
+
 ]
 
 ALL_VMWARE_OPTS = (vmwareapi_vif_opts +

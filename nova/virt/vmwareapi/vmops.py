@@ -3168,6 +3168,10 @@ class VMwareVMOps(object):
             raise exception.MigrationError(
                 reason="No datastore with enough resources")
 
+        block_device_mapping = driver.block_device_info_get_mapping(
+            block_device_info)
+        migrate_data.block_device_mapping = block_device_mapping
+
         spec = vutil.serialize_object(relocate_spec)
         defaults["relocate_spec"] = spec
         # Writing the values back
@@ -3270,6 +3274,16 @@ class VMwareVMOps(object):
                 msg = _("No device with MAC address %s exists on the "
                         "VM") % vif_info["mac_address"]
                 raise exception.NotFound(msg)
+
+            # Determine target vmProfile if the VM is encrypted
+            encrypted_vols = [vol for vol in volume_mapping.values()
+                              if vol.get("kmip_key_id")]
+            if encrypted_vols:
+                vol = encrypted_vols[0]
+                relocate_spec.profile = [
+                    vm_util.get_vm_profile_spec(client_factory,
+                                                vol["profile_id"])
+                ]
 
             # Update the network device backing
             config_spec = client_factory.create("ns0:VirtualDeviceConfigSpec")
@@ -3568,6 +3582,13 @@ class VMwareVMOps(object):
         factory = self._session.vim.client.factory
         rel_spec = target.get_relocate_spec(context, instance, flavor,
                                             factory=factory)
+
+        # Decrypt the VM file for cross-vc migrations as we don't know the
+        # remote storage profile. It will be encrypted again once the
+        # root volume is attached at the destination.
+        if (rel_spec.service and
+                vm_util.get_vm_crypto_key_id(self._session, vm_ref)):
+            vm_util.decrypt_vm(self._session, vm_ref)
 
         # Scale the cloned vm down to minimal resources,
         # so that it fits the source hypervisor as well as the destination.
@@ -4899,3 +4920,8 @@ class VMwareVMOps(object):
                 raise exception.MigrationPreCheckError(
                         reason=("Found non-configdrive CD-ROM. "
                                 "Can only migrate configdrive"))
+
+        if (not CONF.vmware.enable_encrypted_vm_live_migration and
+                vm_util.get_vm_crypto_key_id(self._session, vm_ref)):
+            raise exception.MigrationPreCheckError(
+                reason="Live migration is disabled for encrypted VMs.")
