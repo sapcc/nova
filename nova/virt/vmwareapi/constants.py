@@ -256,3 +256,7 @@ DRS_EXT_CUSTOMER_PREFIX = f"{DRS_PREFIX}external_customer_"
 # Prefix for custom attributes (CustomFieldDef names) that's used by Nova to
 # sync traits from Placement.
 CUSTOM_ATTRIBUTES_TRAITS_PREFIX = 'openstack.nova.traits.'
+
+# The vCenter is expected to be configured with an encryption provider called
+# 'kmip', which Nova uses for encryption key lookup.
+KEY_PROVIDER_ID = "kmip"
