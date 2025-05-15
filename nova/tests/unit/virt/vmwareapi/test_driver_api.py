@@ -2532,7 +2532,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self.assertEqual(2, len(ds_util._DS_DC_MAPPING))
 
     def _create_live_migrate_data(self, source_compute=None,
-                                  dest_compute=None):
+                                  dest_compute=None,
+                                  block_device_mapping=None):
         data = objects.migrate_data.VMwareLiveMigrateData()
 
         data.dest_cluster_ref = "cluster-0"
@@ -2573,11 +2574,20 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
             dest_compute=dest_compute,
         )
         data.migration = migration
+        data.block_device_mapping = block_device_mapping
 
         return data
 
     def _create_block_device_info(self):
-        return {}
+        return {
+            'block_device_mapping': [
+                {'mount_device': '/dev/sda', 'connection_info': {'id': 'c'}},
+                {'mount_device': '/dev/sdb', 'connection_info': {'id': 'b'}},
+                {'mount_device': '/dev/sdc', 'connection_info': {'id': 'a'}},
+            ],
+            'swap': {'disk_bus': None, 'swap_size': 512,
+                     'device_name': '/dev/sdx'}
+        }
 
     def _create_placement_result(self, *args, **kwargs):
         relocate_spec = mock.NonCallableMagicMock(
@@ -2606,6 +2616,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
             self.instance, block_device_info, 'fake_network_info',
             'fake_disk_info', migrate_data)
         self.assertEqual(result, migrate_data)
+        self.assertEqual(block_device_info['block_device_mapping'],
+                         migrate_data.block_device_mapping)
 
     @mock.patch.object(vm_util, 'relocate_vm')
     @mock.patch.object(vm_util, 'get_hardware_devices')

@@ -825,11 +825,15 @@ def get_storage_profile_spec(session, storage_policy):
     """Gets the vm profile spec configured for storage policy."""
     profile_id = pbm.get_profile_id_by_name(session, storage_policy)
     if profile_id:
-        client_factory = session.vim.client.factory
-        storage_profile_spec = client_factory.create(
-            'ns0:VirtualMachineDefinedProfileSpec')
-        storage_profile_spec.profileId = profile_id.uniqueId
-        return storage_profile_spec
+        return get_vm_profile_spec(
+            session.vim.client.factory, profile_id.uniqueId)
+
+
+def get_vm_profile_spec(client_factory, profile_id):
+    storage_profile_spec = client_factory.create(
+        'ns0:VirtualMachineDefinedProfileSpec')
+    storage_profile_spec.profileId = profile_id
+    return storage_profile_spec
 
 
 def get_vmdk_attach_config_spec(client_factory,
@@ -841,7 +845,8 @@ def get_vmdk_attach_config_spec(client_factory,
                                 unit_number=None,
                                 device_name=None,
                                 disk_io_limits=None,
-                                profile_id=None):
+                                profile_id=None,
+                                key_id=None):
     """Builds the vmdk attach config spec."""
     config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
 
@@ -850,12 +855,38 @@ def get_vmdk_attach_config_spec(client_factory,
                                 controller_key, disk_type, file_path,
                                 disk_size, linked_clone,
                                 unit_number, device_name, disk_io_limits,
-                                profile_id=profile_id)
+                                profile_id=profile_id,
+                                key_id=key_id)
 
     device_config_spec.append(virtual_device_config_spec)
 
     config_spec.deviceChange = device_config_spec
     return config_spec
+
+
+def get_encrypt_spec(client_factory, key_id):
+    crypto_spec = client_factory.create('ns0:CryptoSpecEncrypt')
+    crypto_spec.cryptoKeyId = create_key_id_spec(client_factory, key_id)
+    return crypto_spec
+
+
+def create_key_id_spec(client_factory, key_id):
+    crypto_key_id = client_factory.create('ns0:CryptoKeyId')
+    crypto_key_id.keyId = key_id
+    crypto_key_id.providerId = client_factory.create('ns0:KeyProviderId')
+    crypto_key_id.providerId.id = constants.KEY_PROVIDER_ID
+    return crypto_key_id
+
+
+def decrypt_vm(session, vm_ref):
+    client_factory = session.vim.client.factory
+    config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
+    crypto_spec = client_factory.create('ns0:CryptoSpecDecrypt')
+    config_spec.crypto = crypto_spec
+    storage_profile_spec = client_factory.create(
+        'ns0:VirtualMachineEmptyProfileSpec')
+    config_spec.vmProfile = [storage_profile_spec]
+    reconfigure_vm(session, vm_ref, config_spec)
 
 
 def get_cdrom_attach_config_spec(client_factory,
@@ -939,6 +970,13 @@ def get_hardware_devices(session, vm_ref):
                                             vm_ref,
                                             "config.hardware.device")
     return vim_util.get_array_items(hardware_devices)
+
+
+def get_vm_crypto_key_id(session, vm_ref):
+    return session._call_method(vutil,
+                                "get_object_property",
+                                vm_ref,
+                                "config.keyId")
 
 
 def _in_boot_order(disk1, disk2):
@@ -1204,7 +1242,8 @@ def _create_virtual_disk_spec(client_factory, controller_key,
                               unit_number=None,
                               device_name=None,
                               disk_io_limits=None,
-                              profile_id=None):
+                              profile_id=None,
+                              key_id=None):
     """Builds spec for the creation of a new/ attaching of an already existing
     Virtual Disk to the VM.
     """
@@ -1267,6 +1306,15 @@ def _create_virtual_disk_spec(client_factory, controller_key,
             client_factory.create('ns0:VirtualMachineDefinedProfileSpec')
         disk_profile.profileId = profile_id
         virtual_device_config.profile = [disk_profile]
+
+    if key_id:
+        device_backing = \
+            client_factory.create('ns0:VirtualDeviceConfigSpecBackingSpec')
+        device_backing.crypto = \
+            client_factory.create('ns0:CryptoSpecRegister')
+        device_backing.crypto.cryptoKeyId = create_key_id_spec(client_factory,
+                                                               key_id)
+        virtual_device_config.backing = device_backing
 
     return virtual_device_config
 
