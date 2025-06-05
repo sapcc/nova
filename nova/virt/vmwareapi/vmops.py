@@ -1427,9 +1427,7 @@ class VMwareVMOps(object):
                                                   key=attrgetter('name')):
             rules = list(rules)
             existing_rules[rule_name] = rules[0]
-            if len(rules) == 1:
-                continue
-            # we found a duplicated rule and have to delete all but one
+            # any additional rules are duplicates and have to be deleted
             for rule in rules[1:]:
                 config_spec.rulesSpec.append(
                     cluster_util.create_rule_spec(
