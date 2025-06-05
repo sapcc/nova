@@ -1484,7 +1484,7 @@ class VMwareVMOps(object):
             for rule_name in existing_rules.keys() - expected_rule_names:
                 config_spec.rulesSpec.append(
                     cluster_util.create_rule_spec(
-                        client_factory, rules[rule_name], 'remove'))
+                        client_factory, existing_rules[rule_name], 'remove'))
 
             superfluous_vm_group_names = \
                 existing_vm_groups.keys() - expected_vm_group_names
