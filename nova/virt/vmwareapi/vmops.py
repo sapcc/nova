@@ -1427,9 +1427,7 @@ class VMwareVMOps(object):
                                                   key=attrgetter('name')):
             rules = list(rules)
             existing_rules[rule_name] = rules[0]
-            if len(rules) == 1:
-                continue
-            # we found a duplicated rule and have to delete all but one
+            # any additional rules are duplicates and have to be deleted
             for rule in rules[1:]:
                 config_spec.rulesSpec.append(
                     cluster_util.create_rule_spec(
@@ -1484,7 +1482,7 @@ class VMwareVMOps(object):
             for rule_name in existing_rules.keys() - expected_rule_names:
                 config_spec.rulesSpec.append(
                     cluster_util.create_rule_spec(
-                        client_factory, rules[rule_name], 'remove'))
+                        client_factory, existing_rules[rule_name], 'remove'))
 
             superfluous_vm_group_names = \
                 existing_vm_groups.keys() - expected_vm_group_names
