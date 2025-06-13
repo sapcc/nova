@@ -4690,6 +4690,36 @@ def purge_shadow_tables(context, before_date, status_fn=None):
     return total_deleted
 
 
+@pick_context_manager_writer
+def soft_delete_excessive_instance_faults(context, max_rows, max_faults):
+    """Soft-delete excessive instance faults.
+
+    For each instance, soft-deletes all but the newest ``max_faults`` instance
+    fault rows, ordered by ``created_at``.
+
+    :param max_rows: The maximum number of instance faults to soft-delete in
+        total. Used to limit query size.
+    :param max_faults: The maximum number of instance fault rows to keep for
+        each instance. If an instance has multiple instance faults with the
+        same ``created_at`` value, more rows may be kept.
+
+    :returns: The number of soft-deleted rows.
+    """
+    fault = models.InstanceFault
+    rank = func.rank().over(order_by=fault.created_at.desc(),
+                            partition_by=fault.instance_uuid).label('rank')
+    subquery = model_query(context, fault, [fault.id, rank],
+                           read_deleted='no').subquery()
+    excessive_faults = context.session.query(subquery).filter(
+        subquery.c.rank > max_faults).limit(max_rows).all()
+    ids = [f.id for f in excessive_faults]
+    if not ids:
+        return 0
+    deleted = model_query(context, fault).filter(
+        fault.id.in_(ids)).soft_delete()
+    return deleted
+
+
 ####################
 
 
