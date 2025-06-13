@@ -696,6 +696,120 @@ class DbCommands(object):
             instance.host = destination_service.host
             instance.save()
 
+    @args('--max_faults', type=int, metavar='<number>', dest='max_faults',
+          help=('Maximum number of instance fault rows to keep for each '
+                'instance. Defaults to 10.'))
+    @args('--max_rows', type=int, metavar='<number>', dest='max_rows',
+          help=('Maximum number of excessive rows to soft-delete per cell. '
+                'Used to limit query size. Defaults to 1000.'))
+    @args('--verbose', action='store_true', dest='verbose', default=False,
+          help='Print how many rows were soft-deleted per cell.')
+    @args('--until-complete', action='store_true', dest='until_complete',
+          default=False,
+          help=('Run continuously until all excessive rows are soft-deleted. '
+                'Use ``max_rows`` as a batch size for each iteration.'))
+    @args('--all-cells', action='store_true', dest='all_cells',
+          default=False, help='Run command across all cells.')
+    @args('--sleep', type=int, metavar='<seconds>', dest='sleep',
+          help=('The amount of time in seconds to sleep between batches when '
+                '``--until-complete`` is used. Defaults to 0.'))
+    def soft_delete_excessive_instance_faults(
+        self, max_faults=10, max_rows=1000, verbose=False,
+        until_complete=False, all_cells=False, sleep=0,
+    ):
+        """Soft-delete excessive instance faults.
+
+        For each instance, soft-deletes all but the ``max_faults`` newest
+        instance fault rows, ordered by ``created_at``. If an instance has
+        multiple instance faults with the same ``created_at`` value, more than
+        ``max_faults`` rows may be kept.
+
+        Returns 0 if nothing was soft-deleted, 1 if at least one row was
+        soft-deleted, 2 if ``max_faults`` or ``max_rows`` is invalid, 3 if no
+        connection could be established to the API DB. If automating, this
+        should be run either with ``--until-complete`` or iteratively while the
+        result is 1, stopping at 0.
+        """
+        max_rows = int(max_rows)
+        if max_rows < 0:
+            print(_("Must supply a positive value for max_rows"))
+            return 2
+        if max_rows > db_const.MAX_INT:
+            print(_('max rows must be <= %(max_value)d') %
+                  {'max_value': db_const.MAX_INT})
+            return 2
+
+        max_faults = int(max_faults)
+        if max_faults < 0:
+            print(_("Must supply a positive value for max_faults"))
+            return 2
+        if max_faults > db_const.MAX_INT:
+            print(_('max faults must be <= %(max_value)d') %
+                  {'max_value': db_const.MAX_INT})
+            return 2
+
+        ctxt = context.get_admin_context()
+        try:
+            cell_mappings = objects.CellMappingList.get_all(ctxt)
+        except db_exc.CantStartEngineError:
+            print(_('Failed to connect to API DB so aborting this '
+                    'soft-deletion attempt. Please check your config file to '
+                    'make sure that [api_database]/connection is set and run '
+                    'this command again.'))
+            return 3
+
+        cell_to_rows_deleted = {}
+        if until_complete and verbose:
+            print(_('Soft-deleting') + '..', end='')  # noqa
+        interrupt = False
+        if not all_cells:
+            cell_mappings = [None]
+        for cell_mapping in cell_mappings:
+            with context.target_cell(ctxt, cell_mapping) as cctxt:
+                # If all_cells=False, cell_mapping is None
+                cell_name = cell_mapping.name if cell_mapping else ''
+                try:
+                    while True:
+                        rows_deleted = \
+                            db.soft_delete_excessive_instance_faults(
+                                cctxt, max_rows=max_rows,
+                                max_faults=max_faults)
+                        if rows_deleted:
+                            cell_to_rows_deleted.setdefault(cell_name, 0)
+                            cell_to_rows_deleted[cell_name] += rows_deleted
+                        # Stop soft-deleting if there are no more rows to
+                        # soft-delete or we do not run until all rows are
+                        # soft-deleted
+                        if rows_deleted < max_rows or not until_complete:
+                            break
+                        if verbose:
+                            print('.', end='')
+                        # Optionally sleep between batches to throttle the
+                        # soft-deletion.
+                        time.sleep(sleep)
+                except KeyboardInterrupt:
+                    interrupt = True
+                    break
+
+        if until_complete and verbose:
+            if interrupt:
+                print('.' + _('stopped'))  # noqa
+            else:
+                print('.' + _('complete'))  # noqa
+
+        if verbose:
+            if cell_to_rows_deleted:
+                print(format_dict(
+                    cell_to_rows_deleted,
+                    dict_property=_('Cell'),
+                    dict_value=_('Number of Rows Soft-Deleted'),
+                ))
+            else:
+                print(_('Nothing was soft-deleted.'))
+
+        # Return 1 if we soft-deleted something
+        return int(bool(cell_to_rows_deleted))
+
 
 class ApiDbCommands(object):
     """Class for managing the api database."""
