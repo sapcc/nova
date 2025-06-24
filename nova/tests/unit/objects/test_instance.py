@@ -2139,6 +2139,67 @@ class TestInstanceListObject(test_objects._LocalTest,
                                                     {})
         self.assertEqual(2, len(insts))
 
+    def test_sum_counts(self):
+        """Counting instance resource quota
+
+        Having no type in instance_types means we count as normal, because need
+        to count somewhere.
+        """
+        instance_types = {
+            17: {'name': 'no_fake', 'separate': False, 'instance_only': False},
+            18: {'name': 'no_fake2', 'separate': False,
+                 'instance_only': False},
+        }
+        instances = [
+            (17, 2, 4, 512),
+            (18, 4, 6, 1024),
+            (19, 2, 4, 512)]
+        res = objects.InstanceList._sum_counts(instances, instance_types)
+        self.assertEqual({'instances': 8, 'cores': 14, 'ram': 2048}, res)
+
+    def test_sum_counts_instance_only(self):
+        """Flavors with QUOTA_INSTANCE_ONLY_KEY count _only_ instances"""
+        instance_types = {
+            17: {'name': 'no_fake', 'separate': False, 'instance_only': True},
+            18: {'name': 'no_fake2', 'separate': False,
+                 'instance_only': False},
+        }
+        instances = [
+            (17, 2, 4, 512),
+            (18, 4, 6, 1024)]
+        res = objects.InstanceList._sum_counts(instances, instance_types)
+        self.assertEqual({'instances': 6, 'cores': 6, 'ram': 1024}, res)
+
+    def test_sum_counts_separate(self):
+        """Flavors with QUOTA_SEPARATE_KEY count different instances quota"""
+        instance_types = {
+            17: {'name': 'so_fake', 'separate': True, 'instance_only': False},
+            18: {'name': 'no_fake2', 'separate': False,
+                 'instance_only': False},
+        }
+        instances = [
+            (17, 2, 4, 512),
+            (18, 4, 6, 1024)]
+        res = objects.InstanceList._sum_counts(instances, instance_types)
+        self.assertEqual({'instances': 4, 'cores': 10, 'ram': 1536,
+                          'instances_so_fake': 2}, res)
+
+    def test_sum_counts_instance_only_separate(self):
+        """Flavors with QUOTA_SEPARATE_KEY and QUOTA_INSTANCE_ONLY_KEY count
+        _only_ different instances quota
+        """
+        instance_types = {
+            17: {'name': 'so_fake', 'separate': True, 'instance_only': True},
+            18: {'name': 'no_fake2', 'separate': False,
+                 'instance_only': False},
+        }
+        instances = [
+            (17, 2, 4, 512),
+            (18, 4, 6, 1024)]
+        res = objects.InstanceList._sum_counts(instances, instance_types)
+        self.assertEqual({'instances': 4, 'cores': 6, 'ram': 1024,
+                          'instances_so_fake': 2}, res)
+
 
 class TestRemoteInstanceListObject(test_objects._RemoteTest,
                                    _TestInstanceListObject):

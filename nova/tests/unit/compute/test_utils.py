@@ -50,6 +50,7 @@ from nova.tests.unit import fake_instance
 from nova.tests.unit import fake_network
 from nova.tests.unit import fake_server_actions
 from nova.tests.unit.objects import test_flavor
+from nova import utils
 
 
 FAKE_IMAGE_REF = uuids.image_ref
@@ -1325,6 +1326,126 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
         deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
         self.assertEqual(expected_deltas, deltas)
 
+    def test_upsize_quota_delta_instance_only_new(self):
+        """The new flavor has QUOTA_INSTANCE_ONLY_KEY
+
+        Since the new flavor only requires instances quota, we should not see
+        any deltas, because we don't require any additional quota.
+        """
+        old_flavor = objects.Flavor.get_by_name(self.context, 'm1.tiny')
+        new_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true'})
+
+        expected_deltas = {}
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_instance_only_old(self):
+        """The old flavor has QUOTA_INSTANCE_ONLY_KEY
+
+        Since the old flavor required no cpu and ram, we should see the new
+        flavor's cpu and ram in the deltas.
+        """
+        old_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true'})
+        new_flavor = objects.Flavor.get_by_name(self.context, 'm1.tiny')
+
+        expected_deltas = {
+            'cores': new_flavor['vcpus'],
+            'ram': new_flavor['memory_mb'],
+        }
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_instance_only_both(self):
+        """The old and the new flavor have QUOTA_INSTANCE_ONLY_KEY
+
+        Both flavors requiring only instances quota means that there should be
+        no deltas since we don't require additional quota.
+        """
+        old_flavor = objects.Flavor(vcpus=1, memory_mb=256,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true'})
+        new_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true'})
+
+        expected_deltas = {}
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_quota_separate_old(self):
+        """The old flavor has QUOTA_SEPARATE_KEY
+
+        The old flavor requiring renamed instances quota means, that we don't
+        have instances quota reserved, yet, and thus need to reserve instances.
+
+        QUOTA_SEPARATE_KEY has no effect on cores/ram.
+        """
+        old_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+        new_flavor = objects.Flavor(vcpus=2, memory_mb=512, extra_specs={})
+
+        expected_deltas = {'instances': 1, 'cores': 1}
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_quota_separate_new(self):
+        """The new flavor has QUOTA_SEPARATE_KEY
+
+        The new flavor requiring renamed instances quota means, that we have
+        reservations for instances, but not the renamed instances, yet, and
+        thus newly require the renamed instances quota.
+
+        QUOTA_SEPARATE_KEY has no effect on cores/ram.
+        """
+        old_flavor = objects.Flavor(vcpus=1, memory_mb=256, extra_specs={})
+        new_flavor = objects.Flavor(name='very_fake', vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        expected_deltas = {'instances_very_fake': 1, 'ram': 256}
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_quota_separate_both_same(self):
+        """The old and the new flavor have QUOTA_SEPARATE_KEY
+
+        The old flavor requiring renamed instances quota, it depends on the
+        names of the flavors if we require new quota or not.
+
+        QUOTA_SEPARATE_KEY has no effect on cores/ram.
+        """
+        old_flavor = objects.Flavor(name='very_fake', vcpus=1, memory_mb=256,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+        new_flavor = objects.Flavor(name='very_fake', vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        expected_deltas = {'ram': 256}
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
+    def test_upsize_quota_delta_quota_separate_both_different(self):
+        """The old and the new flavor have QUOTA_SEPARATE_KEY
+
+        The old flavor requiring renamed instances quota, it depends on the
+        names of the flavors if we require new quota or not.
+
+        QUOTA_SEPARATE_KEY has no effect on cores/ram.
+        """
+        old_flavor = objects.Flavor(name='not_fake', vcpus=1, memory_mb=256,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+        new_flavor = objects.Flavor(name='very_fake', vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        expected_deltas = {'instances_very_fake': 1, 'ram': 256}
+
+        deltas = compute_utils.upsize_quota_delta(new_flavor, old_flavor)
+        self.assertEqual(expected_deltas, deltas)
+
     @mock.patch('nova.objects.Quotas.count_as_dict')
     def test_check_instance_quota_exceeds_with_multiple_resources(self,
                                                                   mock_count):
@@ -1393,6 +1514,165 @@ class ComputeUtilsQuotaTestCase(test.TestCase):
                 check_project_id=self.context.project_id,
                 check_user_id=self.context.user_id)
             mock_check.reset_mock()
+
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    def test_check_num_instances_quota_instance_only(self, mock_check):
+        """Having QUOTA_INSTANCE_ONLY_KEY requires only instances quota
+
+        We check that we do the quota check with only the expected quotas.
+        """
+        fake_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true'})
+
+        compute_utils.check_num_instances_quota(
+            self.context, fake_flavor, 1, 1)
+
+        deltas = {'instances': 1, 'cores': 0, 'ram': 0}
+        mock_check.assert_called_with(
+            self.context, deltas, self.context.project_id, user_id=None,
+            check_project_id=self.context.project_id, check_user_id=None)
+
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    def test_check_num_instances_quota_instance_only_over(self, mock_check):
+        """Having QUOTA_INSTANCE_ONLY_KEY requires only instances quota
+
+        If we get an OverQuota exception in checking the quota, we need to
+        report the right values.
+        """
+        fake_flavor = objects.Flavor(vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true'})
+
+        quotas = {'cores': 1, 'instances': 2, 'ram': 512}
+        overs = ['instances']
+        over_quota_args = dict(quotas=quotas,
+                               usages={'instances': 2, 'cores': 1, 'ram': 512},
+                               overs=overs)
+        e = exception.OverQuota(**over_quota_args)
+        mock_check.side_effect = e
+        try:
+            compute_utils.check_num_instances_quota(
+                self.context, fake_flavor, 1, 1)
+        except exception.TooManyInstances as e:
+            self.assertEqual('instances', e.kwargs['overs'])
+            self.assertEqual('1', e.kwargs['req'])
+            self.assertEqual('2', e.kwargs['used'])
+            self.assertEqual('2', e.kwargs['allowed'])
+        else:
+            self.fail("Exception not raised")
+
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    def test_check_num_instances_quota_instance_only_quota_separate(
+            self, mock_check):
+        """We should require only instances quota named after the flavor
+
+        Having QUOTA_INSTANCE_ONLY_KEY and QUOTA_SEPARATE_KEY requires only
+        instances quota, but the instances quota is renamed to include the
+        flavor name.
+
+        We check that we do the quota check with only the expected quotas.
+        """
+        fake_flavor = objects.Flavor(name="no_fake", vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true',
+                         utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        compute_utils.check_num_instances_quota(
+            self.context, fake_flavor, 1, 1)
+
+        deltas = {'instances_no_fake': 1, 'instances': 0, 'cores': 0, 'ram': 0}
+        mock_check.assert_called_with(
+            self.context, deltas, self.context.project_id, user_id=None,
+            check_project_id=self.context.project_id, check_user_id=None)
+
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    def test_check_num_instances_quota_instance_only_quota_separate_over(
+            self, mock_check):
+        """We should report instances quota named after the flavor
+
+        Having QUOTA_INSTANCE_ONLY_KEY requires only instances quota and having
+        QUOTA_SEPARATE_KEY renames the instances after the flavor.
+
+        If we get an OverQuota exception in checking the quota, we need to
+        report the right values.
+        """
+        fake_flavor = objects.Flavor(name="no_fake", vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_INSTANCE_ONLY_KEY: 'true',
+                         utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        quotas = {'cores': 1, 'instances': 2, 'ram': 512,
+                  'instances_no_fake': 3}
+        overs = ['instances_no_fake']
+        over_quota_args = dict(quotas=quotas,
+                               usages={'instances': 1, 'cores': 1, 'ram': 512,
+                                       'instances_no_fake': 3},
+                               overs=overs)
+        e = exception.OverQuota(**over_quota_args)
+        mock_check.side_effect = e
+        try:
+            compute_utils.check_num_instances_quota(
+                self.context, fake_flavor, 1, 1)
+        except exception.TooManyInstances as e:
+            self.assertEqual('instances_no_fake', e.kwargs['overs'])
+            self.assertEqual('1', e.kwargs['req'])
+            self.assertEqual('3', e.kwargs['used'])
+            self.assertEqual('3', e.kwargs['allowed'])
+        else:
+            self.fail("Exception not raised")
+
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    def test_check_num_instances_quota_quota_separate(
+            self, mock_check):
+        """We require instances named after the flavor + ram and cpu quota
+
+        Having QUOTA_SEPARATE_KEY renames instances after the flavor but does
+        not touch cores/ram quota.
+
+        We check that we do the quota check with only the expected quotas.
+        """
+        fake_flavor = objects.Flavor(name="no_fake", vcpus=1, memory_mb=512,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        compute_utils.check_num_instances_quota(
+            self.context, fake_flavor, 1, 1)
+
+        deltas = {'instances_no_fake': 1, 'instances': 0, 'cores': 1,
+                  'ram': 512}
+        mock_check.assert_called_with(
+            self.context, deltas, self.context.project_id, user_id=None,
+            check_project_id=self.context.project_id, check_user_id=None)
+
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    def test_check_num_instances_quota_quota_separate_over(
+            self, mock_check):
+        """We should report instances quota named after the flavor + cores/ram
+
+        Having QUOTA_SEPARATE_KEY renames the instances after the flavor.
+
+        If we get an OverQuota exception in checking the quota, we need to
+        report the right values.
+        """
+        fake_flavor = objects.Flavor(name="no_fake", vcpus=4, memory_mb=512,
+            extra_specs={utils.QUOTA_SEPARATE_KEY: 'true'})
+
+        quotas = {'cores': 4, 'instances': 2, 'ram': 768,
+                  'instances_no_fake': 3}
+        overs = ['instances_no_fake', 'cores', 'ram']
+        over_quota_args = dict(quotas=quotas,
+                               usages={'instances': 1, 'cores': 4, 'ram': 512,
+                                       'instances_no_fake': 3},
+                               overs=overs)
+        e = exception.OverQuota(**over_quota_args)
+        mock_check.side_effect = e
+        try:
+            compute_utils.check_num_instances_quota(
+                self.context, fake_flavor, 1, 1)
+        except exception.TooManyInstances as e:
+            self.assertEqual('instances_no_fake, cores, ram',
+                             e.kwargs['overs'])
+            self.assertEqual('1, 4, 512', e.kwargs['req'])
+            self.assertEqual('3, 4, 512', e.kwargs['used'])
+            self.assertEqual('3, 4, 768', e.kwargs['allowed'])
+        else:
+            self.fail("Exception not raised")
 
 
 class IsVolumeBackedInstanceTestCase(test.TestCase):
