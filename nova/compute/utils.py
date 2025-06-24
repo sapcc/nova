@@ -1088,14 +1088,20 @@ def upsize_quota_delta(new_flavor, old_flavor):
     # NOTE(jkulik): We need to add the instances_* resource only if we resize
     # towards a QUOTA_SEPARATE_KEY flavor, as we're interested in positive
     # deltas only. Since we only need resource deltas, the old flavor having
-    # the same QUOTA_SEPARATE_KEY between new and old flavor adds no delta.
+    # the same QUOTA_SEPARATE_KEY between new and old flavor adds no delta. We
+    # also have to add generic instances quota when resizing away from
+    # QUOTA_SEPARATE_KEY.
     new_extra_specs = new_flavor.get('extra_specs', {})
     new_separate = new_extra_specs.get(utils.QUOTA_SEPARATE_KEY) == 'true'
-    if new_separate:
-        old_extra_specs = old_flavor.get('extra_specs', {})
-        old_separate = old_extra_specs.get(utils.QUOTA_SEPARATE_KEY) == 'true'
-        if not old_separate or new_flavor['name'] != old_flavor['name']:
-            deltas[f"instances_{new_flavor['name']}"] = 1
+    old_extra_specs = old_flavor.get('extra_specs', {})
+    old_separate = old_extra_specs.get(utils.QUOTA_SEPARATE_KEY) == 'true'
+    if new_separate and not old_separate:
+        deltas[f"instances_{new_flavor['name']}"] = 1
+    elif (old_separate and new_separate and
+            new_flavor['name'] != old_flavor['name']):
+        deltas[f"instances_{new_flavor['name']}"] = 1
+    elif old_separate and not new_separate:
+        deltas["instances"] = 1
 
     return deltas
 
@@ -1144,15 +1150,13 @@ def check_num_instances_quota(
     # Determine requested cores and ram
     req_cores = max_count * flavor.vcpus
     req_ram = max_count * flavor.memory_mb
-    deltas = {'instances': max_count, 'cores': req_cores, 'ram': req_ram}
+    deltas = {'instances': 0, 'cores': 0, 'ram': 0}
 
     quota_key_instances = 'instances'
     if flavor.get('extra_specs', {}).get(utils.QUOTA_SEPARATE_KEY) == 'true':
         quota_key_instances = 'instances_' + flavor.name
-        deltas[quota_key_instances] = max_count
-        deltas['instances'] = 0
-        deltas['cores'] = 0
-        deltas['ram'] = 0
+    deltas[quota_key_instances] = max_count
+
     reserve_cpu_ram = flavor.get('extra_specs', {}).get(
         utils.QUOTA_INSTANCE_ONLY_KEY) != 'true'
     if reserve_cpu_ram:

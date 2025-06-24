@@ -1698,9 +1698,12 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
             flavor = objects.Flavor.obj_from_primitive(
                                                 flavor_info['cur'])
             separate = flavor.extra_specs.get(utils.QUOTA_SEPARATE_KEY)
+            instance_only = flavor.extra_specs.get(
+                utils.QUOTA_INSTANCE_ONLY_KEY)
             instance_types[flavor.id] = {
                 'name': flavor.name,
-                'separate': separate == 'true'
+                'separate': separate == 'true',
+                'instance_only': instance_only == 'true',
             }
 
     @staticmethod
@@ -1761,11 +1764,13 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
                 # instances, so the overall number is correct at least.
                 # Also this should not happen.
                 LOG.error('Unknown instance type id %s', type_id)
+
             if itype and itype.get('separate', False):
                 t_name = f"instances_{itype['name']}"
                 counts[t_name] = counts.get(t_name, 0) + instance_count
             else:
                 counts['instances'] += instance_count
+            if not itype or not itype.get('instance_only', False):
                 counts['cores'] += int(cores)
                 counts['ram'] += int(ram)
 
