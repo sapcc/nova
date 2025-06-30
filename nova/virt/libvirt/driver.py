@@ -7156,7 +7156,7 @@ class LibvirtDriver(driver.ComputeDriver):
             self._add_vtpm_device(guest, flavor, instance, image_meta)
 
         if CONF.libvirt.virt_type == "ch":
-            self._add_rng_device(guest, flavor, image_meta)
+            return
 
         if self._guest_needs_pcie(guest):
             self._guest_add_pcie_root_ports(guest)
