@@ -516,9 +516,9 @@ class PciDevTrackerTestCase(test.NoDBTestCase):
             0,
             len([dev for dev in self.tracker.pci_devs
                  if dev.status == fields.PciDeviceStatus.REMOVED]))
-
-        # free the device that was allocated
+        # free the device that was allocated and update tracker again
         self.tracker._free_device(claimed_dev)
+        self.tracker._set_hvdevs(copy.deepcopy(fake_pci_devs))
         # and assert that one device is removed from the tracker
         self.assertEqual(
             1,
@@ -885,8 +885,18 @@ class PciDevTrackerTestCase(test.NoDBTestCase):
         dev2.remove()
         self.tracker.save(self.fake_context)
 
+        # This is https://bugs.launchpad.net/nova/+bug/2115729 as
+        # only one half of the removed devices are destroyed.
+        self.assertEqual(len(self.tracker.pci_devs), 2)
+        self.assertEqual(self.destroy_called, 1)
+        # a subsequent save will destroy half of the remaining removed devices
+        self.tracker.save(self.fake_context)
         self.assertEqual(len(self.tracker.pci_devs), 1)
         self.assertEqual(self.destroy_called, 2)
+        # after the fix we should see that a single save causes all the
+        # removed devices destroyed
+        # self.assertEqual(len(self.tracker.pci_devs), 1)
+        # self.assertEqual(self.destroy_called, 2)
 
     def test_clean_usage(self):
         inst_2 = copy.copy(self.inst)
