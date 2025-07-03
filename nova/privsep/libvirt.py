@@ -18,6 +18,7 @@ libvirt specific routines.
 """
 
 import binascii
+import fcntl
 import os
 import stat
 
@@ -156,15 +157,24 @@ def readpty(path):
     # exception here... Some platforms (I'm looking at you Windows)
     # don't have a fcntl and we may as well let them know that
     # with an ImportError, not that they should be calling this at all.
-    import fcntl
+    import select
 
     try:
+        epoll = select.epoll()
         with open(path, 'r') as f:
-            current_flags = fcntl.fcntl(f.fileno(), fcntl.F_GETFL)
-            fcntl.fcntl(f.fileno(), fcntl.F_SETFL,
-                        current_flags | os.O_NONBLOCK)
-
-            return f.read()
+            # this is not accepted by the unit test
+            #   os.set_blocking(f.fileno(), False)
+            # therefore we use fnctl directly
+            flags = fcntl.fcntl(f.fileno(), fcntl.F_GETFL)
+            fcntl.fcntl(f.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            epoll.register(f.fileno(), select.EPOLLIN)
+            poll_list = epoll.poll(1)
+            data = ''
+            for _ in poll_list:
+                data += f.read()
+            epoll.unregister(f.fileno())
+            epoll.close()
+            return data
 
     except Exception as exc:
         # NOTE(mikal): dear internet, I see you looking at me with your

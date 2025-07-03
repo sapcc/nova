@@ -20,6 +20,7 @@ from unittest import mock
 import ddt
 import os
 
+import logging
 import nova.privsep.libvirt
 from nova import test
 from nova.tests import fixtures
@@ -146,6 +147,8 @@ class LibvirtTestCase(test.NoDBTestCase):
                 [mock.call(mock_fileno, mock_fcntl.F_GETFL),
                  mock.call(mock_fileno,
                            mock_fcntl.F_SETFL, 32769 | os.O_NONBLOCK)])
+            # Print all calls recorded by mock_open
+            logging.getLogger().info("mock_open.mock_calls: %s", mock_open.mock_calls)
             self.assertIn(mock.call('/fake/path', 'r'), mock_open.mock_calls)
 
     def test_create_nmdev(self):
