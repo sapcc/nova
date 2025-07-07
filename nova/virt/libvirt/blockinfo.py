@@ -95,7 +95,7 @@ SUPPORTED_DEVICE_BUSES = {
     'qemu': ['virtio', 'scsi', 'ide', 'usb', 'fdc', 'sata'],
     'kvm': ['virtio', 'scsi', 'ide', 'usb', 'fdc', 'sata'],
     'lxc': ['lxc'],
-    'ch': [ 'virtio' ],
+    'ch': ['virtio'],
     'parallels': ['ide', 'scsi'],
     # we no longer support UML or Xen, but we keep track of their bus types so
     # we can reject them for other virt types

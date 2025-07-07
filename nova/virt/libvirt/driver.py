@@ -1380,7 +1380,7 @@ class LibvirtDriver(driver.ComputeDriver):
         elif CONF.libvirt.virt_type == 'parallels':
             uri = CONF.libvirt.connection_uri or 'parallels:///system'
         elif CONF.libvirt.virt_type == 'ch':
-            uri = CONF.libvirt.connection_uri or 'ch:///session'
+            uri = CONF.libvirt.connection_uri or 'ch:///system'
         else:
             uri = CONF.libvirt.connection_uri or 'qemu:///system'
         return uri
@@ -1391,6 +1391,7 @@ class LibvirtDriver(driver.ComputeDriver):
             'kvm': 'qemu+%(scheme)s://%(dest)s/system',
             'qemu': 'qemu+%(scheme)s://%(dest)s/system',
             'parallels': 'parallels+tcp://%(dest)s/system',
+            'ch': 'ch+%(scheme)s://%(dest)s/system',
         }
         dest = oslo_netutils.escape_ipv6(dest)
 
@@ -4497,7 +4498,7 @@ class LibvirtDriver(driver.ComputeDriver):
             ('file', "./devices/console[@type='file']/source[@path]", 'path'),
             ('tcp', "./devices/console[@type='tcp']/log[@file]", 'file'),
             ('pty', "./devices/console[@type='pty']/source[@path]", 'path'),
-            ('pty', "./devices/serial[@type='pty']/source[@path]", 'path'),]
+            ('pty', "./devices/serial[@type='pty']/source[@path]", 'path'), ]
         console_type = ""
         console_path = ""
         for c_type, epath, attrib in path_sources:
@@ -6740,7 +6741,7 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.os_init_env["product_name"] = "OpenStack Nova"
         elif CONF.libvirt.virt_type == "ch":
             guest.virt_type = 'kvm'
-            guest.os_kernel = "/var/lib/nova/hypervisor-fw"
+            guest.os_kernel = "/usr/share/cloud-hypervisor/CLOUDHV_EFI.fd"
         elif CONF.libvirt.virt_type == "parallels":
             if guest.os_type == fields.VMMode.EXE:
                 guest.os_init_path = "/sbin/init"
@@ -7154,9 +7155,6 @@ class LibvirtDriver(driver.ComputeDriver):
             self._set_qemu_guest_agent(guest, flavor, instance, image_meta)
             self._add_rng_device(guest, flavor, image_meta)
             self._add_vtpm_device(guest, flavor, instance, image_meta)
-
-        if CONF.libvirt.virt_type == "ch":
-            return
 
         if self._guest_needs_pcie(guest):
             self._guest_add_pcie_root_ports(guest)
