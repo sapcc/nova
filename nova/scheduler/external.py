@@ -63,11 +63,26 @@ def call_external_scheduler_api(context, weighed_hosts, weights, spec_obj):
         return weighed_hosts
     timeout = CONF.filter_scheduler.external_scheduler_timeout
 
+    # Serialize the request spec and context to plain dicts, but remove
+    # sensitive information.
+    spec_data = spec_obj.obj_to_primitive()
+    obj_key = "nova_object.data"  # Used by obj_to_primitive to wrap objects.
+    unwrapped = spec_data
+    for key in [obj_key, 'requested_destination', obj_key, 'cell', obj_key]:
+        if not unwrapped or key not in unwrapped:
+            unwrapped = None
+            break
+        unwrapped = unwrapped[key]
+    if unwrapped:
+        del unwrapped["database_connection"]
+        del unwrapped["transport_url"]
+    context_data = context.to_dict()
+    if "auth_token" in context_data:
+        del context_data["auth_token"]
+
     json_data = {
-        "spec": spec_obj.obj_to_primitive(),
-        # Also serialize the request context, which contains the global request
-        # id and other information helpful for logging and request tracing.
-        "context": context.to_dict(),
+        "spec": spec_data,
+        "context": context_data,
         # Extract some flags from the spec to indicate the type of
         # request. This will allow the external scheduler to quickly
         # decide if it wants to handle the request or not.
