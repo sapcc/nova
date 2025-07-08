@@ -49,6 +49,8 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             is_admin=False,
             read_deleted='no',
             global_request_id='fake_global_request_id',
+            # Sensitive data to be removed.
+            auth_token='fake_auth_token',
         )
         self.example_spec = objects.RequestSpec(
             context=self.example_ctx,
@@ -57,6 +59,15 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
                 vcpus=4,
                 memory_mb=1024,
                 extra_specs={},
+            ),
+            requested_destination=objects.Destination(
+                host='fake_host',
+                cell=objects.CellMapping(
+                    uuid=objects.CellMapping.CELL0_UUID,
+                    # Sensitive data to be removed.
+                    database_connection='fake_db_conn',
+                    transport_url='fake_transport_url',
+                ),
             ),
         )
 
@@ -84,11 +95,38 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             'global_request_id', kwargs['json']['context'],
             'Global request ID should be included in the context'
         )
+        expected_dict = self.example_ctx.to_dict()
+        del expected_dict['auth_token']
         self.assertEqual(
-            self.example_ctx.to_dict(),
+            expected_dict,
             kwargs['json']['context'],
             'Context should be serialized correctly'
         )
+
+    @patch('requests.post')
+    def test_no_credentials_in_cell_mapping(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'hosts': ['host1', 'host3']}
+        mock_post.return_value = mock_response
+
+        call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+
+        # Check that sensitive data in cell mapping is removed
+        _, kwargs = mock_post.call_args
+        spec_data = kwargs['json']['spec']
+        obj_key = "nova_object.data"
+        self.assertIn('requested_destination', spec_data[obj_key])
+        req_destination = spec_data[obj_key]['requested_destination']
+        self.assertIn('cell', req_destination[obj_key])
+        cell_mapping = req_destination[obj_key]['cell']
+        self.assertNotIn('database_connection', cell_mapping[obj_key])
+        self.assertNotIn('transport_url', cell_mapping[obj_key])
 
     @patch('requests.post')
     @patch('nova.scheduler.external.LOG.debug')
