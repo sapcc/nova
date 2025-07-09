@@ -129,6 +129,32 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
         self.assertNotIn('transport_url', cell_mapping[obj_key])
 
     @patch('requests.post')
+    def test_no_credentials_in_cell_mapping_missing_keys(self, mock_post):
+        """This should not raise if requested_destination or cell is missing"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'hosts': ['host1', 'host3']}
+        mock_post.return_value = mock_response
+
+        self.example_spec.requested_destination.cell = None
+
+        call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+
+        self.example_spec.requested_destination = None
+
+        call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+
+    @patch('requests.post')
     @patch('nova.scheduler.external.LOG.debug')
     def test_enabled_api_success(self, mock_debug_log, mock_post):
         mock_response = MagicMock()

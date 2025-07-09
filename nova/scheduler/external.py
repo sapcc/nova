@@ -67,11 +67,15 @@ def call_external_scheduler_api(context, weighed_hosts, weights, spec_obj):
     # sensitive information.
     spec_data = spec_obj.obj_to_primitive()
     obj_key = "nova_object.data"  # Used by obj_to_primitive to wrap objects.
-    if "requested_destination" in (unwrapped := spec_data[obj_key]):
-        req_destination = unwrapped["requested_destination"]
-        if "cell" in (unwrapped := req_destination[obj_key]):
-            del unwrapped["cell"][obj_key]["database_connection"]
-            del unwrapped["cell"][obj_key]["transport_url"]
+    unwrapped = spec_data
+    for key in [obj_key, 'requested_destination', obj_key, 'cell', obj_key]:
+        if not unwrapped or key not in unwrapped:
+            unwrapped = None
+            break
+        unwrapped = unwrapped[key]
+    if unwrapped:
+        del unwrapped["database_connection"]
+        del unwrapped["transport_url"]
     context_data = context.to_dict()
     if "auth_token" in context_data:
         del context_data["auth_token"]
