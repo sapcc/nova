@@ -884,6 +884,10 @@ class LibvirtDriver(driver.ComputeDriver):
             lv_ver=MIN_LIBVIRT_MAXPHYSADDR,
             hv_ver=MIN_QEMU_MAXPHYSADDR,
             hv_type=host.HV_DRIVER_QEMU,
+        ) or self._host.has_min_version(
+            lv_ver=MIN_LIBVIRT_MAXPHYSADDR,
+            hv_ver=(0,0,0),
+            hv_type=host.HV_DRIVER_CH,
         )
 
         # NOTE(nmiki): Currently libvirt does not provide a distinction
