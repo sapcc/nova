@@ -24,6 +24,7 @@
 import collections
 from contextlib import contextmanager
 import functools
+from operator import attrgetter
 import os
 import re
 import sys
@@ -943,7 +944,30 @@ class CellV2Commands(object):
                     sort_key='created_at', sort_dir='asc', limit=limit,
                     marker=marker)
 
+        instance_map = {i.uuid: i for i in instances}
+        mappings = \
+            objects.InstanceMappingList.get_by_instance_uuids(
+                    cctxt.elevated(read_deleted='yes'), list(instance_map))
+
+        for mapping in mappings:
+            instance = instance_map[mapping.instance_uuid]
+            if (mapping.cell_mapping and
+                mapping.cell_mapping.id == cell_mapping.id and
+                mapping.project_id == instance.project_id and
+                mapping.user_id == instance.user_id):
+                continue
+            mapping.cell_mapping = cell_mapping
+            mapping.project_id = instance.project_id
+            mapping.user_id = instance.user_id
+            try:
+                mapping.save()
+            except exception.InstanceMappingNotFound:
+                continue
+
+        mapped_instance_uuids = {m.instance_uuid for m in mappings}
         for instance in instances:
+            if instance.uuid in mapped_instance_uuids:
+                continue
             try:
                 mapping = objects.InstanceMapping(ctxt)
                 mapping.instance_uuid = instance.uuid
@@ -962,9 +986,7 @@ class CellV2Commands(object):
         return marker
 
     @args('--cell_uuid', metavar='<cell_uuid>', dest='cell_uuid',
-          required=True,
-          help='Unmigrated instances will be mapped to the cell with the '
-               'uuid provided.')
+          help='If set, will only map instances of the provided cell.')
     @args('--max-count', metavar='<max_count>', dest='max_count',
           help='Maximum number of instances to map. If not set, all instances '
                'in the cell will be mapped in batches of 50. If you have a '
@@ -974,32 +996,38 @@ class CellV2Commands(object):
           help='The command will start from the beginning as opposed to the '
                'default behavior of starting from where the last run '
                'finished')
-    def map_instances(self, cell_uuid, max_count=None, reset_marker=None):
-        """Map instances into the provided cell.
+    def map_instances(self, cell_uuid=None, max_count=None, reset_marker=None):
+        """Map instances to the corresponding cell.
 
-        Instances in the nova database of the provided cell (nova database
-        info is obtained from the nova-api database) will be queried from
-        oldest to newest and if unmapped, will be mapped to the provided cell.
-        A max-count can be set on the number of instance to map in a single
-        run. Repeated runs of the command will start from where the last run
-        finished so it is not necessary to increase max-count to finish. A
-        reset option can be passed which will reset the marker, thus making the
-        command start from the beginning as opposed to the default behavior of
-        starting from where the last run finished. An exit code of 0 indicates
-        that all instances have been mapped.
+        Instances in the nova cell databases (nova database info is obtained
+        from the nova-api database) will be queried in order of increasing cell
+        id and from oldest to newest. Missing or inconsistent instance mappings
+        will be created or updated. A ``max-count`` can be set on the number of
+        instances to map in a single run. Repeated runs of the command will
+        start from where the last run finished so it is not necessary to
+        increase ``max-count`` to finish. A ``reset`` option can be passed
+        which will reset the marker, thus making the command start from the
+        beginning as opposed to the default behavior of starting from where the
+        last run finished.
+
+        Returns 0 if all instances have been mapped, 1 if there are any
+        remaining instances to be mapped, 3 if no connection could be
+        established to the API DB, 127 if ``max-count`` is invalid. If
+        automating, this should be run either without ``max-count`` or
+        iteratively while the result is 1, stopping at 0.
         """
 
         # NOTE(stephenfin): The support for batching in this command relies on
         # a bit of a hack. We initially process N instance-cell mappings, where
-        # N is the value of '--max-count' if provided else 50. To ensure we
-        # can continue from N on the next iteration, we store a instance-cell
-        # mapping object with a special name and the UUID of the last
-        # instance-cell mapping processed (N - 1) in munged form. On the next
-        # iteration, we search for the special name and unmunge the UUID to
-        # pick up where we left off. This is done until all mappings are
-        # processed. The munging is necessary as there's a unique constraint on
-        # the UUID field and we need something reversable. For more
-        # information, see commit 9038738d0.
+        # N is the value of 'max-count' if provided else 50. To ensure we can
+        # continue from N on the next iteration, we store an instance-cell
+        # mapping object with a special project and user ID, the UUID of the
+        # last instance-cell mapping processed (N - 1) in munged form and the
+        # corresponding cell. On the next iteration, we search for the special
+        # project ID and unmunge the UUID to pick up where we left off. This is
+        # done until all mappings are processed. The munging is necessary as
+        # there's a unique constraint on the UUID field and we need something
+        # reversable. For more information, see commit 9038738d0.
 
         if max_count is not None:
             try:
@@ -1016,41 +1044,124 @@ class CellV2Commands(object):
 
         ctxt = context.RequestContext()
         marker_project_id = 'INSTANCE_MIGRATION_MARKER'
+        if not cell_uuid:
+            marker_project_id = 'INSTANCE_MIGRATION_MARKER_ALL'
 
-        # Validate the cell exists, this will raise if not
-        cell_mapping = objects.CellMapping.get_by_uuid(ctxt, cell_uuid)
-
-        # Check for a marker from a previous run
-        marker_mapping = objects.InstanceMappingList.get_by_project_id(ctxt,
+        # Check for markers from previous runs
+        marker_cell_id = -1
+        marker_sep = '_'
+        marker_mappings = objects.InstanceMappingList.get_by_project_id(ctxt,
                 marker_project_id)
-        if len(marker_mapping) == 0:
+        if cell_uuid:
+            marker_sep = ' '
+            marker_mappings = [
+                m for m in marker_mappings
+                if getattr(m.cell_mapping, 'uuid', None) == cell_uuid]
+        if reset_marker or len(marker_mappings) == 0:
             marker = None
         else:
-            # There should be only one here
-            marker = marker_mapping[0].instance_uuid.replace(' ', '-')
-            if reset_marker:
-                marker = None
-            marker_mapping[0].destroy()
+            # If this function is called iteratively with a `max-count`
+            # parameter from concurrent processes, there may be multiple
+            # markers remaining. If we restart the mapping in this scenario,
+            # these processes could deadlock each other. We avoid this by
+            # picking the newest existing marker and delaying marker deletion
+            # until we have created a new marker (or the mapping is completed
+            # and a marker is no longer needed). This may still result in
+            # redundant validations across multiple processes, but avoids a
+            # complete deadlock.
+            # NOTE: Selecting the newest marker is not strictly necessary,
+            # but should reduce redundant validations in practice.
+            marker_mappings = sorted(
+                marker_mappings, key=attrgetter('created_at'))
+            marker = marker_mappings[-1].instance_uuid.replace(marker_sep, '-')
+            marker_cell_id = marker_mappings[-1].cell_mapping.id
 
-        next_marker = True
-        while next_marker is not None:
-            next_marker = self._get_and_map_instances(ctxt, cell_mapping,
-                    max_count, marker)
-            marker = next_marker
+        try:
+            if not cell_uuid:
+                cell_mappings = objects.CellMappingList.get_all(ctxt)
+                cell_mappings = [
+                    m for m in cell_mappings if m.id >= marker_cell_id]
+                cell_mappings = sorted(cell_mappings, key=attrgetter('id'))
+            else:
+                cell_mappings = [objects.CellMapping.get_by_uuid(
+                    ctxt, cell_uuid)]
+        except db_exc.CantStartEngineError:
+            print(_('Failed to connect to API DB so aborting this mapping '
+                    'attempt. Please check your config file to make sure that '
+                    '[api_database]/connection is set and run this command '
+                    'again.'))
+            return 3
+
+        for cell_mapping in cell_mappings:
+            print(_('Mapping instances for cell %s') %
+                  getattr(cell_mapping, 'uuid', None))
+            next_marker = True
+            while next_marker is not None:
+                try:
+                    next_marker = self._get_and_map_instances(
+                        ctxt, cell_mapping, max_count, marker)
+                # The marker instance has been deleted, so we need to restart
+                # the mapping process for this cell.
+                except exception.MarkerNotFound:
+                    print(_(
+                        'The marker instance %s was deleted. Restarting the '
+                        'instance mapping for cell %s') %
+                        (marker, getattr(cell_mapping, 'uuid', None)))
+                    next_marker = self._get_and_map_instances(
+                        ctxt, cell_mapping, max_count, None)
+                marker = next_marker
+                if not map_all:
+                    break
             if not map_all:
                 break
 
+        result = 0
         if next_marker:
-            # Don't judge me. There's already an InstanceMapping with this UUID
-            # so the marker needs to be non destructively modified.
-            next_marker = next_marker.replace('-', ' ')
+            print(_('Mapped instances up to instance %s') % next_marker)
+            result = 1
+            # There's already an InstanceMapping with this UUID so the marker
+            # needs to be non destructively modified. We also may need to mark
+            # the same instance twice when the command is executed both for a
+            # given cell and for all cells. To ensure unique values we
+            # therefore use different characters as a UUID separator instead
+            # of `-`.
+            next_marker = next_marker.replace('-', marker_sep)
             # This is just the marker record, so set user_id to the special
             # marker name as well.
-            objects.InstanceMapping(ctxt, instance_uuid=next_marker,
-                    project_id=marker_project_id,
-                    user_id=marker_project_id).create()
-            return 1
-        return 0
+            next_marker_mapping = objects.InstanceMapping(
+                ctxt, instance_uuid=next_marker, cell_mapping=cell_mapping,
+                project_id=marker_project_id, user_id=marker_project_id)
+            try:
+                next_marker_mapping.create()
+            except db_exc.DBDuplicateEntry:
+                # Update the existing marker to ensure that it does not have an
+                # outdated cell mapping if the instance was moved to another
+                # cell.
+                try:
+                    next_marker_mapping.save()
+                except exception.InstanceMappingNotFound:
+                    # Unless we run the command for a single cell and the
+                    # marked instance was moved, the marker was deleted by
+                    # another process that already created a new marker for the
+                    # same cell or all cells case. If the instance was moved to
+                    # another cell and we are in the outdated cell, the
+                    # instance is no longer useful as a marker. In the edge
+                    # case where we run the command for a single cell, the
+                    # marked instance was moved, we are in the new cell, and
+                    # its marker for the outdated cell was just deleted, we
+                    # accept to restart on the next run
+                    pass
+        else:
+            print(_('Instance mapping completed'))
+
+        # Delete previous markers
+        for marker_mapping in marker_mappings:
+            try:
+                marker_mapping.destroy()
+            except exception.InstanceMappingNotFound:
+                pass
+
+        return result
 
     def _map_cell_and_hosts(self, transport_url, name=None, verbose=False):
         ctxt = context.RequestContext()
