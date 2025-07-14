@@ -1354,6 +1354,11 @@ class VMwareVMOps(object):
         LOG.debug('Starting sync for external customer VmGroup %s',
                   vm_group_name)
 
+        # Since this is an admin group it can contain instances from more than
+        # the current project. Therefore, we need to be able to query all
+        # projects and not just to user-scoped one.
+        context = context.elevated()
+
         @utils.synchronized("vmware-external-customer-vm-group-"
                             f"{vm_group_name}")
         def _sync_vm_group(context, vm_group_name):
