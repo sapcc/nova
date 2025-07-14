@@ -223,6 +223,18 @@ If kept empty, the trait will not be added to any VM-build request and the
 vmwareapi driver will not consider assigning VMs to HostGroups and will not run
 its sync-loop that ensures the assignment.
 """),
+    cfg.ListOpt("external_customer_ignored_domain_names",
+        default=[],
+        help="""
+List of domain names that are ignored even if they match
+external_customer_domain_name_prefixes
+
+Some special domains might match the prefix but are stupidly by decision of
+higher-ups still not supposed to be handled like external customers in Nova's
+perspective. Lacking time for a better design, we hard-code a list of domain
+names here that are ignored whenever we use
+external_customer_domain_name_prefixes.
+"""),
 ]
 
 metrics_opts = [
