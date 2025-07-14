@@ -762,3 +762,14 @@ class TestRequestFilter(test.NoDBTestCase):
         self.assertEqual(
             {nova_utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT},
             reqspec.root_required)
+
+    def test_external_customer_filter_prefix_matching_ignored(self):
+        """Prefix of the domain name matches, but the domain is ignored"""
+        reqspec = objects.RequestSpec(
+            scheduler_hints={'domain_name': ['test']})
+
+        self.flags(external_customer_domain_name_prefixes=['foo', 'bar', 'te'])
+        self.flags(external_customer_ignored_domain_names=['food', 'test'])
+
+        self.assertFalse(request_filter.external_customer_filter(
+                         self.context, reqspec))
