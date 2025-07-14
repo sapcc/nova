@@ -468,6 +468,9 @@ def external_customer_filter(
     if not domain_name.startswith(prefixes):
         return False
 
+    if domain_name in CONF.external_customer_ignored_domain_names:
+        return False
+
     request_spec.root_required.add(
         nova_utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT)
     LOG.debug("external_customer_filter added trait %s",

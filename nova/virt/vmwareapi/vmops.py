@@ -1286,7 +1286,8 @@ class VMwareVMOps(object):
         vm_group_name = None
         if domain_name in hostgroups:
             vm_group_name = f"{drs_prefix}{domain_name}"
-        elif not domain_name.startswith(prefixes):
+        elif not domain_name.startswith(prefixes) or \
+                domain_name in CONF.external_customer_ignored_domain_names:
             vm_group_name = f"{drs_prefix}internal_workload"
         else:
             prefixes_and_hg_names = [(prefix, prefix.removesuffix('-'))
