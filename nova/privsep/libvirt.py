@@ -146,30 +146,62 @@ def unplug_plumgrid_vif(dev):
     processutils.execute('ifc_ctl', 'gateway', 'ifdown', dev)
     processutils.execute('ifc_ctl', 'gateway', 'del_port', dev)
 
+def readpty_once(path):
+    import select
+
+    data = bytearray()
+    epoll = select.epoll()
+
+    with open(path, "w") as f:
+        # Writing a null seems to trigger new output while not being
+        # recognized as a newline or similar by the sender.
+        f.write("\0")
+        f.flush()
+
+    with open(path, "rb") as f:
+        os.set_blocking(f.fileno(), False)
+        epoll.register(f.fileno(), select.EPOLLIN)
+        poll_list = epoll.poll(0.1)
+        for _ in poll_list:
+            data += f.read()
+        epoll.unregister(f.fileno())
+        epoll.close()
+
+    return data.decode("utf-8", errors="ignore")
+
 
 @nova.privsep.sys_admin_pctxt.entrypoint
 def readpty(path):
-    # TODO(mikal): I'm not a huge fan that we don't enforce a valid pty path
-    # here, but I haven't come up with a great way of doing that.
-
-    # NOTE(mikal): I am deliberately not catching the ImportError
-    # exception here... Some platforms (I'm looking at you Windows)
-    # don't have a fcntl and we may as well let them know that
-    # with an ImportError, not that they should be calling this at all.
-    import select
-
+    """
+    The pty created by Cloud Hypervisor is a bit tricky. It seems to require
+    some kind of input to deliver output again. Therefore, we send in a '\0'
+    byte before reading (the null byte does not seem to trigger any
+    interactions with the pty like a newline would do).
+    The reading is done in a loop and we cancel reading when no data is
+    returned anymore. Doing so has proven to deliver all the output available
+    in the pty.
+    """
+    # We track how many times we read zero bytes form the pty
+    consecutive_zero = 0
+    data = ""
     try:
-        epoll = select.epoll()
-        with open(path, 'r') as f:
-            os.set_blocking(f.fileno(), False)
-            epoll.register(f.fileno(), select.EPOLLIN)
-            poll_list = epoll.poll(1)
-            data = ''
-            for _ in poll_list:
-                data += f.read()
-            epoll.unregister(f.fileno())
-            epoll.close()
-            return data
+        # We finish reading once we read zero multiple times continuously. The range
+        # is just a safeguard to finish reading if the terminal happens to have new
+        # data all the time.
+        for _ in range(1000):
+            out = readpty_once(path)
+
+            if len(out) == 0:
+                consecutive_zero += 1
+            else:
+                consecutive_zero = 0
+
+            data += out
+
+            if consecutive_zero > 10:
+                return data
+
+        return data
 
     except Exception as exc:
         # NOTE(mikal): dear internet, I see you looking at me with your
