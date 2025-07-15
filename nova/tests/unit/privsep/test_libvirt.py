@@ -18,7 +18,6 @@ import binascii
 from unittest import mock
 
 import ddt
-import os
 
 import nova.privsep.libvirt
 from nova import test
@@ -124,29 +123,17 @@ class LibvirtTestCase(test.NoDBTestCase):
             ])
 
     def test_readpty(self):
-        # Conditionally mock `import`
-        orig_import = __import__
-        mock_fcntl = mock.Mock(fcntl=mock.Mock(return_value=32769))
+        outputs = ['first', 'second'] + [''] * 11
 
-        def fake_import(module, *args):
-            if module == 'fcntl':
-                return mock_fcntl
-            return orig_import(module, *args)
+        with mock.patch.object(
+                nova.privsep.libvirt, 'readpty_once',
+                side_effect=outputs) as mock_readpty_once:
+            data = nova.privsep.libvirt.readpty('/fake/path')
 
-        with test.nested(
-                mock.patch('builtins.open', new=mock.mock_open()),
-                mock.patch('builtins.__import__', side_effect=fake_import),
-                ) as (mock_open, mock_import):
-            nova.privsep.libvirt.readpty('/fake/path')
-
-            mock_fileno = mock_open.return_value.fileno.return_value
-            # NOTE(efried): The fact that we see fcntl's mocked return value in
-            # here proves that `import fcntl` was called within the method.
-            mock_fcntl.fcntl.assert_has_calls(
-                [mock.call(mock_fileno, mock_fcntl.F_GETFL),
-                 mock.call(mock_fileno,
-                           mock_fcntl.F_SETFL, 32769 | os.O_NONBLOCK)])
-            self.assertIn(mock.call('/fake/path', 'r'), mock_open.mock_calls)
+        self.assertEqual('firstsecond', data)
+        self.assertEqual(len(outputs), mock_readpty_once.call_count)
+        mock_readpty_once.assert_has_calls(
+            [mock.call('/fake/path')] * len(outputs))
 
     def test_create_nmdev(self):
         mock_open = mock.mock_open()
