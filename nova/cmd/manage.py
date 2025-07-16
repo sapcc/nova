@@ -3897,6 +3897,179 @@ class SAPCommands(object):
 
         return num_processed
 
+    def _get_instances(self, cctxt, limit, marker_uuid, marker_id):
+        # Return the next `limit` instances after the marker instance in order
+        # of ascending instance ID.
+        filters = {}
+        sort_keys = ['id']
+        sort_dirs = ['asc']
+        try:
+            return objects.InstanceList.get_by_filters(
+                cctxt, filters, limit=limit, marker=marker_uuid,
+                sort_keys=sort_keys, sort_dirs=sort_dirs).objects
+        # If the marker instance was deleted, we find the first instance after
+        # the marker in sort order. We return that instance and the limit - 1
+        # subsequent ones.
+        except exception.MarkerNotFound:
+            pass
+        marker_uuid = db.instance_get_by_sort_filters(
+            cctxt, sort_keys, sort_dirs, [marker_id])
+        # There are no more instances
+        if not marker_uuid:
+            return []
+        # Raises InstanceNotFound if there is no corresponding instance
+        marker_instance = objects.Instance.get_by_uuid(cctxt, marker_uuid)
+        # Raises MarkerNotFound if there is no corresponding instance
+        next_instances = objects.InstanceList.get_by_filters(
+            cctxt, filters, limit=limit - 1, marker=marker_uuid,
+            sort_keys=sort_keys, sort_dirs=sort_dirs).objects
+        return [marker_instance] + next_instances
+
+    def _map_instances(self, cctxt, cell_mapping, instances, limit):
+        mapped = 0
+        if len(instances) == 0:
+            return mapped
+        # Get existing instance mappings for the passed instances
+        instances_by_uuid = {i.uuid: i for i in instances}
+        mappings = objects.InstanceMappingList.get_by_instance_uuids(
+            cctxt, list(instances_by_uuid))
+        # Update inconsistent instance mappings
+        for mapping in mappings:
+            instance = instances_by_uuid[mapping.instance_uuid]
+            if (mapping.cell_mapping and
+                mapping.cell_mapping.id == cell_mapping.id and
+                mapping.project_id == instance.project_id and
+                mapping.user_id == instance.user_id):
+                continue
+            mapping.cell_mapping = cell_mapping
+            mapping.project_id = instance.project_id
+            mapping.user_id = instance.user_id
+            try:
+                mapping.save()
+                mapped += 1
+            except exception.InstanceMappingNotFound:
+                continue
+        # Create missing instance mappings
+        mapped_instance_uuids = {m.instance_uuid for m in mappings}
+        missing_instance_uuids = instances_by_uuid.keys() \
+            - mapped_instance_uuids
+        for instance_uuid in missing_instance_uuids:
+            instance = instances_by_uuid[instance_uuid]
+            try:
+                mapping = objects.InstanceMapping(cctxt)
+                mapping.instance_uuid = instance.uuid
+                mapping.cell_mapping = cell_mapping
+                mapping.project_id = instance.project_id
+                mapping.user_id = instance.user_id
+                mapping.create()
+                mapped += 1
+            except db_exc.DBDuplicateEntry:
+                continue
+        return mapped
+
+    @args('--max_rows', type=int, metavar='<number>', dest='max_rows',
+          help=('Batch size of the maximum number of instances to map in each '
+                'iteration. Used to limit query size. Defaults to 1000.'))
+    @args('--fetch_instances_max_retries', type=int, metavar='<number>',
+          dest='fetch_instances_max_retries',
+          help=('Maximum number of subsequent instance fetching retries. Used '
+          'to safeguard against inifinite loops. Defaults to 100.'))
+    @args('--verbose', action='store_true', dest='verbose', default=False,
+          help='Print how many rows were mapped per cell.')
+    @args('--sleep', type=int, metavar='<seconds>', dest='sleep',
+          help=('The amount of time in seconds to sleep between batches. '
+                'Defaults to 0.'))
+    def map_instances(self, max_rows=1000, fetch_instances_max_retries=100,
+                      verbose=False, sleep=0):
+        """Fix instance mapping inconsistencies.
+
+        Creates missing instance mapping rows and updates inconsistent rows.
+
+        Returns 0 if all instances have been mapped. 2 if ``max_rows`` or
+        ``fetch_instances_max_retries`` is invalid. 3 if no connection could be
+        established to the API DB. 4 if instance fetching failed for
+        ``fetch_instances_max_retries`` subsequent retries.
+        """
+
+        max_rows = int(max_rows)
+        if max_rows <= 0:
+            print(_("Must supply a positive value for max_rows"))
+            return 2
+        if max_rows > db_const.MAX_INT:
+            print(_('max rows must be <= %(max_value)d') %
+                  {'max_value': db_const.MAX_INT})
+            return 2
+
+        fetch_instances_max_retries = int(fetch_instances_max_retries)
+        if fetch_instances_max_retries < 0:
+            print(_("Must supply a positive value for "
+                    "fetch_instances_max_retries"))
+            return 2
+
+        ctxt = context.get_admin_context()
+        try:
+            cell_mappings = objects.CellMappingList.get_all(ctxt)
+        except db_exc.CantStartEngineError:
+            print(_('Failed to connect to API DB so aborting this mapping '
+                    'attempt. Please check your config file to '
+                    'make sure that [api_database]/connection is set and run '
+                    'this command again.'))
+            return 3
+
+        if verbose:
+            print(_('Mapping instances') + '..', end='')  # noqa
+        cell_to_instances_mapped = {}
+        retries = 0
+        for cell_mapping in cell_mappings:
+            marker_uuid = None
+            marker_id = -1
+            with context.target_cell(ctxt, cell_mapping) as cctxt:
+                cell_name = cell_mapping.name
+                while True:
+                    try:
+                        instances = self._get_instances(
+                            cctxt, max_rows, marker_uuid, marker_id)
+                    except (exception.InstanceNotFound,
+                            exception.MarkerNotFound):
+                        if retries >= fetch_instances_max_retries:
+                            print(_('Failed to fetch instances for '
+                                    'marker_uuid %s and marker_id %s within '
+                                    '%s retries.') %
+                                    (marker_uuid, marker_id,
+                                    fetch_instances_max_retries))
+                            return 4
+                        # Rederive instances
+                        retries += 1
+                        continue
+                    retries = 0
+                    instances_mapped = self._map_instances(
+                        cctxt, cell_mapping, instances, max_rows)
+                    if instances_mapped:
+                        cell_to_instances_mapped.setdefault(cell_name, 0)
+                        cell_to_instances_mapped[cell_name] += instances_mapped
+                    if len(instances) < max_rows:
+                        break
+                    if verbose:
+                        print('.', end='')
+                    marker_uuid = instances[-1].uuid
+                    marker_id = instances[-1].id
+                    # Optionally sleep between batches to throttle the
+                    # mapping.
+                    time.sleep(sleep)
+
+        if verbose:
+            print('.' + _('complete'))  # noqa
+            if cell_to_instances_mapped:
+                print(format_dict(
+                    cell_to_instances_mapped,
+                    dict_property=_('Cell'),
+                    dict_value=_(
+                        'Number of Instance Mappings Created/Updated'),
+                ))
+            else:
+                print(_('Nothing was mapped.'))
+        return 0
+
 
 CATEGORIES = {
     'api_db': ApiDbCommands,
