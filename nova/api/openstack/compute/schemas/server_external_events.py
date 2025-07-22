@@ -32,7 +32,8 @@ create = {
                             'network-changed',
                             'network-vif-plugged',
                             'network-vif-unplugged',
-                            'network-vif-deleted'
+                            'network-vif-deleted',
+                            'network-port-realization-done',
                         ],
                     },
                     'status': {
