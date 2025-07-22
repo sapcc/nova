@@ -405,6 +405,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         with test.nested(
             mock.patch.object(self.conn._vmops, 'update_cluster_placement',
                               return_value=None),
+            mock.patch.object(self.conn._vmops, '_wait_for_port_realization',
+                              return_value=None),
             mock.patch.object(self.conn._vmops, '_find_image_template_vm',
                               return_value=None),
             mock.patch.object(self.conn._vmops,
@@ -1157,6 +1159,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                 return_value=True)
     @mock.patch('nova.virt.vmwareapi.vmops.VMwareVMOps.'
                 'update_cluster_placement')
+    @mock.patch('nova.virt.vmwareapi.vmops.VMwareVMOps.'
+                '_wait_for_port_realization')
     @mock.patch.object(vm_util, 'relocate_vm')
     @mock.patch('nova.virt.vmwareapi.volumeops.VMwareVolumeOps.'
                 'attach_volume')
@@ -1169,6 +1173,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                                   mock_get_res_pool_of_vm,
                                   mock_attach_volume,
                                   mock_relocate_vm,
+                                  mock_wait_for_port,
                                   mock_update_cluster_placement,
                                   mock_is_volume_backed,
                                   set_image_ref=True):
@@ -1202,6 +1207,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                 return_value=False)
     @mock.patch('nova.virt.vmwareapi.vmops.VMwareVMOps.'
                 'update_cluster_placement')
+    @mock.patch('nova.virt.vmwareapi.vmops.VMwareVMOps.'
+                '_wait_for_port_realization')
     @mock.patch('nova.virt.vmwareapi.volumeops.VMwareVolumeOps.'
                 'attach_volume')
     @mock.patch('nova.block_device.volume_in_mapping')
@@ -1210,6 +1217,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                                        mock_info_get_mapping,
                                        mock_block_volume_in_mapping,
                                        mock_attach_volume,
+                                       mock_wait_for_port,
                                        mock_update_cluster_placement,
                                        mock_is_volume_backed):
         self._create_instance()
@@ -2430,7 +2438,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self.assertTrue(found_iface_id)
         self.assertEqual(num_iface_ids, num_found)
 
-    def _attach_interface(self, vif):
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
+    def _attach_interface(self, vif, mock_wait_for_port):
         self.conn.attach_interface(self.context, self.instance, self.image,
                                    vif)
         self._validate_interfaces(vif['id'], 1, 2)
@@ -2444,8 +2453,10 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self._create_vm()
         vif = self._create_vif()
 
-        with mock.patch.object(self.conn._session, '_wait_for_task',
-                               side_effect=Exception):
+        with (mock.patch.object(self.conn._session, '_wait_for_task',
+                               side_effect=Exception),
+                mock.patch.object(vmops.VMwareVMOps,
+                                  '_wait_for_port_realization')):
             self.assertRaises(exception.InterfaceAttachFailed,
                               self.conn.attach_interface,
                               self.context, self.instance, self.image, vif)
@@ -2465,8 +2476,10 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
     def test_detach_interface_and_attach(self):
         vif = self._create_vif()
         self._detach_interface(vif)
-        self.conn.attach_interface(self.context, self.instance, self.image,
-                                   vif)
+        with mock.patch.object(vmops.VMwareVMOps,
+                               '_wait_for_port_realization'):
+            self.conn.attach_interface(self.context, self.instance, self.image,
+                                       vif)
         self._validate_interfaces(vif['id'], 1, 2)
 
     def test_detach_interface_no_device(self):
@@ -2601,7 +2614,9 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
 
     @mock.patch.object(oslo_vim_util, 'serialize_object')
     @mock.patch.object(vmops.VMwareVMOps, 'place_vm')
-    def test_pre_live_migration(self, mock_place_vm, mock_serialize_object):
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
+    def test_pre_live_migration(self, mock_wait_for_port, mock_place_vm,
+                                mock_serialize_object):
         mock_place_vm.side_effect = self._create_placement_result
         self._create_instance()
         migrate_data = self._create_live_migrate_data()
