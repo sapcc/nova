@@ -2175,10 +2175,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vmops.lockutils, 'lock')
     @mock.patch.object(ds_util, 'get_datastore')
     def test_spawn_mask_block_device_info_password(self, mock_get_datastore,
-            mock_lock, mock_update_cluster_placement,
+            mock_lock, mock_wait_for_port, mock_update_cluster_placement,
             mock_build_virtual_machine, mock_get_vm_config_info,
             mock_fetch_image_if_missing, mock_debug, mock_glance,
             mock_is_volume_backed):
@@ -2269,12 +2270,14 @@ class VMwareVMOpsTestCase(test.TestCase):
         'nova.virt.vmwareapi.imagecache.ImageCacheManager.enlist_image')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
     @mock.patch.object(images.VMwareImage, 'from_image')
     def test_spawn_non_root_block_device(self, from_image,
                                          get_extra_specs,
                                          get_vm_config_info,
+                                         wait_for_port,
                                          update_cluster_placement,
                                          build_virtual_machine,
                                          enlist_image, fetch_image,
@@ -2337,12 +2340,14 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch('nova.virt.vmwareapi.vm_util.power_on_instance')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
     @mock.patch.object(images.VMwareImage, 'from_image')
     def test_spawn_with_no_image_and_block_devices(self, from_image,
                                                    get_extra_specs,
                                                    get_vm_config_info,
+                                                   wait_for_port,
                                                    update_cluster_placement,
                                                    build_virtual_machine,
                                                    power_on_instance,
@@ -2406,12 +2411,14 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch('nova.virt.vmwareapi.vm_util.power_on_instance')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
     @mock.patch.object(images.VMwareImage, 'from_image')
     def test_spawn_unsupported_hardware(self, from_image,
                                         get_extra_specs,
                                         get_vm_config_info,
+                                        wait_for_port,
                                         update_cluster_placement,
                                         build_virtual_machine,
                                         power_on_instance,
@@ -2648,6 +2655,7 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vmops.VMwareVMOps, '_create_folders',
                        return_value='fake_vm_folder')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch(
         'nova.virt.vmwareapi.vmops.VMwareVMOps._update_vnic_index')
     @mock.patch(
@@ -2684,6 +2692,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                    mock_get_datastore,
                    mock_configure_config_drive,
                    mock_update_vnic_index,
+                   mock_wait_for_port,
                    mock_update_cluster_placement,
                    mock_create_folders,
                    mock_is_volume_backed,
@@ -2951,12 +2960,14 @@ class VMwareVMOpsTestCase(test.TestCase):
         'nova.virt.vmwareapi.imagecache.ImageCacheManager.enlist_image')
     @mock.patch.object(vmops.VMwareVMOps, 'build_virtual_machine')
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vmops.VMwareVMOps, '_get_vm_config_info')
     @mock.patch.object(vmops.VMwareVMOps, '_get_extra_specs')
     @mock.patch.object(images.VMwareImage, 'from_image')
     def test_spawn_with_ephemerals_and_swap(self, from_image,
                                             get_extra_specs,
                                             get_vm_config_info,
+                                            wait_for_port,
                                             update_cluster_placement,
                                             build_virtual_machine,
                                             enlist_image,
@@ -3982,10 +3993,12 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'reconfigure_vm')
     @mock.patch.object(vm_util, 'get_network_attach_config_spec',
                        return_value='fake-attach-spec')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vm_util, 'get_attach_port_index', return_value=1)
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
     def test_attach_interface(self, mock_get_vm_ref,
                               mock_get_attach_port_index,
+                              mock_wait_for_port,
                               mock_get_network_attach_config_spec,
                               mock_reconfigure_vm,
                               mock_extra_specs):
@@ -4084,10 +4097,12 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'reconfigure_vm')
     @mock.patch.object(vm_util, 'get_network_attach_config_spec',
                        return_value='fake-attach-spec')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vm_util, 'get_attach_port_index', return_value=1)
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
     def test_attach_interface_with_limits(self, mock_get_vm_ref,
                               mock_get_attach_port_index,
+                              mock_wait_for_port,
                               mock_get_network_attach_config_spec,
                               mock_reconfigure_vm,
                               mock_extra_specs):

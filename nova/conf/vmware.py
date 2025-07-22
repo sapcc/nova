@@ -423,6 +423,21 @@ When this option is enabled and DRS is set to `disabled`, the VMs will
 be stacked by choosing the fullest host still having enough resources free
 to fit that VM.
 """),
+    cfg.IntOpt('port_realization_wait_timeout',
+               default=180,
+               help="""
+Time to wait in seconds for a Neutron event during VM lifecycle
+
+Neutron sends a network-port-realization-done event after the port binding to
+notify us that we can create/live-migrate/etc. the VM. If we don't receive the
+event after the given seconds, we time out, ask Neutron again if the ports are
+realized, and fail - depending on the `vif_plugging_is_fatal` configuration
+option.
+
+Possible values:
+* A positive integer: seconds to wait for the event
+* 0 or a negative integer: disable waiting for the event
+"""),
 ]
 
 vmwareapi_driver_opts = [
