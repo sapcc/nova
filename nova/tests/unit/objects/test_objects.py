@@ -1110,7 +1110,7 @@ object_data = {
     'InstanceActionEventList': '1.1-13d92fb953030cdbfee56481756e02be',
     'InstanceActionList': '1.1-a2b2fb6006b47c27076d3a1d48baa759',
     'InstanceDeviceMetadata': '1.0-74d78dd36aa32d26d2769a1b57caf186',
-    'InstanceExternalEvent': '1.5-1ec57351a9851c1eb43ccd90662d6dd0',
+    'InstanceExternalEvent': '1.5-bdd2e3f576462d3b823a4530f6fe6874',
     'InstanceFault': '1.2-7ef01f16f1084ad1304a513d6d410a38',
     'InstanceFaultList': '1.2-6bb72de2872fe49ded5eb937a93f2451',
     'InstanceGroup': '1.11-a26b476ba20883380476d4cb8c4b8d41',

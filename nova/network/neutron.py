@@ -3959,6 +3959,38 @@ class API:
                 'Subnet %s not found' % subnet_id) from e
         return subnet.get('segment_id')
 
+    def get_nsxv3_realization_status(self, context, host, port_ids):
+        """Fetch realization status for given ports
+
+        This calls a custom SAP API in Neutron that provides information from
+        the nsxv3-agent i.e. NSX-T about whether the ports have finished
+        creation in the backend i.e. got realized.
+
+        Neutron requires a host here, because during live-migrations, it's not
+        clear which of the bindings should be checked.
+        """
+        client = get_client(context, admin=True)
+
+        # If neutron doesn't support checking for realization status, we assume
+        # the ports have been realized. Otherwise, a code-path waiting for
+        # realization might never continue.
+        if not self._has_extension('nsxt-policy', context, client):
+            return {p_id: True for p_id in port_ids}
+
+        result = {}
+        for port_id in port_ids:
+            url = (f"/nsxt-policy/port/realization_status?"
+                   f"binding_host={host}"
+                   f"&port_id={port_id}")
+            try:
+                result[port_id] = client.get(url)['realized']
+            except neutron_client_exc.NeutronClientException as e:
+                LOG.exception('Unable to get port realization status for '
+                              'port %s: %s - returning False', port_id, e)
+                result[port_id] = False
+
+        return result
+
 
 def _ensure_requested_network_ordering(accessor, unordered, preferred):
     """Sort a list with respect to the preferred network ordering."""

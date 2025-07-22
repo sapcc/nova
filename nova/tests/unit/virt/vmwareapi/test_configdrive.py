@@ -131,6 +131,7 @@ class ConfigDriveTestCase(test.TestCase):
         vmwareapi_fake.cleanup()
 
     @mock.patch.object(vmops.VMwareVMOps, 'update_cluster_placement')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch('nova.utils.vm_needs_special_spawning')
     @mock.patch.object(vmops.VMwareVMOps, '_get_instance_metadata',
                        return_value='fake_metadata')
@@ -140,7 +141,8 @@ class ConfigDriveTestCase(test.TestCase):
                        return_value=None)
     def _spawn_vm(self, fake_fetch_image_from_other_datastores,
                   fake_find_image_template_vm, fake_get_instance_meta,
-                  mock_vm_special_spawning, mock_update_cluster_placement,
+                  mock_vm_special_spawning, mock_wait_for_port,
+                  mock_update_cluster_placement,
                   injected_files=None, admin_password=None,
                   block_device_info=None):
 

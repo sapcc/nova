@@ -33,6 +33,7 @@ import time
 
 import decorator
 
+import eventlet
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
 import oslo_messaging as messaging
@@ -1533,6 +1534,72 @@ class VMwareVMOps(object):
 
         return templ_vm_ref
 
+    def _wait_for_port_realization(self, context, instance, network_info,
+                                   timeout=300):
+        """Wait for Neutron events of NSX-T port realization
+
+        The nsxv3 driver in Neutron returns the port binding request once it
+        created the port in NSX-T. It doesn't wait for the port to be realized.
+        Instead, it sends an event once the port changes its state.
+
+        We wait for the appropriate event here, checking with an API call if we
+        already missed (some) of the ports' events.
+
+        We wait with a timeout, checking again after the timeout, because
+        `get_nsxv3_realization_status()` returns `False` for a port if any
+        problem with Neutron occurred.
+        """
+        port_ids = [vif['id'] for vif in network_info]
+        if timeout <= 0:
+            # No or a negative timeout disables waiting for the event and since
+            # this method does nothing else, we can return early.
+            return
+
+        events = [('network-port-realization-done', p_id)
+                  for p_id in port_ids]
+        try:
+            with self._virtapi.wait_for_instance_event(
+                instance, events, deadline=timeout,
+            ):
+                port_realized_states = \
+                    self._network_api.get_nsxv3_realization_status(context,
+                        self._compute_host, port_ids)
+
+                done_events = []
+                for port_id in port_ids:
+                    if port_id not in port_realized_states:
+                        LOG.warning("No relization status for port %s",
+                                    port_id, instance=instance)
+                        continue
+
+                    if not port_realized_states[port_id]:
+                        continue
+
+                    LOG.info("Port %s already realized. Disabling "
+                        "network-port-realization-done event for it.",
+                        port_id, instance=instance)
+                    done_events.append(('network-port-realization-done',
+                                        port_id))
+
+                self._virtapi.exit_wait_early(done_events)
+        except eventlet.timeout.Timeout as e:
+            port_realized_states = \
+                self._network_api.get_nsxv3_realization_status(context,
+                    self._compute_host, port_ids)
+            not_realized_port_ids = [k for k, v in port_realized_states.items()
+                                     if not v]
+            if not_realized_port_ids:
+                LOG.info("Waiting for network-port-realization-done timed "
+                         "out after %s with some ports not realized: %s",
+                         timeout, ', '.join(not_realized_port_ids),
+                         instance=instance)
+                if CONF.vif_plugging_is_fatal:
+                    raise exception.VirtualInterfaceCreateException() from e
+            else:
+                LOG.info("Waiting for network-port-realization-done timed "
+                         "out after %s, but all ports are realized",
+                         timeout, instance=instance)
+
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info, block_device_info=None):
 
@@ -1551,6 +1618,11 @@ class VMwareVMOps(object):
         metadata = self._get_instance_metadata(context, instance)
         vm_folder = self._get_project_folder(
             vi.dc_info, project_id=instance.project_id, type_='Instances')
+
+        timeout = CONF.vmware.port_realization_wait_timeout
+        self._wait_for_port_realization(context, instance, network_info,
+                                        timeout=timeout)
+
         # Creates the virtual machine. The virtual machine reference returned
         # is unique within Virtual Center.
         vm_ref = self.build_virtual_machine(instance,
@@ -3100,6 +3172,10 @@ class VMwareVMOps(object):
         defaults["relocate_spec"] = spec
         # Writing the values back
         migrate_data.relocate_defaults = defaults
+
+        timeout = CONF.vmware.port_realization_wait_timeout
+        self._wait_for_port_realization(context, instance, network_info,
+                                        timeout=timeout)
 
         return migrate_data
 
