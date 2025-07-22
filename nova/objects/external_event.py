@@ -23,6 +23,7 @@ EVENT_NAMES = [
     'network-vif-plugged',
     'network-vif-unplugged',
     'network-vif-deleted',
+    'network-port-realization-done',
 
     # Volume was extended for this instance, tag is volume_id
     'volume-extended',
