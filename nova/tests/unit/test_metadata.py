@@ -1208,7 +1208,7 @@ class MetadataHandlerTestCase(test.TestCase):
         self.expected_instance_id = b'a-b-c-d'
 
         signed = hmac.new(
-            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret),
+            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret[0]),
             self.expected_instance_id,
             hashlib.sha256).hexdigest()
 
@@ -1293,7 +1293,7 @@ class MetadataHandlerTestCase(test.TestCase):
 
         # unexpected Instance-ID
         signed = hmac.new(
-            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret),
+            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret[0]),
            b'z-z-z-z',
            hashlib.sha256).hexdigest()
 
@@ -1334,7 +1334,7 @@ class MetadataHandlerTestCase(test.TestCase):
         expected_instance_id = b'a-b-c-d'
 
         signed = hmac.new(
-            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret),
+            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret[0]),
             expected_instance_id,
             hashlib.sha256).hexdigest()
 
@@ -1553,7 +1553,47 @@ class MetadataHandlerTestCase(test.TestCase):
 
         shared_secret = "testing1234"
         self.flags(
-            metadata_proxy_shared_secret=shared_secret,
+            metadata_proxy_shared_secret=[shared_secret],
+            service_metadata_proxy=True, group='neutron')
+
+        self.expected_instance_id = b'a-b-c-d'
+
+        # with X-Metadata-Provider
+        proxy_lb_id = 'edge-x'
+
+        signature = hmac.new(
+            encodeutils.to_utf8(shared_secret),
+            encodeutils.to_utf8(proxy_lb_id),
+            hashlib.sha256).hexdigest()
+
+        mock_client = mock_get_client.return_value
+        mock_client.list_ports.return_value = {
+            'ports': [{'device_id': 'a-b-c-d', 'tenant_id': 'test'}]}
+        mock_client.list_subnets.return_value = {
+            'subnets': [{'network_id': 'f-f-f-f'}]}
+
+        response = fake_request(
+            self, self.mdinst,
+            relpath="/2009-04-04/user-data",
+            address="192.192.192.2",
+            fake_get_metadata_by_instance_id=self._fake_x_get_metadata,
+            headers={'X-Forwarded-For': '192.192.192.2',
+                     'X-Metadata-Provider': proxy_lb_id,
+                     'X-Metadata-Provider-Signature': signature})
+
+        self.assertEqual(200, response.status_int)
+
+    @mock.patch.object(neutronapi, 'get_client', return_value=mock.Mock())
+    def test_metadata_lb_proxy_signed_second(self, mock_get_client):
+        """We have two secrets and the second one is used for signing
+
+        We test here, if only the first or more than on secret is checked
+        against the request.
+        """
+
+        shared_secret = "testing1234"
+        self.flags(
+            metadata_proxy_shared_secret=['thisisnotused', shared_secret],
             service_metadata_proxy=True, group='neutron')
 
         self.expected_instance_id = b'a-b-c-d'
@@ -1588,7 +1628,7 @@ class MetadataHandlerTestCase(test.TestCase):
 
         shared_secret = "testing1234"
         self.flags(
-            metadata_proxy_shared_secret=shared_secret,
+            metadata_proxy_shared_secret=[shared_secret],
             service_metadata_proxy=True, group='neutron')
 
         self.expected_instance_id = b'a-b-c-d'
@@ -1617,7 +1657,7 @@ class MetadataHandlerTestCase(test.TestCase):
         shared_secret = "testing1234"
         bad_secret = "testing3468"
         self.flags(
-            metadata_proxy_shared_secret=shared_secret,
+            metadata_proxy_shared_secret=[shared_secret],
             service_metadata_proxy=True, group='neutron')
 
         self.expected_instance_id = b'a-b-c-d'
