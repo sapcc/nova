@@ -52,7 +52,7 @@ class MetadataRequestHandler(wsgi.Application):
         self._cache = cache_utils.get_client(
                 expiration_time=CONF.api.metadata_cache_expiration)
         if (CONF.neutron.service_metadata_proxy and
-            not CONF.neutron.metadata_proxy_shared_secret):
+            not CONF.neutron.metadata_proxy_shared_secret[0]):
             LOG.warning("metadata_proxy_shared_secret is not configured, "
                         "the metadata information returned by the proxy "
                         "cannot be trusted")
@@ -277,7 +277,7 @@ class MetadataRequestHandler(wsgi.Application):
         instance_address = remote_address.split(',')[0]
 
         # If authentication token is set, authenticate
-        if CONF.neutron.metadata_proxy_shared_secret:
+        if CONF.neutron.metadata_proxy_shared_secret[0]:
             signature = req.headers.get('X-Metadata-Provider-Signature')
             self._validate_shared_secret(provider_id, signature,
                                          instance_address)
@@ -300,20 +300,23 @@ class MetadataRequestHandler(wsgi.Application):
 
     def _validate_shared_secret(self, requestor_id, signature,
                                 requestor_address):
-        expected_signature = hmac.new(
-            encodeutils.to_utf8(CONF.neutron.metadata_proxy_shared_secret),
-            encodeutils.to_utf8(requestor_id),
-            hashlib.sha256).hexdigest()
+        expected_signatures = [
+            hmac.new(
+                encodeutils.to_utf8(shared_secret),
+                encodeutils.to_utf8(requestor_id),
+                hashlib.sha256).hexdigest()
+            for shared_secret in CONF.neutron.metadata_proxy_shared_secret]
         if (not signature or
-            not secutils.constant_time_compare(expected_signature, signature)):
+            not any(secutils.constant_time_compare(expected, signature)
+                    for expected in expected_signatures)):
             if requestor_id:
                 LOG.warning('X-Instance-ID-Signature: %(signature)s does '
-                            'not match the expected value: '
-                            '%(expected_signature)s for id: '
+                            'not match any expected value: '
+                            '%(expected_signatures)s for id: '
                             '%(requestor_id)s. Request From: '
                             '%(requestor_address)s',
                             {'signature': signature,
-                             'expected_signature': expected_signature,
+                             'expected_signatures': expected_signatures,
                              'requestor_id': requestor_id,
                              'requestor_address': requestor_address})
             msg = _('Invalid proxy request signature.')
