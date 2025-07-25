@@ -122,13 +122,17 @@ Related options:
 
 * metadata_proxy_shared_secret
 """),
-     cfg.StrOpt("metadata_proxy_shared_secret",
-        default="",
+     cfg.MultiStrOpt("metadata_proxy_shared_secret",
+        default=[""],
         secret=True,
         help="""
 This option holds the shared secret string used to validate proxy requests to
 Neutron metadata requests. In order to be used, the
 'X-Metadata-Provider-Signature' header must be supplied in the request.
+
+We support multiple secrets being set here to improve the secret rotation
+experience. Nova can support the new secret and the old one, so Neutron can
+switch to the new one without downtime.
 
 Related options:
 
