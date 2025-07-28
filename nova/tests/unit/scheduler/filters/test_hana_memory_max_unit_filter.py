@@ -20,6 +20,7 @@ from nova import objects
 from nova.scheduler.filters import hana_memory_max_unit_filter
 from nova import test
 from nova.tests.unit.scheduler import fakes
+from nova.utils import HANA_MANUAL_SCHEDULING_TRAIT
 
 
 @ddt.ddt
@@ -31,7 +32,8 @@ class TestHANAMemoryMaxUnitFilter(test.NoDBTestCase):
 
     def test_passes(self):
         host = fakes.FakeHostState('host1', 'compute', {
-            'stats': {'memory_mb_max_unit': '2048'}
+            'stats': {'memory_mb_max_unit': '2048'},
+            'traits': [HANA_MANUAL_SCHEDULING_TRAIT]
         })
         extra_specs = {'trait:CUSTOM_HANA_EXCLUSIVE_HOST': 'required'}
 
@@ -46,7 +48,8 @@ class TestHANAMemoryMaxUnitFilter(test.NoDBTestCase):
 
     def test_not_pass_too_big_flavor(self):
         host = fakes.FakeHostState('host1', 'compute', {
-            'stats': {'memory_mb_max_unit': '2048'}
+            'stats': {'memory_mb_max_unit': '2048'},
+            'traits': [HANA_MANUAL_SCHEDULING_TRAIT]
         })
         extra_specs = {'trait:CUSTOM_HANA_EXCLUSIVE_HOST': 'required'}
 
@@ -59,11 +62,27 @@ class TestHANAMemoryMaxUnitFilter(test.NoDBTestCase):
 
         self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
 
+    def test_not_pass_without_trait(self):
+        host = fakes.FakeHostState('host1', 'compute', {
+            'stats': {'memory_mb_max_unit': '2048'},
+        })
+        extra_specs = {'trait:CUSTOM_HANA_EXCLUSIVE_HOST': 'required'}
+
+        flavor = objects.Flavor(memory_mb=512,
+                                extra_specs=extra_specs)
+
+        spec_obj = objects.RequestSpec(
+            context=mock.sentinel.ctx,
+            flavor=flavor)
+
+        self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
+
     @ddt.data({},
               {'trait:CUSTOM_HANA_EXCLUSIVE_HOST': 'forbidden'})
     def test_passes_non_hana(self, extra_specs):
         host = fakes.FakeHostState('host1', 'compute', {
-            'stats': {'memory_mb_max_unit': '2048'}
+            'stats': {'memory_mb_max_unit': '2048'},
+            'traits': [HANA_MANUAL_SCHEDULING_TRAIT]
         })
 
         flavor = objects.Flavor(memory_mb=3072,
@@ -77,7 +96,8 @@ class TestHANAMemoryMaxUnitFilter(test.NoDBTestCase):
 
     def test_passes_no_maxunit(self):
         host = fakes.FakeHostState('host1', 'compute', {
-            'stats': {}
+            'stats': {},
+            'traits': [HANA_MANUAL_SCHEDULING_TRAIT]
         })
         extra_specs = {'trait:CUSTOM_HANA_EXCLUSIVE_HOST': 'required'}
 

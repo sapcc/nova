@@ -21,6 +21,7 @@ from nova.scheduler import weights
 from nova.scheduler.weights import hana_binpack
 from nova import test
 from nova.tests.unit.scheduler import fakes
+from nova.utils import HANA_MANUAL_SCHEDULING_TRAIT
 
 
 @ddt.ddt
@@ -45,11 +46,16 @@ class HANABingPackWeigherTestCase(test.NoDBTestCase):
                 hosts, weight_properties)[0]
 
     def _get_all_hosts(self):
+        traits = [HANA_MANUAL_SCHEDULING_TRAIT]
         host_values = [
-            ('host1', 'node1', {'stats': {'memory_mb_max_unit': '3072'}}),
-            ('host2', 'node2', {'stats': {'memory_mb_max_unit': '8192'}}),
-            ('host3', 'node3', {'stats': {'memory_mb_max_unit': '1024'}}),
-            ('host4', 'node4', {'stats': {'memory_mb_max_unit': '512'}})
+            ('host1', 'node1', {'stats': {'memory_mb_max_unit': '3072'},
+                                'traits': traits}),
+            ('host2', 'node2', {'stats': {'memory_mb_max_unit': '8192'},
+                                'traits': traits}),
+            ('host3', 'node3', {'stats': {'memory_mb_max_unit': '1024'},
+                                'traits': traits}),
+            ('host4', 'node4', {'stats': {'memory_mb_max_unit': '512'},
+                                'traits': traits})
         ]
         return [fakes.FakeHostState(host, node, values)
                 for host, node, values in host_values]
@@ -102,6 +108,23 @@ class HANABingPackWeigherTestCase(test.NoDBTestCase):
         attrs = {'stats': {}}
         host_list = [fakes.FakeHostState('host1', 'node1', attrs),
                      fakes.FakeHostState('host2', 'node2', attrs)]
+        weighed_host = self._get_weighed_host(host_list,
+                                              self._hana_spec_obj)
+        self.assertEqual('host1', weighed_host.obj.host)
+        self.assertEqual(0, weighed_host.weight)
+
+    def test_no_host_trait(self):
+        stats = {'memory_mb_max_unit': '3072'}
+        host_list = [
+            fakes.FakeHostState('host1', 'node1',
+                                {'stats': stats}),
+            fakes.FakeHostState('host2', 'node2',
+                                {'stats': stats,
+                                 'traits': []}),
+            fakes.FakeHostState('host3', 'node3',
+                                {'stats': stats,
+                                 'traits': ['CUSTOM_SOME_TRAIT']})
+        ]
         weighed_host = self._get_weighed_host(host_list,
                                               self._hana_spec_obj)
         self.assertEqual('host1', weighed_host.obj.host)

@@ -25,6 +25,7 @@ import nova.conf
 from nova.scheduler import utils
 from nova.scheduler import weights
 from nova.utils import BIGVM_EXCLUSIVE_TRAIT
+from nova.utils import HANA_MANUAL_SCHEDULING_TRAIT
 
 CONF = nova.conf.CONF
 
@@ -43,6 +44,10 @@ class HANABinPackWeigher(weights.BaseHostWeigher):
         """We want stacking to be the default."""
         memory_mb_max_unit = utils.get_memory_mb_max_unit(host_state)
         if memory_mb_max_unit is None:
+            return 0
+
+        if (not host_state.traits or
+                HANA_MANUAL_SCHEDULING_TRAIT not in host_state.traits):
             return 0
 
         trait = f"trait:{BIGVM_EXCLUSIVE_TRAIT}"

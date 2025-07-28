@@ -440,7 +440,10 @@ class VMwareVCDriver(driver.ComputeDriver):
         # memory_mb_max_unit represents the free memory of the freest host
         # available in the cluster. Can be used by the scheduler to determine
         # if the cluster can accommodate a big VM.
-        memory_mb_max_unit = 0
+        # It's calculated by looking at the configured memoryMB of instances
+        # in that host, not taking into account the actual memory usage.
+        memory_mb_max_unit = max(self._vmops.get_available_memory_per_host(
+            self._vc_state.per_host_stats).values())
         # vcpus_max_unit represents the vCPUs of a physical node from the
         # cluster. It can be used to determine if a VM can be powered-on in
         # this cluster, by comparing its flavor.vcpus to this value.
@@ -449,11 +452,6 @@ class VMwareVCDriver(driver.ComputeDriver):
             # Skip the cluster node
             if nodename == self._nodename:
                 continue
-            memory_mb_free = (resources['memory_mb'] -
-                              resources['memory_mb_used'])
-            if memory_mb_max_unit < memory_mb_free:
-                memory_mb_max_unit = memory_mb_free
-
             vcpus = resources['vcpus']
             if vcpus_max_unit < vcpus:
                 vcpus_max_unit = vcpus

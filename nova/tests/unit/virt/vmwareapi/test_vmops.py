@@ -4351,3 +4351,69 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops._resize_vm(self._context, instance, vm_ref, flavor, None)
         fake_apply_evc_mode.assert_called_once_with(
             self._session, mock.sentinel.vm_ref, None)
+
+    @ddt.unpack
+    @ddt.data(
+        # test 1
+        ([
+             {'host': dict(memory_mb=1024),
+              'instances_mem': [512]},
+             {'host': dict(memory_mb=4096,
+                           memory_mb_reserved=2048),
+              'instances_mem': []},
+             {'host': dict(memory_mb=8192,
+                           available=False),
+              'instances_mem': []}
+         ],
+         # available memory per host
+         # expect only hosts in valid state to be returned
+         [512, 2048]),
+
+        # test 2
+        ([
+             {'host': dict(memory_mb=1024),
+              'instances_mem': [256, 256, 256]},
+             {'host': dict(memory_mb=1024),
+              'instances_mem': [512, 512, 512]},
+             {'host': dict(memory_mb=2048,
+                           memory_mb_reserved=512),
+              'instances_mem': [512, 512, 512]}
+         ],
+         # available memory per host
+         # second host is over-provisioned, but we should still
+         # return 0 available memory MB.
+         [256, 0, 0])
+
+    )
+    def test_get_available_memory_per_host(self,
+                                           hosts_with_instances,
+                                           expected_results):
+        def _fake_host_stat(available=True,
+                            memory_mb=0,
+                            memory_mb_reserved=0):
+            return {
+                "available": available,
+                "memory_mb": memory_mb,
+                "memory_mb_reserved": memory_mb_reserved
+            }
+
+        stats_per_host = {}
+        instances_ret = []
+
+        for idx, hi in enumerate(hosts_with_instances):
+            stats = _fake_host_stat(**hi['host'])
+            mo_id = 'host-%s' % idx
+            stats_per_host[mo_id] = stats
+            for mem in hi['instances_mem']:
+                instances_ret.append(
+                    (uuidutils.generate_uuid(),
+                     {'runtime.host': mo_id,
+                      'config.hardware.memoryMB': mem}))
+
+        with test.nested(
+                mock.patch.object(self._vmops, '_list_instances_in_cluster',
+                                  return_value=instances_ret),
+        ):
+            result = self._vmops.get_available_memory_per_host(
+                stats_per_host)
+            self.assertEqual(list(result.values()), expected_results)

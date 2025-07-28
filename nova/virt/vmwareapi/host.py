@@ -68,6 +68,7 @@ class VCState(object):
         self._cluster = cluster
         self._datastore_regex = datastore_regex
         self._stats = {}
+        self._per_host_stats = {}
         ctx = context.get_admin_context()
         try:
             service = objects.Service.get_by_compute_host(ctx, CONF.host)
@@ -154,6 +155,7 @@ class VCState(object):
                 data[h_name].setdefault('hostgroups', []).append(hg.name)
 
         self._stats = data
+        self._per_host_stats = per_host_stats
         if self._auto_service_disabled:
             self._set_host_enabled(True)
         return data
@@ -161,6 +163,10 @@ class VCState(object):
     @property
     def hostgroups(self):
         return self._stats[self._cluster_node_name].get('hostgroups', {})
+
+    @property
+    def per_host_stats(self):
+        return self._per_host_stats or {}
 
     def _merge_stats(self, host, stats, defaults):
         result = deepcopy(defaults)
