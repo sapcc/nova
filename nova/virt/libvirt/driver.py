@@ -8710,7 +8710,8 @@ class LibvirtDriver(driver.ComputeDriver):
         if (caps.host.cpu.arch in (fields.Architecture.I686,
                                    fields.Architecture.X86_64,
                                    fields.Architecture.AARCH64) and
-                self._host.has_min_version(hv_type=host.HV_DRIVER_QEMU)):
+                (self._host.has_min_version(hv_type=host.HV_DRIVER_QEMU) or
+                 self._host.has_min_version(hv_type=host.HV_DRIVER_CH))):
             return True
         elif (caps.host.cpu.arch in (fields.Architecture.PPC64,
                                      fields.Architecture.PPC64LE)):
