@@ -1025,7 +1025,7 @@ class LibvirtDriver(driver.ComputeDriver):
         mode = CONF.libvirt.cpu_mode
         models = CONF.libvirt.cpu_models
 
-        if (CONF.libvirt.virt_type not in ("kvm", "qemu") and
+        if (CONF.libvirt.virt_type not in ("kvm", "qemu", "ch") and
                 mode not in (None, 'none')):
             msg = _("Config requested an explicit CPU model, but "
                     "the current libvirt hypervisor '%s' does not "
@@ -5409,6 +5409,11 @@ class LibvirtDriver(driver.ComputeDriver):
                     if not models:
                         models = ['max']
 
+        elif CONF.libvirt.virt_type == "ch":
+            # Currently, we only support host-passthrough with Cloud
+            # Hypervisor. This changes as soon as we support proper CPU
+            # profiles.
+            mode = "host-passthrough"
         else:
             if mode is None or mode == "none":
                 return None
