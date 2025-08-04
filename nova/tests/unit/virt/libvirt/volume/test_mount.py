@@ -22,12 +22,16 @@ import fixtures
 from oslo_concurrency import processutils
 from oslo_utils.fixture import uuidsentinel as uuids
 
+import nova.conf
 from nova import exception
 from nova import test
 from nova.virt.libvirt import config as libvirt_config
 from nova.virt.libvirt import guest as libvirt_guest
 from nova.virt.libvirt import host as libvirt_host
 from nova.virt.libvirt.volume import mount
+
+
+CONF = nova.conf.CONF
 
 
 # We wait on events in a few cases. In normal execution the wait period should
@@ -316,6 +320,74 @@ class HostMountStateTestCase(test.NoDBTestCase):
 
         # Unmount vol_b. We should have umounted.
         self._sentinel_umount(m, mock.sentinel.vol_b)
+        self.mock_ensure_tree.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+        self.mock_mount.assert_has_calls([
+            mock.call(mock.sentinel.fstype,
+                      mock.sentinel.export, mock.sentinel.mountpoint,
+                      [mock.sentinel.option1, mock.sentinel.option2])])
+        self.mock_umount.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+        self.mock_rmdir.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+
+    def test_mount_umount_oserror_raised(self):
+        # Mount a volume. Test that the OSError still raised
+        m = self._get_clean_hostmountstate()
+
+        # Mount vol_a from export
+        self._sentinel_mount(m, mock.sentinel.vol_a)
+        self.mock_ensure_tree.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+        self.mock_mount.assert_has_calls([
+            mock.call(mock.sentinel.fstype,
+                      mock.sentinel.export, mock.sentinel.mountpoint,
+                      [mock.sentinel.option1, mock.sentinel.option2])])
+
+        # return also None to test that it won't call a second time and recover
+        self.mock_rmdir.side_effect = [
+            OSError(16, "Device or resource busy"), None]
+        # Unmount vol_a, it will fail with the exception
+        self.assertRaises(OSError, self._sentinel_umount, m,
+                          mock.sentinel.vol_a)
+        self.mock_ensure_tree.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+        self.mock_mount.assert_has_calls([
+            mock.call(mock.sentinel.fstype,
+                      mock.sentinel.export, mock.sentinel.mountpoint,
+                      [mock.sentinel.option1, mock.sentinel.option2])])
+        self.mock_umount.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+        self.mock_rmdir.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+
+    def test_mount_umount_oserror_recovered(self):
+        # Mount a volume. Test that we can handle the OSerror when asked
+        m = self._get_clean_hostmountstate()
+
+        CONF.set_override(
+            "num_umount_retries", 1,
+            group='libvirt',
+        )
+
+        CONF.set_override(
+            "umount_retry_delay", 0.0,
+            group='libvirt',
+        )
+
+        # Mount vol_a from export
+        self._sentinel_mount(m, mock.sentinel.vol_a)
+        self.mock_ensure_tree.assert_has_calls([
+            mock.call(mock.sentinel.mountpoint)])
+        self.mock_mount.assert_has_calls([
+            mock.call(mock.sentinel.fstype,
+                      mock.sentinel.export, mock.sentinel.mountpoint,
+                      [mock.sentinel.option1, mock.sentinel.option2])])
+
+        self.mock_rmdir.side_effect = [
+            OSError(16, "Device or resource busy"), None]
+        # Unmount vol_a. We should have umounted.
+        self._sentinel_umount(m, mock.sentinel.vol_a)
         self.mock_ensure_tree.assert_has_calls([
             mock.call(mock.sentinel.mountpoint)])
         self.mock_mount.assert_has_calls([

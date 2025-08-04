@@ -1157,6 +1157,26 @@ Related options:
                help="""
 Number of times to scan given storage protocol to find volume.
 """),
+    cfg.IntOpt('num_umount_retries',
+               default=0,
+               min=0,
+               help="""
+Number of times to retry to umount on errors, such as device busy.
+
+Related options:
+
+* umount_retry_delay
+"""),
+    cfg.FloatOpt('umount_retry_delay',
+               default=1.0,
+               help="""
+Duration in seconds to wait between retries to umount on errors, such as device
+busy.
+
+Related options:
+
+* num_umount_retries
+"""),
 ]
 
 libvirt_volume_aoe_opts = [
