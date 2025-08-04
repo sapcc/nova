@@ -16,9 +16,11 @@ import collections
 import contextlib
 import os.path
 import threading
+import time
 
 from oslo_concurrency import processutils
 from oslo_log import log
+from oslo_utils import excutils
 from oslo_utils import fileutils
 
 import nova.conf
@@ -388,9 +390,18 @@ class _HostMountState(object):
             LOG.error("Couldn't unmount %(mountpoint)s: %(reason)s",
                       {'mountpoint': mountpoint, 'reason': str(ex)})
 
-        if not os.path.ismount(mountpoint):
-            nova.privsep.path.rmdir(mountpoint)
-            return False
+        umount_retries = CONF.libvirt.num_umount_retries
+        for tries in reversed(range(umount_retries + 1)):
+            try:
+                if not os.path.ismount(mountpoint):
+                    nova.privsep.path.rmdir(mountpoint)
+                    return False
+                break
+            except OSError as ose:
+                with excutils.save_and_reraise_exception() as ctx:
+                    if (ose.errno == 16 and tries > 0):
+                        ctx.reraise = False
+                        time.sleep(CONF.libvirt.umount_retry_delay)
 
         return True
 
