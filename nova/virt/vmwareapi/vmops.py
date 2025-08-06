@@ -3075,7 +3075,8 @@ class VMwareVMOps(object):
         image_meta = image_meta or instance.image_meta
         storage_policy = self._get_storage_policy(instance.flavor)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
-            image_meta.properties.hw_disk_type)
+            image_meta.properties.get('hw_disk_type',
+                                      constants.DEFAULT_DISK_TYPE))
         hagroup_re, hagroup = self._get_hagroup_info(context, instance)
         datastore = ds_util.get_datastore(self._session, self._cluster,
                                           self._datastore_regex,
@@ -3527,7 +3528,8 @@ class VMwareVMOps(object):
         image_meta = instance.image_meta
         storage_policy = self._get_storage_policy(flavor)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
-            image_meta.properties.hw_disk_type)
+            image_meta.properties.get('hw_disk_type',
+                                      constants.DEFAULT_DISK_TYPE))
         res_pool = vm_util.get_res_pool_ref(session, cluster)
         datastore = ds_util.get_datastore(session, cluster,
                                           self._datastore_regex,
@@ -4868,7 +4870,9 @@ class VMwareVMOps(object):
                       instance.uuid, sg_uuid, current_hagroup, hagroup)
             storage_policy = self._get_storage_policy(instance.flavor)
             allowed_ds_types = ds_util.get_allowed_datastore_types(
-                instance.image_meta.properties.hw_disk_type)
+                instance.image_meta.properties.get(
+                    'hw_disk_type', constants.DEFAULT_DISK_TYPE))
+
             datastore = ds_util.get_datastore(self._session, self._cluster,
                                               self._datastore_regex,
                                               storage_policy,
