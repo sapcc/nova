@@ -26,6 +26,7 @@ import requests
 
 import nova.conf
 from nova.scheduler import utils
+from nova import utils as nova_utils
 
 CONF = nova.conf.CONF
 LOG = logging.getLogger(__name__)
@@ -60,6 +61,12 @@ def call_external_scheduler_api(context, weighed_hosts, weights, spec_obj):
         return weighed_hosts
     if not (url := CONF.filter_scheduler.external_scheduler_api_url):
         LOG.debug("External scheduler API is not enabled.")
+        return weighed_hosts
+    # ignore baremetal as we don't plan to schedule them
+    # NOTE(jkulik): If we change this, we need to fix the code below to not
+    # deduplicate on `host`.
+    if nova_utils.is_baremetal_flavor(spec_obj.flavor):
+        LOG.debug("External scheduler does not handle baremetal.")
         return weighed_hosts
     timeout = CONF.filter_scheduler.external_scheduler_timeout
 
