@@ -1704,6 +1704,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                           self._context, self._instance_values, dest,
                           self._flavor, None, None)
 
+    @mock.patch.object(images.VMwareImage, 'from_image')
     @mock.patch.object(vm_util, 'rename_vm')
     @mock.patch.object(objects.MigrationContext, 'get_by_instance_uuid')
     @mock.patch.object(vmops.VMwareVMOps, '_get_project_folder')
@@ -1724,7 +1725,8 @@ class VMwareVMOpsTestCase(test.TestCase):
                               fake_change_uuid, fake_get_dc_ref_name,
                               fake_get_project_folder,
                               fake_migration_context_get,
-                              fake_rename_vm, dest, change_uuid_fails=False):
+                              fake_rename_vm, fake_from_image,
+                              dest, change_uuid_fails=False):
 
         vm_ref = mock.sentinel.vm_ref
         folder_ref = mock.sentinel.folder
