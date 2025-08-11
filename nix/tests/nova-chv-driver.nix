@@ -274,7 +274,7 @@ pkgs.nixosTest {
       assert retry_until_succeed(controllerVM, f"ip netns exec {net_ns} ping -c 1 {vm_ip}", 30)
 
       # Test that deletion and cleanup works as expected
-      controllerVM.succeed("openstack server delete test_vm")
+      controllerVM.succeed("openstack server delete test_vm --wait")
 
       assert retry_until_succeed(controllerVM, "openstack server list")
       server_list = json.loads(controllerVM.succeed("openstack server list -f json"))
