@@ -49,7 +49,7 @@
           inherit system;
           overlays = [
             (_: prev: {
-              cloud-hypervisor = pkgs.callPackage ./chv.nix {
+              cloud-hypervisor = pkgs.callPackage ./nix/chv.nix {
                 inherit cloud-hypervisor-src;
                 craneLib = crane.mkLib pkgs;
                 rustToolchain = rust-bin.stable.latest.default;
