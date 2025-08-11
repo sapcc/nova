@@ -1,0 +1,37 @@
+stages:
+  - test
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  CUSTOM_CI_IMAGE: $CI_REGISTRY_IMAGE/ci:$CI_COMMIT_REF_SLUG
+
+.nix_build_template:
+  interruptible: true
+  variables:
+    PYTHONUNBUFFERED: "1"
+    TERM: "xterm"
+  tags:
+    - native-nix-v2
+  before_script:
+    - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "git@${CI_SERVER_HOST}:"
+    - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
+    - unset NIX_PATH
+
+test:basic-test:
+  stage: test
+  extends:
+    - .nix_build_template
+  dependencies: []
+  script:
+    - nix build .#tests.x86_64-linux.nova-chv-driver.driver
+    - ./result/bin/nixos-test-driver
+
+test:live-migration-test:
+  stage: test
+  needs: [ "test:basic-test" ]
+  extends:
+    - .nix_build_template
+  dependencies: []
+  script:
+    - nix build .#tests.x86_64-linux.chv-live-migration.driver
+    - ./result/bin/nixos-test-driver
