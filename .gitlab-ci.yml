@@ -35,3 +35,13 @@ test:live-migration-test:
   script:
     - nix build .#tests.x86_64-linux.chv-live-migration.driver
     - ./result/bin/nixos-test-driver
+
+test:hugepage-numa-test:
+  stage: test
+  needs: [ "test:live-migration-test" ]
+  extends:
+    - .nix_build_template
+  dependencies: []
+  script:
+    - nix build .#tests.x86_64-linux.chv-numa.driver
+    - ./result/bin/nixos-test-driver
