@@ -3,61 +3,13 @@
   nixosModules,
   generateRootwrapConf,
   novaPkg,
-  libvirt-custom,
+  chvModule,
 }:
 let
   novaConfigForIp =
     ip:
     { config, pkgs, ... }:
     {
-      virtualisation.libvirtd.package = pkgs.libvirt.overrideAttrs (_: {
-        src = libvirt-custom;
-        doInstallCheck = false;
-        doCheck = false;
-        patches = [ ./0001-meson-patch-in-an-install-prefix-for-building-on-nix.patch ./0002-substitute-zfs-and-zpool-commands.patch ];
-      });
-
-      virtualisation.libvirtd.extraConfig = ''
-        listen_tls = 0
-        listen_tcp = 1
-        auth_tcp = "none"
-      '';
-
-      systemd.tmpfiles.settings =
-        let
-          chv-firmware = pkgs.fetchurl {
-            url = "https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/0.5.0/hypervisor-fw";
-            hash = "sha256-Sgoel3No9rFdIZiiFr3t+aNQv15a4H4p5pU3PsFq2Vg=";
-          };
-          chv-ovmf = pkgs.OVMF-cloud-hypervisor.fd;
-        in
-        {
-          "10-chv" = {
-            "/var/lib/nova/hypervisor-fw" = {
-              "L+" = {
-                argument = "${chv-firmware}";
-              };
-            };
-            "/usr/share/cloud-hypervisor/CLOUDHV_EFI.fd" = {
-              "L+" = {
-                argument = "${chv-ovmf}/FV/CLOUDHV.fd";
-              };
-            };
-            "/var/log/libvirt/ch" = {
-              "D" = {
-                user = "root";
-                group = "root";
-                mode = "0755";
-              };
-            };
-          };
-        };
-
-      systemd.services.virtchd.wantedBy = [ "multi-user.target" ];
-      systemd.services.virtlogd.wantedBy = [ "multi-user.target" ];
-      systemd.services.virtnodedevd.wantedBy = [ "multi-user.target" ];
-      systemd.sockets.virtproxyd-tcp.wantedBy = [ "sockets.target" ];
-
       nova.novaPackage = novaPkg;
 
       nova.config =
@@ -181,6 +133,7 @@ pkgs.nixosTest {
       imports = [
         nixosModules.computeModule
         nixosModules.testModules.testCompute
+        chvModule
         (novaConfigForIp "10.0.0.39")
       ];
 
@@ -195,6 +148,7 @@ pkgs.nixosTest {
       imports = [
         nixosModules.computeModule
         nixosModules.testModules.testCompute
+        chvModule
         (novaConfigForIp "10.0.0.40")
       ];
 
