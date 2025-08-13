@@ -18,6 +18,8 @@ let
     filterPath = "/etc/nova/rootwrap.d";
     execDirs = execDirs;
   };
+
+  nr_hugepages = "256";
 in
 pkgs.nixosTest {
   name = "OpenStack Cloud Hypervisor driver test";
@@ -30,16 +32,34 @@ pkgs.nixosTest {
         nixosModules.testModules.testController
       ];
 
+      environment.systemPackages = [
+        pkgs.sshpass
+      ];
+
       nova.novaPackage = novaPkg;
     };
 
   nodes.computeVM =
-    { config, ... }:
+    { config, pkgs, ... }:
     {
       imports = [
         nixosModules.computeModule
         nixosModules.testModules.testCompute
         chvModule
+      ];
+
+      virtualisation = {
+        cores = 4;
+        memorySize = 4096;
+      };
+      boot.kernelParams = [ "hugepages=${nr_hugepages}" ];
+
+      virtualisation.qemu.options = [
+        "-smp 4,sockets=2,cores=2,threads=1"
+        "-object memory-backend-ram,size=2G,id=m0"
+        "-object memory-backend-ram,size=2G,id=m1"
+        "-numa node,nodeid=0,cpus=0-1,memdev=m0"
+        "-numa node,nodeid=1,cpus=2-3,memdev=m1"
       ];
 
       nova.novaPackage = novaPkg;
@@ -200,6 +220,17 @@ pkgs.nixosTest {
             return net_ns
         return ""
 
+      def wait_for_ssh( net_ns, vm_ip):
+        for i in range(60):
+          status, _ = ssh(net_ns, vm_ip, "echo")
+          if status == 0:
+            return True
+          time.sleep(1)
+        return False
+
+      def ssh(net_ns, vm_ip, cmd):
+        print(f"ip netns exec {net_ns} sshpass -p gocubsgo ssh -o StrictHostKeyChecking=no cirros@{vm_ip} {cmd}")
+        return controllerVM.execute(f"ip netns exec {net_ns} sshpass -p gocubsgo ssh -o StrictHostKeyChecking=no cirros@{vm_ip} {cmd}")
 
       start_all()
       controllerVM.wait_for_unit("glance-api.service")
@@ -216,32 +247,37 @@ pkgs.nixosTest {
       controllerVM.wait_for_unit("openstack-create-vm.service")
       assert wait_for_openstack_vm()
 
-      # Check that our Cloud Hypervisor driver is loaded and correctly reported
-      assert retry_until_succeed(controllerVM, "openstack hypervisor list")
-      hypervisor_list = json.loads(controllerVM.succeed("openstack hypervisor list -f json"))
-      assert hypervisor_list[0]["Hypervisor Type"] == "CH"
+      controllerVM.succeed("openstack server delete test_vm --wait")
 
-      computeVM.succeed("pgrep -f cloud-hypervisor")
+      status, out = computeVM.execute("cat /proc/meminfo | grep HugePages_Free | awk '{print $2}'")
+      assert int(out) == ${nr_hugepages}, "Expect all hugepages to be free"
 
-      vm_state = json.loads(controllerVM.succeed("openstack server show test_vm -f json"))
-
-      vm_ip = vm_state["addresses"]["provider"][0]
-      assert vm_ip.startswith("192.168.44")
+      controllerVM.succeed("openstack flavor create m1.numa --vcpus 2 --ram 512 --property hw:mem_page_size=2048 --property hw:numa_nodes=2 --property hw:numa_cpus.0=0 --property hw:numa_cpus.1=1 --property hw:numa_mem.0=256 --property hw:numa_mem.1=256")
+      controllerVM.succeed("openstack server create --wait --flavor m1.numa --image cirros --security-group default --network provider test_vm")
 
       net_ns = wait_for_network_namespace()
       assert net_ns != ""
 
-      # Ping the OpenStack VM from the controller host. We use the network
-      # namespace dedicated for the VM to ping it.
-      assert retry_until_succeed(controllerVM, f"ip netns exec {net_ns} ping -c 1 {vm_ip}", 30)
+      assert wait_for_openstack_vm()
+      vm_state = json.loads(controllerVM.succeed("openstack server show test_vm -f json"))
 
-      # Test that deletion and cleanup works as expected
-      controllerVM.succeed("openstack server delete test_vm --wait")
+      vm_ip = vm_state["addresses"]["provider"][0]
+      instance_name = vm_state["OS-EXT-SRV-ATTR:instance_name"]
+      assert vm_ip.startswith("192.168.44")
 
-      assert retry_until_succeed(controllerVM, "openstack server list")
-      server_list = json.loads(controllerVM.succeed("openstack server list -f json"))
-      assert len(server_list) == 0
+      assert wait_for_ssh(net_ns, vm_ip)
 
-      computeVM.fail("pgrep -f cloud-hypervisor")
+      status, out = computeVM.execute("cat /proc/meminfo | grep HugePages_Free | awk '{print $2}'")
+      assert int(out) < ${nr_hugepages}, "No hugepages have been used"
+
+      status, _ = ssh(net_ns, vm_ip, "ls /sys/devices/system/node/node0")
+      assert status == 0, "Expect Numa node0 to be present"
+
+      status, _ = ssh(net_ns, vm_ip, "ls /sys/devices/system/node/node1")
+      assert status == 0, "Expect Numa node1 to be present"
+
+      status, out = ssh(net_ns, vm_ip, "lscpu | grep Socket | awk '{print $2}'")
+      assert status == 0, "cmd failed"
+      assert int(out) == 2, "Expect to find 2 sockets"
     '';
 }
