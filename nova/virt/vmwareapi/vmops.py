@@ -4386,6 +4386,8 @@ class VMwareVMOps(object):
         # Decision matrix for migrations:
         # Mig-Status Action/Host
         #            Source  Dest
+        # Accepted   Remove  N/A
+        # Queued     Remove  N/A
         # Preparing  Remove  N/A
         # Running    Remove  Add
         # (Other states are consistent with default behaviour)
@@ -4399,7 +4401,7 @@ class VMwareVMOps(object):
         filters = {
             "host": self._compute_host,
             "instance_uuid": instance_uuids,
-            "status": ["preparing", "running"],
+            "status": ["accepted", "queued", "preparing", "running"],
         }
 
         expected_members = {}
@@ -4416,7 +4418,7 @@ class VMwareVMOps(object):
                     migration
             else:
                 # We now handle the destination side
-                if migration.status == "preparing":
+                if migration.status != "running":
                     # Not even started, we can ignore that one
                     continue
 
