@@ -1277,6 +1277,13 @@ class VMwareVMOps(object):
                                                 vm_group_name, vm_ref,
                                                 remove=remove)
 
+    def _get_external_customer_hostgroups(self):
+        hg_prefixes = tuple(prefix.removesuffix('-')
+            for prefix in CONF.external_customer_domain_name_prefixes)
+        hostgroups = [hg_name for hg_name in self._vc_state.hostgroups
+                      if hg_name.startswith(hg_prefixes)]
+        return hostgroups
+
     def _get_external_customer_vm_group_for_instance(self, instance,
                                                      hostgroups):
         """Return the VmGroup name for the specific instance"""
@@ -1316,7 +1323,7 @@ class VMwareVMOps(object):
         instances = InstanceList.get_by_filters(
             context, filters, expected_attrs=['system_metadata'])
 
-        hostgroups = self._vc_state.hostgroups
+        hostgroups = self._get_external_customer_hostgroups()
 
         grouped_instances = defaultdict(list)
         for instance in instances:
@@ -1329,10 +1336,7 @@ class VMwareVMOps(object):
     def update_external_customer_placement(self, context, instance,
                                            remove=False):
         """Ensure DRS rules and VmGroup assignment for the instance"""
-        hg_prefixes = tuple(prefix.removesuffix('-')
-            for prefix in CONF.external_customer_domain_name_prefixes)
-        hostgroups = [hg_name for hg_name in self._vc_state.hostgroups
-                      if hg_name.startswith(hg_prefixes)]
+        hostgroups = self._get_external_customer_hostgroups()
 
         if not hostgroups:
             # This cluster does not manage external customer VMs.
