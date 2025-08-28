@@ -4672,15 +4672,20 @@ class VMwareVMOps(object):
         config_spec.version = extra_specs.hw_version
         placement_spec.configSpec = config_spec
 
-        vm_group_name = self._get_admin_group_name_for_instance(instance)
-        if vm_group_name:
-            placement_rules = []
-            placement_spec.rules = placement_rules
+        group_names = set([
+            self._get_admin_group_name_for_instance(instance),
+            self._get_external_customer_vm_group_for_instance(
+                instance, self._vc_state.hostgroups)
+        ])
+        # either of the groups could be None
+        group_names.discard(None)
+        if group_names:
+            placement_spec.rules = []
             cluster_rules = cluster_util.fetch_cluster_rules(self._session,
                                                              self._cluster)
             for rule in cluster_rules.values():
-                if getattr(rule, "vmGroupName", None) == vm_group_name:
-                    placement_rules.append(rule)
+                if getattr(rule, "vmGroupName", None) in group_names:
+                    placement_spec.rules.append(rule)
 
         result = self._session._call_method(self._session.vim, "PlaceVm",
             self._cluster, placementSpec=placement_spec)
