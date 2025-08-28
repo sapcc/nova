@@ -4676,14 +4676,21 @@ class VMwareVMOps(object):
         config_spec.version = extra_specs.hw_version
         placement_spec.configSpec = config_spec
 
-        vm_group_name = self._get_admin_group_name_for_instance(instance)
-        if vm_group_name:
+        # Derive intended VM groups
+        vm_group_names = [
+            self._get_admin_group_name_for_instance(instance),
+            self._get_external_customer_vm_group_for_instance(
+                instance, self._get_external_customer_hostgroups())
+        ]
+        vm_group_names = [name for name in vm_group_names if name]
+        # Set DRS rules for intended VM groups
+        if vm_group_names:
             placement_rules = []
             placement_spec.rules = placement_rules
             cluster_rules = cluster_util.fetch_cluster_rules(self._session,
                                                              self._cluster)
             for rule in cluster_rules.values():
-                if getattr(rule, "vmGroupName", None) == vm_group_name:
+                if getattr(rule, "vmGroupName", None) in vm_group_names:
                     placement_rules.append(rule)
 
         result = self._session._call_method(self._session.vim, "PlaceVm",
