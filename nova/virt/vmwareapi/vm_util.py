@@ -2488,3 +2488,21 @@ def apply_evc_mode(session, vm_ref, evc_mode):
     task = session._call_method(session.vim, "ApplyEvcModeVM_Task", vm_ref,
                                 mask=feature_masks)
     session._wait_for_task(task)
+
+
+def get_vm_cpu_flags(session, vm_ref) -> set:
+    """CPU flags are stored in an array of VirtualMachineFeatureRequirement
+
+    Both featureName and key contain the same value, e.g. cpuid.aes,
+    vt.realmode or hv.capable.
+
+    We only return cpuid.* features as they correspod to CPU flags. We split
+    off the common "cpuid." part the same as we do with host CPU flags.
+    """
+    feature_requirements = session._call_method(vutil,
+                                                "get_object_property",
+                                                vm_ref,
+                                                "runtime.featureRequirement")
+    return {r.key.split(".", 1)[1].lower()
+        for r in vim_util.get_array_items(feature_requirements)
+        if r.key.startswith("cpuid.")}
