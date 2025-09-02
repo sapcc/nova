@@ -1124,7 +1124,10 @@ class VMwareVCDriver(driver.ComputeDriver):
 
         data.relocate_defaults = {
             "service": vim_util.serialize_object(service, typed=True),
-            "target_host_ref_value": target_host_ref_value
+            "target_host_ref_value": target_host_ref_value,
+            # NOTE(jkulik): We make it a list, because this gets serialized to
+            # JSON and JSON has no sets.
+            "supported_cpu_flags": list(self._vc_state.common_cpu_flags),
         }
 
         return data
@@ -1150,7 +1153,11 @@ class VMwareVCDriver(driver.ComputeDriver):
         if dest_check_data.instance_already_migrated:
             return dest_check_data
 
-        self._vmops.check_can_live_migrate_source(instance)
+        # Drop the cpu-flags as we only had to transport them to the source and
+        # don't need them further down the line.
+        dest_cpu_flags = set(defaults.pop("supported_cpu_flags", []))
+        dest_check_data.relocate_defaults = defaults
+        self._vmops.check_can_live_migrate_source(instance, dest_cpu_flags)
 
         if dest_check_data.is_same_vcenter:
             # Drop the service-credentials, no need to check the volumes,
