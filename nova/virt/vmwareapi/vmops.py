@@ -4907,8 +4907,17 @@ class VMwareVMOps(object):
 
             vm_util.vm_ref_cache_update(vm_uuid, props['obj'])
 
-    def check_can_live_migrate_source(self, instance):
+    def check_can_live_migrate_source(self, instance, dest_cpu_flags: set):
+        """Check for CPU flags, non-configdrive CD-ROMs and vm-encryption"""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
+
+        required_cpu_flags = vm_util.get_vm_cpu_flags(self._session, vm_ref)
+        missing_cpu_flags = required_cpu_flags - dest_cpu_flags
+        if missing_cpu_flags:
+            raise exception.MigrationPreCheckError(
+                reason="Destination cluster is missing required CPU flags: "
+                       f"{', '.join(missing_cpu_flags)}")
+
         devices = vm_util.get_hardware_devices_by_type(self._session, vm_ref)
         for cdrom in devices["cdroms"].values():
             backing = getattr(cdrom, 'backing', None)
