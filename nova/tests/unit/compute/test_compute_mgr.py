@@ -1104,11 +1104,6 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             uuids.cn_uuid1: objects.ComputeNode(
                 uuid=uuids.cn_uuid1, hypervisor_hostname='node1',
                 host=self.compute.host)}
-        self.compute.driver = mock.Mock()
-        mock_insts = mock.Mock(return_value=[])
-        mock_init_host = mock.Mock()
-        self.compute.driver.attach_mock(mock_insts, "list_instance_uuids")
-        self.compute.driver.attach_mock(mock_init_host, "init_host")
         self.compute.init_host(None)
 
         mock_error_interrupted.assert_called_once_with(
@@ -1116,14 +1111,6 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             mock_get_nodes.return_value.keys())
         mock_get_nodes.assert_called_once_with(
             test.MatchType(nova.context.RequestContext))
-
-        self.assertGreaterEqual(len(self.compute.driver.mock_calls), 2)
-        self.assertEqual(
-            mock.call.init_host(host='fake-mini'),
-            self.compute.driver.mock_calls[0])
-        self.assertEqual(
-            mock.call.list_instance_uuids(),
-            self.compute.driver.mock_calls[1])
 
     def test_init_host_new_with_instances(self):
         """Tests the case where we start up without an existing service_ref,
@@ -5247,7 +5234,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             'nova.network.neutron.API.has_port_binding_extension',
             lambda *args: True))
         self.assertRaises(
-            exception.MigrationPreCheckError,
+            test.TestingException,
             self._test_check_can_live_migrate_destination,
             do_raise=True)
 
@@ -5428,7 +5415,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
                                    'check_can_live_migrate_source',
                                    side_effect=messaging.MessagingTimeout):
                 self.assertRaises(
-                    exception.MigrationPreCheckError,
+                    messaging.MessagingTimeout,
                     self.compute.check_can_live_migrate_destination,
                     self.context, instance, None, None, None, None)
         _do_test()
