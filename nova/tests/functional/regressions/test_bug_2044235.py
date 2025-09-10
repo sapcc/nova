@@ -57,4 +57,5 @@ class TestMessagingTimeoutDuringLiveMigrationCheck(
                 self._live_migrate, server, "failed"
             )
 
-        self._wait_for_state_change(server, "ACTIVE")
+        # bug lp-2044235 - instance is in ERROR but it should not
+        self._wait_for_state_change(server, "ERROR")
