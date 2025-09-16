@@ -6807,9 +6807,7 @@ class LibvirtDriver(driver.ComputeDriver):
                 guest_cfg, vconfig.LibvirtConfigGuestConsole,
                 log_path=log_path)
         elif CONF.libvirt.virt_type == "ch":
-            consolepty = vconfig.LibvirtConfigGuestSerial()
-            consolepty.type = "pty"
-            guest_cfg.add_device(consolepty)
+            self._create_consoles_ch(guest_cfg, instance, flavor, image_meta)
 
         else:  # qemu, kvm
             if self._is_s390x_guest(image_meta):
@@ -6838,6 +6836,29 @@ class LibvirtDriver(driver.ComputeDriver):
     def _is_x86_guest(self, image_meta: 'objects.ImageMeta') -> bool:
         archs = (fields.Architecture.I686, fields.Architecture.X86_64)
         return self._check_emulation_arch(image_meta) in archs
+
+    def _create_consoles_ch(self, guest_cfg, instance, flavor,
+                            image_meta):
+        """Create a serial device definition for a CH guest.
+
+        If `CONF.serial_console` is enabled, the web serial console feature is
+        enabled. In this case, we configure a serial device in TCP mode, in
+        order to allow the nova-serialproxy to forward the serial connection to
+        the web serial console.
+        Per default, a serial device in PTY mode is used.
+        """
+        char_dev_cls = vconfig.LibvirtConfigGuestSerial
+        log_path = self._get_console_log_path(instance)
+        if CONF.serial_console.enabled:
+            if not self._serial_ports_already_defined(instance):
+                num_ports = hardware.get_number_of_serial_ports(flavor,
+                                                                image_meta)
+                self._check_number_of_serial_console(num_ports)
+                self._create_serial_consoles(guest_cfg, num_ports,
+                                             char_dev_cls, log_path)
+        else:
+            self._create_pty_device(guest_cfg, char_dev_cls,
+                                    log_path=log_path)
 
     def _create_consoles_qemu_kvm(self, guest_cfg, instance, flavor,
                                   image_meta):
