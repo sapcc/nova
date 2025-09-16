@@ -2,15 +2,13 @@
   description = "Cloud Hypervisor driver for OpenStack Nova";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.05";
     openstack-nix = {
       # url = "git+file:<path/to/openstack-nix>";
       url = "git+https://github.com/cobaltcore-dev/openstack-nix.git";
       # We have observed problems if nixpkgs of the consuming project and
       # nixpkgs of openstack-nix are diverged too much. Therefore, use the
-      # nixpkgs of the consuming project. But take in mind, that openstack-nix
-      # currently isn't compatible with nixpkgs 25.05 or higher. See:
-      # https://github.com/cobaltcore-dev/openstack-nix/issues/8
+      # nixpkgs of the consuming project.
       inputs.nixpkgs.follows = "nixpkgs";
     };
     cloud-hypervisor-src = {

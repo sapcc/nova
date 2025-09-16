@@ -126,16 +126,16 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1751274312,
-        "narHash": "sha256-/bVBlRpECLVzjV19t5KMdMFWSwKLtb5RyXdjz3LJT+g=",
+        "lastModified": 1757408970,
+        "narHash": "sha256-aSgK4BLNFFGvDTNKPeB28lVXYqVn8RdyXDNAvgGq+k0=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "50ab793786d9de88ee30ec4e4c24fb4236fc2674",
+        "rev": "d179d77c139e0a3f5c416477f7747e9d6b7ec315",
         "type": "github"
       },
       "original": {
         "owner": "nixos",
-        "ref": "nixos-24.11",
+        "ref": "nixos-25.05",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -149,11 +149,11 @@
         "pre-commit-hooks-nix": "pre-commit-hooks-nix"
       },
       "locked": {
-        "lastModified": 1754633958,
-        "narHash": "sha256-wxxUXtr5OEC6ekR7IgpDgp6XVNXxN6fyUrTH2/FZBok=",
+        "lastModified": 1757318431,
+        "narHash": "sha256-YTwY94o6YVY/rJHI2aYNzpJQBN8c4Yo6mF0ZwUJUQFQ=",
         "ref": "refs/heads/main",
-        "rev": "27e39d1d56989158c6bcd294ea36bb902c6ec0ac",
-        "revCount": 176,
+        "rev": "d4b10a8c501e3a53713c473b2cd1284511c9892e",
+        "revCount": 190,
         "type": "git",
         "url": "https://github.com/cobaltcore-dev/openstack-nix.git"
       },
