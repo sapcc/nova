@@ -4974,7 +4974,8 @@ class LibvirtDriver(driver.ComputeDriver):
             ('file', "./devices/console[@type='file']/source[@path]", 'path'),
             ('tcp', "./devices/console[@type='tcp']/log[@file]", 'file'),
             ('pty', "./devices/console[@type='pty']/source[@path]", 'path'),
-            ('pty', "./devices/serial[@type='pty']/source[@path]", 'path'), ]
+            ('pty', "./devices/serial[@type='pty']/source[@path]", 'path'),
+            ('tcp', "./devices/serial[@type='tcp']/log[@file]", 'file'), ]
         console_type = ""
         console_path = ""
         for c_type, epath, attrib in path_sources:
