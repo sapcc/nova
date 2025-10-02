@@ -149,11 +149,11 @@
         "pre-commit-hooks-nix": "pre-commit-hooks-nix"
       },
       "locked": {
-        "lastModified": 1757318431,
-        "narHash": "sha256-YTwY94o6YVY/rJHI2aYNzpJQBN8c4Yo6mF0ZwUJUQFQ=",
+        "lastModified": 1759410346,
+        "narHash": "sha256-1gpObMSEag4mnrbVfhBitmXrzLygFk8w2wyVLmCXYSM=",
         "ref": "refs/heads/main",
-        "rev": "d4b10a8c501e3a53713c473b2cd1284511c9892e",
-        "revCount": 190,
+        "rev": "b6963da0d120e810196861be0915ce10317f6bb2",
+        "revCount": 195,
         "type": "git",
         "url": "https://github.com/cobaltcore-dev/openstack-nix.git"
       },
