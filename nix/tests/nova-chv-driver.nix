@@ -31,6 +31,82 @@ pkgs.nixosTest {
       ];
 
       nova.novaPackage = novaPkg;
+
+      nova.config = pkgs.writeText "nova.conf" ''
+        [api_database]
+        connection = mysql+pymysql://nova:nova@controller/nova_api
+
+        [database]
+        connection = mysql+pymysql://nova:nova@controller/nova
+
+        [DEFAULT]
+        transport_url = rabbit://openstack:openstack@controller:5672/
+        my_ip = 10.0.0.11
+        log_dir = /var/log/nova
+        lock_path = /var/lock/nova
+        state_path = /var/lib/nova
+
+        [api]
+        auth_strategy = keystone
+
+        [keystone_authtoken]
+        www_authenticate_uri = http://controller:5000/
+        auth_url = http://controller:5000/
+        memcached_servers = controller:11211
+        auth_type = password
+        project_domain_name = Default
+        user_domain_name = Default
+        project_name = service
+        username = nova
+        password = nova
+
+        [service_user]
+        send_service_user_token = true
+        auth_url = http://controller:5000/
+        auth_strategy = keystone
+        auth_type = password
+        project_domain_name = Default
+        project_name = service
+        user_domain_name = Default
+        username = nova
+        password = nova
+
+        [serial_console]
+        enabled = true
+
+        [vnc]
+        enabled = false
+
+        [glance]
+        api_servers = http://controller:9292
+
+        [oslo_concurrency]
+        lock_path = /var/lib/nova/tmp
+
+        [placement]
+        project_domain_name = Default
+        project_name = service
+        auth_type = password
+        user_domain_name = Default
+        auth_url = http://controller:5000/v3
+        username = placement
+        password = placement
+
+        [scheduler]
+        discover_hosts_in_cells_interval = 300
+
+        [neutron]
+        auth_url = http://controller:5000
+        auth_type = password
+        project_domain_name = Default
+        user_domain_name = Default
+        region_name = RegionOne
+        project_name = service
+        username = neutron
+        password = neutron
+        service_metadata_proxy = true
+        metadata_proxy_shared_secret = neutron_metadata_secret
+      '';
     };
 
   nodes.computeVM =
@@ -119,11 +195,15 @@ pkgs.nixosTest {
         username = nova
         password = nova
 
+        # If VNC is enabled, the horizon dashboard does not allow the web
+        # serial console.
         [vnc]
+        enabled = false
+
+        [serial_console]
         enabled = true
-        server_listen = 0.0.0.0
-        server_proxyclient_address = $my_ip
-        novncproxy_base_url = http://controller:6080/vnc_lite.html
+        serialproxy_host = 0.0.0.0
+        proxyclient_address = $my_ip
 
         [cells]
         enable = False
