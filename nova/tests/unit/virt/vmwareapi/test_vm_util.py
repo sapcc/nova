@@ -62,7 +62,8 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
     @staticmethod
     def _expected_cpu_info():
         return {
-            'features': ['aes', 'avx'],
+            'features': {'cpuid.aes': '1', 'cpuid.amd': '0', 'cpuid.avx': '1',
+                         'cpuid.tmul_max_k': '16'},
             'model': 'Intel(R) Xeon(R) CPU E5-4650 v4 @ 2.20GHz',
             'topology': {'cores': 8, 'sockets': 2, 'threads': 16},
             'vendor': 'Intel',
@@ -2410,6 +2411,39 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         session._call_method.assert_called_once_with(
             session.vim, "DetachDisk_Task", vm_ref, diskId=disk_id)
         session._wait_for_task.assert_called_once_with(task)
+
+    def test_feature_requirements_compatibility(self):
+        """Test parsing of the values and checking them against capabilities"""
+        aes = fake.DataObject('FeatureRequirement')
+        aes.key = aes.featureName = 'cpuid.aes'
+        aes.value = 'Bool:Min:1'
+        ple = fake.DataObject('FeatureRequirement')
+        ple.key = ple.featureName = 'vt.ple'
+        ple.value = 'Bool:Match:1'
+        rtm = fake.DataObject('FeatureRequirement')
+        rtm.key = rtm.featureName = 'cpuid.rtm'
+        rtm.value = 'Num:Match:1'
+        tp1nr = fake.DataObject('FeatureRequirement')
+        tp1nr.key = tp1nr.featureName = 'cpuid.tile_palette1_num_regs'
+        tp1nr.value = 'Num:Min:8'
+        tmul_max_k = fake.DataObject('FeatureRequirement')
+        tmul_max_k.key = tmul_max_k.featureName = 'cpuid.tmul_max_k'
+        tmul_max_k.value = '16'
+        tp1mr = fake.DataObject('FeatureRequirement')
+        tp1mr.key = tp1mr.featureName = 'cpuid.tile_palette1_max_rows'
+        tp1mr.value = 'Num:Min:0x10'
+
+        requirements = vm_util.FeatureRequirements([
+            aes, ple, rtm, tp1nr, tmul_max_k, tp1mr])
+
+        capabilities = vm_util.FeatureCapabilities({
+            'cpuid.aes': '1', 'vt.ple': '1', 'cpuid.rtm': '1',
+            'cpuid.tile_palette1_num_regs': '8', 'cpuid.tmul_max_k': '16',
+            'cpuid.tile_palette1_max_rows': '16'})
+
+        compatible, error_str = requirements.check_compatibility(capabilities)
+        self.assertTrue(compatible)
+        self.assertEqual(error_str, '')
 
 
 @mock.patch.object(vmware_session.VMwareAPISession, 'vim',

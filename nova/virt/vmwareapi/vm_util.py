@@ -1716,7 +1716,7 @@ def aggregate_stats_from_cluster(host_stats):
         max_mem_mb_per_host = max(max_mem_mb_per_host,
                                   memory_mb - memory_mb_reserved)
         if not aggregated_cpu_info:
-            aggregated_cpu_info = stats["cpu_info"].copy()
+            aggregated_cpu_info = copy.deepcopy(stats["cpu_info"])
         else:
             cpu_info = stats["cpu_info"]
             for key, value in cpu_info.items():
@@ -1766,21 +1766,14 @@ def _host_props_to_cpu_info(host_props):
         processor_type = t.description
         cpu_vendor = t.vendor.title()
 
-    features = []
+    features = {}
     if "config.featureCapability" in host_props:
-        feature_capability = host_props["config.featureCapability"]
-        for feature in feature_capability.HostFeatureCapability:
-            if not feature.featureName.startswith("cpuid."):
-                continue
-            if feature.value != "1":
-                continue
-
-            name = feature.featureName
-            features.append(name.split(".", 1)[1].lower())
+        features = FeatureCapabilities.from_vmware(
+            host_props["config.featureCapability"].HostFeatureCapability)
     cpu_info = {
         "model": processor_type,
         "vendor": cpu_vendor,
-        "features": sorted(features)
+        "features": features,
     }
     hardware_cpu_info = host_props.get("hardware.cpuInfo")
     if hardware_cpu_info:
@@ -2490,19 +2483,126 @@ def apply_evc_mode(session, vm_ref, evc_mode):
     session._wait_for_task(task)
 
 
-def get_vm_cpu_flags(session, vm_ref) -> set:
+class FeatureCapabilities(collections.UserDict):
+
+    def __init__(self, feature_capabilities):
+        super().__init__()
+        self.data.update(feature_capabilities)
+
+    @classmethod
+    def from_vmware(cls, host_feature_capabilities) -> 'FeatureCapabilities':
+        """Create an object from an Array of HostFeatureCapability objects"""
+        return cls({x_.key.lower(): x_.value
+                    for x_ in host_feature_capabilities})
+
+    def commonalities(self, other: 'FeatureCapabilities'
+    ) -> 'FeatureCapabilities':
+        """Return a new FeatureCapabilities both hosts can support
+
+        Returns only keys existing in both FeatureCapabilities with the value
+        set to the lower one of both `FeatureCapabilities`.
+        """
+        return FeatureCapabilities({
+            key: min(other[key], value) for key, value in self.data.items()
+            if key in other})
+
+
+class FeatureRequirements(collections.UserDict):
+    """VM runtime.featureRequirement representation"""
+
+    def __init__(self, feature_requirements):
+        """Init
+
+        `feature_requirements` is a list of FeatureRequirement objects as
+        found in a VM's `runtime.featureRequirement`, but already unpacked from
+        the ArrayOfFeatureRequirements
+        """
+        super().__init__()
+        for req in feature_requirements:
+            self.data[req.key.lower()] = req.value
+            if ':' not in req.value:
+                LOG.error("Found an invalid FeatureRequirement: %s", req.value)
+
+    def check_compatibility(self, feature_capabilities: FeatureCapabilities
+    ) -> tuple[bool, str]:
+        """Check FeatureRequirements against a host's FeatureCapability
+
+        This is what we found in production:
+            Bool:Match:1
+            Bool:Min:1
+            Num:Match:1
+            Num:Min:0x10
+            Num:Min:0x2000
+            Num:Min:0x40
+            Num:Min:0x400
+            Num:Min:1
+            Num:Min:8
+        """
+        errors = {'missing': [], 'incompatible': []}
+        for key, value in self.data.items():
+            if key not in feature_capabilities:
+                errors['missing'].append(key)
+                continue
+
+            if ':' not in value:
+                continue
+
+            split = value.split(':')
+            if len(split) != 3:
+                LOG.error("Invalid FeatureRequirement format: %s", value)
+                continue
+
+            type_, fn, num_s = split
+            if type_ not in ('Bool', 'Num'):
+                LOG.error("Unexpected FeatureRequirement type: %s", type_)
+                continue
+
+            if fn == 'Min':
+                try:
+                    if num_s.startswith('0x'):
+                        num = int(num_s, 16)
+                    else:
+                        num = int(num_s)
+                except ValueError as e:
+                    LOG.error("Could not parse integer in FeatureRequirement "
+                              "from %s: %s", num_s, e)
+                    continue
+                try:
+                    cap_num = int(feature_capabilities[key])
+                except ValueError as e:
+                    LOG.error("Could not parse integer in "
+                              "HostFeatureCapability for key %s from %s: %s",
+                              key, feature_capabilities[key], e)
+                    continue
+
+                if cap_num < num:
+                    errors['incompatible'].append(
+                        f"{key}: {feature_capabilities[key]} < {num}")
+                    continue
+            elif fn == 'Match':
+                if feature_capabilities[key] != num_s:
+                    errors['incompatible'].append(
+                        f"{key}: {feature_capabilities[key]} != {num_s}")
+                    continue
+            else:
+                LOG.error("Unknown function in FeatureRequirement: %s", fn)
+
+        if errors['missing'] or errors['incompatible']:
+            return False, (
+                f"Missing features {', '.join(errors['missing'])} "
+                f"and incompatible {', '.join(errors['incompatible'])}")
+
+        return True, ''
+
+
+def get_vm_feature_requirements(session, vm_ref) -> FeatureRequirements:
     """CPU flags are stored in an array of VirtualMachineFeatureRequirement
 
     Both featureName and key contain the same value, e.g. cpuid.aes,
     vt.realmode or hv.capable.
-
-    We only return cpuid.* features as they correspod to CPU flags. We split
-    off the common "cpuid." part the same as we do with host CPU flags.
     """
     feature_requirements = session._call_method(vutil,
                                                 "get_object_property",
                                                 vm_ref,
                                                 "runtime.featureRequirement")
-    return {r.key.split(".", 1)[1].lower()
-        for r in vim_util.get_array_items(feature_requirements)
-        if r.key.startswith("cpuid.")}
+    return FeatureRequirements(vim_util.get_array_items(feature_requirements))

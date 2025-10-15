@@ -815,16 +815,19 @@ class HostSystem(ManagedObject):
     @staticmethod
     def create_config_feature_capability():
         aes = DataObject('HostFeatureCapability')
-        aes.featureName = 'cpuid.AES'
+        aes.key = aes.featureName = 'cpuid.AES'
         aes.value = '1'
         avx = DataObject('HostFeatureCapability')
-        avx.featureName = 'cpuid.AVX'
+        avx.key = avx.featureName = 'cpuid.AVX'
         avx.value = '1'
         amd = DataObject('HostFeatureCapability')
-        amd.featureName = 'cpuid.AMD'
+        amd.key = amd.featureName = 'cpuid.AMD'
         amd.value = '0'
+        tmul_max_k = DataObject('HostFeatureCapability')
+        tmul_max_k.key = tmul_max_k.featureName = 'cpuid.tmul_max_k'
+        tmul_max_k.value = '16'
         caps = _create_array_of_type('HostFeatureCapability')
-        caps.HostFeatureCapability = [aes, avx, amd]
+        caps.HostFeatureCapability = [aes, avx, amd, tmul_max_k]
         return caps
 
     def __init__(self, name=None, connected=True, ds_ref=None,
