@@ -163,9 +163,12 @@ class VCState(object):
         return self._stats[self._cluster_node_name].get('hostgroups', {})
 
     @property
-    def common_cpu_flags(self) -> set:
-        """Return a set of CPU flags all available hosts have in common"""
-        flags = None
+    def common_feature_capabilities(self) -> vm_util.FeatureCapabilities:
+        """Return the capabilities all available hosts have in common
+
+        These include e.g. cpu flags.
+        """
+        feature_capabilities = None
         for stats in self._stats.values():
             if not stats.get('available'):
                 continue
@@ -173,12 +176,13 @@ class VCState(object):
             if not (cpu_info := stats.get('cpu_info')):
                 continue
 
-            features = set(cpu_info['features'])
-            if flags is None:
-                flags = features
+            features = cpu_info['features']
+            if feature_capabilities is None:
+                feature_capabilities = features
             else:
-                flags &= features
-        return flags or set()
+                feature_capabilities = \
+                    feature_capabilities.commonalities(features)
+        return feature_capabilities or vm_util.FeatureCapabilities({})
 
     def _merge_stats(self, host, stats, defaults):
         result = deepcopy(defaults)
