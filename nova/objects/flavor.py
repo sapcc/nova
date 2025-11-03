@@ -191,6 +191,8 @@ def _flavor_destroy(context, flavor_id=None, flavorid=None):
         filter_by(flavor_id=result.id).delete()
     context.session.query(api_models.FlavorExtraSpecs).\
         filter_by(flavor_id=result.id).delete()
+    context.session.query(api_models.FlavorPermissionRule).\
+        filter_by(flavor_id=result.id).delete()
     context.session.delete(result)
     return result
 
