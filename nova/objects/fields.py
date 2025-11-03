@@ -14,6 +14,7 @@
 
 import os
 import re
+import typing as ty
 
 from cursive import signature_utils
 from oslo_serialization import jsonutils
@@ -1075,6 +1076,26 @@ class InstanceTaskState(BaseNovaEnum):
            SHELVING_OFFLOADING, UNSHELVING, IN_CLUSTER_VMOTION)
 
 
+class FlavorPermissionRuleEffect(BaseNovaEnum):
+    ALLOW: ty.Final = 'allow'
+    DENY: ty.Final = 'deny'
+
+    ALL = (ALLOW, DENY)
+
+
+FlavorPermissionRuleEffectType = ty.Literal['allow', 'deny']
+
+
+class FlavorPermissionRuleScope(BaseNovaEnum):
+    DOMAIN: ty.Final = 'domain'
+    PROJECT: ty.Final = 'project'
+
+    ALL = (DOMAIN, PROJECT)
+
+
+FlavorPermissionRuleScopeType = ty.Literal['domain', 'project']
+
+
 class InstancePowerState(Enum):
     _UNUSED = '_unused'
     NOSTATE = 'pending'
@@ -1430,6 +1451,10 @@ class InstanceStateField(BaseEnumField):
 
 class InstanceTaskStateField(BaseEnumField):
     AUTO_TYPE = InstanceTaskState()
+
+
+class FlavorPermissionRuleEffectField(BaseEnumField):
+    AUTO_TYPE = FlavorPermissionRuleEffect()
 
 
 class InstancePowerStateField(BaseEnumField):
