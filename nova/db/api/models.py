@@ -273,6 +273,37 @@ class FlavorProjects(BASE):
         primaryjoin='FlavorProjects.flavor_id == Flavors.id')
 
 
+class FlavorPermissionRule(BASE):
+    """Represents a flavor permission rule for a project"""
+
+    __tablename__ = 'flavor_permission_rules'
+    __table_args__ = (
+        schema.UniqueConstraint(
+            'uuid', name='uniq_flavor_permission_rules0uuid'),
+        schema.UniqueConstraint(
+            'domain_id', 'project_id', 'flavor_id',
+            name='uniq_flavor_permission_rules0domain_id0project_id0flavor_id'
+        ),
+        sa.Index('flavor_permission_rules_uuid_idx', 'uuid'),
+        sa.Index(
+            'flavor_permission_rules_domain_id_project_id_flavor_id_idx',
+            'domain_id', 'project_id', 'flavor_id'),
+    )
+
+    id = sa.Column(sa.Integer, primary_key=True)
+    uuid = sa.Column(sa.String(36), nullable=False)
+    domain_id = sa.Column(sa.String(255), nullable=False)
+    # Empty string sentinel means domain-scope rule. We do not use NULL to
+    # properly enforce the unique constraint.
+    project_id = sa.Column(sa.String(255), nullable=False, default='')
+    # -1 sentinel means default rule (applies to all flavors). We do not use
+    # NULL to properly enforce the unique constraint.
+    flavor_id = sa.Column(sa.Integer, nullable=False, default=-1)
+    effect = sa.Column(
+        sa.Enum('allow', 'deny', name='flavor_permission_rules0effect'),
+        nullable=False)
+
+
 class BuildRequest(BASE):
     """Represents the information passed to the scheduler."""
 

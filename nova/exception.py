@@ -1164,6 +1164,21 @@ class FlavorAccessExists(NovaException):
                 "and project %(project_id)s combination.")
 
 
+class FlavorPermissionRuleExists(NovaException):
+    msg_fmt = _("Flavor permission rule already exists for uuid %(uuid)s or "
+                "combination of project %(project_id)s and flavor "
+                "%(flavor_id)s.")
+
+
+class FlavorPermissionRuleNotFound(NotFound):
+    msg_fmt = _("Flavor permission rule not found for id %(id)s")
+
+
+class FlavorPermissionRuleNotFoundForProjectFlavor(NotFound):
+    msg_fmt = _("Flavor permission rule not found for project %(project_id)s "
+                "and flavor %(flavor_id)s combination.")
+
+
 class InvalidSharedStorage(NovaException):
     msg_fmt = _("%(path)s is not on shared storage: %(reason)s")
 
