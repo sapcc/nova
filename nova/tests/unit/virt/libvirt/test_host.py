@@ -2029,6 +2029,26 @@ Active:          8381604 kB
     def test_get_loader(self, mock_get_mtype, mock_loaders):
         loaders = [
             {
+                'description': 'Stateless descriptor',
+                'interface-types': ['uefi'],
+                'mapping': {
+                    'device': 'flash',
+                    'executable': {
+                        'filename': '/usr/share/edk2/ovmf/OVMF_CODE.fd',
+                        'format': 'raw',
+                    },
+                    'mode': 'stateless',
+                },
+                'targets': [
+                    {
+                        'architecture': 'x86_64',
+                        'machines': ['pc-q35-*'],  # exclude pc-i440fx-*
+                    },
+                ],
+                'features': ['acpi-s3', 'amd-sev', 'verbose-dynamic'],
+                'tags': [],
+            },
+            {
                 'description': 'Sample descriptor',
                 'interface-types': ['uefi'],
                 'mapping': {
@@ -2130,7 +2150,7 @@ Active:          8381604 kB
             'x86_64', 'pc', has_secure_boot=False)
 
         # add the secure-boot feature flag
-        loaders[0]['features'].append('secure-boot')
+        loaders[1]['features'].append('secure-boot')
 
         # this should pass because we're reporting the secure-boot feature
         # which is what we want
@@ -2141,7 +2161,7 @@ Active:          8381604 kB
         self.assertFalse(loader[2])
 
         # check that we get SMM bool correctly (True) when required
-        loaders[0]['features'].append('requires-smm')
+        loaders[1]['features'].append('requires-smm')
         loader = self.host.get_loader('x86_64', 'q35', has_secure_boot=True)
         self.assertTrue(loader[2])
 
