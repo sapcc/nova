@@ -1921,10 +1921,15 @@ class Host(object):
             if has_secure_boot != ('secure-boot' in loader['features']):
                 continue
 
-            return (
-                loader['mapping']['executable']['filename'],
-                loader['mapping']['nvram-template']['filename'],
-                'requires-smm' in loader['features'],
-            )
+            try:
+                return (
+                    loader['mapping']['executable']['filename'],
+                    loader['mapping']['nvram-template']['filename'],
+                    'requires-smm' in loader['features'],
+                )
+            except KeyError:
+                # Let's just skip what doesn't match our expectations:
+                # I.e. the stateless firmware doesn't have a nvram-template
+                continue
 
         raise exception.UEFINotSupported()
