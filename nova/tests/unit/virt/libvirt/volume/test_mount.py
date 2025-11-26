@@ -346,7 +346,7 @@ class HostMountStateTestCase(test.NoDBTestCase):
 
         # return also None to test that it won't call a second time and recover
         self.mock_rmdir.side_effect = [
-            OSError(16, "Device or resource busy"), None]
+            OSError(111, "Unexpected error"), None]
         # Unmount vol_a, it will fail with the exception
         self.assertRaises(OSError, self._sentinel_umount, m,
                           mock.sentinel.vol_a)
@@ -361,19 +361,9 @@ class HostMountStateTestCase(test.NoDBTestCase):
         self.mock_rmdir.assert_has_calls([
             mock.call(mock.sentinel.mountpoint)])
 
-    def test_mount_umount_oserror_recovered(self):
+    def test_mount_umount_oserror_logged(self):
         # Mount a volume. Test that we can handle the OSerror when asked
         m = self._get_clean_hostmountstate()
-
-        CONF.set_override(
-            "num_umount_retries", 1,
-            group='libvirt',
-        )
-
-        CONF.set_override(
-            "umount_retry_delay", 0.0,
-            group='libvirt',
-        )
 
         # Mount vol_a from export
         self._sentinel_mount(m, mock.sentinel.vol_a)
