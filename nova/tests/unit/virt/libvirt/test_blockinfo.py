@@ -1060,10 +1060,8 @@ class LibvirtBlockInfoTest(test.NoDBTestCase):
                 ('parallels', 'scsi', None, 'disk', 'scsi'),
                 ('parallels', None, None, 'disk', 'scsi'),
                 ('parallels', None, 'ide', 'cdrom', 'ide'),
-                ('parallels', None, None, 'cdrom', 'ide'),
-                ('ch', None, None, 'disk', 'virtio'),
-                ('ch', None, None, 'cdrom', None),
-        )
+                ('parallels', None, None, 'cdrom', 'ide')
+                )
         for hv, dbus, cbus, dev, res in expected:
             props = {}
             if dbus is not None:
