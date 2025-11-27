@@ -278,11 +278,6 @@ def get_disk_bus_for_device_type(instance,
             return "ide"
         elif device_type == "disk":
             return "scsi"
-    elif virt_type == "ch":
-        if device_type == "cdrom":
-            return None  # Result should never be used
-        elif device_type == "disk":
-            return "virtio"
     else:
         # If virt-type not in list then it is unsupported
         raise exception.UnsupportedVirtType(virt=virt_type)
