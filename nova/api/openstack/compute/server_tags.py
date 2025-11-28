@@ -51,7 +51,8 @@ class ServerTagsController(wsgi.Controller):
     def _check_instance_in_valid_state(self, context, server_id, action):
         instance = common.get_instance(self.compute_api, context, server_id)
         if instance.vm_state not in (vm_states.ACTIVE, vm_states.PAUSED,
-                                     vm_states.SUSPENDED, vm_states.STOPPED):
+                                     vm_states.SUSPENDED, vm_states.STOPPED,
+                                     vm_states.ERROR):
             exc = exception.InstanceInvalidState(attr='vm_state',
                                                  instance_uuid=instance.uuid,
                                                  state=instance.vm_state,
