@@ -82,6 +82,10 @@ VCLS_EXTENSION_TYPE_AGENT = 'cluster-agent'
 # One adapter has 16 slots but one reserved for controller
 SCSI_MAX_CONNECT_NUMBER = 15
 
+# PVSCSI (ParaVirtual SCSI) adapters support 64 devices
+# One slot reserved for controller, leaving 63 usable
+PVSCSI_MAX_CONNECT_NUMBER = 63
+
 # The max number of SCSI adaptors that could be created on one instance.
 SCSI_MAX_CONTROLLER_NUMBER = 4
 
