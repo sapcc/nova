@@ -399,6 +399,17 @@ class VirtualLsiLogicSASController(DataObject):
     pass
 
 
+class ParaVirtualSCSIController(DataObject):
+    """ParaVirtualSCSIController class."""
+
+    def __init__(self, key=0, scsiCtlrUnitNumber=0, busNumber=0):
+        super(ParaVirtualSCSIController, self).__init__()
+        self.key = key
+        self.busNumber = busNumber
+        self.scsiCtlrUnitNumber = scsiCtlrUnitNumber
+        self.device = []
+
+
 class VirtualPCNet32(DataObject):
     """VirtualPCNet32 class."""
 

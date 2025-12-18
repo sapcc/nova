@@ -711,6 +711,32 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                           vm_util.get_scsi_adapter_type,
                           devices)
 
+    def test_get_scsi_adapter_type_pvscsi(self):
+        # Test that PVSCSI adapter type is returned when available
+        vm = fake.VirtualMachine()
+        devices = vm.get("config.hardware.device").VirtualDevice
+        pvscsi_controller = fake.ParaVirtualSCSIController()
+        devices.append(pvscsi_controller)
+        fake.update_object(vm)
+        # Should return the PVSCSI adapter type
+        self.assertEqual(constants.ADAPTER_TYPE_PARAVIRTUAL,
+                         vm_util.get_scsi_adapter_type(devices))
+
+    def test_get_scsi_adapter_type_pvscsi_full(self):
+        # Test that PVSCSI adapter at capacity (63 devices) is not returned
+        vm = fake.VirtualMachine()
+        devices = vm.get("config.hardware.device").VirtualDevice
+        pvscsi_controller = fake.ParaVirtualSCSIController()
+        devices.append(pvscsi_controller)
+        fake.update_object(vm)
+        # Fill up the PVSCSI controller to capacity (63 devices)
+        for i in range(0, constants.PVSCSI_MAX_CONNECT_NUMBER):
+            pvscsi_controller.device.append('device' + str(i))
+        # Should raise error since controller is full
+        self.assertRaises(exception.StorageError,
+                          vm_util.get_scsi_adapter_type,
+                          devices)
+
     def test_find_allocated_slots(self):
         disk1 = fake.VirtualDisk(200, 0)
         disk2 = fake.VirtualDisk(200, 1)
@@ -814,6 +840,43 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
                                                 constants.DEFAULT_ADAPTER_TYPE)
         self.assertEqual(-101, controller_key)
         self.assertEqual(0, unit_number)
+        self.assertEqual(1, controller_spec.device.busNumber)
+
+    def test_allocate_controller_key_and_unit_number_pvscsi(self):
+        # Test that we can allocate up to 64 unit numbers on PVSCSI controller
+        devices = [fake.ParaVirtualSCSIController(1000, scsiCtlrUnitNumber=7)]
+        # Add 20 disks to show it works beyond regular SCSI's 16 limit
+        for unit_number in range(20):
+            disk = fake.VirtualDisk(1000, unit_number)
+            devices.append(disk)
+        factory = fake.FakeFactory()
+        (controller_key, unit_number,
+         controller_spec) = vm_util.allocate_controller_key_and_unit_number(
+            factory, devices, constants.ADAPTER_TYPE_PARAVIRTUAL)
+        # Should allocate unit 20 on the existing controller
+        self.assertEqual(1000, controller_key)
+        self.assertEqual(20, unit_number)
+        self.assertIsNone(controller_spec)
+
+    def test_allocate_controller_key_and_unit_number_pvscsi_full(self):
+        # Test that we create a new controller when PVSCSI is
+        # at capacity (63 devices)
+        devices = [fake.ParaVirtualSCSIController(1000, scsiCtlrUnitNumber=7)]
+        # Fill the controller with 63 disks (PVSCSI max, excluding
+        # unit 7 for controller)
+        for unit_number in range(64):
+            # Skip unit 7 (controller's own slot)
+            if unit_number != 7:
+                disk = fake.VirtualDisk(1000, unit_number)
+                devices.append(disk)
+        factory = fake.FakeFactory()
+        (controller_key, unit_number,
+         controller_spec) = vm_util.allocate_controller_key_and_unit_number(
+            factory, devices, constants.ADAPTER_TYPE_PARAVIRTUAL)
+        # Should create a new controller since existing one is full
+        self.assertEqual(-101, controller_key)
+        self.assertEqual(0, unit_number)
+        self.assertIsNotNone(controller_spec)
         self.assertEqual(1, controller_spec.device.busNumber)
 
     def test_get_vnc_config_spec(self):

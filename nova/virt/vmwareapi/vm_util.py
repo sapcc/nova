@@ -1092,9 +1092,14 @@ def get_scsi_adapter_type(hardware_devices):
     for device in hardware_devices:
         if device.__class__.__name__ in scsi_controller_classes:
             # find the controllers which still have available slots
-            if len(device.device) < constants.SCSI_MAX_CONNECT_NUMBER:
+            # PVSCSI supports 63 devices, regular SCSI supports 15
+            adapter_type = scsi_controller_classes[device.__class__.__name__]
+            max_devices = (constants.PVSCSI_MAX_CONNECT_NUMBER
+                          if adapter_type == constants.ADAPTER_TYPE_PARAVIRTUAL
+                          else constants.SCSI_MAX_CONNECT_NUMBER)
+            if len(device.device) < max_devices:
                 # return the first match one
-                return scsi_controller_classes[device.__class__.__name__]
+                return adapter_type
     raise exception.StorageError(
         reason=_("Unable to find iSCSI Target"))
 
@@ -1160,7 +1165,10 @@ def allocate_controller_key_and_unit_number(client_factory, devices,
         ret = _find_controller_slot(ide_keys, taken, 2)
     elif adapter_type in constants.SCSI_ADAPTER_TYPES:
         scsi_keys = [dev.key for dev in devices if _is_scsi_controller(dev)]
-        ret = _find_controller_slot(scsi_keys, taken, 16)
+        max_unit_number = (
+            64 if adapter_type == constants.ADAPTER_TYPE_PARAVIRTUAL
+            else 16)
+        ret = _find_controller_slot(scsi_keys, taken, max_unit_number)
     if ret:
         return ret[0], ret[1], None
 
