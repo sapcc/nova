@@ -3542,6 +3542,14 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         self.assertTrue(result.filesource)
         self.assertTrue(result.allocateimmediate)
 
+    def test_get_guest_memory_backing_config_always_immediate(self):
+        self.flags(always_allocate_memory_immediately=True, group="libvirt")
+
+        result = self._test_get_guest_memory_backing_config(
+            None, None, None
+        )
+        self.assertTrue(result.allocateimmediate)
+
     def test_get_guest_memory_backing_config_file_backed_hugepages(self):
         self.flags(file_backed_memory=1024, group="libvirt")
         host_topology = objects.NUMATopology(cells=[
