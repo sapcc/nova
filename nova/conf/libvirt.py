@@ -859,6 +859,24 @@ Related options:
 * ``virt_type`` must be set to ``kvm`` or ``qemu``.
 * ``ram_allocation_ratio`` must be set to 1.0.
 """),
+    cfg.BoolOpt('always_allocate_memory_immediately',
+               default=False,
+               help="""
+Whether to always allocate all memory on VM startup or on demand.
+
+Set to false to leave it to the default logic, which is only preallocating
+memory for file-backed memory. Setting it to true will always request to
+allocate the whole memory on startup, which increases the startup time of the
+VM in exchange for more predictable initial memory access times.
+
+.. note::
+   This feature is not compatible with memory overcommit.
+
+Related options:
+
+* ``virt_type`` must be set to ``kvm`` or ``qemu``.
+* ``ram_allocation_ratio`` must be set to 1.0.
+"""),
     cfg.IntOpt('num_memory_encrypted_guests',
                default=None,
                min=0,
