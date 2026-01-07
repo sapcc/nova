@@ -7018,6 +7018,11 @@ class LibvirtDriver(driver.ComputeDriver):
                 membacking = vconfig.LibvirtConfigGuestMemoryBacking()
             membacking.locked = True
 
+        if CONF.libvirt.always_allocate_memory_immediately:
+            if not membacking:
+                membacking = vconfig.LibvirtConfigGuestMemoryBacking()
+            membacking.allocateimmediate = True
+
         return membacking
 
     def _get_memory_backing_hugepages_support(self, inst_topology, numatune):
