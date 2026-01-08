@@ -5737,7 +5737,9 @@ class API:
     @reject_vtpm_instances(instance_actions.EVACUATE)
     @block_accelerators(until_service=SUPPORT_ACCELERATOR_SERVICE_FOR_REBUILD)
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,
-                                    vm_states.ERROR], task_state=None)
+                                    vm_states.ERROR, vm_states.BUILDING],
+                          task_state=None,
+                          must_have_launched=False)
     def evacuate(self, context, instance, host, on_shared_storage,
                  admin_password=None, force=None, target_state=None):
         """Running evacuate to target host.
