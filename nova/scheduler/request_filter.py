@@ -451,24 +451,18 @@ def external_customer_filter(
     ctxt: nova_context.RequestContext,
     request_spec: 'objects.RequestSpec'
 ) -> bool:
-    """Pre-filter resource privders for external customers
+    """Pre-filter resource providers for external customers
 
-    If the request is for an external customer, identified by prefix-matching
-    the domain name the instance is getting spawned in, we add an additional
-    filter for the trait CUSTOM_EXTERNAL_CUSTOMER_SUPPORTED.
+    If the request is for an external customer, identified by checking the
+    domain name the instance is getting spawned in, we add an additional filter
+    for the trait CUSTOM_EXTERNAL_CUSTOMER_SUPPORTED.
     """
-    prefixes = tuple(CONF.external_customer_domain_name_prefixes)
-    if not prefixes:
-        return False
-
     domain_name = request_spec.get_scheduler_hint("domain_name")
     if domain_name is None:
         raise exception.RequestFilterFailed(
             reason="Could not find 'domain_name' scheduler hint")
-    if not domain_name.startswith(prefixes):
-        return False
 
-    if domain_name in CONF.external_customer_ignored_domain_names:
+    if not utils.is_external_customer(domain_name):
         return False
 
     request_spec.root_required.add(
