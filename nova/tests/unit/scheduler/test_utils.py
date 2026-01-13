@@ -2692,3 +2692,27 @@ class TestIsNonVmWareSpec(test.NoDBTestCase):
             "capabilities:hypervisor_type": "QEMU"
         })
         self.assertTrue(utils.is_non_vmware_spec(spec_obj))
+
+
+class TestIsExternalCustomer(test.NoDBTestCase):
+
+    def test_no_config(self):
+        self.flags(external_customer_domain_name_prefixes=[])
+        self.assertFalse(utils.is_external_customer("domain1"))
+
+    def test_no_match(self):
+        self.flags(external_customer_domain_name_prefixes=['foo', 'bar'])
+
+        self.assertFalse(utils.is_external_customer("test"))
+
+    def test_matching(self):
+        self.flags(external_customer_domain_name_prefixes=['foo', 'bar', 'te'])
+
+        self.assertTrue(utils.is_external_customer("test"))
+
+    def test_matching_ignored(self):
+        """Prefix of the domain name matches, but the domain is ignored"""
+        self.flags(external_customer_domain_name_prefixes=['foo', 'bar', 'te'])
+        self.flags(external_customer_ignored_domain_names=['food', 'test'])
+
+        self.assertFalse(utils.is_external_customer("test"))
