@@ -21,6 +21,7 @@ from nova import exception
 from nova.network import model as network_model
 from nova import objects
 from nova.scheduler import request_filter
+from nova.scheduler import utils as scheduler_utils
 from nova import test
 from nova.tests.unit import utils
 from nova import utils as nova_utils
@@ -302,10 +303,12 @@ class TestRequestFilter(test.NoDBTestCase):
         fake_image = objects.ImageMeta(
             properties=objects.ImageMetaProps(
                 traits_required=[]))
+        scheduler_hints = {'domain_name': ["somedomain"]}
         reqspec = objects.RequestSpec(project_id='owner',
                                       availability_zone='myaz',
                                       flavor=fake_flavor,
-                                      image=fake_image)
+                                      image=fake_image,
+                                      scheduler_hints=scheduler_hints)
         request_filter.process_reqspec(self.context, reqspec)
         self.assertEqual(
             ','.join(sorted([uuids.agg1, uuids.agg2])),
@@ -726,50 +729,32 @@ class TestRequestFilter(test.NoDBTestCase):
             reqspec.root_required)
         self.assertEqual(set(), reqspec.root_forbidden)
 
-    def test_external_customer_filter_no_config(self):
-        reqspec = objects.RequestSpec()
+    @mock.patch.object(scheduler_utils, 'is_external_customer')
+    def test_external_customer_filter_not_external(self, mock_is_external):
+        reqspec = objects.RequestSpec(
+            scheduler_hints={'domain_name': ["somedomain"]})
 
-        self.flags(external_customer_domain_name_prefixes=[])
-
+        mock_is_external.return_value = False
         self.assertFalse(request_filter.external_customer_filter(
                          self.context, reqspec))
+        mock_is_external.assert_called_once_with("somedomain")
 
     def test_external_customer_filter_no_scheduler_hint(self):
-        self.flags(external_customer_domain_name_prefixes=['foo', 'bar'])
-
         reqspec = objects.RequestSpec()
         self.assertRaises(exception.RequestFilterFailed,
                           request_filter.external_customer_filter,
                           self.context, reqspec)
 
-    def test_external_customer_filter_no_match(self):
+    @mock.patch.object(scheduler_utils, 'is_external_customer')
+    def test_external_customer_filter_matching(self, mock_is_external):
         reqspec = objects.RequestSpec(
-            scheduler_hints={'domain_name': ['test']})
+            scheduler_hints={'domain_name': ["somedomain"]})
 
-        self.flags(external_customer_domain_name_prefixes=['foo', 'bar'])
-
-        self.assertFalse(request_filter.external_customer_filter(
-                         self.context, reqspec))
-
-    def test_external_customer_filter_matching(self):
-        reqspec = objects.RequestSpec(
-            scheduler_hints={'domain_name': ['test']})
-
-        self.flags(external_customer_domain_name_prefixes=['foo', 'bar', 'te'])
+        mock_is_external.return_value = True
 
         self.assertTrue(request_filter.external_customer_filter(
                          self.context, reqspec))
         self.assertEqual(
             {nova_utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT},
             reqspec.root_required)
-
-    def test_external_customer_filter_prefix_matching_ignored(self):
-        """Prefix of the domain name matches, but the domain is ignored"""
-        reqspec = objects.RequestSpec(
-            scheduler_hints={'domain_name': ['test']})
-
-        self.flags(external_customer_domain_name_prefixes=['foo', 'bar', 'te'])
-        self.flags(external_customer_ignored_domain_names=['food', 'test'])
-
-        self.assertFalse(request_filter.external_customer_filter(
-                         self.context, reqspec))
+        mock_is_external.assert_called_once_with("somedomain")

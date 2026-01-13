@@ -1565,3 +1565,26 @@ def get_memory_mb_max_unit(host_state):
         return int(host_state.stats.get("memory_mb_max_unit"))
     except (TypeError, ValueError):
         return None
+
+
+def is_external_customer(domain_name: str) -> bool:
+    """Return whether a domain belongs to external customers
+
+    External customers are defined by a prefix-match on their domain name.
+    These prefixes can be configured with
+    `external_customer_domain_name_prefixes`. Domains can be explicitly ignored
+    from this match by configuring them in
+    `external_customer_ignored_domain_names`.
+    """
+    prefixes = tuple(CONF.external_customer_domain_name_prefixes)
+    if not prefixes:
+        # without configuration we cannot have any
+        return False
+
+    if not domain_name.startswith(prefixes):
+        return False
+
+    if domain_name in CONF.external_customer_ignored_domain_names:
+        return False
+
+    return True
