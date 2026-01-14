@@ -202,6 +202,22 @@ Related options:
 
 - ``[compute] compute_driver``
 """),
+    cfg.BoolOpt("enable_external_customer_supported_filter",
+        default=False,
+        help="""
+Use placement to filter hosts based on CUSTOM_EXTERNAL_CUSTOMER_SUPPORTED trait
+
+When a domain is identified as belonging to external customers, this filter
+will require hosts to have the trait CUSTOM_EXTERNAL_CUSTOMER_SUPPORTED for any
+requests for VMs in that domain.
+
+Possible values:
+
+- A boolean value.
+
+Related options:
+- ``[Default] external_customer_domain_name_prefixes``
+"""),
 ]
 
 filter_scheduler_group = cfg.OptGroup(
