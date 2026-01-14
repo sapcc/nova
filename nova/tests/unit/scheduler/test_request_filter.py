@@ -730,31 +730,49 @@ class TestRequestFilter(test.NoDBTestCase):
         self.assertEqual(set(), reqspec.root_forbidden)
 
     @mock.patch.object(scheduler_utils, 'is_external_customer')
-    def test_external_customer_filter_not_external(self, mock_is_external):
+    def test_external_customer_supported_filter_not_external(self,
+                                                             mock_is_external):
+        self.flags(enable_external_customer_supported_filter=True,
+                   group='scheduler')
         reqspec = objects.RequestSpec(
             scheduler_hints={'domain_name': ["somedomain"]})
 
         mock_is_external.return_value = False
-        self.assertFalse(request_filter.external_customer_filter(
+        self.assertFalse(request_filter.external_customer_supported_filter(
                          self.context, reqspec))
+        self.assertEqual(0, len(reqspec.root_required))
         mock_is_external.assert_called_once_with("somedomain")
 
-    def test_external_customer_filter_no_scheduler_hint(self):
+    def test_external_customer_supported_filter_no_scheduler_hint(self):
+        self.flags(enable_external_customer_supported_filter=True,
+                   group='scheduler')
         reqspec = objects.RequestSpec()
         self.assertRaises(exception.RequestFilterFailed,
-                          request_filter.external_customer_filter,
+                          request_filter.external_customer_supported_filter,
                           self.context, reqspec)
 
     @mock.patch.object(scheduler_utils, 'is_external_customer')
-    def test_external_customer_filter_matching(self, mock_is_external):
+    def test_external_customer_supported_filter_matching(self,
+                                                         mock_is_external):
+        self.flags(enable_external_customer_supported_filter=True,
+                   group='scheduler')
         reqspec = objects.RequestSpec(
             scheduler_hints={'domain_name': ["somedomain"]})
 
         mock_is_external.return_value = True
 
-        self.assertTrue(request_filter.external_customer_filter(
+        self.assertTrue(request_filter.external_customer_supported_filter(
                          self.context, reqspec))
         self.assertEqual(
             {nova_utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT},
             reqspec.root_required)
         mock_is_external.assert_called_once_with("somedomain")
+
+    def test_external_customer_supported_filter_disabled(self):
+        self.flags(enable_external_customer_supported_filter=False,
+                   group='scheduler')
+        reqspec = objects.RequestSpec()
+
+        self.assertFalse(request_filter.external_customer_supported_filter(
+                         self.context, reqspec))
+        self.assertEqual(0, len(reqspec.root_required))

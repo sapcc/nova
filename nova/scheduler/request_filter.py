@@ -447,7 +447,7 @@ def ephemeral_encryption_filter(
 
 
 @trace_request_filter
-def external_customer_filter(
+def external_customer_supported_filter(
     ctxt: nova_context.RequestContext,
     request_spec: 'objects.RequestSpec'
 ) -> bool:
@@ -457,6 +457,9 @@ def external_customer_filter(
     domain name the instance is getting spawned in, we add an additional filter
     for the trait CUSTOM_EXTERNAL_CUSTOMER_SUPPORTED.
     """
+    if not CONF.scheduler.enable_external_customer_supported_filter:
+        return False
+
     domain_name = request_spec.get_scheduler_hint("domain_name")
     if domain_name is None:
         raise exception.RequestFilterFailed(
@@ -467,7 +470,7 @@ def external_customer_filter(
 
     request_spec.root_required.add(
         nova_utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT)
-    LOG.debug("external_customer_filter added trait %s",
+    LOG.debug("external_customer_supported_filter added trait %s",
               nova_utils.EXTERNAL_CUSTOMER_SUPPORTED_TRAIT)
 
     return True
@@ -486,7 +489,7 @@ ALL_REQUEST_FILTERS = [
     remote_managed_ports_filter,
     ephemeral_encryption_filter,
 ] + [
-    external_customer_filter
+    external_customer_supported_filter,
 ]
 
 
