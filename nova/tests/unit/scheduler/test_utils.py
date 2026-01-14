@@ -2716,3 +2716,40 @@ class TestIsExternalCustomer(test.NoDBTestCase):
         self.flags(external_customer_ignored_domain_names=['food', 'test'])
 
         self.assertFalse(utils.is_external_customer("test"))
+
+
+class TestIsForbiddenOnExternalCustomerHosts(test.NoDBTestCase):
+
+    @mock.patch.object(utils, 'is_external_customer')
+    def test_is_external(self, mock_is_external):
+        mock_is_external.return_value = True
+
+        self.assertFalse(
+            utils.is_forbidden_on_external_customer_hosts("somedomain"))
+        mock_is_external.assert_called_once_with("somedomain")
+
+    @mock.patch.object(utils, 'is_external_customer')
+    def test_is_ignored(self, mock_is_external):
+        mock_is_external.return_value = False
+
+        self.flags(
+            forbidden_on_external_customer_hosts_ignored_domain_names=
+                ['somedomain'],
+            group='scheduler')
+
+        self.assertFalse(
+            utils.is_forbidden_on_external_customer_hosts("somedomain"))
+        mock_is_external.assert_called_once_with("somedomain")
+
+    @mock.patch.object(utils, 'is_external_customer')
+    def test_is_forbidden(self, mock_is_external):
+        mock_is_external.return_value = False
+
+        self.flags(
+            forbidden_on_external_customer_hosts_ignored_domain_names=
+                ['someotherdomain'],
+            group='scheduler')
+
+        self.assertTrue(
+            utils.is_forbidden_on_external_customer_hosts("somedomain"))
+        mock_is_external.assert_called_once_with("somedomain")
