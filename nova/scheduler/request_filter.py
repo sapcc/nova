@@ -476,6 +476,48 @@ def external_customer_supported_filter(
     return True
 
 
+@trace_request_filter
+def external_customer_exclusive_filter(
+    ctxt: nova_context.RequestContext,
+    request_spec: 'objects.ReqestSpec'
+) -> bool:
+    """Handle hosts exclusively for external customers
+
+    By checking the domain name the instance is getting spawned in, we
+    distinguish between requests requiring to spawn on hosts exclusively
+    reserved for external customers - all external customers - and requests
+    forbidden to spawn on these hosts - internal customers. There are
+    exceptions for smoke/regression tests that don't require either.
+
+    We add a filter that either requires or forbids the
+    CUSTOM_EXTERNAL_CUSTOMER_EXCLUSIVE trait depending on the check described
+    above.
+    """
+    if not CONF.scheduler.enable_external_customer_exclusive_filter:
+        return False
+
+    domain_name = request_spec.get_scheduler_hint("domain_name")
+    if domain_name is None:
+        raise exception.RequestFilterFailed(
+            reason="Could not find 'domain_name' scheduler hint")
+
+    if utils.is_external_customer(domain_name):
+        request_spec.root_required.add(
+            nova_utils.EXTERNAL_CUSTOMER_EXCLUSIVE_TRAIT)
+        LOG.debug("external_customer_exclusive_filter added trait %s",
+                  nova_utils.EXTERNAL_CUSTOMER_EXCLUSIVE_TRAIT)
+        return True
+
+    if utils.is_forbidden_on_external_customer_hosts(domain_name):
+        request_spec.root_forbidden.add(
+            nova_utils.EXTERNAL_CUSTOMER_EXCLUSIVE_TRAIT)
+        LOG.debug("external_customer_exclusive_filter forbade trait %s",
+                  nova_utils.EXTERNAL_CUSTOMER_EXCLUSIVE_TRAIT)
+        return True
+
+    return False
+
+
 ALL_REQUEST_FILTERS = [
     require_tenant_aggregate,
     map_az_to_placement_aggregate,
@@ -490,6 +532,7 @@ ALL_REQUEST_FILTERS = [
     ephemeral_encryption_filter,
 ] + [
     external_customer_supported_filter,
+    external_customer_exclusive_filter
 ]
 
 
