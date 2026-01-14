@@ -1601,3 +1601,21 @@ def is_external_customer(domain_name: str) -> bool:
         return False
 
     return True
+
+
+def is_forbidden_on_external_customer_hosts(domain_name: str) -> bool:
+    """Return whether a domain is forbidden on external customer hosts
+
+    Anything that's not an external customer is by default forbidden to run on
+    external customer hosts. Exceptions can be configured with
+    `internal_customer_ignored_domain_names`.
+    """
+    if is_external_customer(domain_name):
+        return False
+
+    v = (CONF.scheduler
+            .forbidden_on_external_customer_hosts_ignored_domain_names)
+    if domain_name in v:
+        return False
+
+    return True

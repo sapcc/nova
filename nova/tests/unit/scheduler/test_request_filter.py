@@ -776,3 +776,73 @@ class TestRequestFilter(test.NoDBTestCase):
         self.assertFalse(request_filter.external_customer_supported_filter(
                          self.context, reqspec))
         self.assertEqual(0, len(reqspec.root_required))
+
+    @mock.patch.object(scheduler_utils, 'is_external_customer')
+    def test_external_customer_exclusive_filter_external(
+            self, mock_is_external):
+        self.flags(enable_external_customer_exclusive_filter=True,
+                   group='scheduler')
+        reqspec = objects.RequestSpec(
+            scheduler_hints={'domain_name': ["somedomain"]})
+
+        mock_is_external.return_value = True
+
+        self.assertTrue(request_filter.external_customer_exclusive_filter(
+                         self.context, reqspec))
+        self.assertEqual(
+            {nova_utils.EXTERNAL_CUSTOMER_EXCLUSIVE_TRAIT},
+            reqspec.root_required)
+        self.assertEqual(0, len(reqspec.root_forbidden))
+        mock_is_external.assert_called_once_with("somedomain")
+
+    @mock.patch.object(scheduler_utils, 'is_external_customer')
+    @mock.patch.object(scheduler_utils,
+        'is_forbidden_on_external_customer_hosts')
+    def test_external_customer_exclusive_filter_forbidden(
+            self, mock_is_forbidden, mock_is_external):
+        self.flags(enable_external_customer_exclusive_filter=True,
+                   group='scheduler')
+        reqspec = objects.RequestSpec(
+            scheduler_hints={'domain_name': ["somedomain"]})
+
+        mock_is_external.return_value = False
+        mock_is_forbidden.return_value = True
+
+        self.assertTrue(request_filter.external_customer_exclusive_filter(
+                         self.context, reqspec))
+        self.assertEqual(0, len(reqspec.root_required))
+        self.assertEqual(
+            {nova_utils.EXTERNAL_CUSTOMER_EXCLUSIVE_TRAIT},
+            reqspec.root_forbidden)
+        mock_is_external.assert_called_once_with("somedomain")
+        mock_is_forbidden.assert_called_once_with("somedomain")
+
+    @mock.patch.object(scheduler_utils, 'is_external_customer')
+    @mock.patch.object(scheduler_utils,
+        'is_forbidden_on_external_customer_hosts')
+    def test_external_customer_exclusive_filter_not_forbidden(
+            self, mock_is_forbidden, mock_is_external):
+        self.flags(enable_external_customer_exclusive_filter=True,
+                   group='scheduler')
+        reqspec = objects.RequestSpec(
+            scheduler_hints={'domain_name': ["somedomain"]})
+
+        mock_is_external.return_value = False
+        mock_is_forbidden.return_value = False
+
+        self.assertFalse(request_filter.external_customer_exclusive_filter(
+                         self.context, reqspec))
+        self.assertEqual(0, len(reqspec.root_required))
+        self.assertEqual(0, len(reqspec.root_forbidden))
+        mock_is_external.assert_called_once_with("somedomain")
+        mock_is_forbidden.assert_called_once_with("somedomain")
+
+    def test_external_customer_exclusive_filter_disabled(self):
+        self.flags(enable_external_customer_exclusive_filter=False,
+                   group='scheduler')
+        reqspec = objects.RequestSpec()
+
+        self.assertFalse(request_filter.external_customer_exclusive_filter(
+                         self.context, reqspec))
+        self.assertEqual(0, len(reqspec.root_required))
+        self.assertEqual(0, len(reqspec.root_forbidden))

@@ -218,6 +218,43 @@ Possible values:
 Related options:
 - ``[Default] external_customer_domain_name_prefixes``
 """),
+    cfg.BoolOpt("enable_external_customer_exclusive_filter",
+        default=False,
+        help="""
+Use placement to filter hosts based on CUSTOM_EXTERNAL_CUSTOMER_EXCLUSIVE trait
+
+When enabling this filter, all requests in domains identified as belonging to
+external customers will require hosts with the
+CUSTOM_EXTERNAL_CUSTOMER_EXCLUSIVE trait. Any other domains unless mentioned in
+``[scheduler] forbidden_on_external_customer_hosts_ignored_domain_names`` will
+be forbidden to use hosts with the CUSTOM_EXTERNAL_CUSTOMER_EXCLUSIVE trait.
+
+Possible values:
+
+- A boolean value.
+
+Related options:
+- ``[Default] external_customer_domain_name_prefixes``
+- ``[scheduler] forbidden_on_external_customer_hosts_ignored_domain_names``
+"""),
+    cfg.ListOpt("forbidden_on_external_customer_hosts_ignored_domain_names",
+        default=[],
+        help="""
+List of domain names that are not forbidden on hosts with
+CUSTOM_EXTERNAL_CUSTOMER_EXCLUSIVE trait even if they are not external customer
+domains.
+
+We have some special domains that we use for internal smoke and regression
+testing that need to be able to spawn/migrate to any host. Since marking them
+as internal would prevent them from spawning on an external customer's host, we
+can configure them to be ignored here.
+
+This is only relevant if ``[scheduler]
+enable_external_customer_exclusive_filter`` is set to ``true``.
+
+Related options:
+- ``[scheduler] enable_external_customer_exclusive_filter``
+"""),
 ]
 
 filter_scheduler_group = cfg.OptGroup(
