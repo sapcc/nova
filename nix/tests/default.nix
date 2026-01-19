@@ -17,6 +17,10 @@ let
     chv-numa = pkgs.callPackage ./chv-numa.nix {
       inherit nixosModules novaPkg generateRootwrapConf chvModule;
     };
+    chv-bdf-live-migration = pkgs.callPackage ./chv-bdf-live-migration.nix {
+      inherit nixosModules novaPkg generateRootwrapConf chvModule;
+      testScriptFile = ./chv-bdf-live-migration.py;
+    };
   };
 in
 pkgs.lib.mapAttrs (_: v: pkgs.lib.recursiveUpdate v { meta.tag = "nix-integration-test"; }) tests
