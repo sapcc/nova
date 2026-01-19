@@ -24,7 +24,7 @@ test:basic-test:
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.nova-chv-driver.driver
-    - ./result/bin/nixos-test-driver
+    - nix run .#tests.x86_64-linux.nova-chv-driver.driver
 
 test:live-migration-test:
   stage: test
@@ -34,7 +34,7 @@ test:live-migration-test:
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.chv-live-migration.driver
-    - ./result/bin/nixos-test-driver
+    - nix run .#tests.x86_64-linux.chv-live-migration.driver
 
 test:hugepage-numa-test:
   stage: test
@@ -44,4 +44,14 @@ test:hugepage-numa-test:
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.chv-numa.driver
-    - ./result/bin/nixos-test-driver
+    - nix run .#tests.x86_64-linux.chv-numa.driver
+
+test:bdf-live-migration-test:
+  stage: test
+  needs: [ "test:hugepage-numa-test" ]
+  extends:
+    - .nix_build_template
+  dependencies: []
+  script:
+    - nix build .#tests.x86_64-linux.chv-bdf-live-migration.driver
+    - nix run .#tests.x86_64-linux.chv-bdf-live-migration.driver
