@@ -55,3 +55,6 @@ releasenotes/build
 # Files created by alembic
 /nova.db
 /nova_api.db
+
+.direnv
+/result*
