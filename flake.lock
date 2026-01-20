@@ -3,11 +3,11 @@
     "cloud-hypervisor-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1759218991,
-        "narHash": "sha256-Kh5Te3jw2TedIUyR+Dbjob+F95Dbj5n25YTVXyy2zHI=",
+        "lastModified": 1768228722,
+        "narHash": "sha256-FKhFxeCULCsirfH9W/lQtHOWOxpcMOY5a8sfyEB++m0=",
         "owner": "cyberus-technology",
         "repo": "cloud-hypervisor",
-        "rev": "fd140ac83a7214feb9f00097040922c88472e993",
+        "rev": "75efbe171ae8de4e8724b2c83d0754e7aaf04efe",
         "type": "github"
       },
       "original": {
@@ -19,11 +19,11 @@
     },
     "crane": {
       "locked": {
-        "lastModified": 1751562746,
-        "narHash": "sha256-smpugNIkmDeicNz301Ll1bD7nFOty97T79m4GUMUczA=",
+        "lastModified": 1767744144,
+        "narHash": "sha256-9/9ntI0D+HbN4G0TrK3KmHbTvwgswz7p8IEJsWyef8Q=",
         "owner": "ipetkov",
         "repo": "crane",
-        "rev": "aed2020fd3dc26e1e857d4107a5a67a33ab6c1fd",
+        "rev": "2fb033290bf6b23f226d4c8b32f7f7a16b043d7e",
         "type": "github"
       },
       "original": {
@@ -108,11 +108,11 @@
     "libvirt-custom": {
       "flake": false,
       "locked": {
-        "lastModified": 1759221222,
-        "narHash": "sha256-nMK8OW0gU2srcFlMKzGoiZiKmHxdDqL04td6rRV5hXw=",
+        "lastModified": 1768471394,
+        "narHash": "sha256-NrBgb3263Vrr7YICs2RaXg/NPASmEAEEwEJ0IAbH+E8=",
         "ref": "gardenlinux",
-        "rev": "c499008efba988b8bae4f0abf19f0a122bc319d2",
-        "revCount": 52356,
+        "rev": "78f2c53ee53a72a319c16d848dcb9d9561baa544",
+        "revCount": 53577,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/cyberus-technology/libvirt.git"
@@ -203,11 +203,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1751942411,
-        "narHash": "sha256-01uMHCt2U9tP4f24DGch145tT8YQppLY5TC9mWK7O0A=",
+        "lastModified": 1768272338,
+        "narHash": "sha256-Tg/kL8eKMpZtceDvBDQYU8zowgpr7ucFRnpP/AtfuRM=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "c587235f892930a61c9e415f0d9792a1b27a41a2",
+        "rev": "03dda130a8701b08b0347fcaf850a190c53a3c1e",
         "type": "github"
       },
       "original": {
