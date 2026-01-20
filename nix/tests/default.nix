@@ -1,14 +1,15 @@
 {
-  pkgs,
+  callPackage,
+  lib,
   generateRootwrapConf,
   nixosModules,
   novaPkg,
   libvirt-custom,
 }:
 let
-  chvModule = pkgs.callPackage ./chv-module.nix { inherit libvirt-custom; };
+  chvModule = callPackage ./chv-module.nix { inherit libvirt-custom; };
   tests = {
-    nova-chv-driver = pkgs.callPackage ./nova-chv-driver.nix {
+    nova-chv-driver = callPackage ./nova-chv-driver.nix {
       inherit
         nixosModules
         novaPkg
@@ -16,7 +17,7 @@ let
         chvModule
         ;
     };
-    chv-live-migration = pkgs.callPackage ./chv-live-migration.nix {
+    chv-live-migration = callPackage ./chv-live-migration.nix {
       inherit
         nixosModules
         novaPkg
@@ -24,7 +25,7 @@ let
         chvModule
         ;
     };
-    chv-numa = pkgs.callPackage ./chv-numa.nix {
+    chv-numa = callPackage ./chv-numa.nix {
       inherit
         nixosModules
         novaPkg
@@ -37,7 +38,7 @@ let
     # Test cases:
     #   Reboot VM via openstack and check BDF assignments
     #   VM Live migration and check BDF assignments
-    chv-bdf-live-migration = pkgs.callPackage ./chv-bdf-live-migration.nix {
+    chv-bdf-live-migration = callPackage ./chv-bdf-live-migration.nix {
       inherit
         nixosModules
         novaPkg
@@ -48,4 +49,4 @@ let
     };
   };
 in
-pkgs.lib.mapAttrs (_: v: pkgs.lib.recursiveUpdate v { meta.tag = "nix-integration-test"; }) tests
+lib.mapAttrs (_: v: lib.recursiveUpdate v { meta.tag = "nix-integration-test"; }) tests

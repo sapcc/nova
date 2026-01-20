@@ -1,5 +1,5 @@
 {
-  pkgs,
+  nixosTest,
   nixosModules,
   generateRootwrapConf,
   novaPkg,
@@ -9,6 +9,7 @@
 let
   novaConfigForIp =
     ip:
+    # NixOS module:
     { config, pkgs, ... }:
     {
       nova.novaPackage = novaPkg;
@@ -116,11 +117,11 @@ let
         '';
     };
 in
-pkgs.nixosTest {
+nixosTest {
   name = "OpenStack bdf live migration test";
 
   nodes.controllerVM =
-    { ... }:
+    { pkgs, ... }:
     {
       imports = [
         nixosModules.controllerModule
@@ -153,7 +154,7 @@ pkgs.nixosTest {
     };
 
   nodes.computeVM2 =
-    { ... }:
+    { pkgs, lib, ... }:
     {
       imports = [
         nixosModules.computeModule
@@ -170,7 +171,7 @@ pkgs.nixosTest {
         10.0.0.39 computeVM computeVM.local
       '';
 
-      systemd.network.networks.eth1.networkConfig.Address = pkgs.lib.mkForce "10.0.0.40/24";
+      systemd.network.networks.eth1.networkConfig.Address = lib.mkForce "10.0.0.40/24";
     };
 
   testScript = { ... }: builtins.readFile testScriptFile;
