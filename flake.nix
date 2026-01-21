@@ -63,13 +63,13 @@
 
         novaSrc = pkgs.lib.cleanSourceWith {
           src = ./.;
-          filter = path: type:
+          filter =
+            path: type:
             let
               baseName = baseNameOf path;
             in
-              # Exclude .nix files and nix/ directory
-              !(pkgs.lib.hasSuffix ".nix" baseName) &&
-              !(baseName == "nix" && type == "directory");
+            # Exclude .nix files and nix/ directory
+            !(pkgs.lib.hasSuffix ".nix" baseName) && !(baseName == "nix" && type == "directory");
         };
 
         # The PBR setup does not work on the plain source code because no
@@ -93,9 +93,95 @@
           src = fixedNovaSrc;
           doInstallCheck = false;
         });
+
+        # test / lint all code below nix folder
+        testSrcNix = pkgs.lib.cleanSourceWith {
+          src = ./nix;
+          filter =
+            path: type:
+            let
+              baseName = baseNameOf path;
+            in
+            # Include .nix files only
+            (pkgs.lib.hasSuffix ".nix" baseName);
+        };
+
+        testSrcPython = pkgs.lib.cleanSourceWith {
+          src = ./nix;
+          filter =
+            path: type:
+            let
+              baseName = baseNameOf path;
+            in
+            # Include .py files only
+            (pkgs.lib.hasSuffix ".py" baseName);
+        };
+
+        deadnix =
+          pkgs.runCommand "deadnix"
+            {
+              nativeBuildInputs = [ pkgs.deadnix ];
+            }
+            ''
+              deadnix -L ${testSrcNix} --fail
+              mkdir $out
+            '';
+
+        pythonFormat =
+          pkgs.runCommand "python-format"
+            {
+              nativeBuildInputs = with pkgs; [ ruff ];
+            }
+            ''
+              ruff format --check ${testSrcPython}
+              mkdir $out
+            '';
+
+        pythonLint =
+          pkgs.runCommand "python-lint"
+            {
+              nativeBuildInputs = with pkgs; [ ruff ];
+            }
+            ''
+              ruff check ${testSrcPython}
+              mkdir $out
+            '';
+
+        pythonTypes =
+          pkgs.runCommand "python-types"
+            {
+              nativeBuildInputs = with pkgs; [ pyright ];
+            }
+            ''
+              pyright ${testSrcPython}
+              mkdir $out
+            '';
+
+        typos =
+          pkgs.runCommand "spellcheck"
+            {
+              nativeBuildInputs = [ pkgs.typos ];
+            }
+            ''
+              typos ${testSrcPython}
+              typos ${testSrcNix}
+              mkdir $out
+            '';
+
+        allChecks = pkgs.symlinkJoin {
+          name = "combined-checks";
+          paths = [
+            deadnix
+            pythonFormat
+            pythonLint
+            pythonTypes
+            typos
+          ];
+        };
+
       in
       {
-        formatter = pkgs.nixfmt-rfc-style;
+        formatter = pkgs.nixfmt-tree;
         tests = import ./nix/tests/default.nix {
           inherit
             pkgs
@@ -104,6 +190,10 @@
             generateRootwrapConf
             libvirt-custom
             ;
+        };
+
+        checks = {
+          default = allChecks;
         };
       }
     );

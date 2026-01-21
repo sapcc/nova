@@ -1,4 +1,5 @@
 stages:
+  - lint
   - test
 
 variables:
@@ -10,6 +11,8 @@ variables:
   variables:
     PYTHONUNBUFFERED: "1"
     TERM: "xterm"
+  rules:
+    - when: always
   tags:
     - native-nix-v2
   before_script:
@@ -17,8 +20,36 @@ variables:
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
     - unset NIX_PATH
 
+lint:linter:
+  stage: lint
+  extends:
+    - .nix_build_template
+  dependencies: []
+  script:
+    - nix build -L .#checks.x86_64-linux.default
+
+lint:gitlint:
+  variables:
+    GIT_STRATEGY: "clone"   # Forces full clone instead of fetch
+    GIT_DEPTH: 0            # Disables shallow clone (full history)
+  stage: lint
+  rules:
+      # Needed for TARGET_BRANCH below.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+    - when: never
+  extends:
+    - .nix_build_template
+  dependencies: []
+  script:
+    # Determine the target branch of the merge request
+    - TARGET_BRANCH=${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_DEFAULT_BRANCH}
+    - echo "TARGET_BRANCH=$TARGET_BRANCH"
+    - nix run nixpkgs#gitlint -- --commits origin/gardenlinux..
+
 test:basic-test:
   stage: test
+  needs: []
   extends:
     - .nix_build_template
   dependencies: []
