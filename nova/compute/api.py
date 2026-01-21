@@ -5145,12 +5145,24 @@ class API:
             # The compute node might have already created the attachment but
             # we never received the answer. In this case it is safe to delete
             # the attachment as nobody will ever pick it up again.
+            # To avoid a race-condition where a second volume-attach request
+            # comes in for the same volume while we wait, we verify that the
+            # BDM we delete has no attachment_id set. attachment_id only
+            # gets set later in _check_attach_and_reserve_volume().
             with excutils.save_and_reraise_exception():
                 try:
-                    objects.BlockDeviceMapping.get_by_volume_and_instance(
-                        context, volume['id'], instance.uuid).destroy()
-                    LOG.debug("Delete BDM after compute did not respond to "
-                              f"attachment request for volume {volume['id']}")
+                    bdm = \
+                        objects.BlockDeviceMapping.get_by_volume_and_instance(
+                            context, volume['id'], instance.uuid)
+                    if bdm.attachment_id:
+                        LOG.debug("BDM for volume %s has attachment_id set, "
+                                  "not deleting to avoid race-condition",
+                                  volume['id'])
+                    else:
+                        bdm.destroy()
+                        LOG.debug("Delete BDM after compute did not respond "
+                                  "to attachment request for volume %s",
+                                  volume['id'])
                 except exception.VolumeBDMNotFound:
                     LOG.debug("BDM not found, ignoring removal. "
                               f"Error attaching volume {volume['id']}")
