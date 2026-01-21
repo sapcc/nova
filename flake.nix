@@ -127,6 +127,19 @@
               mkdir $out
             '';
 
+        nixFormat =
+          pkgs.runCommand "nix-format"
+            {
+              nativeBuildInputs = with pkgs; [
+                nix
+                nixfmt-tree
+              ];
+            }
+            ''
+              treefmt --ci ${testSrcNix}
+              mkdir $out
+            '';
+
         pythonFormat =
           pkgs.runCommand "python-format"
             {
@@ -172,6 +185,7 @@
           name = "combined-checks";
           paths = [
             deadnix
+            nixFormat
             pythonFormat
             pythonLint
             pythonTypes

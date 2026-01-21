@@ -63,6 +63,9 @@ lint:linter:
   dependencies: []
   script:
     - nix build -L .#checks.x86_64-linux.default
+    # Already covered by the checks above, but we double-check to keep the
+    # default flake formatter in sync with the checks.
+    - nix fmt -- --ci
 
 lint:gitlint:
   variables:
