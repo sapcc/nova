@@ -20,6 +20,24 @@ variables:
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "git@${CI_SERVER_HOST}:"
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
     - unset NIX_PATH
+
+# To prevent ony CI failures due to host port clashes, we limit the test
+# execution to the main repository path and add a resource group. This requires
+# users to open a MR to execute the tests in the CI.
+.main_repo_only:
+  rules:
+    # Resource groups do not work across forks. However, we need the resource
+    # group to apply globally for the GitLab CI runner. As a workaround, we
+    # only run this job in the main repository (on pull requests).
+    - if: '$CI_PROJECT_PATH == "cyberus/cloud/openstack-nova"'
+      when: always
+    - when: never
+  resource_group: host-tcp-ports
+  before_script:
+    # before_script is not extended but overriden => copy from above
+    - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "git@${CI_SERVER_HOST}:"
+    - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
+    - unset NIX_PATH
     - export TMPDIR=$(mktemp -d) # randomize tmp dir to prevent clashes of nixos tests
     # We experience CI weirdness with our runners: sometimes we see orphaned
     # QEMU processes still running and blocking host ports, thus, the CI will
@@ -42,19 +60,6 @@ variables:
 
       kill_qemu 6083
       kill_qemu 8080
-
-# To prevent ony CI failures due to host port clashes, we limit the test
-# execution to the main repository path and add a resource group. This requires
-# users to open a MR to execute the tests in the CI.
-.main_repo_only:
-  rules:
-    # Resource groups do not work across forks. However, we need the resource
-    # group to apply globally for the GitLab CI runner. As a workaround, we
-    # only run this job in the main repository (on pull requests).
-    - if: '$CI_PROJECT_PATH == "cyberus/cloud/openstack-nova"'
-      when: always
-    - when: never
-  resource_group: host-tcp-ports
 
 lint:linter:
   stage: lint
