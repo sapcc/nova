@@ -5411,9 +5411,10 @@ class LibvirtDriver(driver.ComputeDriver):
                         models = ['max']
 
         elif CONF.libvirt.virt_type == "ch":
-            # Currently, we only support host-passthrough with Cloud Hypervisor. This
-            # changes as soon as we support proper CPU profiles.
-            mode = "host-passthrough"
+            # We support host-passthrough and custom CPU models. The default is
+            # to use host passthrough.
+            if mode is None:
+                mode = "host-passthrough"
         else:
             if mode is None or mode == "none":
                 return None

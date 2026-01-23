@@ -1,5 +1,6 @@
 stages:
   - lint
+  - build
   - test
 
 variables:
@@ -19,6 +20,41 @@ variables:
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "git@${CI_SERVER_HOST}:"
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
     - unset NIX_PATH
+    - export TMPDIR=$(mktemp -d) # randomize tmp dir to prevent clashes of nixos tests
+    # We experience CI weirdness with our runners: sometimes we see orphaned
+    # QEMU processes still running and blocking host ports, thus, the CI will
+    # fail.
+    #
+    # On the long term, we should refactor the tests to export all tests in CI
+    # mode and interactive mode where only the latter also binds the host
+    # ports. This here, however, is the more pragmatic workaround for now.
+    - |
+      echo "Checking if any orphaned QEMU process needs to be killed ..."
+
+      kill_qemu() {
+        local port=$1
+        local pid=$(nix shell nixpkgs#procps --command bash -c "pgrep -f 'qemu.*[h]ostfwd=tcp::$port' || echo -1")
+        if [ "${pid}" -gt 1 ]; then
+          nix shell nixpkgs#ansi --command bash -c "echo -e \"\$(ansi red bold)FOUND ORPHANED QEMU (pid=$pid) blocking port $port: Killing to unblock pipeline\$(ansi reset)\""
+          kill -KILL "${pid}"
+        fi
+      }
+
+      kill_qemu 6083
+      kill_qemu 8080
+
+# To prevent ony CI failures due to host port clashes, we limit the test
+# execution to the main repository path and add a resource group. This requires
+# users to open a MR to execute the tests in the CI.
+.main_repo_only:
+  rules:
+    # Resource groups do not work across forks. However, we need the resource
+    # group to apply globally for the GitLab CI runner. As a workaround, we
+    # only run this job in the main repository (on pull requests).
+    - if: '$CI_PROJECT_PATH == "cyberus/cloud/openstack-nova"'
+      when: always
+    - when: never
+  resource_group: host-tcp-ports
 
 lint:linter:
   stage: lint
@@ -47,11 +83,25 @@ lint:gitlint:
     - echo "TARGET_BRANCH=$TARGET_BRANCH"
     - nix run nixpkgs#gitlint -- --commits origin/gardenlinux..
 
-test:basic-test:
-  stage: test
-  needs: []
+build:build:
+  stage: build
   extends:
     - .nix_build_template
+  rules:
+    - when: always
+  needs: []
+  dependencies: []
+  script:
+    - nix build .#tests.x86_64-linux.nova-chv-driver.driver
+    - nix build .#tests.x86_64-linux.chv-live-migration.driver
+    - nix build .#tests.x86_64-linux.chv-numa.driver
+    - nix build .#tests.x86_64-linux.chv-bdf-live-migration.driver
+
+test:basic-test:
+  stage: test
+  extends:
+    - .nix_build_template
+    - .main_repo_only
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.nova-chv-driver.driver
@@ -62,6 +112,7 @@ test:live-migration-test:
   needs: [ "test:basic-test" ]
   extends:
     - .nix_build_template
+    - .main_repo_only
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.chv-live-migration.driver
@@ -72,6 +123,7 @@ test:hugepage-numa-test:
   needs: [ "test:live-migration-test" ]
   extends:
     - .nix_build_template
+    - .main_repo_only
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.chv-numa.driver
@@ -82,6 +134,7 @@ test:bdf-live-migration-test:
   needs: [ "test:hugepage-numa-test" ]
   extends:
     - .nix_build_template
+    - .main_repo_only
   dependencies: []
   script:
     - nix build .#tests.x86_64-linux.chv-bdf-live-migration.driver
