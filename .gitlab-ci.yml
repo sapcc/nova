@@ -20,6 +20,27 @@ variables:
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
     - unset NIX_PATH
     - export TMPDIR=$(mktemp -d) # randomize tmp dir to prevent clashes of nixos tests
+    # We experience CI weirdness with our runners: sometimes we see orphaned
+    # QEMU processes still running and blocking host ports, thus, the CI will
+    # fail.
+    #
+    # On the long term, we should refactor the tests to export all tests in CI
+    # mode and interactive mode where only the latter also binds the host
+    # ports. This here, however, is the more pragmatic workaround for now.
+    - |
+      echo "Checking if any orphaned QEMU process needs to be killed ..."
+
+      kill_qemu() {
+        local port=$1
+        local pid=$(nix shell nixpkgs#procps --command bash -c "pgrep -f 'qemu.*[h]ostfwd=tcp::$port' || echo -1")
+        if [ "${pid}" -gt 1 ]; then
+          nix shell nixpkgs#ansi --command bash -c "echo -e \"\$(ansi red bold)FOUND ORPHANED QEMU (pid=$pid) blocking port $port: Killing to unblock pipeline\$(ansi reset)\""
+          kill -KILL "${pid}"
+        fi
+      }
+
+      kill_qemu 6083
+      kill_qemu 8080
 
 lint:linter:
   stage: lint
