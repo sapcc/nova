@@ -6,6 +6,7 @@ stages:
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
   CUSTOM_CI_IMAGE: $CI_REGISTRY_IMAGE/ci:$CI_COMMIT_REF_SLUG
+  XDG_CACHE_HOME: "$CI_PROJECT_DIR/.cache"
 
 .nix_build_template:
   interruptible: true
@@ -20,6 +21,11 @@ variables:
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "git@${CI_SERVER_HOST}:"
     - git config --global --add url.${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/.insteadOf "ssh://git@${CI_SERVER_HOST}/"
     - unset NIX_PATH
+  cache:
+    key: "${CI_PROJECT_ID}-${CI_PROJECT_NAME}-nix-cache"
+    paths:
+      # Nix flake evals, Nix fetches (tarballs, git repositories)
+      - "$CI_PROJECT_DIR/.cache/nix"
 
 # To prevent ony CI failures due to host port clashes, we limit the test
 # execution to the main repository path and add a resource group. This requires
