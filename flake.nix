@@ -127,6 +127,19 @@
               mkdir $out
             '';
 
+        nixFormat =
+          pkgs.runCommand "nix-format"
+            {
+              nativeBuildInputs = with pkgs; [
+                nix
+                nixfmt-tree
+              ];
+            }
+            ''
+              treefmt --ci ${testSrcNix}
+              mkdir $out
+            '';
+
         pythonFormat =
           pkgs.runCommand "python-format"
             {
@@ -172,6 +185,7 @@
           name = "combined-checks";
           paths = [
             deadnix
+            nixFormat
             pythonFormat
             pythonLint
             pythonTypes
@@ -183,8 +197,8 @@
       {
         formatter = pkgs.nixfmt-tree;
         tests = import ./nix/tests/default.nix {
+          inherit (pkgs) callPackage lib;
           inherit
-            pkgs
             nixosModules
             novaPkg
             generateRootwrapConf
