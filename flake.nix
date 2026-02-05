@@ -11,16 +11,8 @@
       # nixpkgs of the consuming project.
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    cloud-hypervisor-src = {
+    cloud-hypervisor = {
       url = "github:cyberus-technology/cloud-hypervisor?ref=gardenlinux";
-      flake = false;
-    };
-    # Nix tooling to build cloud-hypervisor.
-    crane.url = "github:ipetkov/crane/master";
-    # Get proper Rust toolchain, independent of pkgs.rustc.
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     libvirt-custom = {
       url = "git+https://github.com/cyberus-technology/libvirt.git?ref=gardenlinux&submodules=1";
@@ -34,10 +26,8 @@
       nixpkgs,
       flake-utils,
       openstack-nix,
-      cloud-hypervisor-src,
+      cloud-hypervisor,
       libvirt-custom,
-      crane,
-      rust-overlay,
       ...
     }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (
@@ -47,16 +37,18 @@
           inherit system;
           overlays = [
             (_: prev: {
-              cloud-hypervisor = pkgs.callPackage ./nix/chv.nix {
-                inherit cloud-hypervisor-src;
-                craneLib = crane.mkLib pkgs;
-                rustToolchain = rust-bin.stable.latest.default;
-                cloud-hypervisor-meta = prev.cloud-hypervisor.meta;
-              };
+              cloud-hypervisor = cloud-hypervisor.packages.${system}.default.overrideAttrs (old: {
+                env = (old.env or { }) // {
+                  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
+                  CARGO_PROFILE_RELEASE_OPT_LEVEL = 2;
+                  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS = "true";
+                  CARGO_PROFILE_RELEASE_LTO = "thin";
+                };
+              });
             })
           ];
         };
-        rust-bin = (rust-overlay.lib.mkRustBin { }) pkgs;
+
         nixosModules = openstack-nix.nixosModules.${system};
         openstackPackages = openstack-nix.packages.${system};
         generateRootwrapConf = openstack-nix.lib.${system}.generateRootwrapConf;
