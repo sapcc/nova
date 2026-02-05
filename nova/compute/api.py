@@ -5803,6 +5803,12 @@ class API:
         request_spec = objects.RequestSpec.get_by_instance_uuid(
             context, instance.uuid)
 
+        # The task_state is a rebuild, but the scheduler might want to handle
+        # this differently than a normal rebuild.
+        if 'scheduler_hints' not in request_spec:
+            request_spec.scheduler_hints = {}
+        request_spec.scheduler_hints['_nova_check_type'] = ['evacuate']
+
         instance.task_state = task_states.REBUILDING
         instance.save(expected_task_state=None)
         self._record_action_start(context, instance, instance_actions.EVACUATE)
