@@ -5939,8 +5939,17 @@ class LibvirtDriver(driver.ComputeDriver):
         cell_pairs = []
         for guest_config_cell in guest_cpu_numa_config.cells:
             for host_cell in host_topology.cells:
-                if guest_config_cell.id == host_cell.id:
-                    cell_pairs.append((guest_config_cell, host_cell))
+                if guest_config_cell.id != host_cell.id:
+                    continue
+
+                cell_pairs.append((guest_config_cell, host_cell))
+                break
+            else:
+                # NOTE(jkulik): We can end up here if a migration to a node
+                # with more NUMA cells broke and thus the instance's
+                # numa_topology points to an invalid cell.
+                raise exception.InvalidGuestCpuNumaConfig(
+                    cell_id=guest_config_cell.id)
         return cell_pairs
 
     def _get_pin_cpuset(self, vcpu, inst_cell, host_cell):
