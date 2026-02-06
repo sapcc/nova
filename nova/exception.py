@@ -2665,3 +2665,8 @@ class HostConflict(Exception):
 
 class VolumeMigrationError(NovaException):
     msg_fmt = 'Migration of volume %(volume_id)s failed: %(reason)s'
+
+
+class InvalidGuestCpuNumaConfig(NovaException):
+    msg_fmt = _('The guest is configured with a cell with id %(cell_id)s '
+                'which the host does not provide.')
