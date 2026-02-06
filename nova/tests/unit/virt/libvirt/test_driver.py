@@ -5033,6 +5033,44 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         conf = drvr._get_cpu_numa_config_from_instance(None, False)
         self.assertIsNone(conf)
 
+    def test_get_cell_pairs(self):
+        host_topology = objects.InstanceNUMATopology(cells=[
+            objects.InstanceNUMACell(
+                id=0, cpuset=set([1, 2]), pcpuset=set(), memory=128),
+            objects.InstanceNUMACell(
+                id=1, cpuset=set([3, 4]), pcpuset=set(), memory=128),
+            objects.InstanceNUMACell(
+                id=2, cpuset=set([5, 6]), pcpuset=set(), memory=128),
+        ])
+        instance_topology = objects.InstanceNUMATopology(
+            cells=[
+                objects.InstanceNUMACell(
+                    id=0, cpuset=set([1, 2]), pcpuset=set(), memory=128),
+                objects.InstanceNUMACell(
+                    id=2, cpuset=set([1, 2]), pcpuset=set(), memory=128),
+            ])
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+        self.assertEqual(
+            [(instance_topology.cells[0], host_topology.cells[0]),
+             (instance_topology.cells[1], host_topology.cells[2])],
+            drvr._get_cell_pairs(instance_topology, host_topology))
+
+    def test_get_cell_pairs_non_matching_ids(self):
+        host_topology = objects.InstanceNUMATopology(cells=[
+            objects.InstanceNUMACell(
+                id=0, cpuset=set([1, 2]), pcpuset=set(), memory=128),
+            objects.InstanceNUMACell(
+                id=1, cpuset=set([3, 4]), pcpuset=set(), memory=128),
+        ])
+        instance_topology = objects.InstanceNUMATopology(
+            cells=[
+                objects.InstanceNUMACell(
+                    id=2, cpuset=set([1, 2]), pcpuset=set(), memory=128),
+            ])
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+        self.assertRaises(exception.InvalidGuestCpuNumaConfig,
+            drvr._get_cell_pairs, instance_topology, host_topology)
+
     @mock.patch.object(libvirt_driver.LibvirtDriver, "_has_numa_support",
                        return_value=True)
     def test_get_memnode_numa_config_from_instance(self, mock_numa):
