@@ -4,10 +4,10 @@
   generateRootwrapConf,
   nixosModules,
   novaPkg,
-  libvirt-custom,
+  libvirt,
 }:
 let
-  chvModule = callPackage ./chv-module.nix { inherit libvirt-custom; };
+  chvModule = import ./chv-module.nix { inherit libvirt; };
   tests = {
     nova-chv-driver = callPackage ./nova-chv-driver.nix {
       inherit

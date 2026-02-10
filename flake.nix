@@ -13,11 +13,17 @@
     };
     cloud-hypervisor = {
       url = "github:cyberus-technology/cloud-hypervisor?ref=gardenlinux";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
-    libvirt-custom = {
-      url = "git+https://github.com/cyberus-technology/libvirt.git?ref=gardenlinux&submodules=1";
+
+    libvirt = {
+      # A local path can be used for developing or testing local changes. Make
+      # sure the submodules in a local libvirt checkout are populated.
       # url = "git+file:<path/to/libvirt>?submodules=1";
-      flake = false;
+      url = "git+https://github.com/cyberus-technology/libvirt?ref=gardenlinux&submodules=1";
+      inputs.libvirt-tests.inputs.libvirt.follows = "libvirt";
+      inputs.cloud-hypervisor.follows = "cloud-hypervisor";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
@@ -27,7 +33,7 @@
       flake-utils,
       openstack-nix,
       cloud-hypervisor,
-      libvirt-custom,
+      libvirt,
       ...
     }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (
@@ -194,8 +200,8 @@
             nixosModules
             novaPkg
             generateRootwrapConf
-            libvirt-custom
             ;
+          libvirt = libvirt.packages.${system}.libvirt-debugoptimized;
         };
 
         checks = {

@@ -1,15 +1,7 @@
-{ libvirt-custom }:
+{ libvirt }:
 { pkgs, ... }:
 {
-  virtualisation.libvirtd.package = pkgs.libvirt.overrideAttrs (_: {
-    src = libvirt-custom;
-    doInstallCheck = false;
-    doCheck = false;
-    patches = [
-      ./0001-meson-patch-in-an-install-prefix-for-building-on-nix.patch
-      ./0002-substitute-zfs-and-zpool-commands.patch
-    ];
-  });
+  virtualisation.libvirtd.package = libvirt;
 
   systemd.services.virtchd.wantedBy = [ "multi-user.target" ];
   systemd.services.virtlogd.wantedBy = [ "multi-user.target" ];
