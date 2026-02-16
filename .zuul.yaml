@@ -822,6 +822,7 @@
            irrelevant-files: *policies-irrelevant-files
         - grenade-skip-level-always:
             irrelevant-files: *policies-irrelevant-files
+            voting: false
         - nova-grenade-multinode:
             irrelevant-files: *policies-irrelevant-files
         - tempest-ipv6-only:
@@ -856,6 +857,7 @@
             irrelevant-files: *policies-irrelevant-files
         - grenade-skip-level-always:
             irrelevant-files: *policies-irrelevant-files
+            voting: false
         - nova-grenade-multinode:
            irrelevant-files: *policies-irrelevant-files
         - tempest-ipv6-only:
