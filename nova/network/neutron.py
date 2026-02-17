@@ -3713,6 +3713,7 @@ class API:
         # setup_networks_on_host.
         search_opts = {'device_id': instance.uuid,
                        'tenant_id': instance.project_id,
+                       constants.BINDING_HOST_ID: host,
                        'fields': ['id']}  # we only need the port id
         data = self.list_ports(context, **search_opts)
         self._delete_port_bindings(context, data['ports'], host)
