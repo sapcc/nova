@@ -12,6 +12,7 @@
 
 from unittest import mock
 
+import ddt
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
 from oslo_utils.fixture import uuidsentinel as uuids
@@ -41,6 +42,7 @@ fake_selection2 = objects.Selection(service_host="host2", nodename="node2",
         compute_node_uuid=uuids.compute_node2)
 
 
+@ddt.ddt
 class LiveMigrationTaskTestCase(test.NoDBTestCase):
     def setUp(self):
         super(LiveMigrationTaskTestCase, self).setUp()
@@ -918,3 +920,30 @@ class LiveMigrationTaskTestCase(test.NoDBTestCase):
         _test(resources, True)
         self.assertRaises(exception.MigrationPreCheckError,
                           _test, resources, False)
+
+    @ddt.data('source', 'destination')
+    def test_rollback_cleanup_network(self, destination):
+        """Test that rollback cleans up network on destination host."""
+        self.task.source = 'source'
+        self.task.destination = destination
+        with mock.patch.object(
+            self.task.network_api, 'cleanup_instance_network_on_host'
+        ) as mock_cleanup:
+            self.task.rollback(None)
+            if self.task.destination == self.task.source:
+                mock_cleanup.assert_not_called()
+            else:
+                mock_cleanup.assert_called_once_with(
+                    self.context, self.instance, self.task.destination)
+
+    def test_rollback_cleanup_network_raises(self):
+        """Test that rollback cleans up network on destination host."""
+        self.task.source = 'source'
+        self.task.destination = 'destination'
+        with mock.patch.object(
+            self.task.network_api, 'cleanup_instance_network_on_host',
+            side_effect=exception.NovaException('test')
+        ) as mock_cleanup:
+            self.task.rollback(None)
+            mock_cleanup.assert_called_once_with(
+                self.context, self.instance, self.task.destination)
