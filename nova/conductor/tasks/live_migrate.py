@@ -170,6 +170,20 @@ class LiveMigrationTask(base.TaskBase):
                                                     self._source_cn,
                                                     self.instance,
                                                     self.migration)
+        if self.destination != self.source:
+            try:
+                # Delete any destination host port bindings.
+                self.network_api.cleanup_instance_network_on_host(
+                    self.context, self.instance, self.destination)
+            except exception.NovaException as e:
+                # Removing the inactive port bindings from the destination
+                # host is not critical so just log an error but don't fail.
+                LOG.error(
+                    'Network cleanup failed for destination host '
+                    f'{self.destination} during live migration rollback. You '
+                    'may need to manually clean up resources in the network '
+                    f'service. Error: {str(e)}',
+                    instance=self.instance)
 
     def _check_instance_is_active(self):
         # NOSTATE, as the VM might be already migrated,
@@ -384,6 +398,8 @@ class LiveMigrationTask(base.TaskBase):
 
         # Check to see that neutron supports the binding-extended API.
         if self.network_api.has_port_binding_extension(self.context):
+            self.network_api.cleanup_instance_network_on_host(
+                    self.context, self.instance, destination)
             bindings = self._bind_ports_on_destination(
                 destination, provider_mapping)
             self._update_migrate_vifs_from_bindings(self.migrate_data.vifs,
