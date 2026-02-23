@@ -6810,6 +6810,113 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         i = drvr._get_scsi_controller_next_unit(guest)
         self.assertEqual(expect_num, i)
 
+    # Tests for _get_scsi_controller() static method
+    def _assert_scsi_controller(self, controller, expected_model):
+        """Helper to assert SCSI controller properties."""
+        self.assertIsNotNone(controller)
+        self.assertIsInstance(controller, vconfig.LibvirtConfigGuestController)
+        self.assertEqual('scsi', controller.type)
+        self.assertEqual(expected_model, controller.model)
+        self.assertEqual(0, controller.index)
+
+    def test_get_scsi_controller_no_properties(self):
+        """Test that None is returned when no SCSI properties are set."""
+        image_meta = objects.ImageMeta.from_dict({})
+        result = libvirt_driver.LibvirtDriver._get_scsi_controller(
+            image_meta)
+        self.assertIsNone(result)
+
+    @ddt.data('virtio-scsi', 'lsisas1068', 'lsilogic', 'vmpvscsi')
+    def test_get_scsi_controller_hw_scsi_model_various_models(self, model):
+        """Test legacy hw_scsi_model with different model values."""
+        image_meta = objects.ImageMeta.from_dict({})
+        image_meta.properties = objects.ImageMetaProps(
+            hw_scsi_model=model
+        )
+        result = libvirt_driver.LibvirtDriver._get_scsi_controller(
+            image_meta)
+        self._assert_scsi_controller(result, model)
+
+    @ddt.data(
+        # kvm: virtio-scsi has highest priority over lsilogic
+        ('kvm', {'virtio-scsi', 'lsilogic'}, 'virtio-scsi'),
+        # qemu: same priority list as kvm, virtio-scsi wins regardless of
+        # set order
+        ('qemu', {'lsilogic', 'virtio-scsi'}, 'virtio-scsi'),
+        # kvm: lsisas1068 has higher priority than buslogic
+        ('kvm', {'lsisas1068', 'buslogic'}, 'lsisas1068'),
+        # kvm: last-priority model selected when it's the only candidate
+        ('kvm', {'ibmvscsi'}, 'ibmvscsi'),
+        # kvm: virtio-scsi wins when all models are offered
+        ('kvm', {'ibmvscsi', 'buslogic', 'lsilogic', 'lsisas1068',
+                 'lsisas1078', 'vmpvscsi', 'virtio-scsi'}, 'virtio-scsi'),
+        # qemu: same priority list as kvm
+        ('qemu', {'virtio-scsi'}, 'virtio-scsi'),
+    )
+    @ddt.unpack
+    def test_get_scsi_controller_priority_selection(
+            self, virt_type, models, expected):
+        """Test hw_supported_scsi_models respects the hypervisor priority
+        order, not the iteration order of the (unordered) set.
+        """
+        self.flags(virt_type=virt_type, group='libvirt')
+        image_meta = objects.ImageMeta.from_dict({})
+        image_meta.properties = objects.ImageMetaProps(
+            hw_supported_scsi_models=models
+        )
+        result = libvirt_driver.LibvirtDriver._get_scsi_controller(image_meta)
+        self._assert_scsi_controller(result, expected)
+
+    @ddt.data(
+        # empty set → no match → None
+        ('kvm', set()),
+        # unsupported virt_type → None
+        ('lxc', {'virtio-scsi'}),
+    )
+    @ddt.unpack
+    def test_get_scsi_controller_no_supported_match(self, virt_type, models):
+        """Test that None is returned when no supported model can be
+        selected (empty set or unsupported virt_type).
+        """
+        self.flags(virt_type=virt_type, group='libvirt')
+        image_meta = objects.ImageMeta.from_dict({})
+        image_meta.properties = objects.ImageMetaProps(
+            hw_supported_scsi_models=models
+        )
+        result = libvirt_driver.LibvirtDriver._get_scsi_controller(image_meta)
+        self.assertIsNone(result)
+
+    @mock.patch.object(CONF.libvirt, 'virt_type', 'kvm')
+    def test_get_scsi_controller_both_properties_new_takes_precedence(self):
+        """hw_supported_scsi_models takes precedence over hw_scsi_model."""
+        image_meta = objects.ImageMeta.from_dict({})
+        image_meta.properties = objects.ImageMetaProps(
+            hw_scsi_model='lsilogic',
+            hw_supported_scsi_models={'virtio-scsi'}
+        )
+        result = libvirt_driver.LibvirtDriver._get_scsi_controller(
+            image_meta)
+        # Should use virtio-scsi from hw_supported_scsi_models,
+        # not lsilogic from hw_scsi_model
+        self._assert_scsi_controller(result, 'virtio-scsi')
+
+    @mock.patch.object(CONF.libvirt, 'virt_type', 'kvm')
+    def test_get_scsi_controller_both_properties_fallback_to_legacy(self):
+        """Fall back to hw_scsi_model when hw_supported_scsi_models misses.
+
+        This test uses an empty set for hw_supported_scsi_models to ensure
+        no match is found, forcing fallback to hw_scsi_model.
+        """
+        image_meta = objects.ImageMeta.from_dict({})
+        image_meta.properties = objects.ImageMetaProps(
+            hw_scsi_model='lsilogic',
+            hw_supported_scsi_models=set()
+        )
+        result = libvirt_driver.LibvirtDriver._get_scsi_controller(
+            image_meta)
+        # Should fall back to lsilogic from hw_scsi_model
+        self._assert_scsi_controller(result, 'lsilogic')
+
     @mock.patch.object(host.Host, "_check_machine_type", new=mock.Mock())
     def test_get_guest_config_with_type_kvm_on_s390(self):
         self.flags(enabled=False, group='vnc')
