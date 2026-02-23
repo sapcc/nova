@@ -73,6 +73,7 @@ import itertools
 import operator
 
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 
 
@@ -87,6 +88,7 @@ from nova.virt.libvirt import utils as libvirt_utils
 from nova.virt import osinfo
 
 CONF = cfg.CONF
+LOG = logging.getLogger(__name__)
 
 BOOT_DEV_FOR_TYPE = {'disk': 'hd', 'cdrom': 'cdrom', 'floppy': 'fd'}
 # NOTE(aspiers): If you change this, don't forget to update the docs and
@@ -215,6 +217,47 @@ def is_disk_bus_valid_for_virt(virt_type, disk_bus):
     return disk_bus in SUPPORTED_DEVICE_BUSES[virt_type]
 
 
+def _get_disk_bus_from_image_properties(virt_type, image_meta):
+    """Get disk bus from image properties with priority handling.
+
+    Checks hw_supported_disk_buses first (choosing the first valid bus),
+    then falls back to hw_disk_bus if no supported buses are found.
+
+    :param virt_type: The virtualization type (e.g., 'kvm', 'qemu')
+    :param image_meta: objects.image_meta.ImageMeta for the instance
+    :returns: A valid disk bus string, or None if no disk bus is specified
+    :raises: UnsupportedHardware if hw_disk_bus is set but not valid
+    """
+    # PRIORITY 1: Check hw_supported_disk_buses first.
+    # Iterate the hypervisor's PRIORITY list (SUPPORTED_DEVICE_BUSES) and
+    # pick the first bus that is also present in the image's supported set.
+    # This mirrors the VIF-model selection and ensures deterministic,
+    # priority-ordered results regardless of Python set iteration order.
+    supported_buses = image_meta.properties.get('hw_supported_disk_buses')
+    if supported_buses:
+        for bus in SUPPORTED_DEVICE_BUSES.get(virt_type, []):
+            if bus in supported_buses:
+                LOG.debug("Selected disk bus '%(bus)s' from "
+                          "hw_supported_disk_buses for virt_type '%(virt)s'",
+                          {'bus': bus, 'virt': virt_type})
+                return bus
+
+        LOG.info("None of the disk buses in hw_supported_disk_buses "
+                    "%(buses)s are supported by virt_type %(virt)s, "
+                    "falling back to hw_disk_bus or defaults",
+                    {'buses': supported_buses, 'virt': virt_type})
+
+    # PRIORITY 2: Check hw_disk_bus (existing behavior)
+    disk_bus = osinfo.HardwareProperties(image_meta).disk_model
+    if disk_bus is not None:
+        if not is_disk_bus_valid_for_virt(virt_type, disk_bus):
+            raise exception.UnsupportedHardware(model=disk_bus,
+                                                virt=virt_type)
+        return disk_bus
+
+    return None
+
+
 def get_disk_bus_for_device_type(instance,
                                  virt_type,
                                  image_meta,
@@ -233,7 +276,7 @@ def get_disk_bus_for_device_type(instance,
 
     # Prefer a disk bus set against the image first of all
     if device_type == "disk":
-        disk_bus = osinfo.HardwareProperties(image_meta).disk_model
+        disk_bus = _get_disk_bus_from_image_properties(virt_type, image_meta)
     else:
         key = "hw_" + device_type + "_bus"
         disk_bus = image_meta.properties.get(key)

@@ -14,6 +14,8 @@
 
 import datetime
 
+import ddt
+
 from nova import exception
 from nova import objects
 from nova.objects import fields
@@ -102,6 +104,7 @@ class TestImageMeta(test.NoDBTestCase):
         self.assertEqual('', image_meta.disk_format)
 
 
+@ddt.ddt
 class TestImageMetaProps(test.NoDBTestCase):
     def test_normal_props(self):
         props = {'os_type': 'windows',
@@ -570,3 +573,73 @@ class TestImageMetaProps(test.NoDBTestCase):
         # and is absent on older versions
         primitive = obj.obj_to_primitive('1.33')
         self.assertNotIn('hw_viommu_model', primitive['nova_object.data'])
+
+    def test_obj_make_compatible_hw_supported_vif_models(self):
+        """Check 'hw_supported_vif_models' compatibility."""
+        # assert that 'hw_supported_vif_models' is supported
+        # on version 1.36.1
+        obj = objects.ImageMetaProps(
+            hw_supported_vif_models=set(['virtio', 'e1000']),
+        )
+        primitive = obj.obj_to_primitive('1.36.1')
+        self.assertIn('hw_supported_vif_models',
+                      primitive['nova_object.data'])
+
+        # and is absent on older versions (including 1.36) when not set
+        obj_empty = objects.ImageMetaProps()
+        primitive = obj_empty.obj_to_primitive('1.36')
+        self.assertNotIn('hw_supported_vif_models',
+                         primitive['nova_object.data'])
+
+    @ddt.data(
+        ('hw_supported_disk_buses', {'virtio', 'scsi'}),
+        ('hw_supported_scsi_models', {'virtio-scsi', 'lsilogic'}),
+        ('hw_supported_vif_models', {'virtio', 'e1000'}),
+    )
+    @ddt.unpack
+    def test_obj_make_compatible_hw_supported_set(self, prop_name, value):
+        """Test that downgrade drops hw_supported_* field."""
+        obj = objects.ImageMetaProps(**{prop_name: value})
+        primitive = obj.obj_to_primitive('1.36')
+        self.assertNotIn(prop_name, primitive['nova_object.data'])
+
+    # SAP: Tests for comma-separated string parsing from Glance
+    @ddt.data(
+        # single value string is parsed into a one-element set
+        ('hw_supported_vif_models', 'virtio', {'virtio'}),
+        # comma-separated string with two values
+        ('hw_supported_vif_models', 'virtio,e1000', {'virtio', 'e1000'}),
+        # surrounding whitespace is stripped
+        ('hw_supported_vif_models', ' virtio , e1000 ', {'virtio', 'e1000'}),
+        # three-value comma-separated string
+        ('hw_supported_vif_models', 'virtio,e1000,rtl8139',
+         {'virtio', 'e1000', 'rtl8139'}),
+        # empty string produces an empty set
+        ('hw_supported_vif_models', '', set()),
+        # an already-parsed Python set is passed through unchanged
+        ('hw_supported_vif_models', {'virtio', 'e1000'}, {'virtio', 'e1000'}),
+        # Comma-separated string is parsed correctly for disk buses
+        ('hw_supported_disk_buses', 'virtio,scsi', {'virtio', 'scsi'}),
+        # Comma-separated string is parsed correctly for SCSI models
+        ('hw_supported_scsi_models', 'virtio-scsi,lsilogic',
+            {'virtio-scsi', 'lsilogic'}),
+    )
+    @ddt.unpack
+    def test_hw_supported_from_string(self, prop_name, value, expected):
+        """Test hw_supported_* fields are parsed correctly from string."""
+        props = {prop_name: value}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(expected, getattr(result, prop_name))
+
+    @ddt.data(
+        ('hw_supported_vif_models', 'virtio,not_a_model'),
+    )
+    @ddt.unpack
+    def test_hw_supported_from_string_invalid_value(self, prop_name, value):
+        """A comma-separated string containing an invalid model raises."""
+        props = {prop_name: value}
+        self.assertRaises(
+            ValueError,
+            objects.ImageMetaProps.from_dict,
+            props,
+        )
