@@ -1406,6 +1406,153 @@ class LibvirtBlockInfoTest(test.NoDBTestCase):
         self.assertRaises(exception.UnsupportedRescueBus,
                           blockinfo.get_rescue_bus, None, 'kvm', meta, 'disk')
 
+    def test_get_disk_bus_for_device_type_with_supported_buses(self):
+        # Test hw_supported_disk_buses takes priority over hw_disk_bus
+        instance = objects.Instance(**self.test_instance)
+
+        # Case 1: hw_supported_disk_buses with valid bus for KVM
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {'hw_supported_disk_buses': {'virtio', 'scsi'}}
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        # Should pick 'virtio' — it is first in SUPPORTED_DEVICE_BUSES['kvm']
+        self.assertEqual('virtio', bus)
+
+        # Case 2: hw_supported_disk_buses with only one valid bus
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {'hw_supported_disk_buses': {'xen', 'scsi'}}
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        # Should pick 'scsi' as 'xen' is not valid for kvm
+        self.assertEqual('scsi', bus)
+
+        # Case 3: hw_supported_disk_buses with no valid buses, fallback
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {'hw_supported_disk_buses': {'xen', 'uml'}}
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        # Should fallback to hypervisor default (virtio for kvm disk)
+        self.assertEqual('virtio', bus)
+
+    def test_get_disk_bus_for_device_type_supported_buses_priority(self):
+        # Test that hw_supported_disk_buses has priority over hw_disk_bus
+        instance = objects.Instance(**self.test_instance)
+
+        # Both hw_supported_disk_buses and hw_disk_bus are set
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_disk_buses': {'scsi', 'virtio'},
+                'hw_disk_bus': 'ide'
+            }
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        # Should pick 'virtio' (first in KVM priority list), not 'ide'
+        self.assertEqual('virtio', bus)
+
+    def test_get_disk_bus_for_device_type_supported_buses_fallback(self):
+        # Test fallback from hw_supported_disk_buses to hw_disk_bus
+        instance = objects.Instance(**self.test_instance)
+
+        # hw_supported_disk_buses has no valid buses, fall back to
+        # hw_disk_bus
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_disk_buses': {'xen'},
+                'hw_disk_bus': 'scsi'
+            }
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        # Should fallback to hw_disk_bus
+        self.assertEqual('scsi', bus)
+
+    def test_get_disk_bus_for_device_type_supported_buses_invalid(self):
+        # Test that invalid hw_disk_bus still raises exception after
+        # hw_supported_disk_buses has no valid options
+        instance = objects.Instance(**self.test_instance)
+
+        # hw_supported_disk_buses has no valid buses, hw_disk_bus is
+        # invalid
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_disk_buses': {'lxc'},
+                'hw_disk_bus': 'xen'
+            }
+        })
+        # Should raise UnsupportedHardware for invalid hw_disk_bus
+        self.assertRaises(
+            exception.UnsupportedHardware,
+            blockinfo.get_disk_bus_for_device_type,
+            instance, 'kvm', image_meta, device_type='disk')
+
+    def test_get_disk_bus_for_device_type_supported_buses_cdrom(self):
+        # Test that hw_supported_disk_buses is only used for disk device
+        # type
+        instance = objects.Instance(**self.test_instance)
+
+        # hw_supported_disk_buses should not affect cdrom device type
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_disk_buses': {'scsi'},
+                'hw_cdrom_bus': 'sata'
+            }
+        })
+        with mock.patch('nova.virt.libvirt.utils.get_arch',
+                       return_value=obj_fields.Architecture.X86_64):
+            bus = blockinfo.get_disk_bus_for_device_type(
+                instance, 'kvm', image_meta, device_type='cdrom')
+        # Should use hw_cdrom_bus, not hw_supported_disk_buses
+        self.assertEqual('sata', bus)
+
+    def test_get_disk_mapping_with_supported_disk_buses(self):
+        # Test get_disk_mapping with hw_supported_disk_buses
+        instance_ref = objects.Instance(**self.test_instance)
+        image_meta = objects.ImageMeta.from_dict({
+            'disk_format': 'raw',
+            'properties': {'hw_supported_disk_buses': {'scsi', 'virtio'}}
+        })
+
+        block_device_info = {
+            'image': [
+                {'device_type': 'disk', 'boot_index': 0},
+            ]
+        }
+        mapping = blockinfo.get_disk_mapping(
+            "kvm", instance_ref, "virtio", "ide", image_meta,
+            block_device_info=block_device_info)
+
+        # Root device should use a bus from hw_supported_disk_buses
+        self.assertIn(mapping['disk']['bus'], ['scsi', 'virtio'])
+        self.assertIn(mapping['root']['bus'], ['scsi', 'virtio'])
+
+    def test_get_disk_bus_for_device_type_supported_buses_highest_priority(
+            self):
+        # SAP: When hw_supported_disk_buses contains multiple valid buses,
+        # the bus that appears FIRST in SUPPORTED_DEVICE_BUSES[virt_type]
+        # should be selected (i.e. the implementation must iterate the
+        # hypervisor priority list and check membership, not iterate the
+        # unordered set and return the first valid hit).
+        #
+        # For KVM: SUPPORTED_DEVICE_BUSES['kvm'] = ['virtio', 'scsi', ...]
+        # so when both 'virtio' and 'scsi' are offered, 'virtio' must win.
+        instance = objects.Instance(**self.test_instance)
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {'hw_supported_disk_buses': {'scsi', 'virtio'}}
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        self.assertEqual(
+            'virtio', bus,
+            'Expected the highest-priority KVM bus (virtio) to be selected '
+            'when hw_supported_disk_buses contains {scsi, virtio}. '
+            'If this fails, the implementation is iterating the unordered '
+            'set instead of the hypervisor priority list.'
+        )
+
 
 class DefaultDeviceNamesTestCase(test.NoDBTestCase):
     def setUp(self):

@@ -996,6 +996,116 @@ class LibvirtVifTestCase(test.NoDBTestCase):
 
             self._assertModel(xml, network_model.VIF_MODEL_VIRTIO, "qemu")
 
+    def test_model_hw_supported_vif_models_kvm(self):
+        """Test hw_supported_vif_models with KVM - select first valid model"""
+        self.flags(use_virtio_for_bridges=True,
+                   virt_type='kvm',
+                   group='libvirt')
+
+        d = vif.LibvirtGenericVIFDriver()
+        # Set hw_supported_vif_models with virtio, e1000, rtl8139
+        # KVM supports all three, should pick virtio (first in priority list)
+        image_meta = objects.ImageMeta.from_dict(
+            {'properties': {
+                'hw_supported_vif_models': set([
+                    network_model.VIF_MODEL_VIRTIO,
+                    network_model.VIF_MODEL_E1000,
+                    network_model.VIF_MODEL_RTL8139
+                ])
+            }})
+        xml = self._get_instance_xml(d, self.vif_bridge, image_meta)
+        self._assertModel(xml, network_model.VIF_MODEL_VIRTIO)
+
+    def test_model_hw_supported_vif_models_second_priority(self):
+        """Test hw_supported_vif_models selects second priority model"""
+        self.flags(use_virtio_for_bridges=True,
+                   virt_type='kvm',
+                   group='libvirt')
+
+        d = vif.LibvirtGenericVIFDriver()
+        # Set hw_supported_vif_models without virtio, ne2k_pci, pcnet (the
+        # first three in KVM list)
+        # Should pick rtl8139 (fourth in KVM priority list)
+        image_meta = objects.ImageMeta.from_dict(
+            {'properties': {
+                'hw_supported_vif_models': set([
+                    network_model.VIF_MODEL_E1000,
+                    network_model.VIF_MODEL_RTL8139
+                ])
+            }})
+        xml = self._get_instance_xml(d, self.vif_bridge, image_meta)
+        self._assertModel(xml, network_model.VIF_MODEL_RTL8139)
+
+    def test_model_hw_supported_vif_models_fallback_to_hw_vif_model(self):
+        """Test fallback to hw_vif_model when no supported models match"""
+        self.flags(use_virtio_for_bridges=True,
+                   virt_type='kvm',
+                   group='libvirt')
+
+        d = vif.LibvirtGenericVIFDriver()
+        # Set hw_supported_vif_models with only lan9118 (not supported by KVM)
+        # Should fall back to hw_vif_model
+        image_meta = objects.ImageMeta.from_dict(
+            {'properties': {
+                'hw_supported_vif_models': set([
+                    network_model.VIF_MODEL_LAN9118
+                ]),
+                'hw_vif_model': network_model.VIF_MODEL_E1000
+            }})
+        xml = self._get_instance_xml(d, self.vif_bridge, image_meta)
+        self._assertModel(xml, network_model.VIF_MODEL_E1000)
+
+    def test_model_hw_supported_vif_models_empty_set(self):
+        """Test empty hw_supported_vif_models falls back to hw_vif_model"""
+        self.flags(use_virtio_for_bridges=True,
+                   virt_type='kvm',
+                   group='libvirt')
+
+        d = vif.LibvirtGenericVIFDriver()
+        # Empty set should fall back to hw_vif_model
+        image_meta = objects.ImageMeta.from_dict(
+            {'properties': {
+                'hw_supported_vif_models': set(),
+                'hw_vif_model': network_model.VIF_MODEL_RTL8139
+            }})
+        xml = self._get_instance_xml(d, self.vif_bridge, image_meta)
+        self._assertModel(xml, network_model.VIF_MODEL_RTL8139)
+
+    def test_model_hw_supported_vif_models_parallels(self):
+        """Test hw_supported_vif_models with Parallels virt type"""
+        self.flags(use_virtio_for_bridges=True,
+                   virt_type='parallels',
+                   group='libvirt')
+
+        d = vif.LibvirtGenericVIFDriver()
+        # Parallels supports: virtio, rtl8139, e1000
+        # Set models with e1000 and rtl8139 (no virtio)
+        # Should pick rtl8139 (appears before e1000 in parallels priority)
+        image_meta = objects.ImageMeta.from_dict(
+            {'properties': {
+                'hw_supported_vif_models': set([
+                    network_model.VIF_MODEL_E1000,
+                    network_model.VIF_MODEL_RTL8139
+                ])
+            }})
+        xml = self._get_instance_xml(d, self.vif_bridge, image_meta)
+        self._assertModel(xml, network_model.VIF_MODEL_RTL8139)
+
+    def test_model_hw_supported_vif_models_not_set(self):
+        """Test behavior when hw_supported_vif_models is not set"""
+        self.flags(use_virtio_for_bridges=True,
+                   virt_type='kvm',
+                   group='libvirt')
+
+        d = vif.LibvirtGenericVIFDriver()
+        # No hw_supported_vif_models, should fall back to hw_vif_model
+        image_meta = objects.ImageMeta.from_dict(
+            {'properties': {
+                'hw_vif_model': network_model.VIF_MODEL_E1000
+            }})
+        xml = self._get_instance_xml(d, self.vif_bridge, image_meta)
+        self._assertModel(xml, network_model.VIF_MODEL_E1000)
+
     def test_generic_driver_none(self):
         d = vif.LibvirtGenericVIFDriver()
         self.assertRaises(exception.NovaException,
