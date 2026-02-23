@@ -27,8 +27,70 @@ from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import network_util
 from nova.virt.vmwareapi import vm_util
 
+
 LOG = logging.getLogger(__name__)
+
+
 CONF = nova.conf.CONF
+
+# VMware VIF models in priority order (most preferred first)
+SUPPORTED_VIF_MODELS = (
+    model.VIF_MODEL_VMXNET3,
+    model.VIF_MODEL_VMXNET,
+    model.VIF_MODEL_E1000E,
+    model.VIF_MODEL_E1000,
+    model.VIF_MODEL_PCNET,
+    model.VIF_MODEL_SRIOV,
+)
+
+
+def _get_supported_vif_model(image_meta):
+    """Get the best supported VIF model from image metadata.
+
+    :param image_meta: ImageMeta object containing image properties
+    :returns: The first matching model from SUPPORTED_VIF_MODELS, or None
+    """
+    if not image_meta:
+        return None
+
+    supported_models = image_meta.properties.get('hw_supported_vif_models')
+    if not supported_models:
+        return None
+
+    for candidate_model in SUPPORTED_VIF_MODELS:
+        if candidate_model in supported_models:
+            return candidate_model
+
+    return None
+
+
+def get_vif_model(image_meta):
+    """Get the VIF model from image metadata.
+
+    This function tries to determine the VIF model based on the image
+    metadata, if provided.
+
+    It checks hw_supported_vif_models first (selecting the first supported
+    model from the priority list), then falls back to hw_vif_model.
+
+    If either no image_meta has been provided, or the metadata
+    has not been set, it falls back to the default model.
+    :param image_meta: ImageMeta object containing image properties
+    :returns: The VIF model to use (string)
+    """
+    if not image_meta:
+        return constants.DEFAULT_VIF_MODEL
+
+    # First, check if hw_supported_vif_models is specified
+    if vif_model := _get_supported_vif_model(image_meta):
+        return vif_model
+
+    # Fall back to hw_vif_model if specified
+    if vif_model := image_meta.properties.get('hw_vif_model'):
+        return vif_model
+
+    # Return default model
+    return constants.DEFAULT_VIF_MODEL
 
 
 def _check_ovs_supported_version(session):

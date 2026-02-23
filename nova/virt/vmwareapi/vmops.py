@@ -3063,8 +3063,7 @@ class VMwareVMOps(object):
         config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
         extra_specs = self._get_extra_specs(instance.flavor,
                                             instance.image_meta)
-        vif_model = instance.image_meta.properties.get('hw_vif_model',
-            constants.DEFAULT_VIF_MODEL)
+        vif_model = vmwarevif.get_vif_model(instance.image_meta)
 
         vm_util.append_vif_infos_to_config_spec(
             client_factory,
@@ -3106,8 +3105,7 @@ class VMwareVMOps(object):
             return device_changes
 
         # Iterate over the network adapters and update the backing
-        vif_model = image_meta.properties.get('hw_vif_model',
-                                                constants.DEFAULT_VIF_MODEL)
+        vif_model = vmwarevif.get_vif_model(image_meta)
         hardware_devices = vm_util.get_hardware_devices(self._session, vm_ref)
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
@@ -4094,8 +4092,7 @@ class VMwareVMOps(object):
 
     def attach_interface(self, context, instance, image_meta, vif):
         """Attach an interface to the instance."""
-        vif_model = image_meta.properties.get('hw_vif_model',
-                                              constants.DEFAULT_VIF_MODEL)
+        vif_model = vmwarevif.get_vif_model(image_meta)
         vif_model = vm_util.convert_vif_model(vif_model)
         vif_info = vmwarevif.get_vif_dict(self._session, self._cluster,
                                           vif_model, vif)
