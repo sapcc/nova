@@ -92,6 +92,29 @@ def is_vif_model_valid_for_virt(virt_type, vif_model):
     return vif_model in SUPPORTED_VIF_MODELS[virt_type]
 
 
+def _get_supported_vif_model(virt_type, image_meta):
+    """Get the best supported VIF model from image metadata.
+
+    :param virt_type: Virtualization type (e.g., 'kvm', 'qemu', 'xen')
+    :param image_meta: ImageMeta object containing image properties
+    :returns: The first matching model from SUPPORTED_VIF_MODELS, or None
+    """
+    if not image_meta:
+        return None
+
+    supported_models = image_meta.properties.get('hw_supported_vif_models')
+    if not supported_models:
+        return None
+
+    # Iterate through SUPPORTED_VIF_MODELS in priority order
+    # and return the first one that's in the image's supported set
+    for candidate_model in SUPPORTED_VIF_MODELS.get(virt_type, []):
+        if candidate_model in supported_models:
+            return candidate_model
+
+    return None
+
+
 def set_vf_interface_vlan(pci_addr, mac_addr, vlan=0):
     vlan_id = int(vlan)
     pf_ifname = pci_utils.get_ifname_by_pci_address(pci_addr,
@@ -164,9 +187,14 @@ class LibvirtGenericVIFDriver(object):
 
         model = vif_model
 
-        # If the user has specified a 'vif_model' against the
-        # image then honour that model
         if image_meta:
+            # Check hw_supported_vif_models first
+            model = _get_supported_vif_model(
+                CONF.libvirt.virt_type, image_meta)
+            if model:
+                return model
+
+            # Fall back to hw_vif_model via HardwareProperties
             model = osinfo.HardwareProperties(image_meta).network_model
 
         # If the virt type is KVM/QEMU/VZ(Parallels), then use virtio according

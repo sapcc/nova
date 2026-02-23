@@ -265,3 +265,154 @@ class VMwareVifTestCase(test.NoDBTestCase):
         calls = []
         mock_network_name.assert_has_calls(calls)
         self.assertEqual(fake_network_obj, network_ref)
+
+    def test_get_supported_vif_model_with_set(self):
+        """Test that the first supported model from a set is returned."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'e1000', 'vmxnet3', 'e1000e'}
+            }
+        })
+        # vmxnet3 is first in SUPPORTED_VIF_MODELS
+        result = vif._get_supported_vif_model(image_meta)
+        self.assertEqual('vmxnet3', result)
+
+    def test_get_supported_vif_model_priority_order(self):
+        """Test that models are selected in priority order."""
+        from nova import objects
+        # Only e1000 is in both the set and SUPPORTED_VIF_MODELS
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'e1000', 'rtl8139'}
+            }
+        })
+        result = vif._get_supported_vif_model(image_meta)
+        self.assertEqual('e1000', result)
+
+    def test_get_supported_vif_model_no_match(self):
+        """Test that None is returned when no model matches."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'rtl8139', 'ne2k_pci'}
+            }
+        })
+        result = vif._get_supported_vif_model(image_meta)
+        self.assertIsNone(result)
+
+    def test_get_supported_vif_model_no_property(self):
+        """Test that None is returned when property is not set."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({'properties': {}})
+        result = vif._get_supported_vif_model(image_meta)
+        self.assertIsNone(result)
+
+    def test_get_supported_vif_model_none_image_meta(self):
+        """Test that None is returned when image_meta is None."""
+        result = vif._get_supported_vif_model(None)
+        self.assertIsNone(result)
+
+    def test_get_supported_vif_model_empty_set(self):
+        """Test that None is returned for empty set."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': set()
+            }
+        })
+        result = vif._get_supported_vif_model(image_meta)
+        self.assertIsNone(result)
+
+    def test_get_vif_model_with_supported_models(self):
+        """Test get_vif_model with hw_supported_vif_models."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'e1000', 'vmxnet3'}
+            }
+        })
+        result = vif.get_vif_model(image_meta)
+        # vmxnet3 should be selected as it's first in priority
+        self.assertEqual('vmxnet3', result)
+
+    def test_get_vif_model_with_hw_vif_model(self):
+        """Test get_vif_model falls back to hw_vif_model."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_vif_model': 'e1000e'
+            }
+        })
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual('e1000e', result)
+
+    def test_get_vif_model_supported_takes_priority(self):
+        """Test hw_supported_vif_models takes priority over hw_vif_model."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'vmxnet3'},
+                'hw_vif_model': 'e1000'
+            }
+        })
+        result = vif.get_vif_model(image_meta)
+        # hw_supported_vif_models should take priority
+        self.assertEqual('vmxnet3', result)
+
+    def test_get_vif_model_no_match_falls_back_to_hw_vif_model(self):
+        """Test fallback to hw_vif_model when no supported model matches."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'rtl8139'},  # Not supported
+                'hw_vif_model': 'e1000'
+            }
+        })
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual('e1000', result)
+
+    def test_get_vif_model_default(self):
+        """Test get_vif_model returns default when no properties set."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({'properties': {}})
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual(constants.DEFAULT_VIF_MODEL, result)
+
+    def test_get_vif_model_none_image_meta(self):
+        """Test get_vif_model returns default when image_meta is None."""
+        result = vif.get_vif_model(None)
+        self.assertEqual(constants.DEFAULT_VIF_MODEL, result)
+
+    def test_get_vif_model_no_properties(self):
+        """Test get_vif_model returns default when properties missing."""
+        from nova import objects
+        # Image meta without properties attribute
+        image_meta = objects.ImageMeta.from_dict({})
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual(constants.DEFAULT_VIF_MODEL, result)
+
+    def test_get_vif_model_empty_supported_set_with_hw_vif_model(self):
+        """Test empty hw_supported_vif_models falls back to hw_vif_model."""
+        from nova import objects
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': set(),
+                'hw_vif_model': 'vmxnet'
+            }
+        })
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual('vmxnet', result)
+
+    def test_get_vif_model_priority_selection(self):
+        """Test that get_vif_model respects priority order."""
+        from nova import objects
+        # Provide models in reverse priority order
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {
+                'hw_supported_vif_models': {'e1000', 'e1000e', 'vmxnet3'}
+            }
+        })
+        result = vif.get_vif_model(image_meta)
+        # vmxnet3 should be selected as highest priority
+        self.assertEqual('vmxnet3', result)

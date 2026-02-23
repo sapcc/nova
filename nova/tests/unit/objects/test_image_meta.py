@@ -570,3 +570,156 @@ class TestImageMetaProps(test.NoDBTestCase):
         # and is absent on older versions
         primitive = obj.obj_to_primitive('1.33')
         self.assertNotIn('hw_viommu_model', primitive['nova_object.data'])
+
+    def test_hw_supported_vif_models(self):
+        """Test hw_supported_vif_models field with set of VIF models."""
+        props = {'hw_supported_vif_models': set(['virtio', 'e1000'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['virtio', 'e1000']),
+                         virtprops.hw_supported_vif_models)
+
+    def test_obj_make_compatible_hw_supported_vif_models(self):
+        """Check 'hw_supported_vif_models' compatibility."""
+        # assert that 'hw_supported_vif_models' is supported
+        # on version 1.36.1
+        obj = objects.ImageMetaProps(
+            hw_supported_vif_models=set(['virtio', 'e1000']),
+        )
+        primitive = obj.obj_to_primitive('1.36.1')
+        self.assertIn('hw_supported_vif_models',
+                      primitive['nova_object.data'])
+
+        # and is absent on older versions (including 1.36) when not set
+        obj_empty = objects.ImageMetaProps()
+        primitive = obj_empty.obj_to_primitive('1.36')
+        self.assertNotIn('hw_supported_vif_models',
+                         primitive['nova_object.data'])
+
+    def test_hw_supported_disk_buses(self):
+        """Test hw_supported_disk_buses field with set of disk buses."""
+        props = {'hw_supported_disk_buses': set(['virtio', 'scsi'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['virtio', 'scsi']),
+                         virtprops.hw_supported_disk_buses)
+
+    def test_hw_supported_scsi_models(self):
+        """Test hw_supported_scsi_models field with set of SCSI models."""
+        props = {'hw_supported_scsi_models': set(['virtio-scsi',
+                                                   'lsilogic'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['virtio-scsi', 'lsilogic']),
+                         virtprops.hw_supported_scsi_models)
+
+    def test_hw_supported_disk_buses_invalid_value(self):
+        """Test validation error for invalid disk bus in set."""
+        props = {'hw_supported_disk_buses': set(['virtio', 'invalid_bus'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_hw_supported_scsi_models_invalid_value(self):
+        """Test validation error for invalid SCSI model in set."""
+        props = {'hw_supported_scsi_models': set(['virtio-scsi',
+                                                   'invalid_scsi'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_hw_supported_vif_models_invalid_value(self):
+        """Test validation error for invalid VIF model in set."""
+        props = {'hw_supported_vif_models': set(['virtio', 'invalid_vif'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_obj_make_compatible_hw_supported_disk_buses_set(self):
+        """Test that downgrade raises error when
+        hw_supported_disk_buses is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_disk_buses=set(['virtio', 'scsi']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    def test_obj_make_compatible_hw_supported_scsi_models_set(self):
+        """Test that downgrade raises error when
+        hw_supported_scsi_models is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_scsi_models=set(['virtio-scsi', 'lsilogic']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    def test_obj_make_compatible_hw_supported_vif_models_set(self):
+        """Test that downgrade raises error when
+        hw_supported_vif_models is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_vif_models=set(['virtio', 'e1000']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    # SAP: Tests for comma-separated string parsing from Glance
+    def test_hw_supported_vif_models_from_string_single(self):
+        """U1: single value string is parsed into a one-element set."""
+        props = {'hw_supported_vif_models': 'virtio'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_two_values(self):
+        """U2: comma-separated string with two values."""
+        props = {'hw_supported_vif_models': 'virtio,e1000'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'e1000'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_with_spaces(self):
+        """U3: surrounding whitespace is stripped."""
+        props = {'hw_supported_vif_models': ' virtio , e1000 '}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'e1000'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_three_values(self):
+        """U4: three-value comma-separated string."""
+        props = {'hw_supported_vif_models': 'virtio,e1000,rtl8139'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(
+            {'virtio', 'e1000', 'rtl8139'},
+            result.hw_supported_vif_models,
+        )
+
+    def test_hw_supported_vif_models_from_empty_string(self):
+        """U5: empty string produces an empty set."""
+        props = {'hw_supported_vif_models': ''}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(), result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_set_passthrough(self):
+        """U6: an already-parsed Python set is passed through unchanged."""
+        props = {'hw_supported_vif_models': {'virtio', 'e1000'}}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'e1000'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_invalid_value(self):
+        """U7: a comma-separated string containing an invalid model raises."""
+        props = {'hw_supported_vif_models': 'virtio,not_a_model'}
+        self.assertRaises(
+            ValueError,
+            objects.ImageMetaProps.from_dict,
+            props,
+        )
+
+    def test_hw_supported_disk_buses_from_string(self):
+        """Comma-separated string is parsed correctly for disk buses."""
+        props = {'hw_supported_disk_buses': 'virtio,scsi'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'scsi'}, result.hw_supported_disk_buses)
+
+    def test_hw_supported_scsi_models_from_string(self):
+        """Comma-separated string is parsed correctly for SCSI models."""
+        props = {'hw_supported_scsi_models': 'virtio-scsi,lsilogic'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(
+            {'virtio-scsi', 'lsilogic'},
+            result.hw_supported_scsi_models,
+        )
+

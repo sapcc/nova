@@ -192,6 +192,26 @@ VOLUME_DRIVERS = {
 }
 
 
+# At the time of writing, that is the same as fields.SCSIModel.ALL,
+#  but that is not guaranteed, and ALL doesn't define a priority.
+PRIORITIZED_SCSI_MODELS = [
+    fields.SCSIModel.VIRTIO_SCSI,
+    fields.SCSIModel.VMPVSCSI,
+    fields.SCSIModel.LSISAS1078,
+    fields.SCSIModel.LSISAS1068,
+    fields.SCSIModel.LSILOGIC,
+    fields.SCSIModel.BUSLOGIC,
+    fields.SCSIModel.IBMVSCSI,
+]
+
+# SCSI models supported by libvirt, keyed by virt_type. The order defines
+# priority when selecting from hw_supported_scsi_models.
+SUPPORTED_SCSI_MODELS = {
+    'qemu': PRIORITIZED_SCSI_MODELS,
+    'kvm': PRIORITIZED_SCSI_MODELS,
+}
+
+
 def patch_tpool_proxy():
     """eventlet.tpool.Proxy doesn't work with old-style class in __str__()
     or __repr__() calls. See bug #962840 for details.
@@ -5703,14 +5723,34 @@ class LibvirtDriver(driver.ComputeDriver):
 
     @staticmethod
     def _get_scsi_controller(image_meta):
-        """Return scsi controller or None based on image meta"""
-        if image_meta.properties.get('hw_scsi_model'):
-            hw_scsi_model = image_meta.properties.hw_scsi_model
+        """Return scsi controller or None based on image meta.
+
+        :param image_meta: ImageMeta object containing image properties
+        """
+        hw_scsi_model = None
+        # First try hw_supported_scsi_models
+        supported_models = image_meta.properties.get(
+            'hw_supported_scsi_models')
+        if supported_models:
+            # Iterate through SUPPORTED_SCSI_MODELS in priority order
+            # and return the first one that's in the image's supported set
+            virt_type = CONF.libvirt.virt_type
+            for model in SUPPORTED_SCSI_MODELS.get(virt_type, []):
+                if model in supported_models:
+                    hw_scsi_model = model
+                    break
+
+        # Fall back to hw_scsi_model
+        if not hw_scsi_model:
+            hw_scsi_model = image_meta.properties.get('hw_scsi_model')
+
+        if hw_scsi_model:
             scsi_controller = vconfig.LibvirtConfigGuestController()
             scsi_controller.type = 'scsi'
             scsi_controller.model = hw_scsi_model
             scsi_controller.index = 0
             return scsi_controller
+        return None
 
     def _get_host_sysinfo_serial_hardware(self):
         """Get a UUID from the host hardware
