@@ -195,14 +195,31 @@ class ImageMetaProps(base.NovaObject):
     # Version 1.35: Added 'hw_virtio_packed_ring' field
     # Version 1.36: Added 'hw_maxphysaddr_mode' and
     #                     'hw_maxphysaddr_bits' field
+    # Version 1.36.1: SAP - Added set-based hardware support fields:
+    #                 'hw_supported_disk_buses', 'hw_supported_hv_types',
+    #                 'hw_supported_scsi_models', 'hw_supported_video_models',
+    #                 'hw_supported_vif_models'
     # NOTE(efried): When bumping this version, the version of
     # ImageMetaPropsPayload must also be bumped. See its docstring for details.
-    VERSION = '1.36'
+    VERSION = '1.36.1'
 
     def obj_make_compatible(self, primitive, target_version):
         super(ImageMetaProps, self).obj_make_compatible(primitive,
                                                         target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        # SAP: Check non-standard extension fields before removing
+        if target_version < (1, 36, 1):
+            for field_name in ['hw_supported_disk_buses',
+                               'hw_supported_hv_types',
+                               'hw_supported_scsi_models',
+                               'hw_supported_video_models',
+                               'hw_supported_vif_models']:
+                field_value = primitive.pop(field_name, None)
+                if field_value:
+                    raise exception.ObjectActionError(
+                        action='obj_make_compatible',
+                        reason='%s not supported in version %s' %
+                               (field_name, target_version))
         if target_version < (1, 36):
             primitive.pop('hw_maxphysaddr_mode', None)
             primitive.pop('hw_maxphysaddr_bits', None)
@@ -366,6 +383,9 @@ class ImageMetaProps(base.NovaObject):
         # name of the hard disk bus to use eg virtio, scsi, ide
         'hw_disk_bus': fields.DiskBusField(),
 
+        # SAP: set of supported disk bus types
+        'hw_supported_disk_buses': fields.SetOfDiskBusesField(),
+
         # allocation mode eg 'preallocated'
         'hw_disk_type': fields.StringField(),
 
@@ -448,14 +468,23 @@ class ImageMetaProps(base.NovaObject):
         # name of the SCSI bus controller eg 'virtio-scsi', 'lsilogic', etc
         'hw_scsi_model': fields.SCSIModelField(),
 
+        # SAP: set of supported SCSI models
+        'hw_supported_scsi_models': fields.SetOfSCSIModelsField(),
+
         # name of the video adapter model to use, eg cirrus, vga, xen, qxl
         'hw_video_model': fields.VideoModelField(),
+
+        # SAP: set of supported video models
+        'hw_supported_video_models': fields.SetOfVideoModelsField(),
 
         # MB of video RAM to provide eg 64
         'hw_video_ram': fields.IntegerField(),
 
         # name of a NIC device model eg virtio, e1000, rtl8139
         'hw_vif_model': fields.VIFModelField(),
+
+        # SAP: set of supported NIC device models
+        'hw_supported_vif_models': fields.SetOfVIFModelsField(),
 
         # name of IOMMU device model eg virtio, intel, smmuv3, or auto
         'hw_viommu_model': fields.VIOMMUModelField(),
@@ -521,6 +550,9 @@ class ImageMetaProps(base.NovaObject):
 
         # type of the hypervisor, eg kvm, ironic, xen
         'img_hv_type': fields.HVTypeField(),
+
+        # SAP: set of supported hypervisor types
+        'hw_supported_hv_types': fields.SetOfHVTypesField(),
 
         # Whether the image needs/expected config drive
         'img_config_drive': fields.ConfigDrivePolicyField(),

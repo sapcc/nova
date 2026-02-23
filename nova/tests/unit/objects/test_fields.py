@@ -533,6 +533,114 @@ class TestSetOfIntegers(TestField):
         self.assertEqual('set([1,2])', self.field.stringify(set([1, 2])))
 
 
+class TestSetOfVIFModels(TestField):
+    def setUp(self):
+        super(TestSetOfVIFModels, self).setUp()
+        self.field = fields.SetOfVIFModelsField()
+        self.coerce_good_values = [
+            (set(['virtio', 'e1000']), set(['virtio', 'e1000'])),
+            (set(['virtio']), set(['virtio'])),
+        ]
+        self.coerce_bad_values = [
+            set(['invalid_model']),
+            ['virtio'],
+            'virtio',
+        ]
+        self.to_primitive_values = [(set(['virtio']), tuple(['virtio']))]
+        self.from_primitive_values = [(tuple(['virtio']), set(['virtio']))]
+
+    def test_stringify(self):
+        self.assertEqual("set(['virtio'])",
+                         self.field.stringify(set(['virtio'])))
+
+
+class TestSetOfHVTypes(TestField):
+    def setUp(self):
+        super(TestSetOfHVTypes, self).setUp()
+        self.field = fields.SetOfHVTypesField()
+        self.coerce_good_values = [
+            (set(['kvm', 'qemu']), set(['kvm', 'qemu'])),
+            (set(['kvm']), set(['kvm'])),
+        ]
+        self.coerce_bad_values = [
+            set(['invalid_type']),
+            ['kvm'],
+            'kvm',
+        ]
+        self.to_primitive_values = [(set(['kvm']), tuple(['kvm']))]
+        self.from_primitive_values = [(tuple(['kvm']), set(['kvm']))]
+
+    def test_stringify(self):
+        self.assertEqual("set(['kvm'])",
+                         self.field.stringify(set(['kvm'])))
+
+
+class TestSetOfSCSIModels(TestField):
+    def setUp(self):
+        super(TestSetOfSCSIModels, self).setUp()
+        self.field = fields.SetOfSCSIModelsField()
+        self.coerce_good_values = [
+            (set(['virtio-scsi', 'lsilogic']),
+             set(['virtio-scsi', 'lsilogic'])),
+            (set(['virtio-scsi']), set(['virtio-scsi'])),
+        ]
+        self.coerce_bad_values = [
+            set(['invalid_model']),
+            ['virtio-scsi'],
+            'virtio-scsi',
+        ]
+        self.to_primitive_values = [(set(['virtio-scsi']),
+                                     tuple(['virtio-scsi']))]
+        self.from_primitive_values = [(tuple(['virtio-scsi']),
+                                       set(['virtio-scsi']))]
+
+    def test_stringify(self):
+        self.assertEqual("set(['virtio-scsi'])",
+                         self.field.stringify(set(['virtio-scsi'])))
+
+
+class TestSetOfVideoModels(TestField):
+    def setUp(self):
+        super(TestSetOfVideoModels, self).setUp()
+        self.field = fields.SetOfVideoModelsField()
+        self.coerce_good_values = [
+            (set(['cirrus', 'vga']), set(['cirrus', 'vga'])),
+            (set(['virtio']), set(['virtio'])),
+        ]
+        self.coerce_bad_values = [
+            set(['invalid_model']),
+            ['virtio'],
+            'virtio',
+        ]
+        self.to_primitive_values = [(set(['virtio']), tuple(['virtio']))]
+        self.from_primitive_values = [(tuple(['virtio']), set(['virtio']))]
+
+    def test_stringify(self):
+        self.assertEqual("set(['virtio'])",
+                         self.field.stringify(set(['virtio'])))
+
+
+class TestSetOfDiskBuses(TestField):
+    def setUp(self):
+        super(TestSetOfDiskBuses, self).setUp()
+        self.field = fields.SetOfDiskBusesField()
+        self.coerce_good_values = [
+            (set(['virtio', 'scsi']), set(['virtio', 'scsi'])),
+            (set(['virtio']), set(['virtio'])),
+        ]
+        self.coerce_bad_values = [
+            set(['invalid_bus']),
+            ['virtio'],
+            'virtio',
+        ]
+        self.to_primitive_values = [(set(['virtio']), tuple(['virtio']))]
+        self.from_primitive_values = [(tuple(['virtio']), set(['virtio']))]
+
+    def test_stringify(self):
+        self.assertEqual("set(['virtio'])",
+                         self.field.stringify(set(['virtio'])))
+
+
 class TestListOfSetsOfIntegers(TestField):
     def setUp(self):
         super(TestListOfSetsOfIntegers, self).setUp()

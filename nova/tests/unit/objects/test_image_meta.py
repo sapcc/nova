@@ -570,3 +570,137 @@ class TestImageMetaProps(test.NoDBTestCase):
         # and is absent on older versions
         primitive = obj.obj_to_primitive('1.33')
         self.assertNotIn('hw_viommu_model', primitive['nova_object.data'])
+
+    def test_hw_supported_vif_models(self):
+        """Test hw_supported_vif_models field with set of VIF models."""
+        props = {'hw_supported_vif_models': set(['virtio', 'e1000'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['virtio', 'e1000']),
+                         virtprops.hw_supported_vif_models)
+
+    def test_obj_make_compatible_hw_supported_vif_models(self):
+        """Check 'hw_supported_vif_models' compatibility."""
+        # assert that 'hw_supported_vif_models' is supported
+        # on version 1.36.1
+        obj = objects.ImageMetaProps(
+            hw_supported_vif_models=set(['virtio', 'e1000']),
+        )
+        primitive = obj.obj_to_primitive('1.36.1')
+        self.assertIn('hw_supported_vif_models',
+                      primitive['nova_object.data'])
+
+        # and is absent on older versions (including 1.36) when not set
+        obj_empty = objects.ImageMetaProps()
+        primitive = obj_empty.obj_to_primitive('1.36')
+        self.assertNotIn('hw_supported_vif_models',
+                         primitive['nova_object.data'])
+
+    def test_hw_supported_disk_buses(self):
+        """Test hw_supported_disk_buses field with set of disk buses."""
+        props = {'hw_supported_disk_buses': set(['virtio', 'scsi'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['virtio', 'scsi']),
+                         virtprops.hw_supported_disk_buses)
+
+    def test_hw_supported_hv_types(self):
+        """Test hw_supported_hv_types field with set of HV types."""
+        props = {'hw_supported_hv_types': set(['kvm', 'qemu'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['kvm', 'qemu']),
+                         virtprops.hw_supported_hv_types)
+
+    def test_hw_supported_scsi_models(self):
+        """Test hw_supported_scsi_models field with set of SCSI models."""
+        props = {'hw_supported_scsi_models': set(['virtio-scsi',
+                                                   'lsilogic'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['virtio-scsi', 'lsilogic']),
+                         virtprops.hw_supported_scsi_models)
+
+    def test_hw_supported_video_models(self):
+        """Test hw_supported_video_models field with set of video models."""
+        props = {'hw_supported_video_models': set(['vga', 'cirrus'])}
+        virtprops = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(['vga', 'cirrus']),
+                         virtprops.hw_supported_video_models)
+
+    def test_hw_supported_disk_buses_invalid_value(self):
+        """Test validation error for invalid disk bus in set."""
+        props = {'hw_supported_disk_buses': set(['virtio', 'invalid_bus'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_hw_supported_hv_types_invalid_value(self):
+        """Test validation error for invalid HV type in set."""
+        props = {'hw_supported_hv_types': set(['kvm', 'invalid_hv'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_hw_supported_scsi_models_invalid_value(self):
+        """Test validation error for invalid SCSI model in set."""
+        props = {'hw_supported_scsi_models': set(['virtio-scsi',
+                                                   'invalid_scsi'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_hw_supported_video_models_invalid_value(self):
+        """Test validation error for invalid video model in set."""
+        props = {'hw_supported_video_models': set(['vga', 'invalid_video'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_hw_supported_vif_models_invalid_value(self):
+        """Test validation error for invalid VIF model in set."""
+        props = {'hw_supported_vif_models': set(['virtio', 'invalid_vif'])}
+        self.assertRaises(ValueError,
+                          objects.ImageMetaProps.from_dict, props)
+
+    def test_obj_make_compatible_hw_supported_disk_buses_set(self):
+        """Test that downgrade raises error when
+        hw_supported_disk_buses is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_disk_buses=set(['virtio', 'scsi']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    def test_obj_make_compatible_hw_supported_hv_types_set(self):
+        """Test that downgrade raises error when
+        hw_supported_hv_types is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_hv_types=set(['kvm', 'qemu']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    def test_obj_make_compatible_hw_supported_scsi_models_set(self):
+        """Test that downgrade raises error when
+        hw_supported_scsi_models is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_scsi_models=set(['virtio-scsi', 'lsilogic']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    def test_obj_make_compatible_hw_supported_video_models_set(self):
+        """Test that downgrade raises error when
+        hw_supported_video_models is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_video_models=set(['vga', 'cirrus']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
+
+    def test_obj_make_compatible_hw_supported_vif_models_set(self):
+        """Test that downgrade raises error when
+        hw_supported_vif_models is set.
+        """
+        obj = objects.ImageMetaProps(
+            hw_supported_vif_models=set(['virtio', 'e1000']),
+        )
+        self.assertRaises(exception.ObjectActionError,
+                          obj.obj_to_primitive, '1.36')
