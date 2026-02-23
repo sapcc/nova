@@ -1284,6 +1284,10 @@ class DiskBusField(BaseEnumField):
     AUTO_TYPE = DiskBus()
 
 
+class SetOfDiskBusesField(AutoTypedField):
+    AUTO_TYPE = Set(DiskBus())
+
+
 class DiskConfigField(BaseEnumField):
     AUTO_TYPE = DiskConfig()
 
@@ -1344,6 +1348,10 @@ class SCSIModelField(BaseEnumField):
     AUTO_TYPE = SCSIModel()
 
 
+class SetOfSCSIModelsField(AutoTypedField):
+    AUTO_TYPE = Set(SCSIModel())
+
+
 class SecureBootField(BaseEnumField):
     AUTO_TYPE = SecureBoot()
 
@@ -1354,6 +1362,10 @@ class VideoModelField(BaseEnumField):
 
 class VIFModelField(BaseEnumField):
     AUTO_TYPE = VIFModel()
+
+
+class SetOfVIFModelsField(AutoTypedField):
+    AUTO_TYPE = Set(VIFModel())
 
 
 class VIOMMUModelField(BaseEnumField):

@@ -15,10 +15,12 @@
 
 from unittest import mock
 
+import ddt
 from oslo_vmware import vim_util
 
 from nova import exception
 from nova.network import model as network_model
+from nova import objects
 from nova import test
 from nova.tests.unit import utils
 from nova.tests.unit.virt.vmwareapi import fake
@@ -27,6 +29,7 @@ from nova.virt.vmwareapi import network_util
 from nova.virt.vmwareapi import vif
 
 
+@ddt.ddt
 class VMwareVifTestCase(test.NoDBTestCase):
     def setUp(self):
         super(VMwareVifTestCase, self).setUp()
@@ -265,3 +268,63 @@ class VMwareVifTestCase(test.NoDBTestCase):
         calls = []
         mock_network_name.assert_has_calls(calls)
         self.assertEqual(fake_network_obj, network_ref)
+
+    @ddt.data(
+        # First supported model in set is returned
+        ({'e1000', 'vmxnet3', 'e1000e'}, 'vmxnet3'),
+        # No matching model returns None
+        ({'rtl8139', 'ne2k_pci'}, None),
+        # Empty set returns None
+        (set(), None),
+        # No 'hw_supported_vif_models' property returns None
+        (None, None),
+    )
+    @ddt.unpack
+    def test_get_supported_vif_model(self, supported_models, expected):
+        """Test _get_supported_vif_model with various inputs."""
+        if supported_models is None:
+            image_meta = objects.ImageMeta.from_dict({'properties': {}})
+        else:
+            image_meta = objects.ImageMeta.from_dict({
+                'properties': {
+                    'hw_supported_vif_models': supported_models,
+                }
+            })
+        result = vif._get_supported_vif_model(image_meta)
+        self.assertEqual(expected, result)
+
+    def test_get_supported_vif_model_none_image_meta(self):
+        """Test that None is returned when image_meta is None."""
+        result = vif._get_supported_vif_model(None)
+        self.assertIsNone(result)
+
+    @ddt.data(
+        # hw_supported_vif_models takes priority over hw_vif_model
+        ({'hw_supported_vif_models': {'vmxnet3'}, 'hw_vif_model': 'e1000'},
+         'vmxnet3'),
+        # get_vif_model falls back to hw_vif_model
+        ({'hw_vif_model': 'e1000e'}, 'e1000e'),
+        # No match in supported falls back to hw_vif_model
+        ({'hw_supported_vif_models': {'rtl8139'}, 'hw_vif_model': 'e1000'},
+         'e1000'),
+        # Empty supported set falls back to hw_vif_model
+        ({'hw_supported_vif_models': set(), 'hw_vif_model': 'vmxnet'},
+         'vmxnet'),
+        # With supported models, priority is respected
+        ({'hw_supported_vif_models': {'e1000', 'e1000e', 'vmxnet3'}},
+         'vmxnet3'),
+        # No properties returns default
+        ({}, constants.DEFAULT_VIF_MODEL),
+    )
+    @ddt.unpack
+    def test_get_vif_model(self, properties, expected):
+        """Test get_vif_model with various property combinations."""
+        image_meta = objects.ImageMeta.from_dict({'properties': properties})
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual(expected, result)
+
+    @ddt.data(None, objects.ImageMeta.from_dict({}))
+    def test_get_vif_model_no_image_meta(self, image_meta):
+        """Test get_vif_model returns default for missing or empty meta."""
+        result = vif.get_vif_model(image_meta)
+        self.assertEqual(constants.DEFAULT_VIF_MODEL, result)

@@ -385,7 +385,7 @@ notification_object_data = {
     # ImageMetaProps, so when you see a fail here for that reason, you must
     # *also* bump the version of ImageMetaPropsPayload. See its docstring for
     # more information.
-    'ImageMetaPropsPayload': '1.15-a3d7a75fedbf373bcab2d9d6ece249df',
+    'ImageMetaPropsPayload': '1.16-8d76ab248e6f227d1c14297389a5436c',
     'InstanceActionNotification': '1.0-a73147b93b520ff0061865849d3dfa56',
     'InstanceActionPayload': '1.9-61350684ec0c93f32e0f99cd089782db',
     'InstanceActionRebuildNotification':

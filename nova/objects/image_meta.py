@@ -198,14 +198,23 @@ class ImageMetaProps(base.NovaObject):
     # Version 1.37: Added 'hw_ephemeral_encryption_secret_uuid' field
     # Version 1.38: Added 'hw_firmware_stateless' field
     # Version 1.39: Added igb value to 'hw_vif_model' enum
+    # Version 1.40: SAP - Added set-based hardware support fields:
+    #               'hw_supported_disk_buses', 'hw_supported_scsi_models',
+    #               'hw_supported_vif_models'
     # NOTE(efried): When bumping this version, the version of
     # ImageMetaPropsPayload must also be bumped. See its docstring for details.
-    VERSION = '1.39'
+    VERSION = '1.40'
 
-    def obj_make_compatible(self, primitive, target_version):
+    def obj_make_compatible(self, primitive, target_version):  # noqa: C901
         super(ImageMetaProps, self).obj_make_compatible(primitive,
                                                         target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        # SAP: Check non-standard extension fields before removing
+        if target_version < (1, 40):
+            for field_name in ['hw_supported_disk_buses',
+                               'hw_supported_scsi_models',
+                               'hw_supported_vif_models']:
+                primitive.pop(field_name, None)
         if target_version < (1, 39):
             base.raise_on_too_new_values(
                 target_version, primitive,
@@ -365,6 +374,9 @@ class ImageMetaProps(base.NovaObject):
         # name of the hard disk bus to use eg virtio, scsi, ide
         'hw_disk_bus': fields.DiskBusField(),
 
+        # SAP: set of supported disk bus types
+        'hw_supported_disk_buses': fields.SetOfDiskBusesField(),
+
         # allocation mode eg 'preallocated'
         'hw_disk_type': fields.StringField(),
 
@@ -450,6 +462,9 @@ class ImageMetaProps(base.NovaObject):
         # name of the SCSI bus controller eg 'virtio-scsi', 'lsilogic', etc
         'hw_scsi_model': fields.SCSIModelField(),
 
+        # SAP: set of supported SCSI models
+        'hw_supported_scsi_models': fields.SetOfSCSIModelsField(),
+
         # name of the video adapter model to use, eg cirrus, vga, xen, qxl
         'hw_video_model': fields.VideoModelField(),
 
@@ -458,6 +473,9 @@ class ImageMetaProps(base.NovaObject):
 
         # name of a NIC device model eg virtio, e1000, rtl8139
         'hw_vif_model': fields.VIFModelField(),
+
+        # SAP: set of supported NIC device models
+        'hw_supported_vif_models': fields.SetOfVIFModelsField(),
 
         # name of IOMMU device model eg virtio, intel, smmuv3, or auto
         'hw_viommu_model': fields.VIOMMUModelField(),
@@ -689,6 +707,15 @@ class ImageMetaProps(base.NovaObject):
         if hw_numa_cpus_set:
             self.hw_numa_cpus = hw_numa_cpus
 
+    # SAP: Set-typed image properties that accept a comma-separated string
+    # when the value comes from Glance (which stores all properties as
+    # strings).
+    _SET_FIELD_NAMES = frozenset([
+        'hw_supported_disk_buses',
+        'hw_supported_scsi_models',
+        'hw_supported_vif_models',
+    ])
+
     def _set_attr_from_current_names(self, image_props):
         for key in self.fields:
             # The two NUMA fields need special handling to
@@ -697,6 +724,16 @@ class ImageMetaProps(base.NovaObject):
                 self._set_numa_mem(image_props)
             elif key == "hw_numa_cpus":
                 self._set_numa_cpus(image_props)
+            elif key in self._SET_FIELD_NAMES:
+                # SAP: Set-typed fields accept a comma-separated string from
+                # Glance (e.g. "virtio,e1000") or an already-parsed Python set.
+                if key not in image_props:
+                    continue
+                value = image_props[key]
+                if isinstance(value, str):
+                    value = {v.strip() for v in value.split(',')
+                             if v.strip()}
+                setattr(self, key, value)
             else:
                 # traits_required will be populated by
                 # _set_attr_from_trait_names
