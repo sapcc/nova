@@ -37,6 +37,7 @@ from nova.i18n import _
 from nova.image import glance
 from nova.objects import fields
 from nova.virt.vmwareapi import constants
+from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vm_util
 
 # NOTE(mdbooth): We use use_linked_clone below, but don't have to import it
@@ -55,6 +56,69 @@ CHUNK_SIZE = 64 * units.Ki  # default chunk size for image transfer
 
 # VMDK images having this size are considered invalid/incomplete downloads
 INVALID_VMDK_SIZE = 4096000
+
+# VMware disk buses in priority order (SCSI preferred over IDE)
+SUPPORTED_DISK_BUSES = (
+    fields.DiskBus.SCSI,
+    fields.DiskBus.IDE,
+)
+
+# Driver's SCSI model preference order (most preferred first)
+# This matches VMware's recommended best practices for performance
+SCSI_MODELS_BY_PREFERENCE = (
+    fields.SCSIModel.VMPVSCSI,      # ParaVirtual - best performance
+    fields.SCSIModel.LSILOGIC,      # LSI Logic Parallel - default
+    fields.SCSIModel.LSISAS1068,    # LSI Logic SAS
+    fields.SCSIModel.BUSLOGIC,      # BusLogic - legacy
+)
+
+
+def _get_disk_bus_from_image_properties(properties):
+    """Get disk bus from image properties with priority handling.
+
+    Checks hw_supported_disk_buses first (choosing the first valid bus),
+    then falls back to hw_disk_bus if no supported buses are found.
+
+    :param properties: ImageMetaProps object
+    :returns: A disk bus string (e.g., 'ide', 'scsi'), or None
+    """
+    supported_buses = properties.get('hw_supported_disk_buses')
+    if supported_buses:
+        for bus in SUPPORTED_DISK_BUSES:
+            if bus in supported_buses:
+                return bus
+
+        LOG.info("None of the disk buses in hw_supported_disk_buses "
+                    "%(buses)s are supported, falling back to hw_disk_bus "
+                    "or defaults",
+                    {'buses': supported_buses})
+
+    return properties.get('hw_disk_bus')
+
+
+def _get_scsi_model_from_image_properties(properties):
+    """Get SCSI model from image properties with priority handling.
+
+    Checks hw_supported_scsi_models first, selecting based on the internal
+    preference order, then falls back to hw_scsi_model if no supported
+    models are found.
+
+    :param properties: ImageMetaProps object
+    :returns: A SCSI model string (e.g., 'lsilogic', 'vmpvscsi'), or None
+    """
+
+    supported_scsi_models = properties.get('hw_supported_scsi_models')
+    if supported_scsi_models:
+        for preferred_model in SCSI_MODELS_BY_PREFERENCE:
+            if preferred_model in supported_scsi_models:
+                return preferred_model
+
+        LOG.info("None of the SCSI models in hw_supported_scsi_models "
+                    "%(models)s match driver preferences, falling back to "
+                    "hw_scsi_model or defaults",
+                    {'models': supported_scsi_models})
+
+    return properties.get('hw_scsi_model')
 
 
 class VMwareImage(object):
@@ -161,7 +225,7 @@ class VMwareImage(object):
             props['file_size'] = image_meta.size
         if image_meta.obj_attr_is_set('disk_format'):
             props['file_type'] = image_meta.disk_format
-        hw_disk_bus = properties.get('hw_disk_bus')
+        hw_disk_bus = _get_disk_bus_from_image_properties(properties)
         if hw_disk_bus:
             mapping = {
                 fields.SCSIModel.LSILOGIC:
@@ -176,13 +240,15 @@ class VMwareImage(object):
             if hw_disk_bus == fields.DiskBus.IDE:
                 props['adapter_type'] = constants.ADAPTER_TYPE_IDE
             elif hw_disk_bus == fields.DiskBus.SCSI:
-                hw_scsi_model = properties.get('hw_scsi_model')
+                hw_scsi_model = _get_scsi_model_from_image_properties(
+                    properties)
                 props['adapter_type'] = mapping.get(hw_scsi_model)
+
+        props['vif_model'] = vmwarevif.get_vif_model(image_meta)
 
         props_map = {
             'os_distro': 'os_type',
             'hw_disk_type': 'disk_type',
-            'hw_vif_model': 'vif_model'
         }
 
         for k, v in props_map.items():

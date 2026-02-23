@@ -17,6 +17,7 @@ import datetime
 import os
 from unittest import mock
 
+import ddt
 import iso8601
 from oslo_serialization import jsonutils
 from oslo_versionedobjects import exception as ovo_exc
@@ -531,6 +532,79 @@ class TestSetOfIntegers(TestField):
 
     def test_stringify(self):
         self.assertEqual('set([1,2])', self.field.stringify(set([1, 2])))
+
+
+@ddt.ddt
+class TestSetOfHwSupportedFields(test.NoDBTestCase):
+    """Tests for Set-based fields used by hardware support image properties."""
+
+    @ddt.data(
+        (fields.SetOfVIFModelsField, {'virtio', 'e1000'}, {'virtio'}),
+        (fields.SetOfSCSIModelsField, {'virtio-scsi', 'lsilogic'},
+         {'virtio-scsi'}),
+        (fields.SetOfDiskBusesField, {'virtio', 'scsi'}, {'virtio'}),
+    )
+    @ddt.unpack
+    def test_coerce_good_values(self, field_cls, multi_value_set,
+                                single_value_set):
+        field = field_cls()
+        self.assertEqual(multi_value_set,
+                         field.coerce('obj', 'attr', multi_value_set))
+        self.assertEqual(single_value_set,
+                         field.coerce('obj', 'attr', single_value_set))
+
+    @ddt.data(
+        (fields.SetOfVIFModelsField, 'virtio', 'invalid_model'),
+        (fields.SetOfSCSIModelsField, 'virtio-scsi', 'invalid_model'),
+        (fields.SetOfDiskBusesField, 'virtio', 'invalid_bus'),
+    )
+    @ddt.unpack
+    def test_coerce_bad_values(self, field_cls, valid_value, invalid_value):
+        field = field_cls()
+        # invalid enum value in set
+        self.assertRaises((TypeError, ValueError),
+                          field.coerce, 'obj', 'attr', {invalid_value})
+        # list instead of set
+        self.assertRaises((TypeError, ValueError),
+                          field.coerce, 'obj', 'attr', [valid_value])
+        # bare string instead of set
+        self.assertRaises((TypeError, ValueError),
+                          field.coerce, 'obj', 'attr', valid_value)
+
+    @ddt.data(
+        (fields.SetOfVIFModelsField, 'virtio'),
+        (fields.SetOfSCSIModelsField, 'virtio-scsi'),
+        (fields.SetOfDiskBusesField, 'virtio'),
+    )
+    @ddt.unpack
+    def test_to_primitive(self, field_cls, value):
+        field = field_cls()
+        self.assertEqual(tuple([value]),
+                         field.to_primitive('obj', 'attr', {value}))
+
+    @ddt.data(
+        (fields.SetOfVIFModelsField, 'virtio'),
+        (fields.SetOfSCSIModelsField, 'virtio-scsi'),
+        (fields.SetOfDiskBusesField, 'virtio'),
+    )
+    @ddt.unpack
+    def test_from_primitive(self, field_cls, value):
+        class ObjectLikeThing(object):
+            _context = 'context'
+        field = field_cls()
+        self.assertEqual({value},
+                         field.from_primitive(ObjectLikeThing, 'attr',
+                                              (value,)))
+
+    @ddt.data(
+        (fields.SetOfVIFModelsField, 'virtio'),
+        (fields.SetOfSCSIModelsField, 'virtio-scsi'),
+        (fields.SetOfDiskBusesField, 'virtio'),
+    )
+    @ddt.unpack
+    def test_stringify(self, field_cls, value):
+        field = field_cls()
+        self.assertEqual("set(['%s'])" % value, field.stringify({value}))
 
 
 class TestListOfSetsOfIntegers(TestField):
