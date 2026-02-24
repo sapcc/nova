@@ -57,6 +57,35 @@ CHUNK_SIZE = 64 * units.Ki  # default chunk size for image transfer
 INVALID_VMDK_SIZE = 4096000
 
 
+def _get_disk_bus_from_image_properties(properties):
+    """Get disk bus from image properties with priority handling.
+
+    Checks hw_supported_disk_buses first (choosing the first valid bus),
+    then falls back to hw_disk_bus if no supported buses are found.
+
+    :param properties: ImageMetaProps object
+    :returns: A disk bus string (e.g., 'ide', 'scsi'), or None
+    """
+    # Valid disk buses for VMware (SCSI preferred over IDE)
+    valid_buses = [fields.DiskBus.SCSI, fields.DiskBus.IDE]
+
+    supported_buses = properties.get('hw_supported_disk_buses')
+    if supported_buses:
+        for bus in supported_buses:
+            if bus in valid_buses:
+                LOG.info("Selected disk bus '%(bus)s' from "
+                        "hw_supported_disk_buses",
+                        {'bus': bus})
+                return bus
+        # None of the supported buses are valid
+        LOG.warning("None of the disk buses in hw_supported_disk_buses "
+                   "%(buses)s are supported, falling back to hw_disk_bus "
+                   "or defaults",
+                   {'buses': supported_buses})
+
+    return properties.get('hw_disk_bus')
+
+
 class VMwareImage(object):
     def __init__(self, image_id,
                  file_size=0,
@@ -161,7 +190,7 @@ class VMwareImage(object):
             props['file_size'] = image_meta.size
         if image_meta.obj_attr_is_set('disk_format'):
             props['file_type'] = image_meta.disk_format
-        hw_disk_bus = properties.get('hw_disk_bus')
+        hw_disk_bus = _get_disk_bus_from_image_properties(properties)
         if hw_disk_bus:
             mapping = {
                 fields.SCSIModel.LSILOGIC:
