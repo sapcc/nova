@@ -86,6 +86,43 @@ def _get_disk_bus_from_image_properties(properties):
     return properties.get('hw_disk_bus')
 
 
+def _get_scsi_model_from_image_properties(properties):
+    """Get SCSI model from image properties with priority handling.
+
+    Checks hw_supported_scsi_models first, selecting based on the driver's
+    preference order, then falls back to hw_scsi_model if no supported
+    models are found.
+
+    :param properties: ImageMetaProps object
+    :returns: A SCSI model string (e.g., 'lsilogic', 'vmpvscsi'), or None
+    """
+    # Driver's SCSI model preference order (most preferred first)
+    # This matches VMware's recommended best practices for performance
+    driver_preference_order = [
+        fields.SCSIModel.VMPVSCSI,      # ParaVirtual - best performance
+        fields.SCSIModel.LSILOGIC,      # LSI Logic Parallel - default
+        fields.SCSIModel.LSISAS1068,    # LSI Logic SAS
+        fields.SCSIModel.BUSLOGIC,      # BusLogic - legacy
+    ]
+
+    supported_scsi_models = properties.get('hw_supported_scsi_models')
+    if supported_scsi_models:
+        # Iterate through driver's preference order and return first match
+        for preferred_model in driver_preference_order:
+            if preferred_model in supported_scsi_models:
+                LOG.info("Selected SCSI model '%(model)s' from "
+                        "hw_supported_scsi_models based on driver preference",
+                        {'model': preferred_model})
+                return preferred_model
+        # None of the supported SCSI models match driver preferences
+        LOG.warning("None of the SCSI models in hw_supported_scsi_models "
+                   "%(models)s match driver preferences, falling back to "
+                   "hw_scsi_model or defaults",
+                   {'models': supported_scsi_models})
+
+    return properties.get('hw_scsi_model')
+
+
 class VMwareImage(object):
     def __init__(self, image_id,
                  file_size=0,
@@ -205,7 +242,8 @@ class VMwareImage(object):
             if hw_disk_bus == fields.DiskBus.IDE:
                 props['adapter_type'] = constants.ADAPTER_TYPE_IDE
             elif hw_disk_bus == fields.DiskBus.SCSI:
-                hw_scsi_model = properties.get('hw_scsi_model')
+                hw_scsi_model = _get_scsi_model_from_image_properties(
+                    properties)
                 props['adapter_type'] = mapping.get(hw_scsi_model)
 
         props_map = {

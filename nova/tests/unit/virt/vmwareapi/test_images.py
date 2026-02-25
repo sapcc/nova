@@ -375,3 +375,231 @@ class VMwareImagesTestCase(test.NoDBTestCase):
         context = mock.Mock()
         observed = images.get_vsphere_location(context, None)
         self.assertIsNone(observed)
+
+    # Tests for hw_supported_scsi_models functionality
+
+    def _build_image_meta_with_properties(self, properties_dict):
+        """Helper to build ImageMeta object from properties dict."""
+        mdata = {
+            'size': 93 * units.Gi,
+            'disk_format': 'vmdk',
+            'owner': '',
+            'properties': properties_dict
+        }
+        return objects.ImageMeta.from_dict(mdata)
+
+    def test_supported_scsi_models_driver_preference(self):
+        """Test selecting based on driver preference order."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(['lsisas1068', 'vmpvscsi']),
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should select vmpvscsi (driver's most preferred that image supports)
+        self.assertEqual(constants.ADAPTER_TYPE_PARAVIRTUAL,
+                        image.adapter_type)
+
+    def test_supported_scsi_models_driver_prefers_vmpvscsi(self):
+        """Test driver prefers vmpvscsi over buslogic."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(['buslogic', 'vmpvscsi']),
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should select vmpvscsi (driver's most preferred)
+        self.assertEqual(constants.ADAPTER_TYPE_PARAVIRTUAL,
+                        image.adapter_type)
+
+    def test_supported_scsi_models_fallback_to_hw_scsi_model(self):
+        """Test fallback to hw_scsi_model when no matching models."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(),
+            'hw_scsi_model': 'vmpvscsi',
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should fall back to hw_scsi_model
+        self.assertEqual(constants.ADAPTER_TYPE_PARAVIRTUAL,
+                        image.adapter_type)
+
+    def test_supported_scsi_models_priority_over_hw_scsi_model(self):
+        """Test hw_supported_scsi_models takes priority over hw_scsi_model."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(['lsilogic', 'buslogic']),
+            'hw_scsi_model': 'vmpvscsi',
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should use lsilogic from hw_supported_scsi_models (driver's
+        # preference), not hw_scsi_model
+        self.assertEqual(constants.DEFAULT_ADAPTER_TYPE, image.adapter_type)
+
+    def test_supported_scsi_models_all_valid_types(self):
+        """Test all valid SCSI model types."""
+        test_cases = [
+            ('lsilogic', constants.DEFAULT_ADAPTER_TYPE),
+            ('lsisas1068', constants.ADAPTER_TYPE_LSILOGICSAS),
+            ('buslogic', constants.ADAPTER_TYPE_BUSLOGIC),
+            ('vmpvscsi', constants.ADAPTER_TYPE_PARAVIRTUAL),
+        ]
+
+        for scsi_model, expected_adapter in test_cases:
+            properties = {
+                'hw_disk_bus': 'scsi',
+                'hw_supported_scsi_models': set([scsi_model]),
+            }
+            image_meta = self._build_image_meta_with_properties(properties)
+
+            with mock.patch.object(images, 'get_vsphere_location',
+                                   return_value=None):
+                image = images.VMwareImage.from_image(None, uuids.image,
+                                                      image_meta)
+
+            self.assertEqual(expected_adapter, image.adapter_type,
+                           f"Failed for SCSI model: {scsi_model}")
+
+    def test_supported_scsi_models_with_supported_disk_buses(self):
+        """Test hw_supported_scsi_models with explicit SCSI disk bus."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(['vmpvscsi', 'lsilogic']),
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # When SCSI bus is used, driver prefers vmpvscsi over lsilogic
+        self.assertEqual(constants.ADAPTER_TYPE_PARAVIRTUAL,
+                        image.adapter_type)
+
+    def test_supported_scsi_models_no_match(self):
+        """Test behavior when no SCSI models match driver preferences."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(),
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should have None adapter_type (mapping.get(None) returns None)
+        self.assertIsNone(image.adapter_type)
+
+    def test_supported_scsi_models_empty_set(self):
+        """Test behavior with empty hw_supported_scsi_models set."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_supported_scsi_models': set(),
+            'hw_scsi_model': 'buslogic',
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should fall back to hw_scsi_model
+        self.assertEqual(constants.ADAPTER_TYPE_BUSLOGIC, image.adapter_type)
+
+    def test_supported_scsi_models_not_set(self):
+        """Test behavior when hw_supported_scsi_models is not set."""
+        properties = {
+            'hw_disk_bus': 'scsi',
+            'hw_scsi_model': 'lsisas1068',
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # Should use hw_scsi_model as before
+        self.assertEqual(constants.ADAPTER_TYPE_LSILOGICSAS,
+                        image.adapter_type)
+
+    def test_supported_scsi_models_ide_bus_ignored(self):
+        """Test hw_supported_scsi_models ignored when IDE bus selected."""
+        properties = {
+            'hw_disk_bus': 'ide',
+            'hw_supported_scsi_models': set(['vmpvscsi']),
+        }
+        image_meta = self._build_image_meta_with_properties(properties)
+
+        with mock.patch.object(images, 'get_vsphere_location',
+                               return_value=None):
+            image = images.VMwareImage.from_image(None, uuids.image,
+                                                  image_meta)
+
+        # IDE adapter should be used, SCSI models ignored
+        self.assertEqual(constants.ADAPTER_TYPE_IDE, image.adapter_type)
+
+    def test_get_scsi_model_from_image_properties_direct(self):
+        """Test _get_scsi_model_from_image_properties function directly."""
+        properties_dict = {
+            'hw_supported_scsi_models': set(['buslogic', 'lsilogic']),
+            'hw_scsi_model': 'vmpvscsi',
+        }
+        image_meta = self._build_image_meta_with_properties(properties_dict)
+        properties = image_meta.properties
+
+        result = images._get_scsi_model_from_image_properties(properties)
+
+        # Should return lsilogic (driver's preference over buslogic)
+        self.assertEqual('lsilogic', result)
+
+    def test_get_scsi_model_fallback_direct(self):
+        """Test fallback to hw_scsi_model in helper function."""
+        properties_dict = {
+            'hw_supported_scsi_models': set(),
+            'hw_scsi_model': 'lsilogic',
+        }
+        image_meta = self._build_image_meta_with_properties(properties_dict)
+        properties = image_meta.properties
+
+        result = images._get_scsi_model_from_image_properties(properties)
+
+        # Should fall back to hw_scsi_model
+        self.assertEqual('lsilogic', result)
+
+    def test_get_scsi_model_none_set(self):
+        """Test when neither supported models nor hw_scsi_model set."""
+        properties_dict = {}
+        image_meta = self._build_image_meta_with_properties(properties_dict)
+        properties = image_meta.properties
+
+        result = images._get_scsi_model_from_image_properties(properties)
+
+        # Should return None
+        self.assertIsNone(result)
