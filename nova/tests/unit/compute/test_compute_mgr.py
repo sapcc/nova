@@ -10938,33 +10938,45 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
 
     @mock.patch('nova.compute.manager.LOG')
     @mock.patch('nova.volume.cinder.API.attachment_delete')
-    def test_rollback_volume_bdms_exc(self, mock_delete_attachment, mock_log):
+    def test_rollback_volume_bdms_client_exc(
+            self, mock_delete_attachment, mock_log):
         instance = fake_instance.fake_instance_obj(self.context,
                                                    uuid=uuids.instance)
         bdms = self._generate_volume_bdm_list(instance)
         original_bdms = self._generate_volume_bdm_list(instance,
                                                        original=True)
 
-        # Assert that we ignore cinderclient exceptions and continue to attempt
-        # to rollback any remaining bdms.
+        # Assert that we ignore cinderclient exceptions, reset the BDM state
+        # and continue to attempt to rollback any remaining bdms.
         mock_delete_attachment.side_effect = [
             cinder_exception.ClientException(code=9001), None]
         self.compute._rollback_volume_bdms(self.context, bdms,
                 original_bdms, instance)
+        self.assertEqual(uuids.vol1_attach_original,
+                         bdms[0].attachment_id)
+        self.assertEqual("{'data': {'host': 'original'}}",
+                         bdms[0].connection_info)
         self.assertEqual(uuids.vol2_attach_original,
                          bdms[1].attachment_id)
         self.assertEqual("{'data': {'host': 'original'}}",
                          bdms[1].connection_info)
-        bdms[0].save.assert_not_called()
+        bdms[0].save.assert_called_once()
         bdms[1].save.assert_called_once()
         mock_log.warning.assert_called_once()
         self.assertIn('Ignoring cinderclient exception',
                 mock_log.warning.call_args[0][0])
 
+    @mock.patch('nova.compute.manager.LOG')
+    @mock.patch('nova.volume.cinder.API.attachment_delete')
+    def test_rollback_volume_bdms_unknown_exc(
+            self, mock_delete_attachment, mock_log):
+        instance = fake_instance.fake_instance_obj(self.context,
+                                                   uuid=uuids.instance)
+        bdms = self._generate_volume_bdm_list(instance)
+        original_bdms = self._generate_volume_bdm_list(instance,
+                                                       original=True)
+
         # Assert that we raise unknown Exceptions
-        mock_log.reset_mock()
-        bdms[0].save.reset_mock()
-        bdms[1].save.reset_mock()
         mock_delete_attachment.side_effect = test.TestingException
         self.assertRaises(test.TestingException,
             self.compute._rollback_volume_bdms, self.context,
