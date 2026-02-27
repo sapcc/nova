@@ -10318,18 +10318,19 @@ class ComputeManager(manager.Manager):
                     # NOTE(lyarwood): 3.44 cinder api flow. Delete the
                     # attachment used by the bdm and reset it to that of
                     # the original bdm.
-                    self.volume_api.attachment_delete(context,
-                                                      bdm.attachment_id)
-                    bdm.attachment_id = original_bdm.attachment_id
+                    try:
+                        self.volume_api.attachment_delete(context,
+                                                          bdm.attachment_id)
+                    except cinder_exception.ClientException:
+                        LOG.warning("Ignoring cinderclient exception when "
+                                    "attempting to delete attachment %s for "
+                                    "volume %s while rolling back volume "
+                                    "bdms.", bdm.attachment_id, bdm.volume_id,
+                                    instance=instance)
+                bdm.attachment_id = original_bdm.attachment_id
                 # NOTE(lyarwood): Reset the connection_info to the original
                 bdm.connection_info = original_bdm.connection_info
                 bdm.save()
-            except cinder_exception.ClientException:
-                LOG.warning("Ignoring cinderclient exception when "
-                            "attempting to delete attachment %s for volume "
-                            "%s while rolling back volume bdms.",
-                            bdm.attachment_id, bdm.volume_id,
-                            instance=instance)
             except Exception:
                 with excutils.save_and_reraise_exception():
                     LOG.exception("Exception while attempting to rollback "
