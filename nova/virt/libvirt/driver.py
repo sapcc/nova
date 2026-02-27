@@ -10261,8 +10261,14 @@ class LibvirtDriver(driver.ComputeDriver):
         # 'dest' will be substituted into 'migration_uri' so ensure
         # it doesn't contain any characters that could be used to
         # exploit the URI accepted by libvirt
-        if not libvirt_utils.is_valid_hostname(dest):
-            raise exception.InvalidHostname(hostname=dest)
+        try:
+            if not libvirt_utils.is_valid_hostname(dest):
+                LOG.error("Failed live migration due to invalid destination "
+                          f"hostname {dest}", instance=instance)
+                raise exception.InvalidHostname(hostname=dest)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                recover_method(context, instance, dest, migrate_data)
 
         self._live_migration(context, instance, dest,
                              post_method, recover_method, block_migration,
