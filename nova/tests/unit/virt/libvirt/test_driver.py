@@ -21119,12 +21119,20 @@ class LibvirtConnTestCase(test.NoDBTestCase,
     def test_live_migration_hostname_invalid(self, mock_hostname, mock_lm):
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
         mock_hostname.return_value = False
+        dest = "foo/?com=/bin/sh"
+        recover_method = mock.MagicMock()
+        migrate_data = objects.LibvirtLiveMigrateData()
         self.assertRaises(exception.InvalidHostname,
                           drvr.live_migration,
                           self.context, self.test_instance,
-                          "foo/?com=/bin/sh",
+                          dest,
                           lambda x: x,
-                          lambda x: x)
+                          recover_method,
+                          migrate_data=migrate_data)
+        recover_method.assert_called_once_with(
+            self.context, self.test_instance, dest, migrate_data)
+        # Verify _live_migration was NOT called
+        mock_lm.assert_not_called()
 
     def test_live_migration_force_complete(self):
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
