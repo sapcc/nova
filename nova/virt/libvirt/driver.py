@@ -10774,15 +10774,20 @@ class LibvirtDriver(driver.ComputeDriver):
         operation, and then this thread monitors the progress of
         migration and controls its operation
         """
+        try:
+            guest = self._host.get_guest(instance)
 
-        guest = self._host.get_guest(instance)
-
-        disk_paths = []
-        device_names = []
-        if (migrate_data.block_migration and
-                CONF.libvirt.virt_type != "parallels"):
-            disk_paths, device_names = self._live_migration_copy_disk_paths(
-                context, instance, guest)
+            disk_paths = []
+            device_names = []
+            if (migrate_data.block_migration and
+                    CONF.libvirt.virt_type != "parallels"):
+                disk_paths, device_names = \
+                    self._live_migration_copy_disk_paths(context, instance,
+                                                         guest)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception("Failed live migration setup", instance=instance)
+                recover_method(context, instance, dest, migrate_data)
 
         opthread = utils.spawn(self._live_migration_operation,
                                      context, instance, dest,
@@ -10790,44 +10795,48 @@ class LibvirtDriver(driver.ComputeDriver):
                                      migrate_data, guest,
                                      device_names)
 
-        finish_event = eventlet.event.Event()
-        self.active_migrations[instance.uuid] = deque()
-
-        def thread_finished(thread, event):
-            LOG.debug("Migration operation thread notification",
-                      instance=instance)
-            event.send()
-        opthread.link(thread_finished, finish_event)
-
-        # Let eventlet schedule the new thread right away
-        time.sleep(0)
-
         try:
+            finish_event = eventlet.event.Event()
+            self.active_migrations[instance.uuid] = deque()
+
+            def thread_finished(thread, event):
+                LOG.debug("Migration operation thread notification",
+                          instance=instance)
+                event.send()
+            opthread.link(thread_finished, finish_event)
+
+            # Let eventlet schedule the new thread right away
+            time.sleep(0)
+
             LOG.debug("Starting monitoring of live migration",
                       instance=instance)
             self._live_migration_monitor(context, instance, guest, dest,
                                          post_method, recover_method,
                                          block_migration, migrate_data,
                                          finish_event, disk_paths)
-        except Exception as ex:
-            LOG.warning("Error monitoring migration: %(ex)s",
-                        {"ex": ex}, instance=instance, exc_info=True)
-            # NOTE(aarents): Ensure job is aborted if still running before
-            # raising the exception so this would avoid the migration to be
-            # done and the libvirt guest to be resumed on the target while
-            # the instance record would still related to the source host.
-            try:
-                # If migration is running in post-copy mode and guest
-                # already running on dest host, libvirt will refuse to
-                # cancel migration job.
-                self.live_migration_abort(instance)
-            except libvirt.libvirtError:
-                LOG.warning("Error occured when trying to abort live ",
-                            "migration job, ignoring it.", instance=instance)
-            raise
-        finally:
             LOG.debug("Live migration monitoring is all done",
                       instance=instance)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception("Error during live migration monitoring",
+                              instance=instance)
+                # NOTE(aarents): Ensure job is aborted if still running before
+                # raising the exception so this would avoid the migration to be
+                # done and the libvirt guest to be resumed on the target while
+                # the instance record would still related to the source host.
+                try:
+                    # If migration is running in post-copy mode and guest
+                    # already running on dest host, libvirt will refuse to
+                    # cancel migration job.
+                    self.live_migration_abort(instance)
+                except libvirt.libvirtError:
+                    LOG.warning("Error occured when trying to abort live ",
+                                "migration job, ignoring it.",
+                                instance=instance)
+                else:
+                    # If the migration job was successfully aborted, call the
+                    # recover_method for cleanup.
+                    recover_method(context, instance, dest, migrate_data)
 
     def _is_post_copy_enabled(self, migration_flags):
         return (migration_flags & libvirt.VIR_MIGRATE_POSTCOPY) != 0
