@@ -14303,7 +14303,11 @@ class LibvirtConnTestCase(test.NoDBTestCase,
     def _test_live_migration_main(self, mock_abort, mock_copy_disk_path,
                                   mock_running, mock_guest, mock_monitor,
                                   mock_thread, mock_conn,
-                                  mon_side_effect=None):
+                                  mon_side_effect=None,
+                                  abort_side_effect=None,
+                                  guest_side_effect=None,
+                                  copy_disk_path_side_effect=None,
+                                  thread_side_effect=None):
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
         instance = objects.Instance(**self.test_instance)
 
@@ -14313,47 +14317,103 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         migrate_data = objects.LibvirtLiveMigrateData(block_migration=True)
         disks_to_copy = (['/some/path/one', '/test/path/two'],
                          ['vda', 'vdb'])
-        mock_copy_disk_path.return_value = disks_to_copy
 
+        mock_guest.side_effect = guest_side_effect
         mock_guest.return_value = guest
+        mock_copy_disk_path.side_effect = copy_disk_path_side_effect
+        mock_copy_disk_path.return_value = disks_to_copy
+        mock_thread.side_effect = thread_side_effect
         mock_monitor.side_effect = mon_side_effect
+        mock_abort.side_effect = abort_side_effect
 
         def fake_post():
             pass
 
-        def fake_recover():
-            pass
+        recover_method = mock.MagicMock()
+        dest = "fakehost"
 
-        if mon_side_effect:
-            self.assertRaises(mon_side_effect, drvr._live_migration,
-                              self.context, instance, "fakehost", fake_post,
-                              fake_recover, True, migrate_data)
-            mock_abort.assert_called_once_with(instance)
+        # Determine which exception we expect based on what fails first
+        setup_side_effect = (guest_side_effect or
+                             copy_disk_path_side_effect)
+        side_effect = (setup_side_effect or thread_side_effect or
+                       mon_side_effect)
+        if side_effect:
+            self.assertRaises(side_effect, drvr._live_migration, self.context,
+                              instance, dest, fake_post, recover_method, True,
+                              migrate_data)
         else:
-            drvr._live_migration(self.context, instance, "fakehost", fake_post,
-                                 fake_recover, True, migrate_data)
+            drvr._live_migration(self.context, instance, dest, fake_post,
+                                 recover_method, True, migrate_data)
 
+        if setup_side_effect:
+            # Setup failure
+            recover_method.assert_called_once_with(
+                self.context, instance, dest, migrate_data)
+            return
+
+        mock_guest.assert_called_once_with(instance)
         mock_copy_disk_path.assert_called_once_with(self.context, instance,
                                                     guest)
+        mock_thread.assert_called_once_with(
+            drvr._live_migration_operation,
+            self.context, instance, dest, True,
+            migrate_data, guest, disks_to_copy[1])
+
+        if thread_side_effect:
+            # Thread spawn failure
+            recover_method.assert_not_called()
+            return
 
         class AnyEventletEvent(object):
             def __eq__(self, other):
                 return type(other) == eventlet.event.Event
 
-        mock_thread.assert_called_once_with(
-            drvr._live_migration_operation,
-            self.context, instance, "fakehost", True,
-            migrate_data, guest, disks_to_copy[1])
         mock_monitor.assert_called_once_with(
-            self.context, instance, guest, "fakehost",
-            fake_post, fake_recover, True,
+            self.context, instance, guest, dest,
+            fake_post, recover_method, True,
             migrate_data, AnyEventletEvent(), disks_to_copy[0])
+
+        if mon_side_effect:
+            # Monitoring phase failure
+            mock_abort.assert_called_once_with(instance)
+            # recover_method is only called if abort succeeds
+            if abort_side_effect:
+                recover_method.assert_not_called()
+            else:
+                recover_method.assert_called_once_with(
+                    self.context, instance, dest, migrate_data)
+            return
+
+        recover_method.assert_not_called()
 
     def test_live_migration_main(self):
         self._test_live_migration_main()
 
-    def test_live_migration_main_monitoring_failed(self):
+    def test_live_migration_setup_get_guest_fails(self):
+        # When get_guest fails during setup, recover_method is called
+        self._test_live_migration_main(
+            guest_side_effect=Exception)
+
+    def test_live_migration_setup_copy_disk_paths_fails(self):
+        # When _live_migration_copy_disk_paths fails during setup,
+        # recover_method is called
+        self._test_live_migration_main(
+            copy_disk_path_side_effect=Exception)
+
+    def test_live_migration_spawn_fails(self):
+        # When utils.spawn fails, recover_method should NOT be called
+        self._test_live_migration_main(
+            thread_side_effect=Exception)
+
+    def test_live_migration_monitoring_fails(self):
         self._test_live_migration_main(mon_side_effect=Exception)
+
+    def test_live_migration_monitoring_fails_abort_fails(self):
+        # When monitoring fails and abort also fails (e.g., post-copy mode),
+        # recover_method should NOT be called
+        self._test_live_migration_main(
+            mon_side_effect=Exception,
+            abort_side_effect=fakelibvirt.libvirtError("abort failed"))
 
     @mock.patch.object(host.Host, "get_connection", new=mock.Mock())
     @mock.patch.object(utils, "spawn", new=mock.Mock())
@@ -14380,14 +14440,14 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         instance = objects.Instance(**self.test_instance)
         post_method = mock.Mock()
         migrate_data = mock.Mock()
+        recover_method = mock.Mock()
         disks_to_copy = (['/some/path/one', '/test/path/two'],
                          ['vda', 'vdb'])
         mock_copy_disk_paths.return_value = disks_to_copy
 
         func = drvr._live_migration
         args = (self.context, instance, mock.sentinel.dest, post_method,
-                mock.sentinel.recover_method, mock.sentinel.block_migration,
-                migrate_data)
+                recover_method, mock.sentinel.block_migration, migrate_data)
 
         if expect_success:
             func(*args)
