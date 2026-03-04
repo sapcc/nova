@@ -2440,7 +2440,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self.assertTrue(found_iface_id)
         self.assertEqual(num_iface_ids, num_found)
 
-    def _attach_interface(self, vif):
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
+    def _attach_interface(self, vif, mock_wait_for_port):
         self.conn.attach_interface(self.context, self.instance, self.image,
                                    vif)
         self._validate_interfaces(vif['id'], 1, 2)
@@ -2454,8 +2455,10 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
         self._create_vm()
         vif = self._create_vif()
 
-        with mock.patch.object(self.conn._session, '_wait_for_task',
-                               side_effect=Exception):
+        with (mock.patch.object(self.conn._session, '_wait_for_task',
+                               side_effect=Exception),
+                mock.patch.object(vmops.VMwareVMOps,
+                                  '_wait_for_port_realization')):
             self.assertRaises(exception.InterfaceAttachFailed,
                               self.conn.attach_interface,
                               self.context, self.instance, self.image, vif)
@@ -2475,8 +2478,10 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
     def test_detach_interface_and_attach(self):
         vif = self._create_vif()
         self._detach_interface(vif)
-        self.conn.attach_interface(self.context, self.instance, self.image,
-                                   vif)
+        with mock.patch.object(vmops.VMwareVMOps,
+                               '_wait_for_port_realization'):
+            self.conn.attach_interface(self.context, self.instance, self.image,
+                                       vif)
         self._validate_interfaces(vif['id'], 1, 2)
 
     def test_detach_interface_no_device(self):

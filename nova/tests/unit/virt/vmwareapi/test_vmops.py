@@ -4029,10 +4029,12 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'reconfigure_vm')
     @mock.patch.object(vm_util, 'get_network_attach_config_spec',
                        return_value='fake-attach-spec')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vm_util, 'get_attach_port_index', return_value=1)
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
     def test_attach_interface(self, mock_get_vm_ref,
                               mock_get_attach_port_index,
+                              mock_wait_for_port,
                               mock_get_network_attach_config_spec,
                               mock_reconfigure_vm,
                               mock_extra_specs):
@@ -4131,10 +4133,12 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'reconfigure_vm')
     @mock.patch.object(vm_util, 'get_network_attach_config_spec',
                        return_value='fake-attach-spec')
+    @mock.patch.object(vmops.VMwareVMOps, '_wait_for_port_realization')
     @mock.patch.object(vm_util, 'get_attach_port_index', return_value=1)
     @mock.patch.object(vm_util, 'get_vm_ref', return_value='fake-ref')
     def test_attach_interface_with_limits(self, mock_get_vm_ref,
                               mock_get_attach_port_index,
+                              mock_wait_for_port,
                               mock_get_network_attach_config_spec,
                               mock_reconfigure_vm,
                               mock_extra_specs):

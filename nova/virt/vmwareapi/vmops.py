@@ -4107,6 +4107,10 @@ class VMwareVMOps(object):
             client_factory = self._session.vim.client.factory
             extra_specs = self._get_extra_specs(instance.flavor)
 
+            timeout = CONF.vmware.port_realization_wait_timeout
+            self._wait_for_port_realization(context, instance, [vif],
+                                            timeout=timeout)
+
             attach_config_spec = vm_util.get_network_attach_config_spec(
                                         client_factory, vif_info, port_index,
                                         extra_specs.vif_limits)
