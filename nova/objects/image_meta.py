@@ -717,6 +717,16 @@ class ImageMetaProps(base.NovaObject):
         if hw_numa_cpus_set:
             self.hw_numa_cpus = hw_numa_cpus
 
+    # SAP: Set-typed image properties that accept a comma-separated string
+    # when the value comes from Glance (which stores all properties as strings).
+    _SET_FIELD_NAMES = frozenset([
+        'hw_supported_disk_buses',
+        'hw_supported_hv_types',
+        'hw_supported_scsi_models',
+        'hw_supported_video_models',
+        'hw_supported_vif_models',
+    ])
+
     def _set_attr_from_current_names(self, image_props):
         for key in self.fields:
             # The two NUMA fields need special handling to
@@ -725,6 +735,16 @@ class ImageMetaProps(base.NovaObject):
                 self._set_numa_mem(image_props)
             elif key == "hw_numa_cpus":
                 self._set_numa_cpus(image_props)
+            elif key in self._SET_FIELD_NAMES:
+                # SAP: Set-typed fields accept a comma-separated string from
+                # Glance (e.g. "virtio,e1000") or an already-parsed Python set.
+                if key not in image_props:
+                    continue
+                value = image_props[key]
+                if isinstance(value, str):
+                    value = {v.strip() for v in value.split(',')
+                             if v.strip()}
+                setattr(self, key, value)
             else:
                 # traits_required will be populated by
                 # _set_attr_from_trait_names

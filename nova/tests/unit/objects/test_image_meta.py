@@ -704,3 +704,79 @@ class TestImageMetaProps(test.NoDBTestCase):
         )
         self.assertRaises(exception.ObjectActionError,
                           obj.obj_to_primitive, '1.36')
+
+    # SAP: Tests for comma-separated string parsing from Glance
+    def test_hw_supported_vif_models_from_string_single(self):
+        """U1: single value string is parsed into a one-element set."""
+        props = {'hw_supported_vif_models': 'virtio'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_two_values(self):
+        """U2: comma-separated string with two values."""
+        props = {'hw_supported_vif_models': 'virtio,e1000'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'e1000'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_with_spaces(self):
+        """U3: surrounding whitespace is stripped."""
+        props = {'hw_supported_vif_models': ' virtio , e1000 '}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'e1000'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_three_values(self):
+        """U4: three-value comma-separated string."""
+        props = {'hw_supported_vif_models': 'virtio,e1000,rtl8139'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(
+            {'virtio', 'e1000', 'rtl8139'},
+            result.hw_supported_vif_models,
+        )
+
+    def test_hw_supported_vif_models_from_empty_string(self):
+        """U5: empty string produces an empty set."""
+        props = {'hw_supported_vif_models': ''}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(set(), result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_set_passthrough(self):
+        """U6: an already-parsed Python set is passed through unchanged."""
+        props = {'hw_supported_vif_models': {'virtio', 'e1000'}}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'e1000'}, result.hw_supported_vif_models)
+
+    def test_hw_supported_vif_models_from_string_invalid_value(self):
+        """U7: a comma-separated string containing an invalid model raises."""
+        props = {'hw_supported_vif_models': 'virtio,not_a_model'}
+        self.assertRaises(
+            ValueError,
+            objects.ImageMetaProps.from_dict,
+            props,
+        )
+
+    def test_hw_supported_disk_buses_from_string(self):
+        """Comma-separated string is parsed correctly for disk buses."""
+        props = {'hw_supported_disk_buses': 'virtio,scsi'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'virtio', 'scsi'}, result.hw_supported_disk_buses)
+
+    def test_hw_supported_scsi_models_from_string(self):
+        """Comma-separated string is parsed correctly for SCSI models."""
+        props = {'hw_supported_scsi_models': 'virtio-scsi,lsilogic'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(
+            {'virtio-scsi', 'lsilogic'},
+            result.hw_supported_scsi_models,
+        )
+
+    def test_hw_supported_hv_types_from_string(self):
+        """Comma-separated string is parsed correctly for HV types."""
+        props = {'hw_supported_hv_types': 'kvm,qemu'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'kvm', 'qemu'}, result.hw_supported_hv_types)
+
+    def test_hw_supported_video_models_from_string(self):
+        """Comma-separated string is parsed correctly for video models."""
+        props = {'hw_supported_video_models': 'vga,cirrus'}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual({'vga', 'cirrus'}, result.hw_supported_video_models)
