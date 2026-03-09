@@ -14,16 +14,20 @@
 
 # Tests for external scheduler api.
 
+from unittest.mock import call
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import requests
 
+import nova.conf
 from nova import context
 from nova import objects
 from nova.scheduler.external import call_external_scheduler_api
 from nova import test
 from nova.tests.unit.scheduler import fakes
+
+CONF = nova.conf.CONF
 
 
 class ExternalSchedulerAPITestCase(test.NoDBTestCase):
@@ -164,7 +168,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
 
         log = ""
 
-        def append_log(msg, data):
+        def append_log(msg, *data):
             nonlocal log
             log += msg % data
         mock_debug_log.side_effect = append_log
@@ -207,7 +211,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
 
         log = ""
 
-        def append_log(msg, data):
+        def append_log(msg, *data):
             nonlocal log
             log += msg % data
         mock_err_log.side_effect = append_log
@@ -223,7 +227,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             ['host1', 'host2', 'host3'],
             [h.host for h in hosts]
         )
-        self.assertIn('Failed to call external scheduler API: ', log)
+        self.assertIn('Failed to call external scheduler API (attempt 1/', log)
 
     @patch('requests.post')
     @patch('nova.scheduler.external.LOG.error')
@@ -237,7 +241,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
 
         log = ""
 
-        def append_log(msg, data):
+        def append_log(msg, *data):
             nonlocal log
             log += msg % data
         mock_err_log.side_effect = append_log
@@ -266,7 +270,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
     def test_enabled_api_json_decode_err(self, mock_err_log, mock_post):
         log = ""
 
-        def append_log(msg, data):
+        def append_log(msg, *data):
             nonlocal log
             log += msg % data
         mock_err_log.side_effect = append_log
@@ -288,7 +292,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             ['host1', 'host2', 'host3'],
             [h.host for h in hosts]
         )
-        self.assertIn('Failed to call external scheduler API: ', log)
+        self.assertIn('Failed to call external scheduler API (attempt 1/', log)
 
     @patch('requests.post')
     @patch('nova.scheduler.external.LOG.error')
@@ -297,7 +301,7 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
 
         log = ""
 
-        def append_log(msg, data):
+        def append_log(msg, *data):
             nonlocal log
             log += msg % data
         mock_err_log.side_effect = append_log
@@ -313,4 +317,159 @@ class ExternalSchedulerAPITestCase(test.NoDBTestCase):
             ['host1', 'host2', 'host3'],
             [h.host for h in hosts]
         )
+        self.assertIn('Failed to call external scheduler API (attempt 1/', log)
+
+    @patch('requests.post')
+    @patch('nova.scheduler.external.LOG.error')
+    @patch('time.sleep')
+    def test_enabled_api_error_reply_retries(self, mock_sleep, mock_err_log,
+            mock_post):
+        CONF.set_override('external_scheduler_retries', 2,
+                          group='filter_scheduler')
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        mock_post.side_effect = (requests.exceptions.HTTPError,
+            requests.exceptions.HTTPError, requests.exceptions.HTTPError)
+
+        log = ""
+
+        def append_log(msg, *data):
+            nonlocal log
+            log += msg % data
+        mock_err_log.side_effect = append_log
+
+        hosts = call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+        # Should fallback to the original host list.
+        self.assertEqual(
+            ['host1', 'host2', 'host3'],
+            [h.host for h in hosts]
+        )
+        self.assertIn('Failed to call external scheduler API (attempt 1/', log)
+        self.assertIn('Failed to call external scheduler API (attempt 2/', log)
+        self.assertIn('Failed to call external scheduler API (attempt 3/', log)
+
+        sleep_time = \
+            CONF.filter_scheduler.external_scheduler_retry_sleep_seconds
+        mock_sleep.assert_has_calls([call(sleep_time), call(sleep_time)])
+
+    @patch('requests.post')
+    @patch('nova.scheduler.external.LOG.error')
+    @patch('time.sleep')
+    def test_enabled_api_error_reply_retries_and_working(self, mock_sleep,
+            mock_err_log, mock_post):
+        CONF.set_override('external_scheduler_retries', 2,
+                          group='filter_scheduler')
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'hosts': ['host1', 'host3']}
+
+        mock_post.side_effect = (requests.exceptions.HTTPError,
+            requests.exceptions.HTTPError, mock_response)
+
+        log = ""
+
+        def append_log(msg, *data):
+            nonlocal log
+            log += msg % data
+        mock_err_log.side_effect = append_log
+
+        hosts = call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+        # Should fallback to the original host list.
+        self.assertEqual(
+            ['host1', 'host3'],
+            [h.host for h in hosts]
+        )
+        self.assertIn('Failed to call external scheduler API (attempt 1/', log)
+        self.assertIn('Failed to call external scheduler API (attempt 2/', log)
+        self.assertNotIn('Failed to call external scheduler API (attempt 3/',
+                         log)
+
+        sleep_time = \
+            CONF.filter_scheduler.external_scheduler_retry_sleep_seconds
+        mock_sleep.assert_has_calls([call(sleep_time), call(sleep_time)])
+
+    @patch('requests.post')
+    @patch('nova.scheduler.external.LOG.error')
+    @patch('time.sleep')
+    def test_enabled_api_error_reply_retries_no_sleep(self, mock_sleep,
+            mock_err_log, mock_post):
+        CONF.set_override('external_scheduler_retries', 1,
+                          group='filter_scheduler')
+        CONF.set_override('external_scheduler_retry_sleep_seconds', -1,
+                          group='filter_scheduler')
+
+        mock_post.side_effect = (requests.exceptions.HTTPError,
+            requests.exceptions.HTTPError)
+
+        log = ""
+
+        def append_log(msg, *data):
+            nonlocal log
+            log += msg % data
+        mock_err_log.side_effect = append_log
+
+        hosts = call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+
+        # Should fallback to the original host list.
+        self.assertEqual(
+            ['host1', 'host2', 'host3'],
+            [h.host for h in hosts]
+        )
+        self.assertIn('Failed to call external scheduler API (attempt 1/', log)
+        self.assertIn('Failed to call external scheduler API (attempt 2/', log)
+
+        mock_sleep.assert_not_called()
+
+    @patch('requests.post')
+    @patch('nova.scheduler.external.LOG.error')
+    def test_enabled_api_error_reply_no_retry_on_400(self, mock_err_log,
+            mock_post):
+        CONF.set_override('external_scheduler_retries', 1,
+                          group='filter_scheduler')
+
+        mock_error = requests.exceptions.HTTPError()
+        mock_error.response = MagicMock()
+        mock_error.response.status_code = 400
+
+        mock_post.side_effect = mock_error
+
+        log = ""
+
+        def append_log(msg, *data):
+            nonlocal log
+            log += msg % data
+        mock_err_log.side_effect = append_log
+
+        hosts = call_external_scheduler_api(
+            self.example_ctx,
+            self.example_hosts,
+            self.example_weights,
+            self.example_spec,
+        )
+
+        # Should fallback to the original host list.
+        self.assertEqual(
+            ['host1', 'host2', 'host3'],
+            [h.host for h in hosts]
+        )
         self.assertIn('Failed to call external scheduler API: ', log)
+        self.assertNotIn('Failed to call external scheduler API (attempt 1/',
+                         log)
