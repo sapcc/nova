@@ -228,11 +228,15 @@ def _get_disk_bus_from_image_properties(virt_type, image_meta):
     """
     LOG = logging.getLogger(__name__)
 
-    # PRIORITY 1: Check hw_supported_disk_buses first
+    # PRIORITY 1: Check hw_supported_disk_buses first.
+    # Iterate the hypervisor's PRIORITY list (SUPPORTED_DEVICE_BUSES) and
+    # pick the first bus that is also present in the image's supported set.
+    # This mirrors the VIF-model selection and ensures deterministic,
+    # priority-ordered results regardless of Python set iteration order.
     supported_buses = image_meta.properties.get('hw_supported_disk_buses')
     if supported_buses:
-        for bus in supported_buses:
-            if is_disk_bus_valid_for_virt(virt_type, bus):
+        for bus in SUPPORTED_DEVICE_BUSES.get(virt_type, []):
+            if bus in supported_buses:
                 LOG.info("Selected disk bus '%(bus)s' from "
                         "hw_supported_disk_buses for virt_type '%(virt)s'",
                         {'bus': bus, 'virt': virt_type})

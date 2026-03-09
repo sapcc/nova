@@ -1530,6 +1530,30 @@ class LibvirtBlockInfoTest(test.NoDBTestCase):
         self.assertIn(mapping['disk']['bus'], ['scsi', 'virtio'])
         self.assertIn(mapping['root']['bus'], ['scsi', 'virtio'])
 
+    def test_get_disk_bus_for_device_type_supported_buses_highest_priority(
+            self):
+        # SAP: When hw_supported_disk_buses contains multiple valid buses,
+        # the bus that appears FIRST in SUPPORTED_DEVICE_BUSES[virt_type]
+        # should be selected (i.e. the implementation must iterate the
+        # hypervisor priority list and check membership, not iterate the
+        # unordered set and return the first valid hit).
+        #
+        # For KVM: SUPPORTED_DEVICE_BUSES['kvm'] = ['virtio', 'scsi', ...]
+        # so when both 'virtio' and 'scsi' are offered, 'virtio' must win.
+        instance = objects.Instance(**self.test_instance)
+        image_meta = objects.ImageMeta.from_dict({
+            'properties': {'hw_supported_disk_buses': {'scsi', 'virtio'}}
+        })
+        bus = blockinfo.get_disk_bus_for_device_type(
+            instance, 'kvm', image_meta, device_type='disk')
+        self.assertEqual(
+            'virtio', bus,
+            'Expected the highest-priority KVM bus (virtio) to be selected '
+            'when hw_supported_disk_buses contains {scsi, virtio}. '
+            'If this fails, the implementation is iterating the unordered '
+            'set instead of the hypervisor priority list.'
+        )
+
 
 class DefaultDeviceNamesTestCase(test.NoDBTestCase):
     def setUp(self):
