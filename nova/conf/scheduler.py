@@ -1126,6 +1126,31 @@ external scheduler to respond for this long. If the external scheduler does not
 respond within this time, the request will be aborted. In this case, the
 scheduler will continue with the original host selection and weights.
 """),
+    cfg.IntOpt("external_scheduler_retries",
+        default=0,
+        help="""
+Number of retries to call the external scheduler on errors
+
+When calls to the external scheduler API fail for some reason, Nova will retry
+this many times, sleeping in between.
+
+Related options:
+
+* external_scheduler_retry_sleep_seconds
+"""),
+    cfg.FloatOpt("external_scheduler_retry_sleep_seconds",
+        default=1.0,
+        help="""
+Sleep time in seconds between retries
+
+If the external scheduler is configured for retries through
+external_scheduler_retries, the code sleeps this many seconds between the
+retries.
+
+Related options:
+
+* external_scheduler_retries
+"""),
 ]
 
 metrics_group = cfg.OptGroup(
