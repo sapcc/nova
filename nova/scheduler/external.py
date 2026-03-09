@@ -20,6 +20,8 @@ The external scheduler API is expected to take a list of weighed hosts and
 their weights, along with the request specification, and return a reordered
 and filtered list of host names.
 """
+import time
+
 import jsonschema
 from oslo_log import log as logging
 import requests
@@ -113,13 +115,35 @@ def call_external_scheduler_api(context, weighed_hosts, weights, spec_obj):
         "weights": weights,
     }
     LOG.debug("Calling external scheduler API with %s", json_data)
-    try:
-        response = requests.post(url, json=json_data, timeout=timeout)
-        response.raise_for_status()
-        # If the JSON parsing fails, this will also raise a RequestException.
-        response_json = response.json()
-    except requests.RequestException as e:
-        LOG.error("Failed to call external scheduler API: %s", e)
+    # retries + 1 to make at least one try
+    tries = CONF.filter_scheduler.external_scheduler_retries + 1
+    for current_try in range(1, tries + 1):
+        try:
+            response = requests.post(url, json=json_data, timeout=timeout)
+            response.raise_for_status()
+            # If the JSON parsing fails, this will also raise a
+            # RequestException.
+            response_json = response.json()
+            break
+        except requests.RequestException as e:
+            response = getattr(e, 'response', None)
+            if response is not None and response.status_code == 400:
+                LOG.error("Failed to call external scheduler API: %s", e)
+                # If we can't reach the external scheduler we return the
+                # original list of weighed hosts.
+                return weighed_hosts
+
+            LOG.error("Failed to call external scheduler API (attempt %d/%d): "
+                      "%s", current_try, tries, e)
+            sleep_time = \
+                CONF.filter_scheduler.external_scheduler_retry_sleep_seconds
+            if current_try < tries and sleep_time > 0:
+                LOG.debug("Sleeping %d second between external scheduler API "
+                          "calls", sleep_time)
+                time.sleep(sleep_time)
+    else:
+        # If we can't reach the external scheduler we return the original list
+        # of weighed hosts.
         return weighed_hosts
 
     # The external scheduler api is expected to return a json with
