@@ -42,7 +42,7 @@ class DifferentHostFilter(filters.BaseHostFilter):
     def host_info_requiring_instance_ids(self, spec_obj):
         different_host = spec_obj.get_scheduler_hint('different_host')
         if not different_host:
-            return different_host
+            return set()
 
         if isinstance(different_host, str):
             return set([different_host])
@@ -70,7 +70,7 @@ class SameHostFilter(filters.BaseHostFilter):
     def host_info_requiring_instance_ids(self, spec_obj):
         same_host = spec_obj.get_scheduler_hint('same_host')
         if not same_host:
-            return same_host
+            return set()
 
         if isinstance(same_host, str):
             return set([same_host])

@@ -16,6 +16,7 @@ Tests For Scheduler Host Filters.
 """
 from unittest import mock
 
+from nova import objects
 from nova.scheduler import filters
 from nova.scheduler.filters import all_hosts_filter
 from nova.scheduler.filters import compute_filter
@@ -51,3 +52,26 @@ class HostFiltersTestCase(test.NoDBTestCase):
         filt_cls = all_hosts_filter.AllHostsFilter()
         host = fakes.FakeHostState('host1', 'node1', {})
         self.assertTrue(filt_cls.host_passes(host, {}))
+
+    def test_all_filters_host_info_requiring_instance_ids_is_iterable(self):
+        """All filters must return an iterable (set) from
+           host_info_requiring_instance_ids.
+
+        HostFilterHandler calls set.update() on each filter's return value, so
+        returning None causes TypeError: 'NoneType' object is not iterable.
+        """
+        filter_handler = filters.HostFilterHandler()
+        all_filter_classes = filter_handler.get_matching_classes(
+            ['nova.scheduler.filters.all_filters'])
+        spec_obj = objects.RequestSpec(
+            context=mock.sentinel.ctx,
+            scheduler_hints=None,
+            instance_group=None)
+        for filter_cls in all_filter_classes:
+            result = filter_handler.host_info_requiring_instance_ids(
+                [filter_cls()], spec_obj)
+            self.assertIsInstance(
+                result, set,
+                '%s.host_info_requiring_instance_ids() must return a set '
+                '(contract of BaseHostFilter), got %r' % (
+                    filter_cls.__name__, result))
