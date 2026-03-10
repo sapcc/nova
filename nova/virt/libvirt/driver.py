@@ -1479,7 +1479,7 @@ class LibvirtDriver(driver.ComputeDriver):
         elif CONF.libvirt.virt_type == 'parallels':
             uri = CONF.libvirt.connection_uri or 'parallels:///system'
         elif CONF.libvirt.virt_type == 'ch':
-            uri = CONF.libvirt.connection_uri or 'ch:///session'
+            uri = CONF.libvirt.connection_uri or 'ch:///system'
         else:
             uri = CONF.libvirt.connection_uri or 'qemu:///system'
         return uri
@@ -1490,6 +1490,7 @@ class LibvirtDriver(driver.ComputeDriver):
             'kvm': 'qemu+%(scheme)s://%(dest)s/system',
             'qemu': 'qemu+%(scheme)s://%(dest)s/system',
             'parallels': 'parallels+tcp://%(dest)s/system',
+            'ch': 'ch+%(scheme)s://%(dest)s/system',
         }
         dest = oslo_netutils.escape_ipv6(dest)
 
