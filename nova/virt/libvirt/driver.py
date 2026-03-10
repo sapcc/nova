@@ -1025,7 +1025,7 @@ class LibvirtDriver(driver.ComputeDriver):
         mode = CONF.libvirt.cpu_mode
         models = CONF.libvirt.cpu_models
 
-        if (CONF.libvirt.virt_type not in ("kvm", "qemu") and
+        if (CONF.libvirt.virt_type not in ("kvm", "qemu", "ch") and
                 mode not in (None, 'none')):
             msg = _("Config requested an explicit CPU model, but "
                     "the current libvirt hypervisor '%s' does not "
@@ -1379,6 +1379,8 @@ class LibvirtDriver(driver.ComputeDriver):
             uri = CONF.libvirt.connection_uri or 'lxc:///'
         elif CONF.libvirt.virt_type == 'parallels':
             uri = CONF.libvirt.connection_uri or 'parallels:///system'
+        elif CONF.libvirt.virt_type == 'ch':
+            uri = CONF.libvirt.connection_uri or 'ch:///system'
         else:
             uri = CONF.libvirt.connection_uri or 'qemu:///system'
         return uri
@@ -1389,6 +1391,7 @@ class LibvirtDriver(driver.ComputeDriver):
             'kvm': 'qemu+%(scheme)s://%(dest)s/system',
             'qemu': 'qemu+%(scheme)s://%(dest)s/system',
             'parallels': 'parallels+tcp://%(dest)s/system',
+            'ch': 'ch+%(scheme)s://%(dest)s/system',
         }
         dest = oslo_netutils.escape_ipv6(dest)
 
@@ -4494,7 +4497,8 @@ class LibvirtDriver(driver.ComputeDriver):
         path_sources = [
             ('file', "./devices/console[@type='file']/source[@path]", 'path'),
             ('tcp', "./devices/console[@type='tcp']/log[@file]", 'file'),
-            ('pty', "./devices/console[@type='pty']/source[@path]", 'path')]
+            ('pty', "./devices/console[@type='pty']/source[@path]", 'path'),
+            ('pty', "./devices/serial[@type='pty']/source[@path]", 'path'), ]
         console_type = ""
         console_path = ""
         for c_type, epath, attrib in path_sources:
@@ -5405,6 +5409,10 @@ class LibvirtDriver(driver.ComputeDriver):
                     if not models:
                         models = ['max']
 
+        elif CONF.libvirt.virt_type == "ch":
+            # Currently, we only support host-passthrough with Cloud Hypervisor. This
+            # changes as soon as we support proper CPU profiles.
+            mode = "host-passthrough"
         else:
             if mode is None or mode == "none":
                 return None
@@ -6749,6 +6757,9 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.os_init_path = "/sbin/init"
             guest.os_cmdline = CONSOLE
             guest.os_init_env["product_name"] = "OpenStack Nova"
+        elif CONF.libvirt.virt_type == "ch":
+            guest.virt_type = 'kvm'
+            guest.os_kernel = "/usr/share/cloud-hypervisor/CLOUDHV_EFI.fd"
         elif CONF.libvirt.virt_type == "parallels":
             if guest.os_type == fields.VMMode.EXE:
                 guest.os_init_path = "/sbin/init"
@@ -6794,6 +6805,11 @@ class LibvirtDriver(driver.ComputeDriver):
             self._create_pty_device(
                 guest_cfg, vconfig.LibvirtConfigGuestConsole,
                 log_path=log_path)
+        elif CONF.libvirt.virt_type == "ch":
+            consolepty = vconfig.LibvirtConfigGuestSerial()
+            consolepty.type = "pty"
+            guest_cfg.add_device(consolepty)
+
         else:  # qemu, kvm
             if self._is_s390x_guest(image_meta):
                 self._create_consoles_s390x(
@@ -6983,6 +6999,8 @@ class LibvirtDriver(driver.ComputeDriver):
         here explicitly so that we can _disable_ it (by setting the model to
         'none') if it's not necessary.
         """
+        if CONF.libvirt.virt_type == "ch":
+            return
         usbhost = vconfig.LibvirtConfigGuestUSBHostController()
         usbhost.index = 0
         # an unset model means autodetect, while 'none' means don't add a
@@ -7391,6 +7409,8 @@ class LibvirtDriver(driver.ComputeDriver):
     @staticmethod
     def _guest_add_video_device(guest):
         if CONF.libvirt.virt_type == 'lxc':
+            return False
+        elif CONF.libvirt.virt_type == "ch":
             return False
 
         # NB some versions of libvirt support both SPICE and VNC
@@ -8692,7 +8712,8 @@ class LibvirtDriver(driver.ComputeDriver):
         if (caps.host.cpu.arch in (fields.Architecture.I686,
                                    fields.Architecture.X86_64,
                                    fields.Architecture.AARCH64) and
-                self._host.has_min_version(hv_type=host.HV_DRIVER_QEMU)):
+                (self._host.has_min_version(hv_type=host.HV_DRIVER_QEMU) or
+                 self._host.has_min_version(hv_type=host.HV_DRIVER_CH))):
             return True
         elif (caps.host.cpu.arch in (fields.Architecture.PPC64,
                                      fields.Architecture.PPC64LE)):
