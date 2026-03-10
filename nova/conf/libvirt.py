@@ -274,6 +274,7 @@ in following list:
 * 'kvm': 'qemu+tcp://%s/system'
 * 'qemu': 'qemu+tcp://%s/system'
 * 'parallels': 'parallels+tcp://%s/system'
+* 'ch': 'ch+tcp://%s/system'
 
 Related options:
 
