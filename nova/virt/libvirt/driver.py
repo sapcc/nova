@@ -6755,7 +6755,7 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.os_init_env["product_name"] = "OpenStack Nova"
         elif CONF.libvirt.virt_type == "ch":
             guest.virt_type = 'kvm'
-            guest.os_kernel = "/var/lib/nova/hypervisor-fw"
+            guest.os_kernel = "/usr/share/cloud-hypervisor/CLOUDHV_EFI.fd"
         elif CONF.libvirt.virt_type == "parallels":
             if guest.os_type == fields.VMMode.EXE:
                 guest.os_init_path = "/sbin/init"
