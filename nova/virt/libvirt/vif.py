@@ -78,6 +78,9 @@ SUPPORTED_VIF_MODELS = {
         network_model.VIF_MODEL_RTL8139,
         network_model.VIF_MODEL_E1000,
     ],
+    'ch': [
+        network_model.VIF_MODEL_VIRTIO,
+    ],
 }
 
 
@@ -172,7 +175,7 @@ class LibvirtGenericVIFDriver(object):
         # If the virt type is KVM/QEMU/VZ(Parallels), then use virtio according
         # to the global config parameter
         if (model is None and CONF.libvirt.virt_type in
-                ('kvm', 'qemu', 'parallels') and
+                ('kvm', 'qemu', 'parallels', 'ch') and
                 CONF.libvirt.use_virtio_for_bridges):
             model = network_model.VIF_MODEL_VIRTIO
 

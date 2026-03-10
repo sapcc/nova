@@ -85,6 +85,7 @@ CONF = nova.conf.CONF
 # This list is for libvirt hypervisor drivers that need special handling.
 # This is *not* the complete list of supported hypervisor drivers.
 HV_DRIVER_QEMU = "QEMU"
+HV_DRIVER_CH = "CH"
 
 SEV_KERNEL_PARAM_FILE = '/sys/module/kvm_amd/parameters/sev'
 
@@ -1241,6 +1242,7 @@ class Host(object):
 
         :returns: an instance of Guest
         """
+        LOG.info(xml)
         domain = self.get_connection().defineXML(xml)
         return libvirt_guest.Guest(domain)
 
