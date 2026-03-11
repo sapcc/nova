@@ -10170,8 +10170,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._post_live_migration')
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
     def test_live_migration_wait_vif_plugged(
-            self, mock_get_bdms, mock_post_live_mig, mock_pre_live_mig):
+            self, mock_delete_dangling_bdms, mock_get_bdms,
+            mock_post_live_mig, mock_pre_live_mig):
         """Tests the happy path of waiting for network-vif-plugged events from
         neutron when pre_live_migration returns a migrate_data object with
         wait_for_vif_plugged=True.
@@ -10197,6 +10199,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         self.assertEqual(2, len(wait_for_event.call_args[0][1]))
         self.assertEqual(CONF.vif_plugging_timeout,
                          wait_for_event.call_args[1]['deadline'])
+        mock_delete_dangling_bdms.assert_called_once_with(
+            mock.ANY, self.instance, mock_get_bdms.return_value)
         mock_pre_live_mig.assert_called_once_with(
             self.context, self.instance, None, None, 'dest-host',
             migrate_data)
@@ -10205,9 +10209,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
     @mock.patch('nova.compute.manager.ComputeManager._post_live_migration')
     @mock.patch('nova.compute.manager.LOG.debug')
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
     def test_live_migration_wait_vif_plugged_old_dest_host(
-            self, mock_get_bdms, mock_log_debug, mock_post_live_mig,
-            mock_pre_live_mig):
+            self, mock_delete_dangling_bdms, mock_get_bdms, mock_log_debug,
+            mock_post_live_mig, mock_pre_live_mig):
         """Tests the scenario that the destination compute returns a
         migrate_data with no wait_for_vif_plugged set because the dest compute
         doesn't have that code yet. In this case, we default to legacy behavior
@@ -10237,8 +10242,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
     def test_live_migration_wait_vif_plugged_vif_plug_error(
-            self, mock_get_bdms, mock_rollback_live_mig, mock_pre_live_mig):
+            self, mock_delete_dangling_bdms, mock_get_bdms,
+            mock_rollback_live_mig, mock_pre_live_mig):
         """Tests the scenario where wait_for_instance_event fails with
         VirtualInterfacePlugException.
         """
@@ -10271,8 +10278,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
     def test_live_migration_wait_vif_plugged_timeout_error(
-            self, mock_get_bdms, mock_rollback_live_mig, mock_pre_live_mig):
+            self, mock_delete_dangling_bdms, mock_get_bdms,
+            mock_rollback_live_mig, mock_pre_live_mig):
         """Tests the scenario where wait_for_instance_event raises an
         eventlet Timeout exception and we're configured such that vif plugging
         failures are fatal (which is the default).
@@ -10308,8 +10317,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._post_live_migration')
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
     def test_live_migration_wait_vif_plugged_timeout_non_fatal(
-            self, mock_get_bdms, mock_post_live_mig, mock_rollback_live_mig,
+            self, mock_delete_dangling_bdms, mock_get_bdms,
+            mock_post_live_mig, mock_rollback_live_mig,
             mock_pre_live_mig):
         """Tests the scenario where wait_for_instance_event raises an
         eventlet Timeout exception and we're configured such that vif plugging
@@ -10356,7 +10367,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
     @mock.patch.object(compute_utils, 'notify_about_instance_action')
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
-    def test_live_migration_aborted_before_running(self, mock_rpc,
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
+    def test_live_migration_aborted_before_running(self,
+                                                   mock_delete_dangling_bdms,
+                                                   mock_rpc,
                                                    mock_rollback,
                                                    mock_action_notify,
                                                    mock_usage_notify,
