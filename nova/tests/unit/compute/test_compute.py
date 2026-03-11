@@ -6445,8 +6445,9 @@ class ComputeTestCase(BaseTestCase,
         # the same connection_info and attachment_id as the first BDMs
         # generated (before calling pre_live_migration), and that we saved
         # them.
-        self.assertGreater(len(fake_bdms), 1)
-        for source_bdm, final_bdm in zip(fake_bdms[0], fake_bdms[-1]):
+        self.assertEqual(mock_get_bdms.call_count, 3)
+        self.assertEqual(len(fake_bdms), 3)
+        for source_bdm, final_bdm in zip(fake_bdms[1], fake_bdms[2]):
             self.assertEqual(source_bdm.attachment_id,
                              final_bdm.attachment_id)
             self.assertEqual(source_bdm.connection_info,
