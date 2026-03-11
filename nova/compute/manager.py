@@ -4298,10 +4298,15 @@ class ComputeManager(manager.Manager):
         :param instance: instance object.
         :param bdms: BlockDeviceMappingList list object.
         """
-
+        # Use get_admin_context() to authenticate as Cinder admin using Nova's
+        # service credentials and allow usage of `all_tenants=True`
+        cinder_context = nova.context.get_admin_context()
         try:
+            # Use `all_tenants=True` to also obtain attachments when this is
+            # called by an admin user from a different project than the
+            # instance's project.
             cinder_attachments = self.volume_api.attachment_get_all(
-                context, instance.uuid)
+                cinder_context, instance.uuid, all_tenants=True)
         except (keystone_exception.EndpointNotFound,
                 cinder_exception.ClientException):
             # if cinder is not deployed we never need to check for
@@ -4317,7 +4322,8 @@ class ComputeManager(manager.Manager):
         for bdm in bdms.objects:
             if bdm.volume_id and bdm.attachment_id:
                 try:
-                    self.volume_api.attachment_get(context, bdm.attachment_id)
+                    self.volume_api.attachment_get(cinder_context,
+                                                   bdm.attachment_id)
                 except exception.VolumeAttachmentNotFound:
                     LOG.info(
                         f"Removing stale volume attachment "
@@ -4338,7 +4344,7 @@ class ComputeManager(manager.Manager):
             # delete only cinder known attachments, from cinder DB.
             LOG.debug(
                 f"Removing attachment '{each_attach}'", instance=instance)
-            self.volume_api.attachment_delete(context, each_attach)
+            self.volume_api.attachment_delete(cinder_context, each_attach)
 
         # refresh bdms object
         for bdm in bdms_to_delete:
@@ -9643,8 +9649,14 @@ class ComputeManager(manager.Manager):
         # done on source/destination. For now, this is just here for status
         # reporting
         self._set_migration_status(migration, 'preparing')
+
+        elevated = context.elevated()
+        uncleansed_bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            elevated, instance.uuid)
+        self._delete_dangling_bdms(elevated, instance, uncleansed_bdms)
+
         source_bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
-                context, instance.uuid)
+            context, instance.uuid)
 
         migrate_data = self._do_pre_live_migration_from_source(
             context, dest, instance, block_migration, migration, migrate_data,
