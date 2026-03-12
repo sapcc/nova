@@ -431,7 +431,8 @@ class CinderFixture(fixtures.Fixture):
         return limits
 
     def fake_attachment_get_all(
-            self, context, instance_id=None, volume_id=None):
+            self, context, instance_id=None, volume_id=None,
+            all_tenants=False):
         if not instance_id and not volume_id:
             raise exception.InvalidRequest(
                 "Either instance or volume id must be passed.")
