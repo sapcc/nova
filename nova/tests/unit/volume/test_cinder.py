@@ -831,6 +831,19 @@ class CinderApiTestCase(test.NoDBTestCase):
         mock_attachment.list.assert_called_once_with(search_opts=search_opts)
 
     @mock.patch('nova.volume.cinder.cinderclient')
+    def test_attachment_get_all_all_tenants(self, mock_cinderclient):
+        mock_attachment = mock.MagicMock()
+        mock_cinderclient.return_value = \
+            mock.MagicMock(attachments=mock_attachment)
+
+        instance_id = uuids.instance_id
+        search_opts = {'all_tenants': True, 'instance_id': instance_id}
+        self.api.attachment_get_all(self.ctx, instance_id, all_tenants=True)
+        mock_cinderclient.assert_called_once_with(self.ctx, '3.44',
+                                                  skip_version_check=True)
+        mock_attachment.list.assert_called_once_with(search_opts=search_opts)
+
+    @mock.patch('nova.volume.cinder.cinderclient')
     def test_attachment_get_all_failed(self, mock_cinderclient):
         err = "Either instance or volume id must be passed."
         mock_cinderclient.return_value.attachments.show.side_effect = (
