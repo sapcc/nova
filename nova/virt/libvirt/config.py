@@ -1960,6 +1960,7 @@ class LibvirtConfigGuestInterface(LibvirtConfigGuestDevice):
         if (self.driver_name or
                 self.driver_iommu or
                 self.driver_packed or
+                self.vhost_queues or
                 self.net_type == "vhostuser"):
 
             drv_elem = etree.Element("driver")
