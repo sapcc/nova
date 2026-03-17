@@ -5471,14 +5471,15 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
     @mock.patch('nova.compute.manager.ComputeManager.'
                 '_validate_instance_group_policy')
     @mock.patch('nova.compute.manager.ComputeManager._set_migration_status')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
     @mock.patch('nova.compute.resource_tracker.ResourceTracker.rebuild_claim')
     def test_evacuate_late_server_group_policy_check(
-            self, mock_rebuild_claim, mock_set_migration_status,
-            mock_validate_policy, mock_image_meta, mock_notify_exists,
-            mock_notify_legacy, mock_notify, mock_instance_save,
-            mock_setup_networks, mock_setup_instance_network, mock_get_bdms,
-            mock_mutate_migration, mock_appy_migration, mock_drop_migration,
-            mock_context_elevated):
+            self, mock_rebuild_claim, mock_delete_dangling_bdms,
+            mock_set_migration_status, mock_validate_policy, mock_image_meta,
+            mock_notify_exists, mock_notify_legacy, mock_notify,
+            mock_instance_save, mock_setup_networks,
+            mock_setup_instance_network, mock_get_bdms, mock_mutate_migration,
+            mock_appy_migration, mock_drop_migration, mock_context_elevated):
         self.flags(api_servers=['http://localhost/image/v2'], group='glance')
         instance = fake_instance.fake_instance_obj(self.context)
         instance.trusted_certs = None
@@ -5619,6 +5620,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
                               'setup_instance_network_on_host'),
             mock.patch.object(self.compute.network_api,
                               'get_instance_nw_info'),
+            mock.patch.object(self.compute, '_delete_dangling_bdms'),
             mock.patch.object(self.compute,
                               '_get_instance_block_device_info',
                               return_value='fake-bdminfo'),
@@ -5628,6 +5630,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
              mock_setup,
              mock_setup_inst,
              mock_get_nw_info,
+             mock_delete_dangling_bdms,
              mock_get_blk,
              mock_check_trusted_certs
         ):
@@ -5686,6 +5689,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
                 self.context, instance, mock.ANY, mock.ANY,
                 provider_mappings=mock.sentinel.mapping)
             mock_get_nw_info.assert_called_once_with(self.context, instance)
+            mock_delete_dangling_bdms.assert_called_once_with(
+                self.context, instance, bdms)
 
     @ddt.data((False, False), (False, True), (True, False), (True, True))
     @ddt.unpack
