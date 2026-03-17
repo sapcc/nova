@@ -4163,6 +4163,7 @@ class ComputeManager(manager.Manager):
             bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                     context, instance.uuid)
 
+        self._delete_dangling_bdms(context, instance, bdms)
         block_device_info = \
             self._get_instance_block_device_info(
                     context, instance, bdms=bdms)
@@ -4313,7 +4314,7 @@ class ComputeManager(manager.Manager):
             # attachments as there cannot be dangling bdms.
             # if we cannot connect to cinder we cannot check for dangling
             # bdms so we skip the check. Intermittent connection issues
-            # to cinder should not cause instance reboot to fail.
+            # to cinder should not cause instance task to fail.
             return
 
         # attachments present in nova DB, ones nova knows about
