@@ -6798,6 +6798,16 @@ class LibvirtDriver(driver.ComputeDriver):
 
             guest.features.append(hv)
 
+        if (
+            CONF.libvirt.virt_type == "ch" and
+            image_meta.properties.get('os_type') == 'windows'
+        ):
+            LOG.info(
+                "Set cloud hypervisor settings for windows "
+                "operating system via libvirt")
+            ch_win = vconfig.LibvirtConfigGuestFeatureChvWindowsGuest()
+            guest.features.append(ch_win)
+
         if CONF.libvirt.virt_type in ("qemu", "kvm"):
             # vmcoreinfo support is x86, ARM-only for now
             guestarch = self._check_emulation_arch(image_meta)
