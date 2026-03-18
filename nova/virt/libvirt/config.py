@@ -2913,6 +2913,18 @@ class LibvirtConfigGuestFeatureKvmHidden(LibvirtConfigGuestFeature):
         return root
 
 
+class LibvirtConfigGuestFeatureChvWindowsGuest(LibvirtConfigGuestFeature):
+
+    def __init__(self, **kwargs):
+        super().__init__("hyperv", **kwargs)
+        self.mode = "passthrough"
+
+    def format_dom(self):
+        root = super().format_dom()
+        root.set('hyperv', self.mode)
+        return root
+
+
 class LibvirtConfigGuestFeatureSMM(LibvirtConfigGuestFeature):
 
     def __init__(self, **kwargs):
