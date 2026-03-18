@@ -7464,6 +7464,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             mock.patch.object(self.compute,
                               '_notify_about_instance_usage'),
             mock.patch.object(self.compute.network_api,
+                              'cleanup_instance_network_on_host'),
+            mock.patch.object(self.compute.network_api,
                               'setup_networks_on_host'),
             mock.patch.object(self.compute.network_api,
                               'setup_instance_network_on_host'),
@@ -7476,6 +7478,7 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             mock.patch.object(self.compute, '_check_trusted_certs'),
         ) as (
              mock_notify_usage,
+             mock_cleanup_networks,
              mock_setup,
              mock_setup_inst,
              mock_get_nw_info,
@@ -7532,6 +7535,8 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
             self.assertTrue(mock_image_ref.called)
             self.assertTrue(mock_save.called)
             self.assertTrue(mock_notify_exists.called)
+            mock_cleanup_networks.assert_called_once_with(
+                self.context, instance, self.compute.host)
             mock_setup.assert_called_once_with(self.context, instance,
                                                mock.ANY)
             mock_setup_inst.assert_called_once_with(
