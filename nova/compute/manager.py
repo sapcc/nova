@@ -4142,8 +4142,12 @@ class ComputeManager(manager.Manager):
         instance.save(expected_task_state=[task_states.REBUILDING])
 
         if evacuate:
+            # Clean up potential orphaned port bindings on the destination
+            # host from e.g. previous failed instance tasks.
+            self.network_api.cleanup_instance_network_on_host(
+                context, instance, self.host)
             self.network_api.setup_networks_on_host(
-                    context, instance, self.host)
+                context, instance, self.host)
             # For nova-network this is needed to move floating IPs
             # For neutron this updates the host in the port binding
             # TODO(cfriesen): this network_api call and the one above
