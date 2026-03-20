@@ -236,10 +236,6 @@ class LibvirtGenericVIFDriver(object):
             # use vhost and not None.
             driver = vhost_drv or driver
 
-        if virt_type == 'ch':
-            _, vhost_queues = self._get_virtio_mq_settings(
-                image_meta, flavor)
-
         if driver == 'vhost' or driver is None:
             # vhost backend only supports update of RX queue size
             if rx_queue_size:
