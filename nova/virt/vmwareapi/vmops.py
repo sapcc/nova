@@ -3063,9 +3063,10 @@ class VMwareVMOps(object):
         config_spec = client_factory.create('ns0:VirtualMachineConfigSpec')
         extra_specs = self._get_extra_specs(instance.flavor,
                                             instance.image_meta)
-        vif_model = instance.image_meta.properties.get('hw_vif_model',
-            constants.DEFAULT_VIF_MODEL)
+        image_meta = instance.image_meta
+        image_info = images.VMwareImage.from_image(None, None, image_meta)
 
+        vif_model = image_info.vif_model
         vm_util.append_vif_infos_to_config_spec(
             client_factory,
             config_spec,
@@ -3076,10 +3077,11 @@ class VMwareVMOps(object):
     def _relocate_vm(self, vm_ref, context, instance, network_info,
                      image_meta=None):
         image_meta = image_meta or instance.image_meta
+        image_info = images.VMwareImage.from_image(None, None, image_meta)
+
         storage_policy = self._get_storage_policy(instance.flavor)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
-            image_meta.properties.get('hw_disk_type',
-                                      constants.DEFAULT_DISK_TYPE))
+            image_info.disk_type)
         hagroup_re, hagroup = self._get_hagroup_info(context, instance)
         datastore = ds_util.get_datastore(self._session, self._cluster,
                                           self._datastore_regex,
@@ -3096,18 +3098,17 @@ class VMwareVMOps(object):
                                         res_pool=self._root_resource_pool,
                                         folder=folder, datastore=datastore.ref)
         spec.deviceChange = self._get_network_device_change(vm_ref,
-                                                            image_meta,
+                                                            image_info,
                                                             network_info)
         vm_util.relocate_vm(self._session, vm_ref, spec=spec)
 
-    def _get_network_device_change(self, vm_ref, image_meta, network_info):
+    def _get_network_device_change(self, vm_ref, image_info, network_info):
         device_changes = []
         if not network_info:
             return device_changes
 
         # Iterate over the network adapters and update the backing
-        vif_model = image_meta.properties.get('hw_vif_model',
-                                                constants.DEFAULT_VIF_MODEL)
+        vif_model = image_info.vif_model
         hardware_devices = vm_util.get_hardware_devices(self._session, vm_ref)
         vif_infos = vmwarevif.get_vif_info(self._session,
                                            self._cluster,
@@ -3535,10 +3536,10 @@ class VMwareVMOps(object):
             service_spec = self._get_service_locator_spec()
 
         image_meta = instance.image_meta
+        image_info = images.VMwareImage.from_image(None, None, image_meta)
         storage_policy = self._get_storage_policy(flavor)
         allowed_ds_types = ds_util.get_allowed_datastore_types(
-            image_meta.properties.get('hw_disk_type',
-                                      constants.DEFAULT_DISK_TYPE))
+            image_info.disk_type)
         res_pool = vm_util.get_res_pool_ref(session, cluster)
         datastore = ds_util.get_datastore(session, cluster,
                                           self._datastore_regex,
@@ -4884,9 +4885,12 @@ class VMwareVMOps(object):
                       "but should be on %s. Trying to remedy.",
                       instance.uuid, sg_uuid, current_hagroup, hagroup)
             storage_policy = self._get_storage_policy(instance.flavor)
+
+            image_meta = instance.image_meta
+            image_info = images.VMwareImage.from_image(None, None, image_meta)
+
             allowed_ds_types = ds_util.get_allowed_datastore_types(
-                instance.image_meta.properties.get(
-                    'hw_disk_type', constants.DEFAULT_DISK_TYPE))
+                image_info.disk_type)
 
             datastore = ds_util.get_datastore(self._session, self._cluster,
                                               self._datastore_regex,
