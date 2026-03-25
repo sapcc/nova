@@ -63,7 +63,8 @@ update = {
         'quota_set': {
             'properties': update_quota_set,
             'patternProperties': {
-                '^instances_': common_quota
+                '^instances_': common_quota,
+                r'^hw_version_\d+_(cores|ram)$': common_quota
             },
             'additionalProperties': False,
         },
