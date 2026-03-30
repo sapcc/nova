@@ -471,6 +471,53 @@ known-features detection *before* passing the image to qemu-img. Generally,
 this inspection should be enabled for maximum safety, but this workaround
 option allows disabling it if there is a compatibility concern.
 """),
+    cfg.BoolOpt('enable_chv_announce_self',
+                default=False,
+                help="""
+If it is set to True the libvirt driver will try as a best effort to send
+the vm.post-migration-announce command to chv so that it generates RARP frames
+to update network switches in the post live migration phase on the destination.
+
+Related options:
+
+* :oslo.config:option:`DEFAULT.compute_driver` (libvirt)
+"""),
+    cfg.IntOpt('chv_announce_self_count',
+                default=3,
+                min=1,
+                help="""
+The total number of times to send the vm.post-migration-announce command to chv
+when enable_chv_announce_self is enabled.
+
+Related options:
+
+* :oslo.config:option:`WORKAROUNDS.enable_chv_announce_self` (libvirt)
+"""),
+    cfg.IntOpt('chv_announce_self_interval',
+                default=1,
+                min=1,
+                help="""
+The number of seconds to wait before re-sending the announce_self
+command to chv.
+
+Related options:
+
+* :oslo.config:option:`WORKAROUNDS.enable_chv_announce_self` (libvirt)
+"""),
+    cfg.StrOpt('chv_socket_path_template',
+               default="/run/libvirt/ch/%s-socket",
+               help="""
+A template for the path to the cloud hypervisor socket for an instance.
+
+Since there is no libvirt support for chv's vm.post-migration-announce command,
+the libvirt driver has to talk directly to the unix-domain socket created by
+chv. To get the socket path, the driver will template this string with the
+Instance.name.
+
+Related options:
+
+* :oslo.config:option:`WORKAROUNDS.enable_chv_announce_self` (libvirt)
+"""),
 ]
 
 

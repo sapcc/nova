@@ -113,6 +113,7 @@ from nova.virt import hardware
 from nova.virt.image import model as imgmodel
 from nova.virt import images
 from nova.virt.libvirt import blockinfo
+from nova.virt.libvirt import chv_client
 from nova.virt.libvirt import config as vconfig
 from nova.virt.libvirt.cpu import api as libvirt_cpu
 from nova.virt.libvirt import designer
@@ -11342,6 +11343,50 @@ class LibvirtDriver(driver.ComputeDriver):
                      'max_attempts': max_attempts}, instance=instance)
                 LOG.exception()
 
+    def _chv_announce_self(self, instance):
+        # NOTE(jkulik): Try to keep it in sync with
+        # _qemu_monitor_announce_self() above!
+        if not CONF.workarounds.enable_chv_announce_self:
+            return
+
+        try:
+            client = chv_client.ChvClient(instance)
+        except Exception as e:
+            LOG.warning("Could not create a ChvClient for sending "
+                        "announce-self command: %s.", e)
+            return
+
+        current_attempt = 0
+
+        max_attempts = (
+            CONF.workarounds.chv_announce_self_count)
+        # chv_announce_retry_interval specified in seconds
+        announce_pause = (
+            CONF.workarounds.chv_announce_self_interval)
+
+        while(current_attempt < max_attempts):
+            # Increment attempt
+            current_attempt += 1
+
+            # Only use announce_pause after the first attempt to avoid
+            # pausing before calling announce_self for the first attempt
+            if current_attempt != 1:
+                greenthread.sleep(announce_pause)
+
+            LOG.info('Sending announce-self command to chv. '
+                     'Attempt %(current_attempt)s of %(max_attempts)s',
+                     {'current_attempt': current_attempt,
+                      'max_attempts': max_attempts}, instance=instance)
+            try:
+                client.post_migration_announce()
+            except Exception:
+                LOG.warning('Failed to send announce-self command to '
+                    'chv. Attempt %(current_attempt)s of '
+                    '%(max_attempts)s',
+                    {'current_attempt': current_attempt,
+                     'max_attempts': max_attempts}, instance=instance)
+                LOG.exception("Failed to send announce-self")
+
     def post_live_migration_at_destination(self, context,
                                            instance,
                                            network_info,
@@ -11358,6 +11403,7 @@ class LibvirtDriver(driver.ComputeDriver):
         """
         self._reattach_instance_vifs(context, instance, network_info)
         self._qemu_monitor_announce_self(instance)
+        self._chv_announce_self(instance)
 
     def _get_instance_disk_info_from_config(self, guest_config,
                                             block_device_info):
