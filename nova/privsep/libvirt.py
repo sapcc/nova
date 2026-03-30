@@ -27,6 +27,7 @@ from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_utils import units
 from oslo_utils import uuidutils
+import requests_unixsocket
 
 import nova.privsep
 
@@ -224,6 +225,13 @@ def readpty(path):
             'Ignored error while reading from instance console pty: %s', exc
         )
         return ''
+
+
+@nova.privsep.sys_admin_pctxt.entrypoint
+def chv_socket_request(request_type, request_url):
+    with requests_unixsocket.Session() as session:
+        resp = getattr(session, request_type)(request_url)
+        return resp.status_code, resp.text
 
 
 @nova.privsep.sys_admin_pctxt.entrypoint
