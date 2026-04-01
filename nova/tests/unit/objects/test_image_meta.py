@@ -703,3 +703,27 @@ class TestImageMetaProps(test.NoDBTestCase):
             objects.ImageMetaProps.from_dict,
             props,
         )
+
+    # JSON round-trip converts sets to list
+    @ddt.data(
+        # a bit redundant to test all three fields as it is the same code,
+        # but it doesn't cost us much
+        ('hw_supported_disk_buses', ['virtio', 'scsi'],
+                                    {'virtio', 'scsi'}),
+        ('hw_supported_scsi_models', ['virtio-scsi', 'lsilogic'],
+                                    {'virtio-scsi', 'lsilogic'}),
+        ('hw_supported_vif_models', ['virtio', 'e1000'],
+                                    {'virtio', 'e1000'}),
+    )
+    @ddt.unpack
+    def test_hw_supported_from_list(self, prop_name, value, expected):
+        """hw_supported_* fields must accept a list (JSON deserialization).
+
+        During cold migration the image dict arrives from JSON, where Python
+        sets are serialised as arrays.  from_dict() must convert them back to
+        a set instead of passing the list directly to the oslo.versionedobjects
+        Set field coerce(), which raises ValueError for non-set inputs.
+        """
+        props = {prop_name: value}
+        result = objects.ImageMetaProps.from_dict(props)
+        self.assertEqual(expected, getattr(result, prop_name))
