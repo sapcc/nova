@@ -727,12 +727,17 @@ class ImageMetaProps(base.NovaObject):
             elif key in self._SET_FIELD_NAMES:
                 # SAP: Set-typed fields accept a comma-separated string from
                 # Glance (e.g. "virtio,e1000") or an already-parsed Python set.
+                # A list may also arrive when the value was serialised to JSON
+                # (e.g. via RPC transport or system_metadata) and then
+                # deserialised back.
                 if key not in image_props:
                     continue
                 value = image_props[key]
                 if isinstance(value, str):
                     value = {v.strip() for v in value.split(',')
                              if v.strip()}
+                elif isinstance(value, list):
+                    value = set(value)
                 setattr(self, key, value)
             else:
                 # traits_required will be populated by
