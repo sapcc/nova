@@ -18,7 +18,6 @@ import nova.conf
 from nova.scheduler import filters
 from nova.scheduler.mixins import ProjectTagMixin
 from nova.scheduler import utils
-from nova import utils as nova_utils
 from nova.utils import BIGVM_EXCLUSIVE_TRAIT
 
 LOG = logging.getLogger(__name__)
@@ -65,12 +64,11 @@ class ShardFilter(filters.BaseHostFilter, ProjectTagMixin):
 
         host_shard_names = set(aggr.name for aggr in host_shard_aggrs)
         if not host_shard_names:
-            log_method = (LOG.debug if nova_utils.is_baremetal_host(host_state)
-                          else LOG.error)
-            log_method('%(host_state)s is not in an aggregate starting with '
-                       '%(shard_prefix)s.',
-                       {'host_state': host_state,
-                        'shard_prefix': self._SHARD_PREFIX})
+            if host_state.hypervisor_type == 'VMware vCenter Server':
+                LOG.error('%(host_state)s is not in an aggregate starting '
+                          'with %(shard_prefix)s.',
+                          {'host_state': host_state,
+                           'shard_prefix': self._SHARD_PREFIX})
             return False
 
         project_id = spec_obj.project_id

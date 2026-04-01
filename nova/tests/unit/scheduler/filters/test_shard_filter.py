@@ -14,6 +14,7 @@
 #    under the License.
 import time
 
+import ddt
 from unittest import mock
 
 import nova.conf
@@ -25,6 +26,7 @@ from nova.tests.unit.scheduler import fakes
 CONF = nova.conf.CONF
 
 
+@ddt.ddt
 class TestShardFilter(test.NoDBTestCase):
 
     def setUp(self):
@@ -204,9 +206,16 @@ class TestShardFilter(test.NoDBTestCase):
             flavor=objects.Flavor(extra_specs={}))
         self.assertTrue(self.filt_cls.host_passes(host, spec_obj))
 
+    @ddt.data(
+        ('ironic', None),  # no log calls for ironic nodes
+        ('CH', None),  # no log calls for KVM nodes
+        ('QEMU', None),  # no log calls for KVM nodes
+        ('VMware vCenter Server', 'error'))  # error log for vmware nodes
+    @ddt.unpack
     @mock.patch('nova.scheduler.filters.shard_filter.LOG')
     @mock.patch('nova.scheduler.filters.utils.aggregate_metadata_get_by_host')
-    def test_log_level_for_missing_vc_aggregate(self, agg_mock, log_mock):
+    def test_log_level_for_missing_vc_aggregate(self, hv_type,
+            expected_log_level, agg_mock, log_mock):
         host = fakes.FakeHostState('host1', 'compute', {})
         spec_obj = objects.RequestSpec(
             context=mock.sentinel.ctx, project_id='foo',
@@ -217,18 +226,14 @@ class TestShardFilter(test.NoDBTestCase):
         # For ironic hosts we log debug
         log_mock.debug = mock.Mock()
         log_mock.error = mock.Mock()
-        host.hypervisor_type = 'ironic'
+        host.hypervisor_type = hv_type
         self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
-        log_mock.debug.assert_called_once_with(mock.ANY, mock.ANY)
-        log_mock.error.assert_not_called()
-
-        # For other hosts we log error
-        log_mock.debug = mock.Mock()
-        log_mock.error = mock.Mock()
-        host.hypervisor_type = 'Some HV'
-        self.assertFalse(self.filt_cls.host_passes(host, spec_obj))
-        log_mock.error.assert_called_once_with(mock.ANY, mock.ANY)
-        log_mock.debug.assert_not_called()
+        for log_level in ('debug', 'error'):
+            log_fn = getattr(log_mock, log_level)
+            if log_level == expected_log_level:
+                log_fn.assert_called_once_with(mock.ANY, mock.ANY)
+            else:
+                log_fn.assert_not_called()
 
     @mock.patch('nova.scheduler.utils.is_non_vmware_spec', return_value=True)
     def test_non_vmware_spec(self, mock_is_non_vmware_spec):
