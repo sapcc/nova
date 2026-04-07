@@ -113,6 +113,18 @@ def report_client_singleton():
     return PLACEMENTCLIENT
 
 
+def reset_report_client():
+    """Reset the placement report client singleton.
+
+    Must be called in each child process after os.fork() to ensure the
+    child does not share a pre-fork SDK adapter (and any associated HTTP
+    connections or auth state) with other child processes or the parent.
+    Analogous to clearing nova.context.CELL_CACHE after fork.
+    """
+    global PLACEMENTCLIENT
+    PLACEMENTCLIENT = None
+
+
 def safe_connect(f):
     @functools.wraps(f)
     def wrapper(self, *a, **k):

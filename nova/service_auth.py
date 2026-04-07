@@ -25,7 +25,7 @@ _SERVICE_AUTH = None
 
 
 def reset_globals():
-    """For async unit test consistency."""
+    """For async unit test consistency and not sharing sockets after fork."""
     global _SERVICE_AUTH
     _SERVICE_AUTH = None
 
