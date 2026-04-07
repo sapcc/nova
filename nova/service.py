@@ -46,6 +46,8 @@ from nova import objects
 from nova.objects import base as objects_base
 from nova.objects import service as service_obj
 from nova import rpc
+from nova.scheduler.client import report as report_client
+from nova import service_auth
 from nova import servicegroup
 from nova import utils
 from nova import version
@@ -156,6 +158,18 @@ class Service(service.Service):
         # require python 3.7 as a minimum version, we must handle the situation
         # outside of oslo.db.
         context.CELL_CACHE = {}
+        # NOTE: Reset the placement report client singleton so each forked
+        # worker process creates its own fresh SDK adapter (with independent
+        # HTTP connection pool and keystoneauth token cache) rather than
+        # sharing the pre-fork object inherited from the parent process.
+        # This is analogous to the CELL_CACHE reset above.
+        # See https://bugs.python.org/issue6721 for the general fork-safety
+        # concern.
+        report_client.reset_report_client()
+        # NOTE: Reset the keystoneauth service-user auth plugin singleton so
+        # each forked worker process obtains its own independent token cache
+        # rather than sharing the pre-fork object.
+        service_auth.reset_globals()
 
         verstr = version.version_string_with_package()
         LOG.info('Starting %(topic)s node (version %(version)s)',
