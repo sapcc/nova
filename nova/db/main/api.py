@@ -383,18 +383,18 @@ def service_destroy(context, service_id):
     if service.binary == 'nova-compute':
         # TODO(sbauza): Remove the service_id filter in a later release
         # once we are sure that all compute nodes report the host field
-        query = model_query(context, models.ComputeNode).\
-            filter(sql.or_(
-            models.ComputeNode.service_id == service_id,
-            models.ComputeNode.host == service['host']))
-
-        # NOTE(jlejeune): Make sure that the mapped field is set to 0
+        # NOTE(jlejeune): Make sure that the mapped field of the
+        # relevant compute nodes is set to 0
         # See https://bugs.launchpad.net/nova/+bug/2085135.
-        compute_ref = query.first()
-        if compute_ref:
-            compute_ref.update({'mapped': 0})
-
-        query.soft_delete(synchronize_session=False)
+        model_query(context, models.ComputeNode).\
+            filter(sql.or_(
+                models.ComputeNode.service_id == service_id,
+                models.ComputeNode.host == service['host'])).\
+            update({'deleted': models.ComputeNode.id,
+                    'updated_at': models.ComputeNode.updated_at,
+                    'deleted_at': timeutils.utcnow(),
+                    'mapped': 0},
+                   synchronize_session=False)
 
 
 @pick_context_manager_reader
