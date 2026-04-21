@@ -7302,6 +7302,11 @@ class LibvirtDriver(driver.ComputeDriver):
         elif CONF.libvirt.virt_type == "ch":
             guest.virt_type = 'kvm'
             guest.os_kernel = "/usr/share/cloud-hypervisor/CLOUDHV_EFI.fd"
+            caps = self._host.get_capabilities()
+            arch = caps.host.cpu.arch
+            if arch in (fields.Architecture.I686, fields.Architecture.X86_64):
+                guest.sysinfo = self._get_guest_config_sysinfo(instance)
+                guest.os_smbios = vconfig.LibvirtConfigGuestSMBIOS()
         elif CONF.libvirt.virt_type == "parallels":
             if guest.os_type == fields.VMMode.EXE:
                 guest.os_init_path = "/sbin/init"
