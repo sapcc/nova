@@ -464,6 +464,50 @@ class VIFTests(test.NoDBTestCase):
         self.assertEqual(fake_network_cache_model.new_network(),
                          vif['network'])
 
+    def test_hydrate_vif_with_trunk_vifs(self):
+        subport_vif = fake_network_cache_model.new_vif(
+            {'id': 'subport1', 'type': 'trunk-subport',
+             'profile': {'tag': 1049}})
+        parent_vif = fake_network_cache_model.new_vif(
+            {'id': 'parent1', 'trunk_vifs': [subport_vif]})
+
+        hydrated = model.VIF.hydrate(parent_vif)
+
+        self.assertEqual(1, len(hydrated['trunk_vifs']))
+        self.assertIsInstance(hydrated['trunk_vifs'][0], model.VIF)
+        self.assertEqual('subport1', hydrated['trunk_vifs'][0]['id'])
+        self.assertEqual(1049, hydrated['trunk_vifs'][0]['profile']['tag'])
+
+    def test_vif_without_subports_has_no_trunk_vifs_key(self):
+        # Do not save trunk_vifs to the info_caches if it's empty
+        vif = fake_network_cache_model.new_vif({'id': 'p1', 'type': 'ovs'})
+        self.assertNotIn('trunk_vifs', vif)
+
+    def test_hydrate_moves_trunk_vifs_from_meta_to_top_level(self):
+        # Cache rows written by older code that did not have the
+        # trunk_vifs field store trunk_vifs inside vif['meta']. Hydration
+        # must move them back to the top-level field so that the
+        # IpPayload meta field (DictOfStrings) does not reject the list
+        # value.
+        subport_dict = {'id': 'subport1', 'type': 'trunk-subport',
+                        'address': 'aa:aa:aa:aa:aa:aa',
+                        'network': fake_network_cache_model.new_network(),
+                        'profile': {'tag': 1049}}
+        stored_vif = {
+            'id': 'parent1',
+            'address': 'aa:aa:aa:aa:aa:aa',
+            'network': fake_network_cache_model.new_network(),
+            'type': 'ovs',
+            'meta': {'trunk_vifs': [subport_dict]},
+        }
+
+        hydrated = model.VIF.hydrate(stored_vif)
+
+        self.assertNotIn('trunk_vifs', hydrated['meta'])
+        self.assertEqual(1, len(hydrated['trunk_vifs']))
+        self.assertIsInstance(hydrated['trunk_vifs'][0], model.VIF)
+        self.assertEqual('subport1', hydrated['trunk_vifs'][0]['id'])
+
 
 class NetworkInfoTests(test.NoDBTestCase):
     def test_create_model(self):
@@ -1080,6 +1124,69 @@ class TestNetworkMetadata(test.NoDBTestCase):
 
     def test_get_network_metadata_json_ipv6_addr_mode_stateless(self):
         self._test_get_network_metadata_json_ipv6_addr_mode('dhcpv6-stateless')
+
+    def test_get_network_metadata_json_trunks(self):
+        subport_vif = fake_network_cache_model.new_vif(
+            {'type': 'trunk-subport', 'devname': 'tapsubport1',
+             'id': 'subport1',
+             'profile': {'tag': 1049}})
+        parent_vif = fake_network_cache_model.new_vif(
+            {'type': 'ovs', 'devname': 'tapparent1',
+             'id': 'parent1',
+             'trunk_vifs': [subport_vif]})
+
+        netinfo = model.NetworkInfo([parent_vif])
+
+        net_metadata = netutils.get_network_metadata(netinfo)
+
+        self.assertIn({
+            'id': 'tapsubport1',
+            'vif_id': 'subport1',
+            'type': 'vlan',
+            'mtu': None,
+            'ethernet_mac_address': 'aa:aa:aa:aa:aa:aa',
+            'vlan_link': 'tapparent1',
+            'vlan_id': 1049,
+            'vlan_mac_address': 'aa:aa:aa:aa:aa:aa'},
+            net_metadata['links'])
+
+    def test_get_network_metadata_json_trunk_subport_also_top_level(self):
+        # A subport that is both referenced by its parent's trunk_vifs and
+        # attached directly as a top-level VIF (Neutron flipped its
+        # device_owner to trunk:subport) must be rendered exactly once, as a
+        # vlan link, not duplicated.
+        subport_vif = fake_network_cache_model.new_vif(
+            {'type': 'trunk-subport', 'devname': 'tapsubport1',
+             'id': 'subport1',
+             'profile': {'tag': 1049}})
+        parent_vif = fake_network_cache_model.new_vif(
+            {'type': 'ovs', 'devname': 'tapparent1',
+             'id': 'parent1',
+             'trunk_vifs': [subport_vif]})
+
+        netinfo = model.NetworkInfo([parent_vif, subport_vif])
+
+        net_metadata = netutils.get_network_metadata(netinfo)
+
+        subport_links = [link for link in net_metadata['links']
+                         if link['vif_id'] == 'subport1']
+        self.assertEqual(1, len(subport_links))
+        self.assertEqual('vlan', subport_links[0]['type'])
+
+    def test_get_network_metadata_json_trunk_subport_no_parent(self):
+        # A top-level trunk-subport VIF whose parent is not in network_info
+        # (e.g. cache built before trunk_details was populated on the parent)
+        # is skipped from metadata entirely rather than crashing.
+        subport_vif = fake_network_cache_model.new_vif(
+            {'type': 'trunk-subport', 'devname': 'tapsubport1',
+             'id': 'subport1',
+             'profile': {'tag': 1049}})
+
+        netinfo = model.NetworkInfo([subport_vif])
+
+        net_metadata = netutils.get_network_metadata(netinfo)
+
+        self.assertEqual([], net_metadata['links'])
 
     def test__get_nets(self):
         expected_net = {
