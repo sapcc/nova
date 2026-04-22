@@ -186,7 +186,14 @@ def get_network_metadata(network_info):
     ifc_num = -1
     net_num = -1
 
+    vifs_with_parent = []
     for vif in network_info:
+        if vif.get('type') != model.VIF_TYPE_TRUNK_SUBPORT:
+            vifs_with_parent.append((vif, None))
+        for subport in vif['trunk_vifs']:
+            vifs_with_parent.append((subport, vif))
+
+    for vif, parent_vif in vifs_with_parent:
         if not vif.get('network') or not vif['network'].get('subnets'):
             continue
 
@@ -202,7 +209,7 @@ def get_network_metadata(network_info):
 
         # Get the VIF or physical NIC data
         if subnet_v4 or subnet_v6:
-            link = _get_eth_link(vif, ifc_num)
+            link = _get_eth_link(vif, ifc_num, parent_vif)
             links.append(link)
 
         # Add IPv4 and IPv6 networks if they exist
@@ -240,7 +247,7 @@ def get_ec2_ip_info(network_info):
     return ip_info
 
 
-def _get_eth_link(vif, ifc_num):
+def _get_eth_link(vif, ifc_num, parent_vif=None):
     """Get a VIF or physical NIC representation.
 
     :param vif: Neutron VIF
@@ -256,6 +263,8 @@ def _get_eth_link(vif, ifc_num):
     # Use 'phy' for physical links. Ethernet can be confusing
     if vif.get('type') in model.LEGACY_EXPOSED_VIF_TYPES:
         nic_type = vif.get('type')
+    elif vif.get('type') == model.VIF_TYPE_TRUNK_SUBPORT:
+        nic_type = 'vlan'
     else:
         nic_type = 'phy'
 
@@ -266,6 +275,12 @@ def _get_eth_link(vif, ifc_num):
         'mtu': _get_link_mtu(vif),
         'ethernet_mac_address': vif.get('address'),
     }
+
+    if nic_type == 'vlan':
+        link['vlan_link'] = parent_vif['devname']
+        link['vlan_id'] = vif['profile']['tag']
+        link['vlan_mac_address'] = vif['address']
+
     return link
 
 
