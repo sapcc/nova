@@ -3445,13 +3445,17 @@ class API:
         preserve_on_delete = (current_neutron_port['id'] in
                               preexisting_port_ids)
 
-        return network_model.VIF(
+        vif_type = current_neutron_port.get('binding:vif_type')
+        if current_neutron_port.get('device_owner') == 'trunk:subport':
+            vif_type = network_model.VIF_TYPE_TRUNK_SUBPORT
+
+        vif = network_model.VIF(
             id=current_neutron_port['id'],
             address=current_neutron_port['mac_address'],
             network=network,
             vnic_type=current_neutron_port.get('binding:vnic_type',
                                                network_model.VNIC_TYPE_NORMAL),
-            type=current_neutron_port.get('binding:vif_type'),
+            type=vif_type,
             profile=get_binding_profile(current_neutron_port),
             details=current_neutron_port.get('binding:vif_details'),
             ovs_interfaceid=ovs_interfaceid,
@@ -3460,6 +3464,8 @@ class API:
             preserve_on_delete=preserve_on_delete,
             delegate_create=True,
         )
+        self._populate_trunk_info(context, client, vif, current_neutron_port)
+        return vif
 
     def _log_error_if_vnic_type_changed(
         self, port_id, old_vnic_type, new_vnic_type, instance
@@ -3479,6 +3485,31 @@ class API:
                 old_vnic_type,
                 instance=instance
             )
+
+    def _populate_trunk_info(self, context, client, vif, current_neutron_port):
+        sub_ports = current_neutron_port.get('trunk_details', {}).get(
+            'sub_ports') or []
+        if not sub_ports:
+            return
+
+        port_ids = [sp['port_id'] for sp in sub_ports]
+        ports = client.list_ports(id=port_ids).get('ports', [])
+        ports_by_id = {p['id']: p for p in ports}
+
+        net_ids = list({p['network_id'] for p in ports})
+        networks = client.list_networks(id=net_ids).get('networks', [])
+
+        seg_by_port = {sp['port_id']: sp.get('segmentation_id')
+                       for sp in sub_ports}
+
+        for port_id in port_ids:
+            port = ports_by_id.get(port_id)
+            if not port:
+                continue
+            subport_vif = self._build_vif_model(
+                context, client, port, networks, [port_id])
+            subport_vif['profile']['tag'] = seg_by_port.get(port_id)
+            vif.add_trunk_vif(subport_vif)
 
     def _build_network_info_model(self, context, instance, networks=None,
                                   port_ids=None, admin_client=None,
