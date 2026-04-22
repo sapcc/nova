@@ -50,6 +50,7 @@ from nova import test
 from nova.tests.unit.api.openstack import fakes
 from nova.tests.unit import fake_block_device
 from nova.tests.unit import fake_network
+from nova.tests.unit import fake_network_cache_model
 from nova.tests.unit import fake_requests
 from nova import utils
 from nova.virt import netutils
@@ -1067,6 +1068,38 @@ class OpenStackMetadataTestCase(test.TestCase):
         # check the other expected values
         for k, v in nw_data.items():
             self.assertEqual(nw[k], v)
+
+    def test_network_data_response_with_trunk_subport(self):
+        inst = self.instance.obj_clone()
+
+        subport_vif = fake_network_cache_model.new_vif(
+            {'type': 'trunk-subport', 'devname': 'tapsubport',
+             'id': 'subport-id', 'address': 'aa:aa:aa:aa:aa:bb',
+             'profile': {'tag': 1049}})
+        parent_vif = fake_network_cache_model.new_vif(
+            {'type': 'ovs', 'devname': 'tapparent',
+             'id': 'parent-id',
+             'trunk_vifs': [subport_vif]})
+        nw_info = network_model.NetworkInfo([parent_vif])
+
+        mdinst = fake_InstanceMetadata(self, inst, network_info=nw_info)
+
+        nwpath = "/openstack/2015-10-15/network_data.json"
+        nw = jsonutils.loads(mdinst.lookup(nwpath))
+
+        vlan_links = [link for link in nw['links']
+                      if link.get('type') == 'vlan']
+        self.assertEqual(1, len(vlan_links))
+        self.assertEqual({
+            'id': 'tapsubport',
+            'vif_id': 'subport-id',
+            'type': 'vlan',
+            'mtu': None,
+            'ethernet_mac_address': 'aa:aa:aa:aa:aa:bb',
+            'vlan_link': 'tapparent',
+            'vlan_id': 1049,
+            'vlan_mac_address': 'aa:aa:aa:aa:aa:bb'},
+            vlan_links[0])
 
 
 class MetadataHandlerTestCase(test.TestCase):

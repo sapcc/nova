@@ -45,6 +45,7 @@ VIF_TYPE_AGILIO_OVS = 'agilio_ovs'
 VIF_TYPE_BINDING_FAILED = 'binding_failed'
 VIF_TYPE_VIF = 'vif'
 VIF_TYPE_UNBOUND = 'unbound'
+VIF_TYPE_TRUNK_SUBPORT = 'trunk-subport'
 
 
 # Constants for dictionary keys in the 'vif_details' field in the VIF
@@ -411,7 +412,7 @@ class VIF(Model):
                  qbh_params=None, qbg_params=None, active=False,
                  vnic_type=VNIC_TYPE_NORMAL, profile=None,
                  preserve_on_delete=False, delegate_create=False,
-                 **kwargs):
+                 trunk_vifs=None, **kwargs):
         super(VIF, self).__init__()
 
         self['id'] = id
@@ -429,6 +430,7 @@ class VIF(Model):
         self['profile'] = profile
         self['preserve_on_delete'] = preserve_on_delete
         self['delegate_create'] = delegate_create
+        self['trunk_vifs'] = trunk_vifs or []
 
         self._set_meta(kwargs)
 
@@ -436,7 +438,8 @@ class VIF(Model):
         keys = ['id', 'address', 'network', 'vnic_type',
                 'type', 'profile', 'details', 'devname',
                 'ovs_interfaceid', 'qbh_params', 'qbg_params',
-                'active', 'preserve_on_delete', 'delegate_create']
+                'active', 'preserve_on_delete', 'delegate_create',
+                'trunk_vifs']
         return all(self[k] == other[k] for k in keys)
 
     def __ne__(self, other):
@@ -507,9 +510,16 @@ class VIF(Model):
             phy_network = self['details'].get(VIF_DETAILS_PHYSICAL_NETWORK)
         return phy_network
 
+    def add_trunk_vif(self, vif):
+        if any(vif['id'] == _vif['id'] for _vif in self['trunk_vifs']):
+            return
+        self['trunk_vifs'].append(vif)
+
     @classmethod
     def hydrate(cls, vif):
         vif = cls(**vif)
+        vif['trunk_vifs'] = [VIF.hydrate(trunk_vif) for trunk_vif
+                             in vif.get('trunk_vifs', [])]
         vif['network'] = Network.hydrate(vif['network'])
         return vif
 
