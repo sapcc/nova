@@ -396,6 +396,7 @@ class RealRolePolicyTestCase(test.NoDBTestCase):
 "os_compute_api:sap:all-instance-uuids",
 "os_compute_api:sap:usage-by-az",
 "os_compute_api:sap:get-scheduler-settings",
+"os_compute_api:sap:evacuate-delete",
 )
 
         self.admin_or_owner_rules = (
