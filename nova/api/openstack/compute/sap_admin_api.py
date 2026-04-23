@@ -171,6 +171,31 @@ class SAPAdminApiController(wsgi.Controller):
             'config': config,
         }
 
+    @wsgi.expected_errors((400, 403, 404, 409))
+    @validation.schema(sap_admin_api.evacuate_delete)
+    @_register_endpoint('POST')
+    def evacuate_delete(self, req, body):
+        """Finish a server deletion during evacuation when stuck on a
+        failed host
+        """
+        context = req.environ["nova.context"]
+        instance_uuid = body['instance_uuid']
+        instance = common.get_instance(
+            self.compute_api, context, instance_uuid)
+
+        context.can(sap_policies.POLICY_ROOT % 'evacuate-delete',
+                    target={'user_id': instance.user_id,
+                            'project_id': instance.project_id})
+
+        try:
+            self.compute_api.evacuate_delete(context, instance)
+        except exception.InstanceInvalidState as state_error:
+            common.raise_http_conflict_for_instance_invalid_state(
+                state_error, 'evacuate_delete', instance_uuid)
+        except exception.ComputeServiceInUse as e:
+            raise exc.HTTPBadRequest(explanation=e.format_message())
+        return None
+
     @_register_endpoint('GET')
     def endpoints(self, req):
         """Return the available API endpoints"""

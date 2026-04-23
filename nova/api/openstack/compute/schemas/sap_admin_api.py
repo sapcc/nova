@@ -47,3 +47,12 @@ usage_by_az_query_params = {
     'required': ['project_id'],
     'additionalProperties': False,
 }
+
+evacuate_delete = {
+    'type': 'object',
+    'properties': {
+        'instance_uuid': parameter_types.server_id,
+    },
+    'required': ['instance_uuid'],
+    'additionalProperties': False,
+}
