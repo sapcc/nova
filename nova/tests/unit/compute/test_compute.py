@@ -12722,6 +12722,95 @@ class ComputeAPITestCase(BaseTestCase):
             host='fake_dest_host', on_shared_storage=True,
             admin_password=None)
 
+    @mock.patch('nova.compute.api.API._record_action_start')
+    @mock.patch('nova.compute.api.API._local_delete')
+    @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid',
+                return_value=[])
+    @mock.patch('nova.objects.Service.get_by_compute_host')
+    def test_evacuate_delete_active_deleting_host_down(
+            self, mock_service, mock_bdms, mock_local_delete, mock_record):
+        instance = self._create_fake_instance_obj({
+            'vm_state': vm_states.ACTIVE,
+            'task_state': task_states.DELETING,
+            'host': 'fake_host',
+        })
+        mock_service.return_value = mock.Mock()
+        self.stub_out('nova.servicegroup.api.API.service_is_up',
+                      lambda *a, **kw: False)
+
+        self.compute_api.evacuate_delete(self.context, instance)
+
+        mock_local_delete.assert_called_once()
+        mock_record.assert_called_once_with(
+            self.context, instance, instance_actions.SAP_EVACUATE_DELETE)
+
+    @mock.patch('nova.compute.api.API._record_action_start')
+    @mock.patch('nova.compute.api.API._local_delete')
+    @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid',
+                return_value=[])
+    @mock.patch('nova.objects.Service.get_by_compute_host')
+    def test_evacuate_delete_deleted_state_host_down(
+            self, mock_service, mock_bdms, mock_local_delete, mock_record):
+        instance = self._create_fake_instance_obj({
+            'vm_state': vm_states.DELETED,
+            'task_state': None,
+            'host': 'fake_host',
+        })
+        mock_service.return_value = mock.Mock()
+        self.stub_out('nova.servicegroup.api.API.service_is_up',
+                      lambda *a, **kw: False)
+
+        self.compute_api.evacuate_delete(self.context, instance)
+
+        mock_local_delete.assert_called_once()
+        mock_record.assert_called_once_with(
+            self.context, instance, instance_actions.SAP_EVACUATE_DELETE)
+
+    @mock.patch('nova.objects.Service.get_by_compute_host')
+    def test_evacuate_delete_host_up_raises(self, mock_service):
+        instance = self._create_fake_instance_obj({
+            'vm_state': vm_states.ACTIVE,
+            'task_state': task_states.DELETING,
+            'host': 'fake_host',
+        })
+        mock_service.return_value = mock.Mock()
+        self.stub_out('nova.servicegroup.api.API.service_is_up',
+                      lambda *a, **kw: True)
+
+        self.assertRaises(
+            exception.ComputeServiceInUse,
+            self.compute_api.evacuate_delete,
+            self.context,
+            instance)
+
+    def test_evacuate_delete_wrong_state_raises(self):
+        states = [vm_states.BUILDING, vm_states.PAUSED, vm_states.SUSPENDED,
+                  vm_states.RESCUED, vm_states.RESIZED, vm_states.SOFT_DELETED]
+        instances = [self._create_fake_instance_obj({'vm_state': state})
+                     for state in states]
+
+        for instance in instances:
+            self.assertRaises(
+                exception.InstanceInvalidState,
+                self.compute_api.evacuate_delete,
+                self.context,
+                instance)
+
+        # Edge case for ACTIVE/ERROR and task_state None
+        for vm_state, task_state in [
+            (vm_states.ACTIVE, None),
+            (vm_states.ERROR, None),
+        ]:
+            instance = self._create_fake_instance_obj({
+                'vm_state': vm_state,
+                'task_state': task_state,
+            })
+            self.assertRaises(
+                exception.InstanceInvalidState,
+                self.compute_api.evacuate_delete,
+                self.context,
+                instance)
+
     @mock.patch('nova.objects.MigrationList.get_by_filters')
     def test_get_migrations(self, mock_migration):
         migration = test_migration.fake_db_migration()

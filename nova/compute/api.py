@@ -46,6 +46,7 @@ from nova.compute import power_state
 from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import task_states
 from nova.compute import utils as compute_utils
+from nova.compute.utils import EventReporter
 from nova.compute.utils import wrap_instance_event
 from nova.compute import vm_states
 from nova import conductor
@@ -5856,6 +5857,65 @@ class API:
                        host=host,
                        request_spec=request_spec,
                        target_state=target_state)
+
+    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.DELETED,
+                                     vm_states.ERROR],
+                                     task_state=[None, task_states.DELETING])
+    def evacuate_delete(self, context, instance):
+        """Force local delete for an instance stuck on a failed host.
+
+        Checking vm compute host state, if host not in expected_state,
+        raising an exception.
+
+        :param instance: The instance to delete during evacuation
+        """
+        LOG.debug('vm evacuation delete scheduled', instance=instance)
+        # We need to check the following 2 states explicitly.
+        # Those can not be represented by check_instance_state.
+        not_allowed = (
+          (instance.vm_state == vm_states.ACTIVE and
+           instance.task_state is None) or
+          (instance.vm_state == vm_states.ERROR and
+           instance.task_state is None)
+        )
+        if not_allowed:
+            raise exception.InstanceInvalidState(
+                attr='vm_state/task_state',
+                instance_uuid=instance.uuid,
+                state='%s/%s' % (instance.vm_state, instance.task_state),
+                method='evacuate_delete')
+
+        if instance.host is None:
+            raise exception.InstanceInvalidState(
+                attr='host',
+                instance_uuid=instance.uuid,
+                state='None',
+                method='evacuate_delete')
+
+        service = objects.Service.get_by_compute_host(
+            context.elevated(), instance.host)
+        if self.servicegroup_api.service_is_up(service):
+            raise exception.ComputeServiceInUse(host=instance.host)
+
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            context, instance.uuid)
+
+        try:
+            im = objects.InstanceMapping.get_by_instance_uuid(
+                context, instance.uuid)
+            cell = im.cell_mapping
+        except exception.InstanceMappingNotFound:
+            LOG.warning('During local delete, failed to find '
+                        'instance mapping', instance=instance)
+            return
+
+        with nova_context.target_cell(context, cell) as cctxt:
+            self._record_action_start(
+                context, instance, instance_actions.SAP_EVACUATE_DELETE)
+            with EventReporter(cctxt, 'api_evacuate_delete', None,
+                               instance.uuid):
+                self._local_delete(cctxt, instance, bdms,
+                                   'delete', self._do_delete)
 
     def get_migrations(self, context, filters):
         """Get all migrations for the given filters."""
