@@ -88,6 +88,17 @@ sap_admin_api_policies = [
             }
         ],
         scope_types=['system', 'project']),
+    policy.DocumentedRuleDefault(
+        name=POLICY_ROOT % 'evacuate-delete',
+        check_str=base.RULE_ADMIN_API,
+        description="Force local delete of a server stuck on a failed host",
+        operations=[
+            {
+                'method': 'POST',
+                'path': '/sap/evacuate_delete'
+            }
+        ],
+        scope_types=['system', 'project']),
 ]
 
 

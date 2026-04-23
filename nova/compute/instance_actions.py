@@ -77,3 +77,5 @@ RESET_STATE = 'resetState'
 NOVA_MANAGE_REFRESH_VOLUME_ATTACHMENT = 'refresh_volume_attachment'
 
 SAP_IN_CLUSTER_VMOTION = 'sap_in_cluster_vmotion'
+
+SAP_EVACUATE_DELETE = 'sap_evacuate_delete'
