@@ -16,6 +16,7 @@ from oslo_serialization import jsonutils
 from oslo_utils.fixture import uuidsentinel as uuids
 
 from nova.compute import rpcapi as compute_rpcapi
+from nova.compute import power_state
 from nova.conductor.tasks import migrate
 from nova import context
 from nova import exception
@@ -423,17 +424,20 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         fake_journal = {'img_hv_type': 'vmware', 'hw_disk_bus': 'scsi'}
         self.sanitize_mock.return_value = fake_journal
 
+        self.request_spec.is_bfv = True
+        self.flavor.extra_specs['capabilities:hypervisor_type'] = 'CH'
         task = self._generate_task()
+        task.instance.power_state = power_state.RUNNING
 
         def set_migration_uuid(*a, **k):
             task._migration.uuid = uuids.migration
-            return mock.MagicMock()
+            cn = mock.MagicMock()
+            cn.hypervisor_type = 'VMware vCenter Server'
+            task._source_cn = cn
+            return cn
 
         cn_mock.side_effect = set_migration_uuid
-
-        with mock.patch.object(task, '_is_vmware_to_kvm_resize',
-                               return_value=True):
-            task.execute()
+        task.execute()
 
         self.sanitize_mock.assert_called_once_with(self.request_spec)
         self.assertEqual(fake_journal, task._old_image_properties)
@@ -467,11 +471,76 @@ class MigrationTaskTestCase(test.NoDBTestCase):
             return mock.MagicMock()
 
         cn_mock.side_effect = set_migration_uuid
-        # _is_vmware_to_kvm_resize stub returns False by default
         task.execute()
 
         self.sanitize_mock.assert_not_called()
         self.assertEqual({}, task._old_image_properties)
+
+
+class CrossHvResizeTestCase(test.NoDBTestCase):
+    HV_VMWARE = 'VMware vCenter Server'
+    HV_CH = 'CH'
+    HV_KVM = 'QEMU'
+
+    def setUp(self):
+        super().setUp()
+        ctx = FakeContext('fake', 'fake')
+        flavor = fake_flavor.fake_flavor_obj(ctx)
+        flavor.extra_specs = {}
+        inst = fake_instance.fake_db_instance(flavor=flavor)
+        inst_obj = objects.Instance(
+            flavor=flavor, numa_topology=None,
+            pci_requests=None, system_metadata={})
+        self.instance = objects.Instance._from_db_object(
+            ctx, inst_obj, inst, [])
+        self.instance.power_state = power_state.RUNNING
+        request_spec = objects.RequestSpec(image=objects.ImageMeta())
+        request_spec.is_bfv = True
+        self.task = migrate.MigrationTask(
+            ctx, self.instance, flavor, request_spec,
+            clean_shutdown=True,
+            compute_rpcapi=mock.Mock(),
+            query_client=mock.Mock(),
+            report_client=mock.Mock(),
+            host_list=None,
+            network_api=mock.Mock())
+        self.task._source_cn = mock.Mock()
+        self.task._source_cn.hypervisor_type = self.HV_VMWARE
+
+    def test_prep_raises_for_disallowed_transition(self):
+        for src, dest in [
+            ('CH', 'VMware vCenter Server'),
+            ('VMware vCenter Server', 'QEMU'),
+            ('QEMU', 'CH'),
+        ]:
+            with self.subTest(src=src, dest=dest):
+                self.assertRaises(
+                    exception.InvalidCrossHvResize,
+                    self.task._prep_cross_hv_resize, src, dest)
+
+    @mock.patch('nova.compute.utils.sanitize_image_props_for_kvm',
+                return_value={'img_hv_type': 'vmware'})
+    def test_prep_vmware_to_ch_passes_and_sanitizes(self, mock_sanitize):
+        self.task._prep_cross_hv_resize(self.HV_VMWARE, self.HV_CH)
+        mock_sanitize.assert_called_once_with(self.task.request_spec)
+        self.assertEqual({'img_hv_type': 'vmware'},
+                         self.task._old_image_properties)
+
+    def test_prep_raises_not_bfv(self):
+        self.task.request_spec.is_bfv = False
+        self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self.task._prep_cross_hv_resize, self.HV_VMWARE, self.HV_CH)
+
+    def test_prep_raises_not_running(self):
+        for ps in (power_state.SHUTDOWN, power_state.PAUSED,
+                   power_state.SUSPENDED):
+            with self.subTest(power_state=ps):
+                self.instance.power_state = ps
+                self.assertRaises(
+                    exception.InvalidCrossHvResizePrecondition,
+                    self.task._prep_cross_hv_resize, self.HV_VMWARE,
+                    self.HV_CH)
 
 
 class MigrationTaskAllocationUtils(test.NoDBTestCase):
