@@ -393,6 +393,66 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         selection = objects.Selection(cell_uuid=uuids.cell2, service_host='x')
         self.assertFalse(task._is_selected_host_in_source_cell(selection))
 
+    @mock.patch.object(scheduler_utils, 'fill_provider_mapping')
+    @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
+    def test_schedule_default_uses_task_request_spec(
+            self, mock_select_dest, mock_fill):
+        """_schedule() with no args passes self.request_spec to
+        select_destinations.
+        """
+        task = self._generate_task()
+        selection = objects.Selection(
+            service_host='host1', nodename='node1', cell_uuid=uuids.cell1)
+        mock_select_dest.return_value = [[selection]]
+
+        result = task._schedule()
+
+        mock_select_dest.assert_called_once_with(
+            self.context, self.request_spec, [self.instance.uuid],
+            return_objects=True, return_alternates=True)
+        self.assertIs(selection, result)
+        self.assertEqual([], task.host_list)
+
+    @mock.patch.object(scheduler_utils, 'fill_provider_mapping')
+    @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
+    def test_schedule_override_spec_used_for_select_destinations(
+            self, mock_select_dest, mock_fill):
+        """_schedule(override_spec) passes override_spec to
+        select_destinations, not self.request_spec.
+        """
+        task = self._generate_task()
+        override_spec = objects.RequestSpec(image=objects.ImageMeta())
+        selection = objects.Selection(
+            service_host='host1', nodename='node1', cell_uuid=uuids.cell1)
+        alternate = objects.Selection(
+            service_host='host2', nodename='node2', cell_uuid=uuids.cell1)
+        mock_select_dest.return_value = [[selection, alternate]]
+
+        result = task._schedule(request_spec=override_spec)
+
+        mock_select_dest.assert_called_once_with(
+            self.context, override_spec, [self.instance.uuid],
+            return_objects=True, return_alternates=True)
+        self.assertIs(selection, result)
+        self.assertEqual([alternate], task.host_list)
+
+    @mock.patch.object(scheduler_utils, 'fill_provider_mapping')
+    @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
+    def test_schedule_fill_provider_mapping_on_task_request_spec(
+            self, mock_select_dest, mock_fill):
+        """Even when an override_spec is passed, fill_provider_mapping should
+        operate on self.request_spec, not on the override.
+        """
+        task = self._generate_task()
+        override_spec = objects.RequestSpec(image=objects.ImageMeta())
+        selection = objects.Selection(
+            service_host='host1', nodename='node1', cell_uuid=uuids.cell1)
+        mock_select_dest.return_value = [[selection]]
+
+        task._schedule(request_spec=override_spec)
+
+        mock_fill.assert_called_once_with(self.request_spec, selection)
+
 
 class MigrationTaskAllocationUtils(test.NoDBTestCase):
     @mock.patch('nova.objects.ComputeNode.get_by_host_and_nodename')

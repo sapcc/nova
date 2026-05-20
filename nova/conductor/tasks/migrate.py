@@ -338,9 +338,19 @@ class MigrationTask(base.TaskBase):
             node=node, clean_shutdown=self.clean_shutdown,
             host_list=self.host_list)
 
-    def _schedule(self):
+    def _schedule(self, request_spec=None):
+        """Select a destination host via the scheduler.
+
+        :param request_spec: Optional RequestSpec to pass to
+            select_destinations for scheduler filtering. When provided this
+            overrides self.request_spec for the scheduler call only.
+            Provider mapping is always written back to self.request_spec
+            regardless of whether an override was supplied.
+        """
+        spec_for_sched = (
+            request_spec if request_spec is not None else self.request_spec)
         selection_lists = self.query_client.select_destinations(
-            self.context, self.request_spec, [self.instance.uuid],
+            self.context, spec_for_sched, [self.instance.uuid],
             return_objects=True, return_alternates=True)
         # Since there is only ever one instance to migrate per call, we
         # just need the first returned element.
