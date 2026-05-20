@@ -48,6 +48,7 @@ from nova.notifications.objects import request_spec as reqspec_notification
 from nova.notifications.objects import scheduler as scheduler_notification
 from nova.notifications.objects import server_group as sg_notification
 from nova.notifications.objects import volume as volume_notification
+from nova.network import model as network_model
 from nova import objects
 from nova.objects import fields
 from nova import rpc
@@ -299,6 +300,39 @@ def heal_reqspec_is_bfv(ctxt, request_spec, instance):
     # in the request spec accordingly.
     request_spec.is_bfv = is_volume_backed_instance(ctxt, instance)
     request_spec.save()
+
+
+def sanitize_reqspec_vmware_to_kvm(request_spec):
+    """Return a deep-cloned RequestSpec sanitized for cross-hypervisor resize.
+
+    This sanitizer is only valid for a VMware -> CH/KVM cross-hypervisor
+    resize. It rewrites the scheduler-facing explicit image metadata to target-
+    compatible values and leaves the ``hw_supported_*`` metadata untouched.
+    The original ``request_spec`` is never mutated.
+
+    :param request_spec: nova.objects.RequestSpec to sanitize
+    :returns: a new nova.objects.RequestSpec (deep clone, mutated as above)
+    """
+    clone = request_spec.obj_clone()
+
+    if not clone.obj_attr_is_set('image') or clone.image is None:
+        return clone
+
+    props = clone.image.properties
+
+    if props.obj_attr_is_set('img_hv_type'):
+        delattr(props, 'img_hv_type')
+
+    props.hw_disk_bus = fields.DiskBus.VIRTIO
+
+    if props.obj_attr_is_set('hw_scsi_model'):
+        delattr(props, 'hw_scsi_model')
+
+    props.hw_vif_model = network_model.VIF_MODEL_VIRTIO
+
+    props.hw_video_model = fields.VideoModel.VIRTIO
+
+    return clone
 
 
 def convert_mb_to_ceil_gb(mb_value):

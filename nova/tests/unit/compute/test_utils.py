@@ -2074,3 +2074,193 @@ class AcceleratorRequestTestCase(test.NoDBTestCase):
         compute_utils.delete_arqs_if_needed(self.context, instance, arq_uuids)
         mock_del_inst.assert_called_once_with(instance.uuid)
         mock_del_uuid.assert_called_once_with(arq_uuids)
+
+
+class TestSanitizeReqspecVmwareToKvm(test.NoDBTestCase):
+    """Tests for compute_utils.sanitize_reqspec_vmware_to_kvm."""
+
+    def _make_reqspec_with_image_props(self, **props):
+        image_props = objects.ImageMetaProps(**props)
+        image = objects.ImageMeta(properties=image_props)
+        return objects.RequestSpec(image=image)
+
+    def test_returns_clone_not_original(self):
+        """The returned object must be a different object from the input."""
+        reqspec = self._make_reqspec_with_image_props()
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertIsNot(reqspec, result)
+
+    def test_original_image_props_unchanged(self):
+        """Mutations on the clone must not affect the original."""
+        reqspec = self._make_reqspec_with_image_props(
+            img_hv_type='vmware',
+            hw_disk_bus=fields.DiskBus.SCSI,
+            hw_scsi_model=fields.SCSIModel.VMPVSCSI,
+            hw_vif_model=model.VIF_MODEL_VMXNET3,
+            hw_video_model=fields.VideoModel.VMVGA,
+            hw_supported_disk_buses={fields.DiskBus.SCSI},
+            hw_supported_scsi_models={fields.SCSIModel.VMPVSCSI},
+            hw_supported_vif_models={model.VIF_MODEL_VMXNET3},
+        )
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+
+        self.assertFalse(result.image.properties.obj_attr_is_set('img_hv_type'))
+        self.assertEqual(fields.DiskBus.VIRTIO,
+                         result.image.properties.hw_disk_bus)
+        self.assertFalse(
+            result.image.properties.obj_attr_is_set('hw_scsi_model'))
+        self.assertEqual(model.VIF_MODEL_VIRTIO,
+                         result.image.properties.hw_vif_model)
+        self.assertEqual(fields.VideoModel.VIRTIO,
+                         result.image.properties.hw_video_model)
+        self.assertEqual(
+            {fields.DiskBus.SCSI},
+            result.image.properties.hw_supported_disk_buses)
+        self.assertEqual(
+            {fields.SCSIModel.VMPVSCSI},
+            result.image.properties.hw_supported_scsi_models)
+        self.assertEqual(
+            {model.VIF_MODEL_VMXNET3},
+            result.image.properties.hw_supported_vif_models)
+
+        props = reqspec.image.properties
+        self.assertEqual(fields.HVType.VMWARE, props.img_hv_type)
+        self.assertEqual(fields.DiskBus.SCSI, props.hw_disk_bus)
+        self.assertEqual(fields.SCSIModel.VMPVSCSI, props.hw_scsi_model)
+        self.assertEqual(model.VIF_MODEL_VMXNET3, props.hw_vif_model)
+        self.assertEqual(fields.VideoModel.VMVGA, props.hw_video_model)
+        self.assertEqual({fields.DiskBus.SCSI}, props.hw_supported_disk_buses)
+        self.assertEqual(
+            {fields.SCSIModel.VMPVSCSI}, props.hw_supported_scsi_models)
+        self.assertEqual(
+            {model.VIF_MODEL_VMXNET3}, props.hw_supported_vif_models)
+
+    def test_img_hv_type_removed(self):
+        """img_hv_type must be removed from the clone."""
+        reqspec = self._make_reqspec_with_image_props(img_hv_type='vmware')
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertFalse(result.image.properties.obj_attr_is_set('img_hv_type'))
+
+    def test_img_hv_type_non_vmware_also_removed(self):
+        """The sanitizer should always clear img_hv_type on this path."""
+        reqspec = self._make_reqspec_with_image_props(img_hv_type='kvm')
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertFalse(result.image.properties.obj_attr_is_set('img_hv_type'))
+
+    def test_hw_disk_bus_overridden_to_virtio(self):
+        """The explicit disk bus should always become virtio."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_disk_bus=fields.DiskBus.SCSI)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(fields.DiskBus.VIRTIO,
+                         result.image.properties.hw_disk_bus)
+
+    def test_hw_disk_bus_set_to_virtio_even_when_unset(self):
+        """hw_disk_bus must be set to 'virtio' even if not originally set."""
+        reqspec = self._make_reqspec_with_image_props()
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(fields.DiskBus.VIRTIO,
+                         result.image.properties.hw_disk_bus)
+
+    def test_hw_scsi_model_removed(self):
+        """An explicit SCSI model should be removed from the clone."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_scsi_model=fields.SCSIModel.VMPVSCSI)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertFalse(
+            result.image.properties.obj_attr_is_set('hw_scsi_model'))
+
+    def test_hw_scsi_model_absent_no_error(self):
+        """Removing hw_scsi_model when absent must not raise."""
+        reqspec = self._make_reqspec_with_image_props()
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertFalse(
+            result.image.properties.obj_attr_is_set('hw_scsi_model'))
+
+    def test_hw_vif_model_vmxnet_overridden_to_virtio(self):
+        """A VMware VIF model should become virtio."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_vif_model=model.VIF_MODEL_VMXNET)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(model.VIF_MODEL_VIRTIO,
+                         result.image.properties.hw_vif_model)
+
+    def test_hw_vif_model_vmxnet3_overridden_to_virtio(self):
+        """A VMware VIF model should become virtio."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_vif_model=model.VIF_MODEL_VMXNET3)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(model.VIF_MODEL_VIRTIO,
+                         result.image.properties.hw_vif_model)
+
+    def test_hw_vif_model_non_vmware_also_overridden_to_virtio(self):
+        """The sanitizer should always force a virtio VIF model."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_vif_model=model.VIF_MODEL_E1000)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(model.VIF_MODEL_VIRTIO,
+                         result.image.properties.hw_vif_model)
+
+    def test_hw_video_model_vmvga_replaced_with_virtio(self):
+        """hw_video_model='vmvga' must be replaced with 'virtio'."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_video_model=fields.VideoModel.VMVGA)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(fields.VideoModel.VIRTIO,
+                         result.image.properties.hw_video_model)
+
+    def test_hw_video_model_non_vmware_also_overridden_to_virtio(self):
+        """The sanitizer should always force a virtio video model."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_video_model=fields.VideoModel.VGA)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(fields.VideoModel.VIRTIO,
+                         result.image.properties.hw_video_model)
+
+    def test_hw_supported_disk_buses_preserved(self):
+        """Existing supported disk buses should remain untouched."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_supported_disk_buses={fields.DiskBus.IDE})
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(
+            {fields.DiskBus.IDE},
+            result.image.properties.hw_supported_disk_buses)
+
+    def test_hw_supported_scsi_models_preserved(self):
+        """Existing supported SCSI models should remain untouched."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_supported_scsi_models={fields.SCSIModel.LSILOGIC})
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(
+            {fields.SCSIModel.LSILOGIC},
+            result.image.properties.hw_supported_scsi_models)
+
+    def test_hw_supported_vif_models_preserved(self):
+        """Existing supported VIF models should remain untouched."""
+        reqspec = self._make_reqspec_with_image_props(
+            hw_supported_vif_models={model.VIF_MODEL_E1000})
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertEqual(
+            {model.VIF_MODEL_E1000},
+            result.image.properties.hw_supported_vif_models)
+
+    def test_no_image_in_reqspec(self):
+        """Must not raise when request_spec.image is not set."""
+        reqspec = objects.RequestSpec()
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertIsNot(reqspec, result)
+        self.assertFalse(result.obj_attr_is_set('image'))
+
+    def test_image_is_none(self):
+        """Must not raise when request_spec.image is explicitly None."""
+        reqspec = objects.RequestSpec(image=None)
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertIsNot(reqspec, result)
+        self.assertIsNone(result.image)
+
+    def test_clone_image_objects_are_independent_of_original(self):
+        """Nested image and properties on the clone must be distinct objects."""
+        reqspec = self._make_reqspec_with_image_props(hw_disk_bus='ide')
+        result = compute_utils.sanitize_reqspec_vmware_to_kvm(reqspec)
+        self.assertIsNot(reqspec.image, result.image)
+        self.assertIsNot(reqspec.image.properties, result.image.properties)
