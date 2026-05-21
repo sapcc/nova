@@ -34,6 +34,7 @@ from nova.compute import task_states
 from nova.compute import vm_states
 import nova.conf
 from nova import exception
+from nova.network import model as network_model
 from nova import notifications
 from nova.notifications.objects import aggregate as aggregate_notification
 from nova.notifications.objects import base as notification_base
@@ -299,6 +300,65 @@ def heal_reqspec_is_bfv(ctxt, request_spec, instance):
     # in the request spec accordingly.
     request_spec.is_bfv = is_volume_backed_instance(ctxt, instance)
     request_spec.save()
+
+
+def sanitize_image_props_for_kvm(request_spec):
+    """Sanitize VMware-specific image properties for KVM scheduling.
+
+    Mutates request_spec.image.properties in place to remove or replace
+    VMware-pinning values so the scheduler can select KVM/CH hosts.
+
+    Returns a dict of original values that were overwritten or removed,
+    suitable for storage in MigrationContext.old_image_properties as a
+    rollback journal.
+
+    Precondition: only valid for VMware-to-KVM cross-hypervisor resize.
+
+    :param request_spec: nova.objects.RequestSpec to sanitize in place
+    :returns: dict of {field_name: original_value} for rollback, or
+              empty dict if nothing was changed
+    """
+    if (not request_spec.obj_attr_is_set('image') or
+            request_spec.image is None):
+        return {}
+
+    image = request_spec.image
+    if not image.obj_attr_is_set('properties'):
+        return {}
+
+    props = image.properties
+    old = {}
+
+    if props.obj_attr_is_set('img_hv_type'):
+        old['img_hv_type'] = props.img_hv_type
+        delattr(props, 'img_hv_type')
+
+    if props.obj_attr_is_set('hw_disk_bus'):
+        old['hw_disk_bus'] = props.hw_disk_bus
+        props.hw_disk_bus = fields.DiskBus.VIRTIO
+
+    if props.obj_attr_is_set('hw_cdrom_bus'):
+        old['hw_cdrom_bus'] = props.hw_cdrom_bus
+        props.hw_cdrom_bus = fields.DiskBus.VIRTIO
+
+    if props.obj_attr_is_set('hw_scsi_model'):
+        old['hw_scsi_model'] = props.hw_scsi_model
+        delattr(props, 'hw_scsi_model')
+
+    if props.obj_attr_is_set('hw_vif_model'):
+        old['hw_vif_model'] = props.hw_vif_model
+        props.hw_vif_model = network_model.VIF_MODEL_VIRTIO
+
+    if props.obj_attr_is_set('hw_video_model'):
+        old['hw_video_model'] = props.hw_video_model
+        props.hw_video_model = fields.VideoModel.VIRTIO
+
+    if (props.obj_attr_is_set('img_hv_requested_version') and
+            props.img_hv_requested_version):
+        old['img_hv_requested_version'] = props.img_hv_requested_version
+        delattr(props, 'img_hv_requested_version')
+
+    return old
 
 
 def convert_mb_to_ceil_gb(mb_value):

@@ -38,6 +38,10 @@ fake_migration_context_obj.new_pci_requests = (
 fake_migration_context_obj.old_pci_requests = None
 fake_migration_context_obj.new_resources = objects.ResourceList()
 fake_migration_context_obj.old_resources = None
+fake_migration_context_obj.old_image_properties = {
+    'img_hv_type': 'vmware',
+    'hw_disk_bus': 'scsi',
+}
 
 fake_db_context = {
     'created_at': None,
@@ -104,6 +108,8 @@ class _TestMigrationContext(object):
                                   mig_context.new_resources.__class__)
             self.assertIsInstance(expected_mig_context.old_resources,
                                   mig_context.old_resources.__class__)
+            self.assertEqual(expected_mig_context.old_image_properties,
+                             mig_context.old_image_properties)
         else:
             self.assertIsNone(mig_context)
 
@@ -134,6 +140,14 @@ class _TestMigrationContext(object):
         mig_ctx = get_fake_migration_context_obj(ctxt)
         self.assertTrue(mig_ctx.is_cross_cell_move())
         mock_get_by_id.assert_called_once_with(ctxt, mig_ctx.migration_id)
+
+    def test_obj_make_compatible_pre_1_3(self):
+        primitive = fake_migration_context_obj.obj_to_primitive()
+
+        fake_migration_context_obj.obj_make_compatible(
+            primitive['nova_object.data'], '1.2')
+
+        self.assertNotIn('old_image_properties', primitive['nova_object.data'])
 
 
 class TestMigrationContext(test_objects._LocalTest, _TestMigrationContext):

@@ -449,6 +449,24 @@ class ComputeTaskManager:
         # NOTE(sbauza): Make sure we persist the new flavor in case we had
         # a successful scheduler call if and only if nothing bad happened
         if request_spec.obj_what_changed():
+            # Persist the rollback journal for image properties BEFORE
+            # saving the modified request_spec, so that revert can always
+            # find the originals even if a crash occurs between these two
+            # writes.
+            old_img_props = getattr(task, '_old_image_properties', None)
+            if old_img_props and isinstance(old_img_props, dict):
+                if ('migration_context' in instance and
+                        instance.migration_context is not None):
+                    mig_context = instance.migration_context
+                else:
+                    mig_context = objects.MigrationContext(
+                        context=context,
+                        instance_uuid=instance.uuid,
+                        migration_id=task._migration.id)
+                mig_context.old_image_properties = old_img_props
+                instance.migration_context = mig_context
+                instance.save()
+
             # NOTE(jkulik): Make sure we do not store the "volume_sizes"
             # scheduler_hint as that can change at any time and saving it in
             # the DB thus is not useful.
