@@ -133,6 +133,15 @@ class MigrationTask(base.TaskBase):
         self._held_allocations = None
         self._source_cn = None
 
+    def _is_vmware_to_kvm_resize(self):
+        """Return True if this resize is specifically VMware to KVM.
+
+        Stub — always returns False until VMware-to-KVM detection is
+        implemented (see: Add Cross-Hypervisor Resize Detection and
+        Guardrails ticket).
+        """
+        return False
+
     def _preallocate_migration(self):
         # If this is a rescheduled migration, don't create a new record.
         migration_type = ("resize" if self.instance.flavor.id != self.flavor.id
@@ -283,6 +292,16 @@ class MigrationTask(base.TaskBase):
         self.request_spec.ensure_network_information(self.instance)
         compute_utils.heal_reqspec_is_bfv(
             self.context, self.request_spec, self.instance)
+        # For cross-hypervisor resize (VMware to KVM), sanitize the image
+        # properties directly on the canonical request_spec so the scheduler
+        # can select KVM/CH hosts.  The returned dict of original values is
+        # stashed for the conductor to persist into MigrationContext before
+        # request_spec.save().
+        self._old_image_properties = {}
+        if self._is_vmware_to_kvm_resize():
+            self._old_image_properties = (
+                compute_utils.sanitize_image_props_for_kvm(
+                    self.request_spec))
         # On an initial call to migrate, 'self.host_list' will be None, so we
         # have to call the scheduler to get a list of acceptable hosts to
         # migrate to. That list will consist of a selected host, along with

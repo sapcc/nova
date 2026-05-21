@@ -4087,6 +4087,71 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         spec_save_mock.assert_called_once_with()
 
     @mock.patch.object(objects.Instance, 'get_bdms')
+    @mock.patch.object(objects.Instance, 'save')
+    @mock.patch.object(objects.RequestSpec, 'save')
+    @mock.patch.object(migrate.MigrationTask, 'execute')
+    @mock.patch.object(utils, 'get_image_from_system_metadata')
+    def test_cold_migrate_persists_old_image_properties(
+            self, image_mock, task_exec_mock, spec_save_mock,
+            inst_save_mock, bdms_mock):
+        """Verify old_image_properties is persisted to MigrationContext."""
+        inst_obj = objects.Instance(
+            image_ref='fake-image_ref',
+            vm_state=vm_states.STOPPED,
+            instance_type_id=self.flavor.id,
+            system_metadata={},
+            uuid=uuids.instance,
+            user_id=fakes.FAKE_USER_ID,
+            flavor=self.flavor,
+            availability_zone=None,
+            pci_requests=None,
+            numa_topology=None,
+            host='host1',
+            node='node1',
+            migration_context=None)
+        image = 'fake-image'
+        fake_spec = fake_request_spec.fake_spec_obj()
+        fake_journal = {'img_hv_type': 'vmware', 'hw_disk_bus': 'scsi'}
+        save_order = []
+
+        bdms_mock.return_value = []
+        image_mock.return_value = image
+        inst_save_mock.side_effect = lambda *a, **k: save_order.append(
+            'instance.save')
+        spec_save_mock.side_effect = lambda *a, **k: save_order.append(
+            'request_spec.save')
+
+        original_build = self.conductor._build_cold_migrate_task
+
+        def patched_build(*args, **kwargs):
+            task = original_build(*args, **kwargs)
+
+            def fake_task_execute():
+                task._old_image_properties = fake_journal
+                task._migration = objects.Migration(id=1)
+
+            task.execute = fake_task_execute
+            return task
+
+        with mock.patch.object(self.conductor,
+                               '_build_cold_migrate_task',
+                               side_effect=patched_build):
+            self.conductor._cold_migrate(
+                self.context, inst_obj, self.flavor, {},
+                True, fake_spec, None)
+
+        # Verify instance.save() was called to persist the MigrationContext
+        inst_save_mock.assert_called()
+        # Verify MigrationContext has old_image_properties
+        self.assertIsNotNone(inst_obj.migration_context)
+        self.assertEqual(
+            fake_journal,
+            inst_obj.migration_context.old_image_properties)
+        # And reqspec was saved after
+        spec_save_mock.assert_called()
+        self.assertEqual(['instance.save', 'request_spec.save'], save_order)
+
+    @mock.patch.object(objects.Instance, 'get_bdms')
     @mock.patch('nova.objects.RequestSpec.from_primitives')
     @mock.patch.object(objects.RequestSpec, 'save')
     def test_cold_migrate_reschedule_legacy_request_spec(
