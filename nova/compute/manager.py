@@ -112,6 +112,16 @@ wrap_exception = functools.partial(
     exception_wrapper.wrap_exception, service='compute', binary='nova-compute')
 
 
+KEEP_IN_BUILD_STEP_NONE = 10
+KEEP_IN_BUILD_STEP_NETWORKING = 20
+KEEP_IN_BUILD_STEP_BLOCK_DEVICE_MAPPING = 30
+KEEP_IN_BUILD_STEP_SPAWNING = 40
+
+
+class _KeepInBuildAbort(Exception):
+    pass
+
+
 @contextlib.contextmanager
 def errors_out_migration_ctxt(migration):
     """Context manager to error out migration on failure."""
@@ -717,6 +727,40 @@ class ComputeManager(manager.Manager):
             setattr(instance, k, v)
         instance.save()
         self._update_resource_tracker(context, instance)
+
+    def _parse_keep_in_build_name(self, instance_name):
+        if not instance_name:
+            return None, None
+
+        match = re.match(r'^([0-9a-z]{8})-keep-in-build-(\d{3})$',
+                         instance_name)
+        if not match:
+            return None, None
+
+        slug, step = match.groups()
+        return slug, int(step)
+
+    def _get_keep_in_build_slug(self):
+        slug = CONF.keep_in_build_slug
+        if not slug:
+            return None
+        return slug
+
+    def _maybe_keep_in_build(self, instance, step):
+        configured_slug = self._get_keep_in_build_slug()
+        if not configured_slug:
+            return
+
+        instance_name = getattr(instance, 'display_name', None) or instance.name
+        slug, requested_step = self._parse_keep_in_build_name(instance_name)
+        if slug != configured_slug or requested_step != step:
+            return
+
+        LOG.warning(
+            'Keep-in-build debug cut applied at step %(step)03d',
+            {'step': step},
+            instance=instance)
+        raise _KeepInBuildAbort()
 
     def _nil_out_instance_obj_host_and_node(self, instance):
         # NOTE(jwcroppe): We don't do instance.save() here for performance
@@ -2053,6 +2097,8 @@ class ComputeManager(manager.Manager):
         instance.task_state = task_states.NETWORKING
         instance.save(expected_task_state=[None])
 
+        self._maybe_keep_in_build(instance, KEEP_IN_BUILD_STEP_NETWORKING)
+
         return network_model.NetworkInfoAsyncWrapper(
                 self._allocate_network_async, context, instance,
                 requested_networks, security_groups, resource_provider_mapping,
@@ -2440,6 +2486,7 @@ class ComputeManager(manager.Manager):
             instance.task_state = None
             instance.save(expected_task_state=
                     (task_states.SCHEDULING, None))
+            self._maybe_keep_in_build(instance, KEEP_IN_BUILD_STEP_NONE)
         except exception.InstanceNotFound:
             msg = 'Instance disappeared before build.'
             LOG.debug(msg, instance=instance)
@@ -2513,6 +2560,8 @@ class ComputeManager(manager.Manager):
                 return build_results.RESCHEDULED_BY_POLICY
 
             return build_results.RESCHEDULED
+        except _KeepInBuildAbort:
+            return build_results.FAILED_BY_POLICY
         except (exception.InstanceNotFound,
                 exception.UnexpectedDeletingTaskStateError):
             msg = 'Instance disappeared during build.'
@@ -2638,6 +2687,8 @@ class ComputeManager(manager.Manager):
                     # saved in that function to prevent races.
                     instance.save(expected_task_state=
                             task_states.BLOCK_DEVICE_MAPPING)
+                    self._maybe_keep_in_build(
+                        instance, KEEP_IN_BUILD_STEP_SPAWNING)
                     block_device_info = resources['block_device_info']
                     network_info = resources['network_info']
                     accel_info = resources['accel_info']
@@ -2873,6 +2924,8 @@ class ComputeManager(manager.Manager):
             instance.vm_state = vm_states.BUILDING
             instance.task_state = task_states.BLOCK_DEVICE_MAPPING
             instance.save()
+            self._maybe_keep_in_build(
+                instance, KEEP_IN_BUILD_STEP_BLOCK_DEVICE_MAPPING)
 
             block_device_info = self._prep_block_device(context, instance,
                     block_device_mapping)

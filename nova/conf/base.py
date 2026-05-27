@@ -203,6 +203,20 @@ The 'x_' prefix in the default sorts aliased flavors towards the end of the
 flavor list (when sorting by flavorid, which is the API default). This
 decreases visibility for aliased flavors.
 """),
+    cfg.StrOpt(
+        'keep_in_build_slug',
+        default='',
+        regex='^$|^[0-9a-zA-Z_.-]+$',
+        help="""
+Debug-only slug for intentionally cutting selected instance builds short while
+keeping them in BUILDING.
+
+Instances are matched by display name against the pattern
+``{slug}-keep-in-build-{step}``, where ``slug`` must equal this option and
+``step`` is a zero-padded three-digit step number.
+
+Leave empty to disable the behavior.
+"""),
     cfg.ListOpt("external_customer_domain_name_prefixes",
         default=[],
         help="""
