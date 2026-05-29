@@ -478,6 +478,36 @@ class VIFTests(test.NoDBTestCase):
         self.assertEqual('subport1', hydrated['trunk_vifs'][0]['id'])
         self.assertEqual(1049, hydrated['trunk_vifs'][0]['profile']['tag'])
 
+    def test_vif_without_subports_has_no_trunk_vifs_key(self):
+        # Do not save trunk_vifs to the info_caches if it's empty
+        vif = fake_network_cache_model.new_vif({'id': 'p1', 'type': 'ovs'})
+        self.assertNotIn('trunk_vifs', vif)
+
+    def test_hydrate_moves_trunk_vifs_from_meta_to_top_level(self):
+        # Cache rows written by older code that did not have the
+        # trunk_vifs field store trunk_vifs inside vif['meta']. Hydration
+        # must move them back to the top-level field so that the
+        # IpPayload meta field (DictOfStrings) does not reject the list
+        # value.
+        subport_dict = {'id': 'subport1', 'type': 'trunk-subport',
+                        'address': 'aa:aa:aa:aa:aa:aa',
+                        'network': fake_network_cache_model.new_network(),
+                        'profile': {'tag': 1049}}
+        stored_vif = {
+            'id': 'parent1',
+            'address': 'aa:aa:aa:aa:aa:aa',
+            'network': fake_network_cache_model.new_network(),
+            'type': 'ovs',
+            'meta': {'trunk_vifs': [subport_dict]},
+        }
+
+        hydrated = model.VIF.hydrate(stored_vif)
+
+        self.assertNotIn('trunk_vifs', hydrated['meta'])
+        self.assertEqual(1, len(hydrated['trunk_vifs']))
+        self.assertIsInstance(hydrated['trunk_vifs'][0], model.VIF)
+        self.assertEqual('subport1', hydrated['trunk_vifs'][0]['id'])
+
 
 class NetworkInfoTests(test.NoDBTestCase):
     def test_create_model(self):
