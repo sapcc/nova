@@ -430,17 +430,26 @@ class VIF(Model):
         self['profile'] = profile
         self['preserve_on_delete'] = preserve_on_delete
         self['delegate_create'] = delegate_create
-        self['trunk_vifs'] = trunk_vifs or []
+        if trunk_vifs:
+            self['trunk_vifs'] = trunk_vifs
 
         self._set_meta(kwargs)
+
+        # NOTE(leust): Cache rows written by older code that did not have
+        # the trunk_vifs field store trunk_vifs inside meta because
+        # _set_meta captured unknown kwargs there. Move trunk_vifs back
+        # to the top level so notifications and metadata get a clean
+        # meta dict.
+        if 'trunk_vifs' in self['meta']:
+            self['trunk_vifs'] = self['meta'].pop('trunk_vifs')
 
     def __eq__(self, other):
         keys = ['id', 'address', 'network', 'vnic_type',
                 'type', 'profile', 'details', 'devname',
                 'ovs_interfaceid', 'qbh_params', 'qbg_params',
-                'active', 'preserve_on_delete', 'delegate_create',
-                'trunk_vifs']
-        return all(self[k] == other[k] for k in keys)
+                'active', 'preserve_on_delete', 'delegate_create']
+        return (all(self[k] == other[k] for k in keys) and
+                self.get('trunk_vifs') == other.get('trunk_vifs'))
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -511,15 +520,18 @@ class VIF(Model):
         return phy_network
 
     def add_trunk_vif(self, vif):
-        if any(vif['id'] == _vif['id'] for _vif in self['trunk_vifs']):
+        trunk_vifs = self.setdefault('trunk_vifs', [])
+        if any(vif['id'] == _vif['id'] for _vif in trunk_vifs):
             return
-        self['trunk_vifs'].append(vif)
+        trunk_vifs.append(vif)
 
     @classmethod
     def hydrate(cls, vif):
         vif = cls(**vif)
-        vif['trunk_vifs'] = [VIF.hydrate(trunk_vif) for trunk_vif
-                             in vif.get('trunk_vifs', [])]
+        trunk_vifs = [VIF.hydrate(trunk_vif)
+                      for trunk_vif in vif.get('trunk_vifs', ())]
+        if trunk_vifs:
+            vif['trunk_vifs'] = trunk_vifs
         vif['network'] = Network.hydrate(vif['network'])
         return vif
 

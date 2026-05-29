@@ -190,7 +190,7 @@ def get_network_metadata(network_info):
     for vif in network_info:
         if vif.get('type') != model.VIF_TYPE_TRUNK_SUBPORT:
             vifs_with_parent.append((vif, None))
-        for subport in vif['trunk_vifs']:
+        for subport in vif.get('trunk_vifs', ()):
             vifs_with_parent.append((subport, vif))
 
     for vif, parent_vif in vifs_with_parent:
