@@ -304,7 +304,9 @@ class ComputeTaskManager:
         exception.HypervisorUnavailable,
         exception.InstanceInvalidState,
         exception.MigrationPreCheckError,
-        exception.UnsupportedPolicyException)
+        exception.UnsupportedPolicyException,
+        exception.InvalidCrossHvResize,
+        exception.InvalidCrossHvResizePrecondition)
     @targets_cell
     @wrap_instance_event(prefix='conductor')
     def migrate_server(self, context, instance, scheduler_hint, live, rebuild,
@@ -427,6 +429,15 @@ class ComputeTaskManager:
                 self._set_vm_state_and_notify(context, instance.uuid,
                                               'migrate_server',
                                               updates, ex, request_spec)
+        except (exception.InvalidCrossHvResize,
+                exception.InvalidCrossHvResizePrecondition) as ex:
+            vm_state = instance.vm_state
+            if not vm_state:
+                vm_state = vm_states.ACTIVE
+            updates = {'vm_state': vm_state, 'task_state': None}
+            self._set_vm_state_and_notify(context, instance.uuid,
+                                          'resize_server',
+                                          updates, ex, request_spec)
         except Exception as ex:
             with excutils.save_and_reraise_exception():
                 # Refresh the instance so we don't overwrite vm_state changes

@@ -15,6 +15,7 @@ from oslo_serialization import jsonutils
 
 from nova import availability_zones
 from nova.compute import utils as compute_utils
+from nova.compute import power_state
 from nova.conductor.tasks import base
 from nova.conductor.tasks import cross_cell_migrate
 from nova import exception
@@ -22,6 +23,7 @@ from nova.i18n import _
 from nova import objects
 from nova.scheduler.client import report
 from nova.scheduler import utils as scheduler_utils
+from nova.scheduler.filters import extra_specs_ops
 
 LOG = logging.getLogger(__name__)
 
@@ -113,6 +115,7 @@ def revert_allocation_for_migration(context, source_cn, instance, migration):
 
 
 class MigrationTask(base.TaskBase):
+
     def __init__(self, context, instance, flavor,
                  request_spec, clean_shutdown, compute_rpcapi,
                  query_client, report_client, host_list, network_api):
@@ -132,15 +135,6 @@ class MigrationTask(base.TaskBase):
         self._migration = None
         self._held_allocations = None
         self._source_cn = None
-
-    def _is_vmware_to_kvm_resize(self):
-        """Return True if this resize is specifically VMware to KVM.
-
-        Stub — always returns False until VMware-to-KVM detection is
-        implemented (see: Add Cross-Hypervisor Resize Detection and
-        Guardrails ticket).
-        """
-        return False
 
     def _preallocate_migration(self):
         # If this is a rescheduled migration, don't create a new record.
@@ -298,10 +292,12 @@ class MigrationTask(base.TaskBase):
         # stashed for the conductor to persist into MigrationContext before
         # request_spec.save().
         self._old_image_properties = {}
-        if self._is_vmware_to_kvm_resize():
-            self._old_image_properties = (
-                compute_utils.sanitize_image_props_for_kvm(
-                    self.request_spec))
+        src_hv = self._source_cn.hypervisor_type
+        dest_hv = self.flavor.extra_specs.get('capabilities:hypervisor_type')
+        if dest_hv and not extra_specs_ops.match(src_hv, dest_hv):
+            LOG.debug('Cross-hypervisor resize detected')
+            self._prep_cross_hv_resize(src_hv, dest_hv)
+
         # On an initial call to migrate, 'self.host_list' will be None, so we
         # have to call the scheduler to get a list of acceptable hosts to
         # migrate to. That list will consist of a selected host, along with
@@ -356,6 +352,25 @@ class MigrationTask(base.TaskBase):
             request_spec=self.request_spec, filter_properties=legacy_props,
             node=node, clean_shutdown=self.clean_shutdown,
             host_list=self.host_list)
+
+    def _prep_cross_hv_resize(self, src_hv: str, dest_hv: str):
+        if extra_specs_ops.match("VMware vCenter Server", src_hv) \
+                and extra_specs_ops.match("CH", dest_hv):
+            if not self.request_spec.is_bfv:
+                raise exception.InvalidCrossHvResizePrecondition(
+                    'Must be BFV instance')
+            if self.instance.power_state != power_state.RUNNING:
+                raise exception.InvalidCrossHvResizePrecondition(
+                    'Instance must be running for cross-hypervisor resize. '
+                    'The compute service will take care of stopping the instance.')
+
+            self._old_image_properties = (
+                compute_utils.sanitize_image_props_for_kvm(
+                    self.request_spec))
+
+        else:
+            raise exception.InvalidCrossHvResize(
+                src_hv_type=src_hv, dest_hv_type=dest_hv)
 
     def _schedule(self):
         selection_lists = self.query_client.select_destinations(
