@@ -847,6 +847,15 @@ class ServerActionsControllerTestV21(test.TestCase):
                           self.controller._action_resize,
                           self.req, FAKE_UUID, body=body)
 
+    @mock.patch('nova.compute.api.API.resize',
+                side_effect=exception.InvalidCrossHvResize(
+                    src_hv_type='VMware vCenter Server', dest_hv_type='CH'))
+    def test_resize_raises_invalid_cross_hv_resize(self, mock_resize):
+        body = dict(resize=dict(flavorRef="http://localhost/3"))
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller._action_resize,
+                          self.req, FAKE_UUID, body=body)
+
     def test_resize_with_too_many_instances(self):
         body = dict(resize=dict(flavorRef="http://localhost/3"))
 

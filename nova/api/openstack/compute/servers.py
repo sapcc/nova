@@ -1095,6 +1095,7 @@ class ServersController(wsgi.Controller):
             exception.CannotResizeToSameFlavor,
             exception.FlavorNotFound,
             exception.ExtendedResourceRequestOldCompute,
+            exception.InvalidCrossHvResize,
             exception.InvalidVolume,
         ) as e:
             raise exc.HTTPBadRequest(explanation=e.format_message())
