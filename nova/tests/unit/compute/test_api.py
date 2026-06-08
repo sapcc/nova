@@ -7577,6 +7577,13 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
         self.assertRaises(exception.CannotResizeToSameFlavor,
                           self._test_resize, same_flavor=True)
 
+    @mock.patch('nova.compute.utils.is_cross_hypervisor_resize',
+                return_value=True)
+    def test_resize_cross_hypervisor_fails(self, mock_is_cross_hv):
+        """Resize between different hypervisor types is rejected early."""
+        self.assertRaises(exception.InvalidCrossHvResize,
+                          self._test_resize)
+
     def test_find_service_in_cell_error_case(self):
         self.assertRaises(exception.NovaException,
                           compute_api._find_service_in_cell, self.context)
