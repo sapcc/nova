@@ -2074,3 +2074,69 @@ class AcceleratorRequestTestCase(test.NoDBTestCase):
         compute_utils.delete_arqs_if_needed(self.context, instance, arq_uuids)
         mock_del_inst.assert_called_once_with(instance.uuid)
         mock_del_uuid.assert_called_once_with(arq_uuids)
+
+
+class IsCrossHypervisorResizeTestCase(test.NoDBTestCase):
+    """Tests for compute_utils.is_cross_hypervisor_resize."""
+
+    def _make_flavor(self, extra_specs=None):
+        flavor = objects.Flavor(
+            id=1, name='test', memory_mb=512, vcpus=1, root_gb=10,
+            ephemeral_gb=0, swap=0, rxtx_factor=1.0, flavorid='fakeid',
+            disabled=False, is_public=True,
+            extra_specs=extra_specs or {})
+        return flavor
+
+    def test_detects_cross_hv_resize(self):
+        """Resizing between different hypervisor types returns True."""
+        dest_flavor = self._make_flavor(
+            {'capabilities:hypervisor_type': 'CH'})
+        self.assertTrue(
+            compute_utils.is_cross_hypervisor_resize(
+                'VMware vCenter Server', dest_flavor))
+
+    def test_same_hv_returns_false(self):
+        """Resizing within the same hypervisor type returns False."""
+        dest_flavor = self._make_flavor(
+            {'capabilities:hypervisor_type': 'CH'})
+        self.assertFalse(
+            compute_utils.is_cross_hypervisor_resize('CH', dest_flavor))
+
+    def test_source_is_none_returns_false(self):
+        """If source hypervisor type is None, returns False."""
+        dest_flavor = self._make_flavor(
+            {'capabilities:hypervisor_type': 'QEMU'})
+        self.assertFalse(
+            compute_utils.is_cross_hypervisor_resize(None, dest_flavor))
+
+    def test_dest_has_no_hv_spec_returns_false(self):
+        """If dest flavor has no hypervisor_type spec, returns False."""
+        dest_flavor = self._make_flavor({})
+        self.assertFalse(
+            compute_utils.is_cross_hypervisor_resize(
+                'VMware vCenter Server', dest_flavor))
+
+    def test_all_cross_transitions_detected(self):
+        """All cross-hypervisor transitions return True."""
+        hv_types = ['VMware vCenter Server', 'CH', 'ironic']
+        for src in hv_types:
+            for dest in hv_types:
+                if src == dest:
+                    continue
+                with self.subTest(src=src, dest=dest):
+                    dest_flavor = self._make_flavor(
+                        {'capabilities:hypervisor_type': dest})
+                    self.assertTrue(
+                        compute_utils.is_cross_hypervisor_resize(
+                            src, dest_flavor))
+
+    def test_all_same_hv_transitions_allowed(self):
+        """Same-hypervisor resizes return False for all known types."""
+        hv_types = ['VMware vCenter Server', 'CH', 'ironic']
+        for hv in hv_types:
+            with self.subTest(hv=hv):
+                dest_flavor = self._make_flavor(
+                    {'capabilities:hypervisor_type': hv})
+                self.assertFalse(
+                    compute_utils.is_cross_hypervisor_resize(
+                        hv, dest_flavor))
