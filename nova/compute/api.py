@@ -4320,6 +4320,18 @@ class API:
         if same_flavor and flavor_id:
             raise exception.CannotResizeToSameFlavor()
 
+        source_hv_type = current_flavor.extra_specs.get(
+            'capabilities:hypervisor_type')
+        if compute_utils.is_cross_hypervisor_resize(
+                source_hv_type, new_flavor):
+            # TODO(KVMotion): When specific transitions are allowed (e.g.
+            # VMware->KVM), replace this blanket rejection with an allow-list
+            # check and let permitted transitions through to the conductor
+            raise exception.InvalidCrossHvResize(
+                src_hv_type=source_hv_type,
+                dest_hv_type=new_flavor.extra_specs.get(
+                    'capabilities:hypervisor_type'))
+
         # ensure there is sufficient headroom for upsizes
         if flavor_id:
             # Figure out if the instance is volume-backed but only if we didn't

@@ -1747,3 +1747,29 @@ def delete_arqs_if_needed(context, instance, arq_uuids=None):
               {'instance': instance.uuid,
                'uuid': arq_uuids})
         cyclient.delete_arqs_by_uuid(arq_uuids)
+
+
+def is_cross_hypervisor_resize(source_hypervisor_type, dest_flavor):
+    """Detect whether a resize would cross hypervisor boundaries.
+
+    Compares the source hypervisor type against the destination flavor's
+    ``capabilities:hypervisor_type`` extra spec.
+
+    :param source_hypervisor_type: The hypervisor type string of the source,
+        e.g. 'VMware vCenter Server', 'QEMU', 'CH'. May be None, in which
+        case the function returns False (cannot determine).
+    :param dest_flavor: The destination Flavor object. Its extra_specs are
+        inspected for 'capabilities:hypervisor_type'.
+    :returns: True if the resize crosses hypervisor boundaries, False if the
+        types match or if either value is unset (cannot determine).
+    """
+    from nova.scheduler.filters import extra_specs_ops
+
+    if not source_hypervisor_type:
+        return False
+
+    dest_hv_type = dest_flavor.extra_specs.get('capabilities:hypervisor_type')
+    if not dest_hv_type:
+        return False
+
+    return not extra_specs_ops.match(source_hypervisor_type, dest_hv_type)
