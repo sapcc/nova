@@ -11546,6 +11546,7 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                           'block_migration': True,
                           'is_volume_backed': False,
                           'dst_wants_file_backed_memory': False,
+                          'dst_wants_memory_allocation_immediately': False,
                           'graphics_listen_addr_spice': '127.0.0.1',
                           'graphics_listen_addr_vnc': '127.0.0.1',
                           'serial_listen_addr': None},
@@ -11586,6 +11587,7 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                           'block_migration': True,
                           'is_volume_backed': False,
                           'dst_wants_file_backed_memory': False,
+                          'dst_wants_memory_allocation_immediately': False,
                           'graphics_listen_addr_spice': '127.0.0.1',
                           'graphics_listen_addr_vnc': '127.0.0.1',
                           'serial_listen_addr': None},
@@ -11623,6 +11625,7 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                           'disk_available_mb': 409600,
                           'is_volume_backed': False,
                           'dst_wants_file_backed_memory': False,
+                          'dst_wants_memory_allocation_immediately': False,
                           'graphics_listen_addr_spice': '127.0.0.1',
                           'graphics_listen_addr_vnc': '127.0.0.1',
                           'serial_listen_addr': None},
@@ -11709,6 +11712,7 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                           'disk_available_mb': 1024,
                           'is_volume_backed': False,
                           'dst_wants_file_backed_memory': False,
+                          'dst_wants_memory_allocation_immediately': False,
                           'graphics_listen_addr_spice': '127.0.0.1',
                           'graphics_listen_addr_vnc': '127.0.0.1',
                           'serial_listen_addr': None},
@@ -11805,6 +11809,7 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                           'disk_available_mb': 1024,
                           'is_volume_backed': False,
                           'dst_wants_file_backed_memory': False,
+                          'dst_wants_memory_allocation_immediately': False,
                           'graphics_listen_addr_spice': '127.0.0.1',
                           'graphics_listen_addr_vnc': '127.0.0.1',
                           'serial_listen_addr': None},
@@ -11840,6 +11845,35 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                 instance_ref, None, compute_info, False)
 
         self.assertTrue(return_value.dst_wants_file_backed_memory)
+
+    @mock.patch(
+        'nova.network.neutron.API.has_port_binding_extension',
+        new=mock.Mock(return_value=False))
+    @mock.patch.object(libvirt_driver.LibvirtDriver,
+        '_create_shared_storage_test_file')
+    @mock.patch.object(fakelibvirt.Connection, 'compareHypervisorCPU')
+    def test_check_can_live_migrate_dest_memory_allocation_immediately(
+        self, mock_cpu, mock_test_file,
+    ):
+        self.flags(always_allocate_memory_immediately=True, group='libvirt')
+
+        instance_ref = objects.Instance(**self.test_instance)
+        instance_ref.vcpu_model = test_vcpu_model.fake_vcpumodel
+
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        compute_info = {'disk_available_least': 400,
+                        'cpu_info': 'asdf',
+                        }
+
+        # _check_cpu_match
+        mock_cpu.return_value = 1
+        # mounted_on_same_shared_storage
+        mock_test_file.return_value = "file"
+        # No need for the src_compute_info
+        return_value = drvr.check_can_live_migrate_destination(self.context,
+                instance_ref, None, compute_info, False)
+
+        self.assertTrue(return_value.dst_wants_memory_allocation_immediately)
 
     @mock.patch.object(fakelibvirt.Connection, 'compareHypervisorCPU')
     def test_check_can_live_migrate_dest_incompatible_cpu_raises(
