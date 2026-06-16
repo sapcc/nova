@@ -1128,7 +1128,7 @@ object_data = {
     'KeyPair': '1.4-1244e8d1b103cc69d038ed78ab3a8cc6',
     'KeyPairList': '1.3-94aad3ac5c938eef4b5e83da0212f506',
     'LibvirtLiveMigrateBDMInfo': '1.1-5f4a68873560b6f834b74e7861d71aaf',
-    'LibvirtLiveMigrateData': '1.13-c92e9c98bfccafe84e52c08efbec41d8',
+    'LibvirtLiveMigrateData': '1.14-3a8f38309de92853382644554f71fe5c',
     'LibvirtLiveMigrateNUMAInfo': '1.0-0e777677f3459d0ed1634eabbdb6c22f',
     'LibvirtVPMEMDevice': '1.0-17ffaf47585199eeb9a2b83d6bde069f',
     'MemoryDiagnostics': '1.0-2c995ae0f2223bb0f8e523c5cc0b83da',

@@ -10445,6 +10445,8 @@ class LibvirtDriver(driver.ComputeDriver):
             data.disk_over_commit = disk_over_commit
         data.disk_available_mb = disk_available_mb
         data.dst_wants_file_backed_memory = CONF.libvirt.file_backed_memory > 0
+        data.dst_wants_memory_allocation_immediately = \
+            CONF.libvirt.always_allocate_memory_immediately
 
         # TODO(artom) Set to indicate that the destination (us) can perform a
         # NUMA-aware live migration. NUMA-aware live migration will become
