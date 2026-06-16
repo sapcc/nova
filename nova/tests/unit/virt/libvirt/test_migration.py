@@ -715,7 +715,8 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
 
     def test_update_memory_backing_xml_remove(self):
         data = objects.LibvirtLiveMigrateData(
-            dst_wants_file_backed_memory=False)
+            dst_wants_file_backed_memory=False,
+            dst_wants_memory_allocation_immediately=False)
         xml = """<domain>
   <memoryBacking>
     <source type="file"/>
@@ -749,6 +750,41 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
   </memoryBacking>
 </domain>""")
 
+    def test_update_memory_backing_xml_add_immediately(self):
+        data = objects.LibvirtLiveMigrateData(
+            dst_wants_memory_allocation_immediately=True)
+        xml = """<domain/>"""
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_memory_backing_xml(doc, data),
+                             encoding='unicode')
+
+        self.assertXmlEqual(res, textwrap.dedent("""\
+            <domain>
+              <memoryBacking>
+                <allocation mode="immediate"/>
+              </memoryBacking>
+            </domain>"""))
+
+    def test_update_memory_backing_xml_add_filebacked_immediately(self):
+        """file backed takes precedence, as it contains the immediate flags"""
+        data = objects.LibvirtLiveMigrateData(
+            dst_wants_file_backed_memory=True,
+            dst_wants_memory_allocation_immediately=True)
+        xml = """<domain/>"""
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_memory_backing_xml(doc, data),
+                             encoding='unicode')
+
+        self.assertXmlEqual(res, textwrap.dedent("""\
+            <domain>
+              <memoryBacking>
+                <source type="file"/>
+                <access mode="shared"/>
+                <allocation mode="immediate"/>
+                <discard />
+              </memoryBacking>
+            </domain>"""))
+
     def test_update_memory_backing_xml_keep(self):
         data = objects.LibvirtLiveMigrateData(
             dst_wants_file_backed_memory=True)
@@ -773,6 +809,27 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
     <discard />
   </memoryBacking>
 </domain>""")
+
+    def test_update_memory_backing_xml_keep_immediate(self):
+        data = objects.LibvirtLiveMigrateData(
+            dst_wants_memory_allocation_immediately=True)
+
+        xml = textwrap.dedent("""\
+            <domain>
+              <memoryBacking>
+                <allocation mode="immediate"/>
+              </memoryBacking>
+            </domain>""")
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_memory_backing_xml(doc, data),
+                             encoding='unicode')
+
+        self.assertXmlEqual(res, textwrap.dedent("""\
+            <domain>
+              <memoryBacking>
+                <allocation mode="immediate"/>
+              </memoryBacking>
+            </domain>"""))
 
     def _test_update_vif_xml(self, conf, original_xml, expected_xml):
         """Simulates updating the guest xml for live migrating from a host

@@ -240,7 +240,8 @@ class LibvirtLiveMigrateData(LiveMigrateData):
     # Version 1.9: Inherited vifs from LiveMigrateData
     # Version 1.10: Added dst_numa_info, src_supports_numa_live_migration, and
     #               dst_supports_numa_live_migration fields
-    VERSION = '1.10'
+    # Version 1.10.1: Added dst_wants_memory_allocation_immediately
+    VERSION = '1.10.1'
 
     fields = {
         'filename': fields.StringField(),
@@ -270,12 +271,16 @@ class LibvirtLiveMigrateData(LiveMigrateData):
         'src_supports_numa_live_migration': fields.BooleanField(),
         'dst_supports_numa_live_migration': fields.BooleanField(),
         'dst_numa_info': fields.ObjectField('LibvirtLiveMigrateNUMAInfo'),
+        'dst_wants_memory_allocation_immediately': fields.BooleanField(),
     }
 
     def obj_make_compatible(self, primitive, target_version):
         super(LibvirtLiveMigrateData, self).obj_make_compatible(
             primitive, target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if (target_version < (1, 10, 1) and
+                'dst_wants_memory_allocation_immediately' in primitive):
+            del primitive['dst_wants_memory_allocation_immediately']
         if (target_version < (1, 10) and
                 'src_supports_numa_live_migration' in primitive):
             del primitive['src_supports_numa_live_migration']
