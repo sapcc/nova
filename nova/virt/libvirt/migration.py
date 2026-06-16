@@ -444,7 +444,7 @@ def _update_perf_events_xml(xml_doc, migrate_data):
 
 
 def _update_memory_backing_xml(xml_doc, migrate_data):
-    """Update libvirt domain XML for file-backed memory
+    """Update libvirt domain XML for memory backing (file-backed/immediate)
 
     If incoming XML has a memoryBacking element, remove access, source,
     and allocation children elements to get it to a known consistent state.
@@ -453,14 +453,19 @@ def _update_memory_backing_xml(xml_doc, migrate_data):
 
     If destination wants file-backed memory, add source, access,
     and allocation children.
+    If destination has always_allocate_memory_immediately, add allocation.
     """
     old_xml_has_memory_backing = True
     file_backed = False
+    always_allocate_memory_immediately = False
 
     memory_backing = xml_doc.findall('./memoryBacking')
 
     if 'dst_wants_file_backed_memory' in migrate_data:
         file_backed = migrate_data.dst_wants_file_backed_memory
+    if 'dst_wants_memory_allocation_immediately' in migrate_data:
+        always_allocate_memory_immediately = \
+            migrate_data.dst_wants_memory_allocation_immediately
 
     if not memory_backing:
         # Create memoryBacking element
@@ -475,14 +480,17 @@ def _update_memory_backing_xml(xml_doc, migrate_data):
                 memory_backing.remove(tag[0])
 
     # Leave empty memoryBacking element
-    if not file_backed:
+    if not file_backed and not always_allocate_memory_immediately:
         return xml_doc
 
-    # Add file_backed memoryBacking children
-    memory_backing.append(etree.Element("source", type="file"))
-    memory_backing.append(etree.Element("access", mode="shared"))
-    memory_backing.append(etree.Element("allocation", mode="immediate"))
-    memory_backing.append(etree.Element("discard"))
+    if file_backed:
+        # Add file_backed memoryBacking children
+        memory_backing.append(etree.Element("source", type="file"))
+        memory_backing.append(etree.Element("access", mode="shared"))
+        memory_backing.append(etree.Element("allocation", mode="immediate"))
+        memory_backing.append(etree.Element("discard"))
+    elif always_allocate_memory_immediately:
+        memory_backing.append(etree.Element("allocation", mode="immediate"))
 
     if not old_xml_has_memory_backing:
         xml_doc.append(memory_backing)
