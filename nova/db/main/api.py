@@ -582,13 +582,16 @@ def service_update(context, service_id, values):
 ###################
 
 
-def _compute_node_select(context, filters=None, limit=None, marker=None):
+def _compute_node_select(context, filters=None, limit=None, marker=None,
+                         join=None):
     if filters is None:
         filters = {}
 
     cn_tbl = models.ComputeNode.__table__.alias('cn')
     select = sa.select(cn_tbl)
 
+    if join:
+        select = select.join(*join)
     if context.read_deleted == "no":
         select = select.where(cn_tbl.c.deleted == 0)
     if "compute_id" in filters:
@@ -612,12 +615,14 @@ def _compute_node_select(context, filters=None, limit=None, marker=None):
         select = select.limit(limit)
     # Explicitly order by id, so we're not dependent on the native sort
     # order of the underlying DB.
-    select = select.order_by(expression.asc("id"))
+    select = select.order_by(expression.asc(cn_tbl.c.id))
     return select
 
 
-def _compute_node_fetchall(context, filters=None, limit=None, marker=None):
-    select = _compute_node_select(context, filters, limit=limit, marker=marker)
+def _compute_node_fetchall(context, filters=None, limit=None, marker=None,
+                           join=None):
+    select = _compute_node_select(context, filters, limit=limit, marker=marker,
+                                  join=join)
     engine = get_engine(context=context)
 
     with engine.connect() as conn, conn.begin():
@@ -772,7 +777,17 @@ def compute_node_get_all_by_pagination(context, limit=None, marker=None):
 
     :returns: List of dictionaries each containing compute node properties
     """
-    return _compute_node_fetchall(context, limit=limit, marker=marker)
+    services_tbl = models.Service.__table__
+    cn_tbl = models.ComputeNode.__table__.alias('cn')
+
+    join = (services_tbl,
+            sql.and_(
+                cn_tbl.c.service_id == services_tbl.c.id,
+                services_tbl.c.deleted == 0
+            ))
+
+    return _compute_node_fetchall(context, limit=limit, marker=marker,
+                                  join=join)
 
 
 @pick_context_manager_reader
