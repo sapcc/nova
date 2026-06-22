@@ -9064,7 +9064,7 @@ class ComputeManager(manager.Manager):
                                        post_live_migration,
                                        rollback_live_migration,
                                        block_migration, migrate_data)
-        except Exception:
+        except Exception as e:
             LOG.exception('Live migration failed.', instance=instance)
             with excutils.save_and_reraise_exception():
                 # Put instance and migration into error state,
@@ -9073,6 +9073,12 @@ class ComputeManager(manager.Manager):
                 # first refresh instance as it may have got updated by
                 # post_live_migration_at_destination
                 instance.refresh()
+                # Record the fault so the actual failure reason is visible on
+                # the instance. _do_live_migration runs in a thread pool so
+                # exceptions never reach the @wrap_instance_fault decorator on
+                # the outer live_migration() RPC method.
+                compute_utils.add_instance_fault_from_exc(
+                    context, instance, e, sys.exc_info())
                 self._set_instance_obj_error_state(instance,
                                                    clean_task_state=True)
 

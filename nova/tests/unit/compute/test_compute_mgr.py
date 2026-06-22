@@ -10285,6 +10285,39 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             migrate_data=migrate_data, source_bdms=source_bdms,
             pre_live_migration=True)
 
+    @mock.patch('nova.compute.utils.add_instance_fault_from_exc')
+    @mock.patch(
+      'nova.compute.manager.ComputeManager._set_instance_obj_error_state')
+    @mock.patch('nova.objects.Instance.refresh')
+    @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
+    @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    @mock.patch('nova.compute.manager.ComputeManager._delete_dangling_bdms')
+    def test_do_live_migration_driver_raises_records_fault(
+            self, mock_delete_bdms, mock_get_bdms, mock_pre_live_mig,
+            mock_refresh, mock_set_error, mock_add_fault):
+        """Test that when driver.live_migration raises, the fault is recorded
+        on the instance so the actual error is visible rather than a stale one.
+        """
+        migrate_data = objects.LibvirtLiveMigrateData()
+        mock_get_bdms.return_value = objects.BlockDeviceMappingList(objects=[])
+        mock_pre_live_mig.return_value = migrate_data
+        self.compute._waiting_live_migrations[self.instance.uuid] = (
+            self.migration, mock.MagicMock()
+        )
+        exc = exception.InstanceNotFound(instance_id=self.instance.uuid)
+        with mock.patch.object(self.compute.driver, 'live_migration',
+                               side_effect=exc):
+            self.assertRaises(
+                exception.InstanceNotFound,
+                self.compute._do_live_migration,
+                self.context, 'dest-host', self.instance,
+                False, self.migration, migrate_data)
+        self.assertEqual('error', self.migration.status)
+        mock_add_fault.assert_called_once_with(
+            self.context, self.instance, exc, mock.ANY)
+        mock_set_error.assert_called_once_with(
+            self.instance, clean_task_state=True)
+
     @mock.patch('nova.compute.rpcapi.ComputeAPI.pre_live_migration')
     @mock.patch('nova.compute.manager.ComputeManager._rollback_live_migration')
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
