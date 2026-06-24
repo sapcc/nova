@@ -785,6 +785,27 @@ class UtilityMigrationTestCase(test.NoDBTestCase):
               </memoryBacking>
             </domain>"""))
 
+    def test_update_memory_backing_xml_preserve_immediate_if_flag_absent(self):
+        data = objects.LibvirtLiveMigrateData(
+            dst_wants_file_backed_memory=False)
+
+        xml = textwrap.dedent("""\
+            <domain>
+              <memoryBacking>
+                <allocation mode="immediate"/>
+              </memoryBacking>
+            </domain>""")
+        doc = etree.fromstring(xml)
+        res = etree.tostring(migration._update_memory_backing_xml(doc, data),
+                             encoding='unicode')
+
+        self.assertXmlEqual(res, textwrap.dedent("""\
+            <domain>
+              <memoryBacking>
+                <allocation mode="immediate"/>
+              </memoryBacking>
+            </domain>"""))
+
     def test_update_memory_backing_xml_keep(self):
         data = objects.LibvirtLiveMigrateData(
             dst_wants_file_backed_memory=True)

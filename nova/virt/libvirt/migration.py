@@ -300,8 +300,8 @@ def _update_perf_events_xml(xml_doc, migrate_data):
 def _update_memory_backing_xml(xml_doc, migrate_data):
     """Update libvirt domain XML for file-backed memory and immediate allocation
 
-    If incoming XML has a memoryBacking element, remove access, source,
-    and allocation children elements to get it to a known consistent state.
+    If incoming XML has a memoryBacking element, remove the children whose
+    destination state is known to get it to a consistent state.
 
     If no incoming memoryBacking element, create one.
 
@@ -311,7 +311,7 @@ def _update_memory_backing_xml(xml_doc, migrate_data):
     """
     old_xml_has_memory_backing = True
     file_backed = False
-    always_allocate_memory_immediately = False
+    always_allocate_memory_immediately = None
 
     memory_backing = xml_doc.findall('./memoryBacking')
 
@@ -328,8 +328,16 @@ def _update_memory_backing_xml(xml_doc, migrate_data):
     else:
         memory_backing = memory_backing[0]
         # Remove existing file-backed memory tags, if they exist.
-        for name in ("access", "source", "allocation", "discard"):
+        for name in ("access", "source", "discard"):
             tag = memory_backing.findall(name)
+            if tag:
+                memory_backing.remove(tag[0])
+        # Only remove the existing allocation tag when the destination
+        # explicitly reported what it wants. Older services do not carry
+        # dst_wants_memory_allocation_immediately, so preserve the source
+        # allocation mode in that case.
+        if file_backed or always_allocate_memory_immediately is not None:
+            tag = memory_backing.findall("allocation")
             if tag:
                 memory_backing.remove(tag[0])
 
