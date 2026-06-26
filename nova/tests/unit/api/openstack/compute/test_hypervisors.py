@@ -107,17 +107,20 @@ TEST_HYPERS_OBJ = [objects.ComputeNode(**hyper_dct)
 TEST_HYPERS[0].update({'service': TEST_SERVICES[0]})
 TEST_HYPERS[1].update({'service': TEST_SERVICES[1]})
 
-TEST_SERVERS = [dict(name="inst1", uuid=uuids.instance_1, host="compute1"),
-                dict(name="inst2", uuid=uuids.instance_2, host="compute2"),
-                dict(name="inst3", uuid=uuids.instance_3, host="compute1"),
-                dict(name="inst4", uuid=uuids.instance_4, host="compute2")]
+TEST_SERVERS = {'compute1': [(uuids.instance_1, "inst1"),
+                             (uuids.instance_3, "inst3")],
+                'compute2': [(uuids.instance_2, "inst2"),
+                             (uuids.instance_4, "inst4")]}
 
 
-def fake_compute_node_get_all(context, limit=None, marker=None):
+def fake_compute_node_get_all(context, limit=None, marker=None,
+                              with_servers=False):
     if marker in ['99999', uuids.invalid_marker]:
         raise exception.MarkerNotFound(marker)
     marker_found = True if marker is None else False
     output = []
+    services = []
+    instances_by_host = {}
     for hyper in TEST_HYPERS_OBJ:
         # Starting with the 2.53 microversion, the marker is a uuid.
         if not marker_found and marker in (str(hyper.id), hyper.uuid):
@@ -125,11 +128,17 @@ def fake_compute_node_get_all(context, limit=None, marker=None):
         elif marker_found:
             if limit is None or len(output) < int(limit):
                 output.append(hyper)
-    return output
+                services.append(next(s for s in TEST_SERVICES
+                                     if hyper.host == s.host))
+                if with_servers:
+                    instances_by_host[hyper.host] = TEST_SERVERS[hyper.host]
+    return (output, services, instances_by_host)
 
 
-def fake_compute_node_search_by_hypervisor(context, hypervisor_re):
-    return TEST_HYPERS_OBJ
+def fake_compute_node_search_by_hypervisor(context, hypervisor_re,
+                                           with_servers=False):
+    servers = TEST_SERVERS if with_servers else {}
+    return (TEST_HYPERS_OBJ, TEST_SERVICES, servers)
 
 
 def fake_compute_node_get(context, compute_id):
@@ -178,12 +187,9 @@ def fake_compute_node_statistics(context):
 
 
 def fake_instance_get_all_by_host(context, host):
-    results = []
-    for inst in TEST_SERVERS:
-        if inst['host'] == host:
-            inst_obj = fake_instance.fake_instance_obj(context, **inst)
-            results.append(inst_obj)
-    return results
+    return [
+        fake_instance.fake_instance_obj(context, uuid=uuid_, name=name)
+        for uuid_, name in TEST_SERVERS.get(host, ())]
 
 
 class HypervisorsTestV21(test.NoDBTestCase):
@@ -319,16 +325,15 @@ class HypervisorsTestV21(test.NoDBTestCase):
 
     def test_view_hypervisor_servers(self):
         req = self._get_request(True)
+        servers = self.TEST_SERVERS['compute1']
         result = self.controller._view_hypervisor(self.TEST_HYPERS_OBJ[0],
                                                   self.TEST_SERVICES[0],
                                                   False, req,
-                                                  self.TEST_SERVERS)
+                                                  servers)
         expected_dict = copy.deepcopy(self.INDEX_HYPER_DICTS[0])
         expected_dict.update({'servers': [
                                   dict(name="inst1", uuid=uuids.instance_1),
-                                  dict(name="inst2", uuid=uuids.instance_2),
-                                  dict(name="inst3", uuid=uuids.instance_3),
-                                  dict(name="inst4", uuid=uuids.instance_4)]})
+                                  dict(name="inst3", uuid=uuids.instance_3)]})
 
         self.assertEqual(expected_dict, result)
 
@@ -358,156 +363,11 @@ class HypervisorsTestV21(test.NoDBTestCase):
 
         self.assertEqual(dict(hypervisors=self.INDEX_HYPER_DICTS), result)
 
-    def test_index_compute_host_not_found(self):
-        """Tests that if a service is deleted but the compute node is not we
-        don't fail when listing hypervisors.
-        """
-
-        # two computes, a matching service only exists for the first one
-        compute_nodes = objects.ComputeNodeList(objects=[
-            objects.ComputeNode(**TEST_HYPERS[0]),
-            objects.ComputeNode(**TEST_HYPERS[1])
-        ])
-
-        def fake_service_get_by_compute_host(context, host):
-            if host == TEST_HYPERS[0]['host']:
-                return TEST_SERVICES[0]
-            raise exception.ComputeHostNotFound(host=host)
-
-        m_get = self.controller.host_api.compute_node_get_all
-        m_get.side_effect = None
-        m_get.return_value = compute_nodes
-        self.controller.host_api.service_get_by_compute_host.side_effect = (
-                fake_service_get_by_compute_host)
-
-        req = self._get_request(True)
-        result = self.controller.index(req)
-        self.assertEqual(1, len(result['hypervisors']))
-        expected = {
-            'id': compute_nodes[0].uuid if self.expect_uuid_for_id
-                                        else compute_nodes[0].id,
-            'hypervisor_hostname': compute_nodes[0].hypervisor_hostname,
-            'state': 'up',
-            'status': 'enabled',
-        }
-        self.assertDictEqual(expected, result['hypervisors'][0])
-
-    def test_index_compute_host_not_mapped(self):
-        """Tests that we don't fail index if a host is not mapped."""
-
-        # two computes, a matching service only exists for the first one
-        compute_nodes = objects.ComputeNodeList(objects=[
-            objects.ComputeNode(**TEST_HYPERS[0]),
-            objects.ComputeNode(**TEST_HYPERS[1])
-        ])
-
-        def fake_service_get_by_compute_host(context, host):
-            if host == TEST_HYPERS[0]['host']:
-                return TEST_SERVICES[0]
-            raise exception.HostMappingNotFound(name=host)
-
-        self.controller.host_api.compute_node_get_all.return_value = (
-            compute_nodes)
-        self.controller.host_api.service_get_by_compute_host = (
-            fake_service_get_by_compute_host)
-
-        req = self._get_request(True)
-        result = self.controller.index(req)
-        self.assertEqual(1, len(result['hypervisors']))
-        expected = {
-            'id': compute_nodes[0].uuid if self.expect_uuid_for_id
-                                        else compute_nodes[0].id,
-            'hypervisor_hostname': compute_nodes[0].hypervisor_hostname,
-            'state': 'up',
-            'status': 'enabled',
-        }
-        self.assertDictEqual(expected, result['hypervisors'][0])
-
     def test_detail(self):
         req = self._get_request(True)
         result = self.controller.detail(req)
 
         self.assertEqual(dict(hypervisors=self.DETAIL_HYPERS_DICTS), result)
-
-    def test_detail_compute_host_not_found(self):
-        """Tests that if a service is deleted but the compute node is not we
-        don't fail when listing hypervisors.
-        """
-
-        # two computes, a matching service only exists for the first one
-        compute_nodes = objects.ComputeNodeList(objects=[
-            objects.ComputeNode(**TEST_HYPERS[0]),
-            objects.ComputeNode(**TEST_HYPERS[1])
-        ])
-
-        def fake_service_get_by_compute_host(context, host):
-            if host == TEST_HYPERS[0]['host']:
-                return TEST_SERVICES[0]
-            raise exception.ComputeHostNotFound(host=host)
-
-        m_get = self.controller.host_api.compute_node_get_all
-        m_get.side_effect = None
-        m_get.return_value = compute_nodes
-        self.controller.host_api.service_get_by_compute_host.side_effect = (
-            fake_service_get_by_compute_host)
-
-        req = self._get_request(True)
-        result = self.controller.detail(req)
-        self.assertEqual(1, len(result['hypervisors']))
-        expected = {
-            'id': compute_nodes[0].id,
-            'hypervisor_hostname': compute_nodes[0].hypervisor_hostname,
-            'state': 'up',
-            'status': 'enabled',
-        }
-        # we don't care about all of the details, just make sure we get
-        # the subset we care about and there are more keys than what index
-        # would return
-        hypervisor = result['hypervisors'][0]
-        self.assertTrue(
-            set(expected.keys()).issubset(set(hypervisor.keys())))
-        self.assertGreater(len(hypervisor.keys()), len(expected.keys()))
-        self.assertEqual(compute_nodes[0].hypervisor_hostname,
-                         hypervisor['hypervisor_hostname'])
-
-    def test_detail_compute_host_not_mapped(self):
-        """Tests that if a service is deleted but the compute node is not we
-        don't fail when listing hypervisors.
-        """
-
-        # two computes, a matching service only exists for the first one
-        compute_nodes = objects.ComputeNodeList(objects=[
-            objects.ComputeNode(**TEST_HYPERS[0]),
-            objects.ComputeNode(**TEST_HYPERS[1])
-        ])
-
-        def fake_service_get_by_compute_host(context, host):
-            if host == TEST_HYPERS[0]['host']:
-                return TEST_SERVICES[0]
-            raise exception.HostMappingNotFound(name=host)
-
-        self.controller.host_api.service_get_by_compute_host.side_effect = (
-                fake_service_get_by_compute_host)
-        self.controller.host_api.compute_node_get_all.return_value = (
-                compute_nodes)
-        req = self._get_request(True)
-        result = self.controller.detail(req)
-        self.assertEqual(1, len(result['hypervisors']))
-        expected = {
-            'id': compute_nodes[0].id,
-            'hypervisor_hostname': compute_nodes[0].hypervisor_hostname,
-            'state': 'up',
-            'status': 'enabled',
-        }
-        # we don't care about all of the details, just make sure we get
-        # the subset we care about and there are more keys than what index
-        # would return
-        hypervisor = result['hypervisors'][0]
-        self.assertTrue(
-            set(expected.keys()).issubset(set(hypervisor.keys())))
-        self.assertGreater(len(hypervisor.keys()), len(expected.keys()))
-        self.assertEqual(compute_nodes[0].hypervisor_hostname,
-                         hypervisor['hypervisor_hostname'])
 
     def test_show(self):
         req = self._get_request(True)
@@ -631,24 +491,11 @@ class HypervisorsTestV21(test.NoDBTestCase):
     def test_search_non_exist(self):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = []
+        m_search.return_value = ([], [], {})
 
         req = self._get_request(True)
         self.assertRaises(exc.HTTPNotFound, self.controller.search, req, 'a')
         self.assertEqual(1, m_search.call_count)
-
-    def test_search_unmapped(self):
-        m_search = self.controller.host_api.compute_node_search_by_hypervisor
-        m_search.side_effect = None
-        m_search.return_value = [mock.MagicMock()]
-
-        self.controller.host_api.service_get_by_compute_host.side_effect = (
-            exception.HostMappingNotFound(name='foo'))
-
-        req = self._get_request(True)
-        self.assertRaises(exc.HTTPNotFound, self.controller.search, req, 'a')
-        self.assertTrue(
-            self.controller.host_api.service_get_by_compute_host.called)
 
     @mock.patch.object(objects.InstanceList, 'get_by_host',
                        side_effect=fake_instance_get_all_by_host)
@@ -670,35 +517,10 @@ class HypervisorsTestV21(test.NoDBTestCase):
                 del server['name']
         self.assertEqual(dict(hypervisors=expected_dict), result)
 
-    def test_servers_not_mapped(self):
-        req = self._get_request(True)
-        with mock.patch.object(
-            self.controller.host_api, 'instance_get_all_by_host',
-            side_effect=exception.HostMappingNotFound(name='something'),
-        ):
-            self.assertRaises(
-                exc.HTTPNotFound,
-                self.controller.servers, req, 'hyper')
-
-    def test_servers_compute_host_not_found(self):
-        req = self._get_request(True)
-
-        self.controller.host_api.service_get_by_compute_host.side_effect = (
-            exception.ComputeHostNotFound(host='foo'))
-        with mock.patch.object(
-            self.controller.host_api,
-            'instance_get_all_by_host',
-            side_effect=fake_instance_get_all_by_host,
-        ):
-            # The result should be empty since every attempt to fetch the
-            # service for a hypervisor "failed"
-            result = self.controller.servers(req, 'hyper')
-            self.assertEqual({'hypervisors': []}, result)
-
     def test_servers_non_id(self):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = []
+        m_search.return_value = ([], [], {})
 
         req = self._get_request(True)
         self.assertRaises(exc.HTTPNotFound,
@@ -709,7 +531,7 @@ class HypervisorsTestV21(test.NoDBTestCase):
     def test_servers_with_non_integer_hypervisor_id(self):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = []
+        m_search.return_value = ([], [], {})
 
         req = self._get_request(True)
         self.assertRaises(
@@ -717,13 +539,21 @@ class HypervisorsTestV21(test.NoDBTestCase):
         self.assertEqual(1, m_search.call_count)
 
     def test_servers_with_no_servers(self):
+        def fake(*args, **kwargs):
+            (compute_nodes, services, _) = \
+                fake_compute_node_search_by_hypervisor(*args, **kwargs)
+            return (compute_nodes, services, {})
+
+        f = self.controller.host_api.compute_node_search_by_hypervisor
+        f.side_effect = fake
+
         with mock.patch.object(self.controller.host_api,
                                'instance_get_all_by_host',
                                return_value=[]) as mock_inst_get_all:
             req = self._get_request(True)
             result = self.controller.servers(req, self.TEST_HYPERS_OBJ[0].id)
             self.assertEqual(dict(hypervisors=self.INDEX_HYPER_DICTS), result)
-            self.assertTrue(mock_inst_get_all.called)
+            mock_inst_get_all.assert_not_called()
 
     def test_statistics(self):
         req = self._get_request(True)
@@ -1039,58 +869,39 @@ class HypervisorsTestV253(HypervisorsTestV252):
         """Tests GET /os-hypervisors?with_servers=1 when there are no
         instances on the given host.
         """
+        def fake(*args, **kwargs):
+            (compute_nodes, services, _) = \
+                fake_compute_node_get_all(*args, **kwargs)
+            return (compute_nodes, services, {})
+
+        self.controller.host_api.compute_node_get_all.side_effect = fake
+
         with mock.patch.object(self.controller.host_api,
-                               'instance_get_all_by_host',
-                               return_value=[]) as mock_inst_get_all:
+                               'instance_get_all_by_host'
+                               ) as mock_inst_get_all:
             req = self._get_request(use_admin_context=True,
                                     url='/os-hypervisors?with_servers=1')
             result = self.controller.index(req)
         self.assertEqual(dict(hypervisors=self.INDEX_HYPER_DICTS), result)
-        # instance_get_all_by_host is called for each hypervisor
-        self.assertEqual(2, mock_inst_get_all.call_count)
-        mock_inst_get_all.assert_has_calls((
-            mock.call(req.environ['nova.context'], TEST_HYPERS_OBJ[0].host),
-            mock.call(req.environ['nova.context'], TEST_HYPERS_OBJ[1].host)))
-
-    def test_index_with_servers_not_mapped(self):
-        """Tests that instance_get_all_by_host fails with HostMappingNotFound.
-        """
-        req = self._get_request(use_admin_context=True,
-                                url='/os-hypervisors?with_servers=1')
-        with mock.patch.object(
-                self.controller.host_api, 'instance_get_all_by_host',
-                side_effect=exception.HostMappingNotFound(name='something')):
-            result = self.controller.index(req)
-            self.assertEqual(dict(hypervisors=[]), result)
-
-    def test_index_with_servers_compute_host_not_found(self):
-        req = self._get_request(
-            use_admin_context=True,
-            url='/os-hypervisors?with_servers=1')
-
-        self.controller.host_api.service_get_by_compute_host.side_effect = (
-            exception.ComputeHostNotFound(host='foo'))
-
-        with mock.patch.object(
-            self.controller.host_api,
-            "instance_get_all_by_host",
-            side_effect=fake_instance_get_all_by_host,
-        ):
-            # The result should be empty since every attempt to fetch the
-            # service for a hypervisor "failed"
-            result = self.controller.index(req)
-            self.assertEqual({'hypervisors': []}, result)
+        # instance_get_all_by_host is _not_ called for each hypervisor, because
+        # that doesn't scale
+        mock_inst_get_all.assert_not_called()
 
     def test_index_with_servers(self):
         """Tests GET /os-hypervisors?with_servers=True"""
-        instances = [
-            objects.InstanceList(objects=[objects.Instance(
-                id=1, uuid=uuids.hyper1_instance1)]),
-            objects.InstanceList(objects=[objects.Instance(
-                id=2, uuid=uuids.hyper2_instance1)])]
+        instances = {
+            'compute1': [(uuids.hyper1_instance1, "instance-00000001")],
+            'compute2': [(uuids.hyper2_instance1, "instance-00000002")]}
+
+        def fake(*args, **kwargs):
+            compute_nodes, services, _ = fake_compute_node_get_all(*args,
+                                                                   **kwargs)
+            return (compute_nodes, services, instances)
+
+        self.controller.host_api.compute_node_get_all.side_effect = fake
         with mock.patch.object(self.controller.host_api,
-                               'instance_get_all_by_host',
-                               side_effect=instances) as mock_inst_get_all:
+                               'instance_get_all_by_host'
+                               ) as mock_inst_get_all:
             req = self._get_request(use_admin_context=True,
                                     url='/os-hypervisors?with_servers=True')
             result = self.controller.index(req)
@@ -1100,11 +911,9 @@ class HypervisorsTestV253(HypervisorsTestV252):
         index_with_servers[1]['servers'] = [
             {'name': 'instance-00000002', 'uuid': uuids.hyper2_instance1}]
         self.assertEqual(dict(hypervisors=index_with_servers), result)
-        # instance_get_all_by_host is called for each hypervisor
-        self.assertEqual(2, mock_inst_get_all.call_count)
-        mock_inst_get_all.assert_has_calls((
-            mock.call(req.environ['nova.context'], TEST_HYPERS_OBJ[0].host),
-            mock.call(req.environ['nova.context'], TEST_HYPERS_OBJ[1].host)))
+        # instance_get_all_by_host not not called anymore as that wouldn't
+        # scale
+        mock_inst_get_all.assert_not_called()
 
     def test_index_with_servers_invalid_parameter(self):
         """Tests using an invalid with_servers query parameter."""
@@ -1136,11 +945,12 @@ class HypervisorsTestV253(HypervisorsTestV252):
                 'hypervisor_hostname_pattern=shenzhen')
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = objects.ComputeNodeList()
+        m_search.return_value = (
+            objects.ComputeNodeList(), objects.ServiceList(), {})
 
         self.assertRaises(exc.HTTPNotFound, self.controller.index, req)
         m_search.assert_called_once_with(
-            req.environ['nova.context'], 'shenzhen')
+            req.environ['nova.context'], 'shenzhen', with_servers=True)
 
     def test_detail_with_hostname_pattern(self):
         """Test listing hypervisors with details and using the
@@ -1151,12 +961,14 @@ class HypervisorsTestV253(HypervisorsTestV252):
             url='/os-hypervisors?hypervisor_hostname_pattern=shenzhen')
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = objects.ComputeNodeList(
-            objects=[TEST_HYPERS_OBJ[0]])
+        m_search.return_value = (
+            objects.ComputeNodeList(objects=[TEST_HYPERS_OBJ[0]]),
+            objects.ServiceList(objects=[TEST_SERVICES[0]]),
+            {})
 
         result = self.controller.detail(req)
         m_search.assert_called_once_with(
-            req.environ['nova.context'], 'shenzhen')
+            req.environ['nova.context'], 'shenzhen', with_servers=False)
 
         expected = {'hypervisors': [self.DETAIL_HYPERS_DICTS[0]]}
 
@@ -1232,8 +1044,7 @@ class HypervisorsTestV253(HypervisorsTestV252):
 
     def test_show_with_servers(self):
         """Tests the show() result when servers are included in the output."""
-        instances = objects.InstanceList(objects=[objects.Instance(
-            id=1, uuid=uuids.hyper1_instance1)])
+        instances = [(uuids.hyper1_instance1, "instance-00000001")]
         hyper_id = self._get_hyper_id()
         req = self._get_request(
             use_admin_context=True,
@@ -1383,6 +1194,13 @@ class HypervisorsTestV275(HypervisorsTestV253):
         """Tests GET APIs return 'servers' field in response even
            no servers on hypervisors.
         """
+        def fake(*args, **kwargs):
+            (compute_nodes, services, _) = fake_compute_node_get_all(*args,
+                                                                     **kwargs)
+            return (compute_nodes, services, {})
+
+        self.controller.host_api.compute_node_get_all.side_effect = fake
+        # we still need this, because "show" doesn't call compute_node_get_all
         with mock.patch.object(
             self.controller.host_api,
             'instance_get_all_by_host',
