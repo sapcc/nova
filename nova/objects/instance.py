@@ -1399,7 +1399,8 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
     # Version 2.4: Add get_counts()
     # Version 2.5: Add get_uuids_by_host_and_node()
     # Version 2.6: Add get_uuids_by_hosts()
-    VERSION = '2.6'
+    # Version 2.6.1: Add get_names_and_uuids_by_hosts()
+    VERSION = '2.6.1'
 
     fields = {
         'objects': fields.ListOfObjectsField('Instance'),
@@ -1612,6 +1613,13 @@ class InstanceList(base.ObjectListBase, base.NovaObject):
         UUIDs associated with that compute node.
         """
         return db.instance_get_all_uuids_by_hosts(context, hosts)
+
+    @base.remotable_classmethod
+    def get_names_and_uuids_by_hosts(cls, context, hosts):
+        """Returns a dict, keyed by hypervisor hostname, of a list of tuples
+        containing instance UUID and name associated with that compute node.
+        """
+        return db.instance_get_all_names_and_uuids_by_hosts(context, hosts)
 
     @staticmethod
     @db.pick_context_manager_reader
