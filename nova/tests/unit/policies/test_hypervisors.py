@@ -31,8 +31,10 @@ class HypervisorsPolicyTest(base.BasePolicyTest):
         super(HypervisorsPolicyTest, self).setUp()
         self.controller = hypervisors.HypervisorsController()
         self.req = fakes.HTTPRequest.blank('')
-        self.controller._get_compute_nodes_by_name_pattern = mock.MagicMock()
-        self.controller.host_api.compute_node_get_all = mock.MagicMock()
+        self.controller._get_compute_nodes_by_name_pattern = mock.MagicMock(
+            return_value=(mock.MagicMock(), [], {}))
+        self.controller.host_api.compute_node_get_all = mock.MagicMock(
+            return_value=(mock.MagicMock(), [], {}))
         self.controller.host_api.service_get_by_compute_host = mock.MagicMock()
         self.controller.host_api.compute_node_get = mock.MagicMock()
 
