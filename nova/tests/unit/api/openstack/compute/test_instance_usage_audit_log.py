@@ -115,7 +115,7 @@ class InstanceUsageAuditLogTestV21(test.NoDBTestCase):
         self._set_up_controller()
         self.host_api = self.controller.host_api
 
-        def fake_service_get_all(context, disabled):
+        def fake_service_get_all(context, disabled, ids=None):
             self.assertIsNone(disabled)
             return TEST_COMPUTE_SERVICES
 
