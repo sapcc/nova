@@ -2182,10 +2182,12 @@ def instance_get_all_by_host(context, host, columns_to_join=None):
     )
 
 
-def _instance_get_all_uuids_by_hosts(context, hosts):
+def _instance_get_all_uuids_by_hosts(context, hosts, extra_columns=None):
+    if not extra_columns:
+        extra_columns = ()
     itbl = models.Instance.__table__
     default_deleted_value = itbl.c.deleted.default.arg
-    sel = sql.select(itbl.c.host, itbl.c.uuid)
+    sel = sql.select(itbl.c.host, itbl.c.uuid, *extra_columns)
     sel = sel.where(sql.and_(
             itbl.c.deleted == default_deleted_value,
             itbl.c.host.in_(sa.bindparam('hosts', expanding=True))))
@@ -2193,7 +2195,10 @@ def _instance_get_all_uuids_by_hosts(context, hosts):
     # group the instance UUIDs by hostname
     res = collections.defaultdict(list)
     for rec in context.session.execute(sel, {'hosts': hosts}).fetchall():
-        res[rec[0]].append(rec[1])
+        if extra_columns:
+            res[rec[0]].append(tuple(rec[1:]) if extra_columns else rec[1])
+        else:
+            res[rec[0]].append(rec[1])
     return res
 
 
@@ -2206,6 +2211,20 @@ def instance_get_all_uuids_by_hosts(context, hosts):
     in the dict will return an empty list not a KeyError.
     """
     return _instance_get_all_uuids_by_hosts(context, hosts)
+
+
+@pick_context_manager_reader
+def instance_get_all_names_and_uuids_by_hosts(context, hosts):
+    """Get a dict, keyed by hostname, of a list of tuplies of instance UUIDs
+    and names for the instances on the host for each supplied hostname, not
+    Instance model objects.
+
+    The dict is a defaultdict of list, thus inspecting the dict for a host not
+    in the dict will return an empty list not a KeyError.
+    """
+    itbl = models.Instance.__table__
+    return _instance_get_all_uuids_by_hosts(context, hosts,
+                                            (itbl.c.display_name, ))
 
 
 @pick_context_manager_reader
