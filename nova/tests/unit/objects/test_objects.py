@@ -1167,7 +1167,7 @@ object_data = {
     'SecurityGroupList': '1.1-c655ed13298e630f4d398152f7d08d71',
     'Selection': '1.1-548e3c2f04da2a61ceaf9c4e1589f264',
     'Service': '1.22-8a740459ab9bf258a19c8fcb875c2d9a',
-    'ServiceList': '1.19-5325bce13eebcbf22edc9678285270cc',
+    'ServiceList': '1.19.1-42b171e25a008e89104113507029a600',
     'ShareMapping': '1.2-ae6ba712dc8022d08c4de34fb8b6e015',
     'ShareMappingList': '1.0-634980d5efdf3656e28c8dec3d862ab9',
     'ShareMetadata': '1.0-09f69ac0bd47371417b5477a277e43af',

@@ -437,12 +437,15 @@ def service_get_minimum_version(context, binaries):
 
 
 @pick_context_manager_reader
-def service_get_all(context, disabled=None):
+def service_get_all(context, disabled=None, ids=None):
     """Get all services."""
     query = model_query(context, models.Service)
 
     if disabled is not None:
         query = query.filter_by(disabled=disabled)
+
+    if ids:
+        query = query.filter(models.Service.id.in_(ids))
 
     return query.all()
 

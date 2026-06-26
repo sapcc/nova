@@ -31,7 +31,7 @@ from nova.tests.unit.api.openstack import fakes
 from nova.tests.unit import fake_hosts
 
 
-def stub_service_get_all(context, disabled=None):
+def stub_service_get_all(context, disabled=None, ids=None):
     return fake_hosts.SERVICES_LIST
 
 
