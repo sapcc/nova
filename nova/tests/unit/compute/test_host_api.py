@@ -241,14 +241,14 @@ class ComputeHostAPITestCase(test.TestCase):
         # Test no filters
         result = self.host_api.service_get_all(self.ctxt)
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, services)
 
         # Test no filters #2
         mock_service_get_all.reset_mock()
         result = self.host_api.service_get_all(self.ctxt, filters={})
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, services)
 
         # Test w/ filter
@@ -256,7 +256,7 @@ class ComputeHostAPITestCase(test.TestCase):
         result = self.host_api.service_get_all(self.ctxt,
                                                filters=dict(host='host2'))
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, [services[1]])
 
     @mock.patch('nova.db.main.api.service_get_all')
@@ -276,7 +276,7 @@ class ComputeHostAPITestCase(test.TestCase):
         # Test no filters
         result = self.host_api.service_get_all(self.ctxt, set_zones=True)
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, exp_services)
 
         # Test no filters #2
@@ -284,7 +284,7 @@ class ComputeHostAPITestCase(test.TestCase):
         result = self.host_api.service_get_all(self.ctxt, filters={},
                                                set_zones=True)
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, exp_services)
 
         # Test w/ filter
@@ -293,7 +293,7 @@ class ComputeHostAPITestCase(test.TestCase):
                                                filters=dict(host='host2'),
                                                set_zones=True)
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, [exp_services[1]])
 
         # Test w/ zone filter but no set_zones arg.
@@ -302,7 +302,7 @@ class ComputeHostAPITestCase(test.TestCase):
         result = self.host_api.service_get_all(self.ctxt,
                                                filters=filters)
         mock_service_get_all.assert_called_once_with(self.ctxt,
-                                                     disabled=None)
+                                                     disabled=None, ids=None)
         self._compare_objs(result, exp_services)
 
     @mock.patch(
