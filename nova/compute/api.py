@@ -6568,10 +6568,13 @@ class HostAPI:
 
         raise exception.ComputeHostNotFound(host=compute_id)
 
-    def compute_node_get_all(self, context, limit=None, marker=None):
+    def compute_node_get_all(self, context, limit=None, marker=None,
+                             with_servers=False):
         load_cells()
 
         computes = []
+        services = []
+        instances_by_host = {}
         uuid_marker = marker and uuidutils.is_uuid_like(marker)
         for cell in CELLS:
             if cell.uuid == objects.CellMapping.CELL0_UUID:
@@ -6598,6 +6601,15 @@ class HostAPI:
                     # NOTE(danms): Keep looking through cells
                     continue
                 computes.extend(cell_computes)
+
+                services.extend(objects.ServiceList.get_all(
+                    cctxt, ids=[cn.service_id for cn in cell_computes]))
+
+                if with_servers:
+                    instances_by_host.update(
+                        objects.InstanceList.get_names_and_uuids_by_hosts(
+                            cctxt, [cn.host for cn in cell_computes]))
+
                 # NOTE(danms): We must have found the marker, so continue on
                 # without one
                 marker = None
@@ -6611,20 +6623,36 @@ class HostAPI:
             # mimic the db_api behavior here.
             raise exception.MarkerNotFound(marker=marker)
 
-        return objects.ComputeNodeList(objects=computes)
+        return (objects.ComputeNodeList(objects=computes),
+                objects.ServiceList(objects=services),
+                instances_by_host)
 
-    def compute_node_search_by_hypervisor(self, context, hypervisor_match):
+    def compute_node_search_by_hypervisor(self, context, hypervisor_match,
+                                          with_servers=False):
         load_cells()
 
         computes = []
+        services = []
+        instances_by_host = {}
         for cell in CELLS:
             if cell.uuid == objects.CellMapping.CELL0_UUID:
                 continue
             with nova_context.target_cell(context, cell) as cctxt:
                 cell_computes = objects.ComputeNodeList.get_by_hypervisor(
                     cctxt, hypervisor_match)
+
+                services.extend(objects.ServiceList.get_all(
+                    cctxt, ids=[cn.service_id for cn in cell_computes]))
+
+                if with_servers:
+                    instances_by_host.update(
+                        objects.InstanceList.get_names_and_uuids_by_hosts(
+                            cctxt, [cn.host for cn in cell_computes]))
+
             computes.extend(cell_computes)
-        return objects.ComputeNodeList(objects=computes)
+        return (objects.ComputeNodeList(objects=computes),
+                objects.ServiceList(objects=services),
+                instances_by_host)
 
     def compute_node_statistics(self, context):
         load_cells()

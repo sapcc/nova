@@ -122,8 +122,8 @@ class HypervisorsController(wsgi.Controller):
 
         if servers:
             hyp_dict['servers'] = [
-                {'name': serv['name'], 'uuid': serv['uuid']}
-                for serv in servers
+                {'name': name, 'uuid': uuid_}
+                for uuid_, name in servers
             ]
         # The 2.75 microversion adds 'servers' field always in response.
         # Empty list if there are no servers on hypervisors and it is
@@ -135,14 +135,18 @@ class HypervisorsController(wsgi.Controller):
 
         return hyp_dict
 
-    def _get_compute_nodes_by_name_pattern(self, context, hostname_match):
-        compute_nodes = self.host_api.compute_node_search_by_hypervisor(
-                context, hostname_match)
+    def _get_compute_nodes_by_name_pattern(self, context, hostname_match,
+            with_servers=False):
+        compute_nodes, services, instances_by_host = \
+            self.host_api.compute_node_search_by_hypervisor(
+                context, hostname_match, with_servers=with_servers)
         if not compute_nodes:
             msg = (_("No hypervisor matching '%s' could be found.") %
                    hostname_match)
             raise webob.exc.HTTPNotFound(explanation=msg)
-        return compute_nodes
+
+        services_by_id = {s.id: s for s in services}
+        return compute_nodes, services_by_id, instances_by_host
 
     def _get_hypervisors(self, req, detail=False, limit=None, marker=None,
                          links=False):
@@ -185,30 +189,28 @@ class HypervisorsController(wsgi.Controller):
 
             # Get all compute nodes with a hypervisor_hostname that matches
             # the given pattern. If none are found then it's a 404 error.
-            compute_nodes = self._get_compute_nodes_by_name_pattern(
-                context, hypervisor_match)
+            compute_nodes, services_by_id, instances_by_host = \
+                self._get_compute_nodes_by_name_pattern(
+                    context, hypervisor_match, with_servers=with_servers)
         else:
             # Get all compute nodes.
             try:
-                compute_nodes = self.host_api.compute_node_get_all(
-                    context, limit=limit, marker=marker)
+                compute_nodes, services, instances_by_host = \
+                    self.host_api.compute_node_get_all(
+                        context, limit=limit, marker=marker,
+                        with_servers=with_servers)
             except exception.MarkerNotFound:
                 msg = _('marker [%s] not found') % marker
                 raise webob.exc.HTTPBadRequest(explanation=msg)
 
+            services_by_id = {s.id: s for s in services}
+
         hypervisors_list = []
         for hyp in compute_nodes:
+            instances = instances_by_host.get(hyp.host)
             try:
-                instances = None
-                if with_servers:
-                    instances = self.host_api.instance_get_all_by_host(
-                        context, hyp.host)
-                service = self.host_api.service_get_by_compute_host(
-                    context, hyp.host)
-            except (
-                exception.ComputeHostNotFound,
-                exception.HostMappingNotFound,
-            ):
+                service = services_by_id[hyp.service_id]
+            except KeyError:
                 # The compute service could be deleted which doesn't delete
                 # the compute node record, that has to be manually removed
                 # from the database so we just ignore it when listing nodes.
@@ -445,14 +447,14 @@ class HypervisorsController(wsgi.Controller):
 
         # Get all compute nodes with a hypervisor_hostname that matches
         # the given pattern. If none are found then it's a 404 error.
-        compute_nodes = self._get_compute_nodes_by_name_pattern(context, id)
+        compute_nodes, services_by_id, _ = \
+            self._get_compute_nodes_by_name_pattern(context, id)
 
         hypervisors = []
         for compute_node in compute_nodes:
             try:
-                service = self.host_api.service_get_by_compute_host(
-                    context, compute_node.host)
-            except exception.ComputeHostNotFound:
+                service = services_by_id[compute_node.service_id]
+            except KeyError:
                 # The compute service could be deleted which doesn't delete
                 # the compute node record, that has to be manually removed
                 # from the database so we just ignore it when listing nodes.
@@ -461,8 +463,6 @@ class HypervisorsController(wsgi.Controller):
                     'service may be deleted and compute nodes need to '
                     'be manually cleaned up.', compute_node.host)
                 continue
-            except exception.HostMappingNotFound as e:
-                raise webob.exc.HTTPNotFound(explanation=e.format_message())
 
             hypervisor = self._view_hypervisor(
                 compute_node, service, False, req)
@@ -484,20 +484,17 @@ class HypervisorsController(wsgi.Controller):
 
         # Get all compute nodes with a hypervisor_hostname that matches
         # the given pattern. If none are found then it's a 404 error.
-        compute_nodes = self._get_compute_nodes_by_name_pattern(context, id)
+        compute_nodes, services_by_id, instances_by_host = \
+            self._get_compute_nodes_by_name_pattern(context, id,
+                                                    with_servers=True)
 
         hypervisors = []
         for compute_node in compute_nodes:
-            try:
-                instances = self.host_api.instance_get_all_by_host(context,
-                    compute_node.host)
-            except exception.HostMappingNotFound as e:
-                raise webob.exc.HTTPNotFound(explanation=e.format_message())
+            instances = instances_by_host.get(compute_node.host)
 
             try:
-                service = self.host_api.service_get_by_compute_host(
-                    context, compute_node.host)
-            except exception.ComputeHostNotFound:
+                service = services_by_id[compute_node.service_id]
+            except KeyError:
                 # The compute service could be deleted which doesn't delete
                 # the compute node record, that has to be manually removed
                 # from the database so we just ignore it when listing nodes.
@@ -506,8 +503,6 @@ class HypervisorsController(wsgi.Controller):
                     'service may be deleted and compute nodes need to '
                     'be manually cleaned up.', compute_node.host)
                 continue
-            except exception.HostMappingNotFound as e:
-                raise webob.exc.HTTPNotFound(explanation=e.format_message())
 
             hypervisor = self._view_hypervisor(
                 compute_node, service, False, req, instances)
