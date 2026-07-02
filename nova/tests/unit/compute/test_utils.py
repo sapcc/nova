@@ -2125,3 +2125,154 @@ class IsCrossHypervisorResizeTestCase(test.NoDBTestCase):
                 self.assertFalse(
                     compute_utils.is_cross_hypervisor_resize(
                         hv, dest_flavor))
+
+
+class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
+    """Tests for sanitize_image_props_for_kvm (early-commit approach)."""
+
+    def _make_request_spec(self, **image_props):
+        props = objects.ImageMetaProps(**image_props)
+        image = objects.ImageMeta(properties=props)
+        return objects.RequestSpec(image=image)
+
+    def test_img_hv_type_removed_and_journaled(self):
+        reqspec = self._make_request_spec(img_hv_type='vmware')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertFalse(
+            reqspec.image.properties.obj_attr_is_set('img_hv_type'))
+        self.assertEqual('vmware', old['img_hv_type'])
+
+    def test_img_hv_type_any_value_removed(self):
+        reqspec = self._make_request_spec(img_hv_type='kvm')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertFalse(
+            reqspec.image.properties.obj_attr_is_set('img_hv_type'))
+        self.assertEqual('kvm', old['img_hv_type'])
+
+    def test_hw_disk_bus_replaced_with_virtio(self):
+        reqspec = self._make_request_spec(hw_disk_bus='scsi')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_disk_bus)
+        self.assertEqual('scsi', old['hw_disk_bus'])
+
+    def test_hw_disk_bus_already_virtio_still_journaled(self):
+        reqspec = self._make_request_spec(hw_disk_bus='virtio')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_disk_bus)
+        self.assertEqual('virtio', old['hw_disk_bus'])
+
+    def test_hw_scsi_model_removed_and_journaled(self):
+        reqspec = self._make_request_spec(hw_scsi_model='virtio-scsi')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertFalse(
+            reqspec.image.properties.obj_attr_is_set('hw_scsi_model'))
+        self.assertEqual('virtio-scsi', old['hw_scsi_model'])
+
+    def test_hw_scsi_model_absent_no_error(self):
+        reqspec = self._make_request_spec(hw_disk_bus='scsi')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertNotIn('hw_scsi_model', old)
+
+    def test_hw_vif_model_replaced_with_virtio(self):
+        reqspec = self._make_request_spec(hw_vif_model='vmxnet3')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_vif_model)
+        self.assertEqual('vmxnet3', old['hw_vif_model'])
+
+    def test_hw_video_model_replaced_with_virtio(self):
+        reqspec = self._make_request_spec(hw_video_model='vmvga')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio',
+                         reqspec.image.properties.hw_video_model)
+        self.assertEqual('vmvga', old['hw_video_model'])
+
+    def test_mutates_in_place(self):
+        reqspec = self._make_request_spec(
+            img_hv_type='vmware', hw_disk_bus='scsi')
+        props_before = reqspec.image.properties
+        compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertIs(props_before, reqspec.image.properties)
+
+    def test_returns_complete_journal(self):
+        reqspec = self._make_request_spec(
+            img_hv_type='vmware', hw_disk_bus='scsi',
+            hw_cdrom_bus='ide', hw_scsi_model='virtio-scsi',
+            hw_vif_model='vmxnet3', hw_video_model='vmvga',
+            img_hv_requested_version='>=6.0')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual({
+            'img_hv_type': 'vmware',
+            'hw_disk_bus': 'scsi',
+            'hw_cdrom_bus': 'ide',
+            'hw_scsi_model': 'virtio-scsi',
+            'hw_vif_model': 'vmxnet3',
+            'hw_video_model': 'vmvga',
+            'img_hv_requested_version': '>=6.0',
+        }, old)
+
+    def test_no_image_returns_empty_dict(self):
+        reqspec = objects.RequestSpec()
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual({}, old)
+
+    def test_image_none_returns_empty_dict(self):
+        reqspec = objects.RequestSpec(image=None)
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual({}, old)
+
+    def test_hw_cdrom_bus_replaced_with_virtio(self):
+        reqspec = self._make_request_spec(hw_cdrom_bus='ide')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
+        self.assertEqual('ide', old['hw_cdrom_bus'])
+
+    def test_hw_cdrom_bus_sata_replaced_with_virtio(self):
+        reqspec = self._make_request_spec(hw_cdrom_bus='sata')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
+        self.assertEqual('sata', old['hw_cdrom_bus'])
+
+    def test_hw_cdrom_bus_already_virtio_still_journaled(self):
+        reqspec = self._make_request_spec(hw_cdrom_bus='virtio')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
+        self.assertEqual('virtio', old['hw_cdrom_bus'])
+
+    def test_img_hv_requested_version_removed_and_journaled(self):
+        reqspec = self._make_request_spec(
+            img_hv_requested_version='>=6.0,<7.0')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertFalse(
+            reqspec.image.properties.obj_attr_is_set(
+                'img_hv_requested_version'))
+        self.assertEqual('>=6.0,<7.0', old['img_hv_requested_version'])
+
+    def test_img_hv_requested_version_absent_no_error(self):
+        reqspec = self._make_request_spec(img_hv_type='vmware')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertNotIn('img_hv_requested_version', old)
+
+    def test_no_props_set_returns_empty_dict(self):
+        reqspec = self._make_request_spec()
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual({}, old)
+
+    def test_restore_image_props_from_cross_hv_journal(self):
+        reqspec = self._make_request_spec(
+            img_hv_type='vmware', hw_disk_bus='virtio')
+        sysmeta = {'image_hw_disk_bus': 'virtio'}
+        journal = {
+            'img_hv_type': 'vmware',
+            'hw_disk_bus': 'scsi',
+            'image_img_hv_type': 'vmware',
+            'image_hw_disk_bus': 'scsi'}
+
+        changed = compute_utils.restore_image_props_from_cross_hv_journal(
+            request_spec=reqspec, sysmeta=sysmeta,
+            old_image_properties=journal)
+
+        self.assertTrue(changed)
+        self.assertEqual('vmware', reqspec.image.properties.img_hv_type)
+        self.assertEqual('scsi', reqspec.image.properties.hw_disk_bus)
+        self.assertEqual('vmware', sysmeta['image_img_hv_type'])
+        self.assertEqual('scsi', sysmeta['image_hw_disk_bus'])

@@ -301,6 +301,103 @@ def heal_reqspec_is_bfv(ctxt, request_spec, instance):
     request_spec.save()
 
 
+# Fields sanitized for cross-HV resize (VMware → KVM/CH).
+# Each tuple: (image_property_name, replacement_value_or_None_to_remove).
+# Used by both the reqspec sanitizer (conductor, before scheduling) and the
+# system_metadata sanitizer (vmware driver, before returning the shell).
+# System_metadata keys are 'image_' + field_name.
+CROSS_HV_SANITIZE_PROPS = (
+    ('img_hv_type', None),
+    ('hw_disk_bus', 'virtio'),
+    ('hw_cdrom_bus', 'virtio'),
+    ('hw_scsi_model', None),
+    ('hw_vif_model', 'virtio'),
+    ('hw_video_model', 'virtio'),
+    ('img_hv_requested_version', None),
+)
+
+
+def sanitize_image_props_for_kvm(request_spec):
+    """Sanitize VMware-specific image properties for KVM scheduling.
+
+    Mutates request_spec.image.properties in place to remove or replace
+    VMware-pinning values so the scheduler can select KVM/CH hosts.
+
+    Returns a dict of original values that were overwritten or removed,
+    suitable for storage in MigrationContext.old_image_properties as a
+    rollback journal.
+
+    Precondition: only valid for VMware-to-KVM cross-hypervisor resize.
+
+    :param request_spec: nova.objects.RequestSpec to sanitize in place
+    :returns: dict of {field_name: original_value} for rollback, or
+              empty dict if nothing was changed
+    """
+    if (not request_spec.obj_attr_is_set('image') or
+            request_spec.image is None):
+        return {}
+
+    image = request_spec.image
+    if not image.obj_attr_is_set('properties'):
+        return {}
+
+    props = image.properties
+    old = {}
+
+    for field, replacement in CROSS_HV_SANITIZE_PROPS:
+        if not props.obj_attr_is_set(field):
+            continue
+        old[field] = getattr(props, field)
+        if replacement is None:
+            delattr(props, field)
+        else:
+            setattr(props, field, replacement)
+
+    # Force change tracking: OVO delattr does not propagate changes up
+    # to the parent RequestSpec. Without this, request_spec.save() may
+    # skip persisting the mutations when only deletions occurred.
+    if old:
+        request_spec.image = request_spec.image
+
+    return old
+
+
+def restore_image_props_from_cross_hv_journal(request_spec=None, sysmeta=None,
+                                             old_image_properties=None):
+    """Restore image properties from MigrationContext.old_image_properties.
+    """
+    if not old_image_properties:
+        return False
+
+    changed = False
+    props = None
+    if (request_spec is not None and
+            request_spec.obj_attr_is_set('image') and
+            request_spec.image is not None and
+            request_spec.image.obj_attr_is_set('properties')):
+        props = request_spec.image.properties
+
+    for field, value in old_image_properties.items():
+        if field.startswith('image_'):
+            if sysmeta is None:
+                continue
+            if sysmeta.get(field) != value:
+                sysmeta[field] = value
+                changed = True
+            continue
+
+        if props is None:
+            continue
+        if (not props.obj_attr_is_set(field) or
+                getattr(props, field) != value):
+            setattr(props, field, value)
+            changed = True
+
+    if changed and request_spec is not None:
+        request_spec.image = request_spec.image
+    return changed
+
+
 def convert_mb_to_ceil_gb(mb_value):
     gb_int = 0
     if mb_value:

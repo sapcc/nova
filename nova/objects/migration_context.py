@@ -40,7 +40,8 @@ class MigrationContext(base.NovaPersistentObject, base.NovaObject):
     # Version 1.0: Initial version
     # Version 1.1: Add old/new pci_devices and pci_requests
     # Version 1.2: Add old/new resources
-    VERSION = '1.2'
+    # Version 1.2.1: SAP - Add old_image_properties for cross-HV resize
+    VERSION = '1.2.1'
 
     fields = {
         'instance_uuid': fields.UUIDField(),
@@ -61,11 +62,14 @@ class MigrationContext(base.NovaPersistentObject, base.NovaObject):
                                             nullable=True),
         'old_resources': fields.ObjectField('ResourceList',
                                             nullable=True),
+        'old_image_properties': fields.DictOfStringsField(nullable=True),
     }
 
     @classmethod
     def obj_make_compatible(cls, primitive, target_version):
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 2, 1):
+            primitive.pop('old_image_properties', None)
         if target_version < (1, 2):
             primitive.pop('old_resources', None)
             primitive.pop('new_resources', None)
