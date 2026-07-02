@@ -317,8 +317,21 @@ CROSS_HV_SANITIZE_PROPS = (
 )
 
 
+def is_supported_cross_hypervisor_resize(source_hypervisor_type,
+                                         dest_hypervisor_type):
+    """Return True if this cross-hypervisor resize is supported."""
+    from nova.scheduler.filters import extra_specs_ops
+
+    if not source_hypervisor_type or not dest_hypervisor_type:
+        return False
+
+    return (extra_specs_ops.match('VMware vCenter Server',
+                                  source_hypervisor_type) and
+            extra_specs_ops.match('CH', dest_hypervisor_type))
+
+
 def sanitize_image_props_for_kvm(request_spec):
-    """Sanitize VMware-specific image properties for KVM scheduling.
+    """Sanitize VMware-specific image properties for KVM/CH scheduling.
 
     Mutates request_spec.image.properties in place to remove or replace
     VMware-pinning values so the scheduler can select KVM/CH hosts.
@@ -327,7 +340,7 @@ def sanitize_image_props_for_kvm(request_spec):
     suitable for storage in MigrationContext.old_image_properties as a
     rollback journal.
 
-    Precondition: only valid for VMware-to-KVM cross-hypervisor resize.
+    Precondition: only valid for VMware-to-KVM/CH cross-hypervisor resize.
 
     :param request_spec: nova.objects.RequestSpec to sanitize in place
     :returns: dict of {field_name: original_value} for rollback, or
@@ -1802,17 +1815,17 @@ def delete_arqs_if_needed(context, instance, arq_uuids=None):
         cyclient.delete_arqs_by_uuid(arq_uuids)
 
 
-def is_cross_hypervisor_resize(source_hypervisor_type, dest_flavor):
+def is_cross_hypervisor_resize(source_hypervisor_type, dest_hypervisor_type):
     """Detect whether a resize would cross hypervisor boundaries.
 
-    Compares the source hypervisor type against the destination flavor's
-    ``capabilities:hypervisor_type`` extra spec.
+    Compares source and destination hypervisor types.
 
     :param source_hypervisor_type: The hypervisor type string of the source,
         e.g. 'VMware vCenter Server', 'QEMU', 'CH'. May be None, in which
         case the function returns False (cannot determine).
-    :param dest_flavor: The destination Flavor object. Its extra_specs are
-        inspected for 'capabilities:hypervisor_type'.
+    :param dest_hypervisor_type: The hypervisor type string of the destination,
+        e.g. 'VMware vCenter Server', 'QEMU', 'CH'. May be None, in which
+        case the function returns False (cannot determine).
     :returns: True if the resize crosses hypervisor boundaries, False if the
         types match or if either value is unset (cannot determine).
     """
@@ -1821,8 +1834,53 @@ def is_cross_hypervisor_resize(source_hypervisor_type, dest_flavor):
     if not source_hypervisor_type:
         return False
 
-    dest_hv_type = dest_flavor.extra_specs.get('capabilities:hypervisor_type')
-    if not dest_hv_type:
+    if not dest_hypervisor_type:
         return False
 
-    return not extra_specs_ops.match(source_hypervisor_type, dest_hv_type)
+    return not extra_specs_ops.match(source_hypervisor_type,
+                                     dest_hypervisor_type)
+
+
+def raise_on_unsupported_cross_hypervisor_resize(context,
+                                                 instance,
+                                                 request_spec,
+                                                 source_hypervisor_type,
+                                                 dest_hypervisor_type):
+    """Detect whether a cross-hypervisor resize is supported.
+
+    Detects which specific cross hypervisor resize is requested, checks whether
+    the requested combination is supported and its preconditions are met.
+
+    :param context: Request context for the current operation.
+    :param instance: The instance which the operation is performed on.
+    :param request_spec: The request_spec of the current operation.
+    :param source_hypervisor_type: The hypervisor type string of the source,
+        e.g. 'VMware vCenter Server', 'QEMU', 'CH'. May be None, in which
+        case InvalidCrossHvResize is raised.
+    :param dest_hypervisor_type: The hypervisor type string of the dest,
+        e.g. 'VMware vCenter Server', 'QEMU', 'CH'. May be None, in which
+        case InvalidCrossHvResize is raised.
+    :raises InvalidCrossHvResize: if the resize from source to
+        destination hypervisor is not supported.
+    :raises InvalidCrossHvResizePrecondition: if preconditions of a specific
+        cross hypervisor resize are not met even though source and destination
+        hypervisor are valid.
+    """
+    if is_supported_cross_hypervisor_resize(
+            source_hypervisor_type, dest_hypervisor_type):
+        bfv = request_spec.is_bfv if "is_bfv" in request_spec else \
+                is_volume_backed_instance(context, instance)
+
+        if not bfv:
+            raise exception.InvalidCrossHvResizePrecondition(
+                    reason='Must be BFV instance')
+        if instance.power_state != power_state.RUNNING:
+            raise exception.InvalidCrossHvResizePrecondition(
+                    reason='Instance must be running for cross-hypervisor '
+                    'resize. The compute service will take care of '
+                    'stopping the instance.')
+        return
+
+    raise exception.InvalidCrossHvResize(
+        src_hv_type=source_hypervisor_type,
+        dest_hv_type=dest_hypervisor_type)

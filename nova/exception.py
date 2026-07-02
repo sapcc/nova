@@ -2552,3 +2552,7 @@ class InvalidGuestCpuNumaConfig(NovaException):
 class InvalidCrossHvResize(NovaException):
     msg_fmt = _('Resize from hypervisor type %(src_hv_type)s to '
                 '%(dest_hv_type)s is not allowed')
+
+
+class InvalidCrossHvResizePrecondition(NovaException):
+    msg_fmt = _('Cross-hypervisor resize precondition not met: %(reason)s')

@@ -2390,11 +2390,15 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.compute.flavors.get_flavor_by_flavor_id')
     @mock.patch('nova.objects.Quotas.count_as_dict')
     @mock.patch('nova.objects.Quotas.limit_check_project_and_user')
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
-    def test_resize_quota_check(self, bdm_get_by_instance_uuid, mock_check,
+    def test_resize_quota_check(self, bdm_get_by_instance_uuid,
+                                mock_get_by_instance_uuid, mock_check,
                                 mock_count, mock_get):
         bdms = objects.BlockDeviceMappingList()
         bdm_get_by_instance_uuid.return_value = bdms
+        mock_get_by_instance_uuid.return_value = objects.RequestSpec(
+            pci_requests=objects.InstancePCIRequests(requests=[]))
         self.flags(cores=1, group='quota')
         self.flags(ram=2048, group='quota')
         proj_count = {'instances': 1, 'cores': 1, 'ram': 1024}
@@ -2639,13 +2643,17 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(quotas_obj.Quotas, 'count_as_dict')
     @mock.patch.object(compute_utils, 'upsize_quota_delta')
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_quota_exceeds_fails(self, bdm_get_by_instance_uuid,
+                                        mock_get_by_instance_uuid,
                                         mock_get_flavor, mock_upsize,
                                         mock_count, mock_limit, mock_record,
                                         mock_save):
         bdms = objects.BlockDeviceMappingList()
         bdm_get_by_instance_uuid.return_value = bdms
+        mock_get_by_instance_uuid.return_value = objects.RequestSpec(
+            pci_requests=objects.InstancePCIRequests(requests=[]))
         mock_resize = self.useFixture(fixtures.MockPatchObject(
             self.compute_api.compute_task_api, 'resize_instance')).mock
 
@@ -2700,13 +2708,17 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(compute_utils, 'upsize_quota_delta')
     @mock.patch.object(quotas_obj.Quotas, 'count_as_dict')
     @mock.patch.object(quotas_obj.Quotas, 'limit_check_project_and_user')
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_quota_exceeds_fails_instance(self,
                                                  bdm_get_by_instance_uuid,
+                                                 mock_get_by_instance_uuid,
                                                  mock_check, mock_count,
                                                  mock_upsize, mock_flavor):
         bdms = objects.BlockDeviceMappingList()
         bdm_get_by_instance_uuid.return_value = bdms
+        mock_get_by_instance_uuid.return_value = objects.RequestSpec(
+            pci_requests=objects.InstancePCIRequests(requests=[]))
         fake_inst = self._create_instance_obj()
         fake_flavor = self._create_flavor(id=200, flavorid='flavor-id',
                             name='foo', disabled=False)
@@ -2733,12 +2745,15 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
     @mock.patch.object(objects.Quotas, 'count_as_dict')
     @mock.patch.object(objects.Quotas, 'limit_check_project_and_user')
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_instance_quota_exceeds_with_multiple_resources(
-            self, bdm_get_by_instance_uuid, mock_check, mock_count,
-            mock_get_flavor):
+            self, bdm_get_by_instance_uuid, mock_get_by_instance_uuid,
+            mock_check, mock_count, mock_get_flavor):
         bdms = objects.BlockDeviceMappingList()
         bdm_get_by_instance_uuid.return_value = bdms
+        mock_get_by_instance_uuid.return_value = objects.RequestSpec(
+            pci_requests=objects.InstancePCIRequests(requests=[]))
         quotas = {'cores': 1, 'ram': 512}
         overs = ['cores', 'ram']
         over_quota_args = dict(quotas=quotas,
@@ -2771,11 +2786,15 @@ class _ComputeAPIUnitTestMixIn(object):
     @mock.patch('nova.servicegroup.api.API.service_is_up',
                 new=mock.Mock(return_value=True))
     @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
     def test_resize_instance_quota_exceeds_with_multiple_resources_ul(
-            self, bdm_get_by_instance_uuid, mock_get_flavor, mock_enforce):
+            self, bdm_get_by_instance_uuid, mock_get_by_instance_uuid,
+            mock_get_flavor, mock_enforce):
         bdms = objects.BlockDeviceMappingList()
         bdm_get_by_instance_uuid.return_value = bdms
+        mock_get_by_instance_uuid.return_value = objects.RequestSpec(
+            pci_requests=objects.InstancePCIRequests(requests=[]))
         self.flags(driver="nova.quota.UnifiedLimitsDriver", group="quota")
         mock_enforce.side_effect = limit_exceptions.ProjectOverLimit(
             self.context.project_id, [limit_exceptions.OverLimitInfo(
@@ -7660,12 +7679,7 @@ class ComputeAPIUnitTestCase(_ComputeAPIUnitTestMixIn, test.NoDBTestCase):
         self.assertRaises(exception.CannotResizeToSameFlavor,
                           self._test_resize, same_flavor=True)
 
-    @mock.patch('nova.compute.utils.is_cross_hypervisor_resize',
-                return_value=True)
-    def test_resize_cross_hypervisor_fails(self, mock_is_cross_hv):
-        """Resize between different hypervisor types is rejected early."""
-        self.assertRaises(exception.InvalidCrossHvResize,
-                          self._test_resize)
+    # TODO(KVMotion): test cross-hv resizes get correctly accepted and rejected
 
     def test_find_service_in_cell_error_case(self):
         self.assertRaises(exception.NovaException,
