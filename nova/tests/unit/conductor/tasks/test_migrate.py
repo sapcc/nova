@@ -426,6 +426,7 @@ class MigrationTaskTestCase(test.NoDBTestCase):
 
         self.request_spec.is_bfv = True
         self.flavor.extra_specs['capabilities:hypervisor_type'] = 'CH'
+        self.flags(enable_cross_hv_resize=True, group='workarounds')
         task = self._generate_task()
         task.instance.save = mock.Mock()
         task.instance.power_state = power_state.RUNNING
@@ -497,6 +498,7 @@ class CrossHvResizeTestCase(test.NoDBTestCase):
 
     def setUp(self):
         super().setUp()
+        self.flags(enable_cross_hv_resize=True, group='workarounds')
         ctx = FakeContext('fake', 'fake')
         flavor = fake_flavor.fake_flavor_obj(ctx)
         flavor.extra_specs = {}

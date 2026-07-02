@@ -518,6 +518,21 @@ Related options:
 
 * :oslo.config:option:`WORKAROUNDS.enable_chv_announce_self` (libvirt)
 """),
+    cfg.BoolOpt(
+        'enable_cross_hv_resize',
+        default=False,
+        help="""
+Enable cross-hypervisor resize (VMware to KVM/CH).
+
+When False (default), cross-hypervisor resize attempts are rejected at the
+API with InvalidCrossHvResize. Set to True only after all Nova services
+(API, conductor, scheduler, and all compute agents) have been upgraded to
+a version that supports the cross-HV resize flow.
+
+Related options:
+
+* :oslo.config:option:`WORKAROUNDS.enable_cross_hv_resize` (conductor, API)
+"""),
 ]
 
 
