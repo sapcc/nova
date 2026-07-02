@@ -1133,7 +1133,7 @@ object_data = {
     'LibvirtVPMEMDevice': '1.0-17ffaf47585199eeb9a2b83d6bde069f',
     'MemoryDiagnostics': '1.0-2c995ae0f2223bb0f8e523c5cc0b83da',
     'Migration': '1.8-6ed577d80e71e9b9d88b8cf358af3781',
-    'MigrationContext': '1.2-89f10a83999f852a489962ae37d8a026',
+    'MigrationContext': '1.2.1-5a6f4e6ddeedf6ad1607da1fa7eed8e8',
     'MigrationList': '1.5-36793f8d65bae421bd5564d09a4de7be',
     'MonitorMetric': '1.1-53b1db7c4ae2c531db79761e7acc52ba',
     'MonitorMetricList': '1.1-15ecf022a68ddbb8c2a6739cfc9f8f5e',

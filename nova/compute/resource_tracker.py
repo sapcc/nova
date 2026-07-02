@@ -348,6 +348,14 @@ class ResourceTracker(object):
         claimed_resources = self._claim_resources(allocations)
         old_resources = instance.resources
 
+        existing_old_image_properties = None
+        if (instance.obj_attr_is_set('migration_context') and
+                instance.migration_context is not None and
+                instance.migration_context.obj_attr_is_set(
+                    'old_image_properties')):
+            existing_old_image_properties = (
+                instance.migration_context.old_image_properties)
+
         # TODO(jaypipes): Move claimed_numa_topology out of the Claim's
         # constructor flow so the Claim constructor only tests whether
         # resources can be claimed, not consume the resources directly.
@@ -366,7 +374,8 @@ class ResourceTracker(object):
             old_pci_requests=instance.pci_requests,
             new_pci_requests=new_pci_requests,
             old_resources=old_resources,
-            new_resources=claimed_resources)
+            new_resources=claimed_resources,
+            old_image_properties=existing_old_image_properties)
 
         instance.migration_context = mig_context
         instance.save()

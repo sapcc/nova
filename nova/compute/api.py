@@ -4002,6 +4002,16 @@ class API:
                 instance.old_flavor, instance.image_meta)
             reqspec.save()
 
+        # For cross-HV resize, the conductor mutated request_spec.image
+        # properties for KVM/CH scheduling. Restore originals on revert.
+        mig_ctx = instance.migration_context
+        if (mig_ctx and mig_ctx.obj_attr_is_set('old_image_properties') and
+                mig_ctx.old_image_properties):
+            if compute_utils.restore_image_props_from_cross_hv_journal(
+                    request_spec=reqspec,
+                    old_image_properties=mig_ctx.old_image_properties):
+                reqspec.save()
+
         # NOTE(gibi): This is a performance optimization. If the network info
         # cache does not have ports with allocations in the binding profile
         # then we can skip reading port resource request from neutron below.
