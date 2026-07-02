@@ -1539,6 +1539,396 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                fake_get_vm_ref.return_value,
                                                self._instance)
 
+    # --- Cross-HV resize tests ---
+
+    def test_is_cross_hv_resize_true_for_supported_flavor(self):
+        flavor = fake_flavor.fake_flavor_obj(self._context)
+        flavor.extra_specs = {'capabilities:hypervisor_type': 'CH'}
+
+        self.assertTrue(self._vmops._is_cross_hv_resize(flavor))
+
+    def test_is_cross_hv_resize_false_for_vmware_flavor(self):
+        flavor = fake_flavor.fake_flavor_obj(self._context)
+        flavor.extra_specs = {
+            'capabilities:hypervisor_type': 'VMware vCenter Server'}
+
+        self.assertFalse(self._vmops._is_cross_hv_resize(flavor))
+
+    def test_is_cross_hv_resize_false_for_qemu_flavor(self):
+        flavor = fake_flavor.fake_flavor_obj(self._context)
+        flavor.extra_specs = {'capabilities:hypervisor_type': 'QEMU'}
+
+        self.assertFalse(self._vmops._is_cross_hv_resize(flavor))
+
+    @mock.patch.object(vm_util, 'get_hardware_devices_by_type',
+                       return_value={'disks': [], 'nics': []})
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=None)
+    @mock.patch.object(vmops.VMwareVMOps, 'change_vm_instance_uuid')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_remove_network_device_change',
+                       return_value=['fake-nic-change'])
+    @mock.patch.object(vmops.VMwareVMOps, '_detach_volumes')
+    @mock.patch.object(vm_util, 'get_vm_state',
+                       return_value=power_state.RUNNING)
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown', return_value=True)
+    @mock.patch.object(vm_util, 'rename_vm')
+    @mock.patch.object(vm_util, 'get_vm_ref', return_value='source-ref')
+    @mock.patch.object(vmops.VMwareVMOps, '_update_instance_progress')
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_migrate_disk_and_power_off_cross_hv(
+            self, mock_mig_get, mock_progress, mock_get_vm_ref,
+            mock_rename, mock_shutdown, mock_get_state, mock_detach,
+            mock_remove_nic, mock_reconfig, mock_change_uuid,
+            mock_search_shell, mock_get_hardware):
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        mig_ctx.old_image_properties = {'img_hv_type': 'vmware'}
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'false',
+            'image_img_hv_type': 'vmware',
+            'image_hw_disk_bus': 'scsi',
+            'image_hw_scsi_model': 'lsilogic',
+            'image_hw_vif_model': 'vmxnet3',
+            'image_hw_video_model': 'vmvga',
+        }
+        self._instance.save = mock.Mock()
+
+        with mock.patch.object(self._vmops, '_is_cross_hv_resize',
+                               return_value=True):
+            result = self._vmops.migrate_disk_and_power_off(
+                self._context, self._instance, '10.20.30.40',
+                self._instance.flavor,
+                network_info=mock.sentinel.net_info,
+                block_device_info=mock.sentinel.bdi)
+
+        self.assertEqual('[]', result)
+        # system_metadata sanitized
+        sys_meta = self._instance.system_metadata
+        self.assertNotIn('image_img_hv_type', sys_meta)
+        self.assertEqual('virtio', sys_meta['image_hw_disk_bus'])
+        self.assertNotIn('image_hw_scsi_model', sys_meta)
+        self.assertEqual('virtio', sys_meta['image_hw_vif_model'])
+        self.assertEqual('virtio', sys_meta['image_hw_video_model'])
+        self.assertEqual('true', sys_meta['cross_hv_resize'])
+        self.assertEqual('true', sys_meta['cross_hv_source_prepared'])
+        # Operations called
+        mock_detach.assert_called_once_with(
+            self._instance, mock.sentinel.bdi)
+        mock_reconfig.assert_called_once_with(
+            self._session, 'source-ref', ['fake-nic-change'])
+        mock_change_uuid.assert_called_once_with(
+            self._context, self._instance, 'source-ref',
+            uuid=migration.uuid)
+        self._instance.save.assert_called()
+
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value='existing-shell')
+    @mock.patch.object(vmops.VMwareVMOps, '_update_instance_progress')
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_migrate_disk_and_power_off_cross_hv_idempotent(
+            self, mock_mig_get, mock_progress, mock_search_shell):
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        self._instance.migration_context = mig_ctx
+
+        with mock.patch.object(self._vmops, '_is_cross_hv_resize',
+                               return_value=True):
+            result = self._vmops.migrate_disk_and_power_off(
+                self._context, self._instance, '10.20.30.40',
+                self._instance.flavor,
+                network_info=None, block_device_info=None)
+
+        self.assertEqual('[]', result)
+
+    @mock.patch.object(vmops.VMwareVMOps, '_do_finish_revert_migration')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=None)
+    @mock.patch.object(vmops.VMwareVMOps, 'change_vm_instance_uuid')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_remove_network_device_change',
+                       return_value=['fake-nic-change'])
+    @mock.patch.object(vmops.VMwareVMOps, '_detach_volumes')
+    @mock.patch.object(vm_util, 'get_vm_state',
+                       return_value=power_state.RUNNING)
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown', return_value=True)
+    @mock.patch.object(vm_util, 'rename_vm')
+    @mock.patch.object(vm_util, 'get_vm_ref', return_value='source-ref')
+    @mock.patch.object(vmops.VMwareVMOps, '_update_instance_progress')
+    @mock.patch.object(vm_util, 'get_hardware_devices_by_type')
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_cross_hv_rollback_uses_current_hardware(
+            self, mock_mig_get, mock_get_hardware, mock_progress,
+            mock_get_vm_ref, mock_rename, mock_shutdown, mock_get_state,
+            mock_detach, mock_remove_nic, mock_reconfig, mock_change_uuid,
+            mock_search_shell, mock_power_on, mock_finish_revert):
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'false'}
+        self._instance.save = mock.Mock()
+        pre_hardware = {'disks': ['pre-disk'], 'nics': ['pre-nic']}
+        post_hardware = {'disks': [], 'nics': []}
+        mutated = {'value': False}
+
+        def fake_get_hardware(session, vm_ref):
+            return post_hardware if mutated['value'] else pre_hardware
+
+        def fake_detach(instance, block_device_info):
+            mutated['value'] = True
+
+        mock_get_hardware.side_effect = fake_get_hardware
+        mock_detach.side_effect = fake_detach
+        mock_change_uuid.side_effect = RuntimeError('uuid failed')
+
+        with mock.patch.object(self._vmops, '_is_cross_hv_resize',
+                               return_value=True):
+            self.assertRaises(
+                exception.InstanceFaultRollback,
+                self._vmops.migrate_disk_and_power_off,
+                self._context, self._instance, '10.20.30.40',
+                self._instance.flavor, network_info=mock.sentinel.net_info,
+                block_device_info=mock.sentinel.bdi)
+
+        mock_finish_revert.assert_called_once_with(
+            self._context, self._instance, mock.sentinel.bdi,
+            mock.sentinel.net_info, 'source-ref', post_hardware)
+        mock_power_on.assert_called_once_with(self._session, self._instance)
+
+    @mock.patch.object(vm_util, 'get_hardware_devices_by_type',
+                       return_value={'disks': [], 'nics': []})
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=None)
+    @mock.patch.object(vmops.VMwareVMOps, 'change_vm_instance_uuid')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_remove_network_device_change',
+                       return_value=[])
+    @mock.patch.object(vmops.VMwareVMOps, '_detach_volumes')
+    @mock.patch.object(vm_util, 'get_vm_state',
+                       return_value=power_state.SHUTDOWN)
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
+    @mock.patch.object(vm_util, 'rename_vm')
+    @mock.patch.object(vm_util, 'get_vm_ref', return_value='source-ref')
+    @mock.patch.object(vmops.VMwareVMOps, '_update_instance_progress')
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_migrate_disk_and_power_off_cross_hv_already_powered_off(
+            self, mock_mig_get, mock_progress, mock_get_vm_ref,
+            mock_rename, mock_shutdown, mock_get_state, mock_detach,
+            mock_remove_nic, mock_reconfig, mock_change_uuid,
+            mock_search_shell, mock_get_hardware):
+        """VM is already powered off (Phase 2 pre-step). Shutdown skipped."""
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        mig_ctx.old_image_properties = {}
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {}
+        self._instance.save = mock.Mock()
+
+        with mock.patch.object(self._vmops, '_is_cross_hv_resize',
+                               return_value=True):
+            result = self._vmops.migrate_disk_and_power_off(
+                self._context, self._instance, '10.20.30.40',
+                self._instance.flavor,
+                network_info=mock.sentinel.net_info,
+                block_device_info=mock.sentinel.bdi)
+
+        self.assertEqual('[]', result)
+        mock_shutdown.assert_not_called()
+
+    @mock.patch.object(vm_util, 'get_hardware_devices_by_type',
+                       return_value={'disks': [], 'nics': []})
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=None)
+    @mock.patch.object(vmops.VMwareVMOps, 'change_vm_instance_uuid')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_remove_network_device_change',
+                       return_value=[])
+    @mock.patch.object(vmops.VMwareVMOps, '_detach_volumes')
+    @mock.patch.object(vm_util, 'get_vm_state',
+                       return_value=power_state.RUNNING)
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown', return_value=True)
+    @mock.patch.object(vm_util, 'rename_vm')
+    @mock.patch.object(vm_util, 'get_vm_ref', return_value='source-ref')
+    @mock.patch.object(vmops.VMwareVMOps, '_update_instance_progress')
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_migrate_disk_and_power_off_cross_hv_no_disk_device(
+            self, mock_mig_get, mock_progress, mock_get_vm_ref,
+            mock_rename, mock_shutdown, mock_get_state, mock_detach,
+            mock_remove_nic, mock_reconfig, mock_change_uuid,
+            mock_search_shell, mock_get_hardware):
+        """No VirtualDisk on VM for root BDM (Phase 2: already detached).
+
+        _detach_volumes tolerates missing disks — verify it does not raise.
+        """
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        mig_ctx.old_image_properties = {}
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {}
+        self._instance.save = mock.Mock()
+        # Simulate _detach_volumes encountering no matching disk — it
+        # should not raise (DiskNotFound is caught internally).
+        mock_detach.return_value = None
+
+        with mock.patch.object(self._vmops, '_is_cross_hv_resize',
+                               return_value=True):
+            result = self._vmops.migrate_disk_and_power_off(
+                self._context, self._instance, '10.20.30.40',
+                self._instance.flavor,
+                network_info=mock.sentinel.net_info,
+                block_device_info=mock.sentinel.bdi)
+
+        self.assertEqual('[]', result)
+        mock_detach.assert_called_once()
+
+    @mock.patch.object(vm_util, 'destroy_vm')
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=mock.sentinel.shell_ref)
+    def test_confirm_migration_cross_hv(self, mock_search, mock_destroy):
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true',
+            'image_hw_disk_bus': 'virtio',
+        }
+        self._instance.save = mock.Mock()
+        migration = objects.Migration(uuid=uuids.migration)
+
+        with mock.patch.object(
+                self._vmops, '_is_in_place_migration',
+                side_effect=AssertionError('must not reach legacy branch')):
+            self._vmops.confirm_migration(
+                self._context, migration, self._instance, network_info=None)
+
+        mock_search.assert_called_once_with(self._session, migration.uuid)
+        mock_destroy.assert_called_once_with(
+            self._session, self._instance, mock.sentinel.shell_ref)
+        # Markers cleaned, but KVM image properties remain
+        self.assertNotIn('cross_hv_resize',
+                         self._instance.system_metadata)
+        self.assertNotIn('cross_hv_source_prepared',
+                         self._instance.system_metadata)
+        self.assertEqual('virtio',
+                         self._instance.system_metadata['image_hw_disk_bus'])
+        self._instance.save.assert_called_once()
+
+    @mock.patch.object(vm_util, 'destroy_vm')
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier')
+    def test_confirm_migration_cross_hv_not_prepared(
+            self, mock_search, mock_destroy):
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'false'}
+        self._instance.save = mock.Mock()
+        migration = objects.Migration(uuid=uuids.migration)
+
+        self._vmops.confirm_migration(
+            self._context, migration, self._instance, network_info=None)
+
+        mock_search.assert_not_called()
+        mock_destroy.assert_not_called()
+        self.assertNotIn('cross_hv_resize',
+                         self._instance.system_metadata)
+        self.assertNotIn('cross_hv_source_prepared',
+                         self._instance.system_metadata)
+
+    @mock.patch.object(vm_util, 'destroy_vm')
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=None)
+    def test_confirm_migration_cross_hv_shell_missing(
+            self, mock_search, mock_destroy):
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true'}
+        self._instance.save = mock.Mock()
+        migration = objects.Migration(uuid=uuids.migration)
+
+        self._vmops.confirm_migration(
+            self._context, migration, self._instance, network_info=None)
+
+        mock_destroy.assert_not_called()
+
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'rename_vm')
+    @mock.patch.object(vmops.VMwareVMOps, '_attach_volumes')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_instance_config_info')
+    @mock.patch.object(vmops.VMwareVMOps, '_update_vnic_index')
+    @mock.patch.object(vm_util, 'vm_ref_cache_update')
+    @mock.patch.object(vm_util, 'reconfigure_vm')
+    @mock.patch.object(vmops.VMwareVMOps, '_get_vm_networking_spec')
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=mock.sentinel.shell_ref)
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_finish_revert_migration_cross_hv(
+            self, mock_mig_get, mock_search, mock_net_spec,
+            mock_reconfig, mock_cache_update, mock_vnic_index,
+            mock_config_info, mock_attach, mock_rename, mock_power_on):
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        mig_ctx.old_image_properties = {
+            'image_img_hv_type': 'vmware',
+            'image_hw_disk_bus': 'scsi',
+        }
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true',
+            'image_hw_disk_bus': 'virtio',
+        }
+        self._instance.save = mock.Mock()
+        mock_net_spec.return_value = mock.MagicMock()
+        vi_mock = mock.MagicMock()
+        vi_mock.ii.adapter_type = 'lsiLogic'
+        mock_config_info.return_value = vi_mock
+
+        self._vmops.finish_revert_migration(
+            self._context, self._instance,
+            network_info=mock.sentinel.net_info,
+            block_device_info=mock.sentinel.bdi, power_on=True)
+
+        mock_search.assert_called_once_with(self._session, migration.uuid)
+        mock_cache_update.assert_called_once_with(
+            self._instance.uuid, mock.sentinel.shell_ref)
+        mock_attach.assert_called_once()
+        mock_rename.assert_called_once()
+        mock_power_on.assert_called_once()
+
+    @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
+                       return_value=None)
+    @mock.patch.object(objects.Migration, 'get_by_id_and_instance')
+    def test_finish_revert_migration_cross_hv_shell_missing(
+            self, mock_mig_get, mock_search):
+        migration = objects.Migration(uuid=uuids.migration)
+        mock_mig_get.return_value = migration
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true'}
+
+        self.assertRaises(
+            exception.InstanceNotFound,
+            self._vmops.finish_revert_migration,
+            self._context, self._instance,
+            network_info=None, block_device_info=None, power_on=True)
+
     @mock.patch.object(ds_util, 'disk_delete')
     @mock.patch.object(ds_util, 'file_exists',
                        return_value=True)

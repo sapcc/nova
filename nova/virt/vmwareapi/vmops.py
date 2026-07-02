@@ -435,6 +435,47 @@ class VMwareVMOps(object):
         except error_util.InvalidHostAddrFormat:
             return True
 
+    def _is_cross_hv_resize(self, flavor):
+        """Return True if this resize crosses hypervisor boundaries.
+        """
+        if not flavor.obj_attr_is_set('extra_specs'):
+            return False
+        dest_hv_type = flavor.extra_specs.get('capabilities:hypervisor_type')
+        return compute_utils.is_supported_cross_hypervisor_resize(
+            'VMware vCenter Server', dest_hv_type)
+
+    def _sanitize_system_metadata_for_kvm(self, instance):
+        """Sanitize VMware-specific image properties in system_metadata.
+
+        Mutates instance.system_metadata in place and returns a dict of
+        originals for storage in MigrationContext.old_image_properties.
+        """
+        sys_meta = instance.system_metadata
+        originals = {}
+
+        for field, replacement in compute_utils.CROSS_HV_SANITIZE_PROPS:
+            key = 'image_' + field
+            if key in sys_meta and sys_meta[key] is not None:
+                originals[key] = sys_meta[key]
+                if replacement is None:
+                    del sys_meta[key]
+                else:
+                    sys_meta[key] = replacement
+
+        return originals
+
+    def _is_cross_hv_source_prepared(self, instance):
+        return (instance.system_metadata.get('cross_hv_source_prepared') ==
+                'true')
+
+    def _cleanup_cross_hv_markers(self, instance):
+        sysmeta = instance.system_metadata
+        keys_to_remove = [k for k in sysmeta if k.startswith('cross_hv_')]
+        for key in keys_to_remove:
+            del sysmeta[key]
+        if keys_to_remove:
+            instance.save()
+
     def build_virtual_machine(self, instance, context, image_info, datastore,
                               network_info, extra_specs, metadata, vm_folder,
                               vm_name=None, host_ref=None):
@@ -2667,6 +2708,13 @@ class VMwareVMOps(object):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
+        # Cross-HV detection must happen before _decode_host_addr because
+        # a KVM/CH destination supplies a plain IP, not a VMware-encoded
+        # string.
+        if self._is_cross_hv_resize(flavor):
+            return self._migrate_disk_and_power_off_cross_hv(
+                context, instance, flavor, network_info, block_device_info)
+
         try:
             decoded = self._decode_host_addr(dest)
         except error_util.InvalidHostAddrFormat:
@@ -2745,6 +2793,100 @@ class VMwareVMOps(object):
                 vm_util.power_on_instance(self._session, instance)
             raise exception.InstanceFaultRollback(e)
 
+    def _migrate_disk_and_power_off_cross_hv(self, context, instance, flavor,
+                                             network_info, block_device_info):
+        """Prepare the source VM as an empty shell for cross-HV BFV resize.
+
+        Powers off, detaches volumes and NICs, swaps instanceUuid to
+        migration.uuid, and renames the shell for operator visibility.
+        The KVM/CH destination boots from the existing volume directly.
+        """
+        migration = objects.Migration.get_by_id_and_instance(
+            context, instance.migration_context.migration_id, instance.uuid)
+
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+
+        # Idempotency: if a shell already exists from a prior attempt, skip.
+        existing_shell = vm_util.search_vm_ref_by_identifier(
+            self._session, migration.uuid)
+        if existing_shell:
+            LOG.info('Cross-HV shell already exists for migration %s; '
+                     'skipping preparation.', migration.uuid,
+                     instance=instance)
+            return '[]'
+
+        self._update_instance_progress(context, instance, step=0,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+        vm_util.rename_vm(self._session, vm_ref, instance)
+
+        # Power off — tolerate already-powered-off (Phase 2 idempotency).
+        vm_state = vm_util.get_vm_state(self._session, instance)
+        if vm_state != power_state.SHUTDOWN:
+            vm_was_on = self._soft_shutdown(instance)
+        else:
+            vm_was_on = False
+
+        self._update_instance_progress(context, instance, step=1,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+
+        try:
+            # Sanitize system_metadata image properties for KVM/CH and
+            # merge originals into the existing MigrationContext journal.
+            sysmeta_originals = self._sanitize_system_metadata_for_kvm(
+                instance)
+            mig_ctx = instance.migration_context
+            if mig_ctx and mig_ctx.obj_attr_is_set('old_image_properties'):
+                existing = mig_ctx.old_image_properties or {}
+                existing.update(sysmeta_originals)
+                mig_ctx.old_image_properties = existing
+            elif mig_ctx:
+                mig_ctx.old_image_properties = sysmeta_originals
+            instance.save()
+
+            self._detach_volumes(instance, block_device_info)
+            self._update_instance_progress(context, instance, step=2,
+                                           total_steps=RESIZE_TOTAL_STEPS)
+
+            device_change = self._get_remove_network_device_change(vm_ref)
+            vm_util.reconfigure_vm_device_change(self._session, vm_ref,
+                                                 device_change)
+            self._update_instance_progress(context, instance, step=3,
+                                           total_steps=RESIZE_TOTAL_STEPS)
+
+            self.change_vm_instance_uuid(context, instance, vm_ref,
+                                         uuid=migration.uuid)
+            shell_name = '%s (Mig %s)' % (instance.uuid, migration.uuid)
+            vm_util.rename_vm(self._session, vm_ref, instance,
+                              vm_name=shell_name)
+            instance.system_metadata['cross_hv_source_prepared'] = 'true'
+            instance.save()
+            self._update_instance_progress(context, instance, step=4,
+                                           total_steps=RESIZE_TOTAL_STEPS)
+            return '[]'
+        except Exception as exc:
+            LOG.exception("Cross-HV migrate preparation failed",
+                          instance=instance)
+            # Rollback: after change_vm_instance_uuid, the cache is stale.
+            try:
+                rollback_ref = vm_util.get_vm_ref(self._session, instance)
+            except exception.InstanceNotFound:
+                rollback_ref = vm_util.search_vm_ref_by_identifier(
+                    self._session, migration.uuid)
+                if rollback_ref:
+                    vm_util.vm_ref_cache_update(instance.uuid, rollback_ref)
+                else:
+                    raise exception.InstanceFaultRollback(exc)
+
+            hardware = vm_util.get_hardware_devices_by_type(
+                self._session, rollback_ref)
+
+            self._do_finish_revert_migration(context, instance,
+                                             block_device_info, network_info,
+                                             rollback_ref, hardware)
+            if vm_was_on:
+                vm_util.power_on_instance(self._session, instance)
+            raise exception.InstanceFaultRollback(exc)
+
     def get_vif_info(self, ctxt, vif_model=None, network_info=None):
         """ctxt is only there to provide the same signature as rpc calls"""
         vif_info = vmwarevif.get_vif_info(self._session,
@@ -2761,6 +2903,16 @@ class VMwareVMOps(object):
 
     def confirm_migration(self, context, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
+        if instance.system_metadata.get('cross_hv_resize') == 'true':
+            if not self._is_cross_hv_source_prepared(instance):
+                LOG.warning('Cross-HV resize source was not prepared for '
+                            'migration %s; skipping shell cleanup.',
+                            migration.uuid, instance=instance)
+                self._cleanup_cross_hv_markers(instance)
+                return
+            self._do_confirm_cross_hv_migration(migration, instance)
+            return
+
         # To ensure compatibility with unfinished migrations with the previous
         # code, we check the version of the migration and call the appropriate
         # function for the kind of migration.
@@ -2768,6 +2920,19 @@ class VMwareVMOps(object):
             self._do_confirm_in_place_migration(instance)
         else:
             self._do_confirm_migration(context, instance, migration)
+
+    def _do_confirm_cross_hv_migration(self, migration, instance):
+        """Destroy the VMware shell VM after cross-HV resize confirm."""
+        vm_ref = vm_util.search_vm_ref_by_identifier(
+            self._session, migration.uuid)
+        if not vm_ref:
+            LOG.warning('Cross-HV shell VM not found for migration %s; '
+                        'may have already been cleaned up.',
+                        migration.uuid, instance=instance)
+        else:
+            vm_util.destroy_vm(self._session, instance, vm_ref)
+
+        self._cleanup_cross_hv_markers(instance)
 
     def _do_migrate_disk_and_power_off(self, context, instance, dest, flavor,
                                        network_info, block_device_info):
@@ -2883,11 +3048,27 @@ class VMwareVMOps(object):
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
-        # This DB call can be removed in Train, when the migration object will
-        # be passed as parameter.
+        if not (instance.obj_attr_is_set('migration_context') and
+                instance.migration_context):
+            raise exception.InstanceInvalidState(
+                instance_uuid=instance.uuid,
+                attr='migration_context', state='None',
+                method='finish_revert_migration')
         migration = objects.Migration.get_by_id_and_instance(
             context, instance.migration_context.migration_id,
             instance.uuid)
+
+        if instance.system_metadata.get('cross_hv_resize') == 'true':
+            if not self._is_cross_hv_source_prepared(instance):
+                LOG.warning('Cross-HV resize source was not prepared; '
+                            'skipping VMware shell restore.',
+                            instance=instance)
+                return
+            self._do_finish_revert_cross_hv_migration(
+                context, instance, migration, network_info, block_device_info)
+            if power_on:
+                vm_util.power_on_instance(self._session, instance)
+            return
 
         # To ensure compatibility with unfinished migrations with the previous
         # code, we check the version of the migration and call the appropriate
@@ -2896,7 +3077,6 @@ class VMwareVMOps(object):
             self._do_finish_revert_in_place_migration(
                 context, instance, block_device_info, network_info)
         else:
-            # This is the new
             vm_ref = vm_util.search_vm_ref_by_identifier(self._session,
                                                          migration.uuid)
             self._do_finish_revert_migration(context, instance,
@@ -2905,6 +3085,28 @@ class VMwareVMOps(object):
 
         if power_on:
             vm_util.power_on_instance(self._session, instance)
+
+    def _do_finish_revert_cross_hv_migration(self, context, instance,
+                                             migration, network_info,
+                                             block_device_info):
+        """Restore the VMware shell VM after a cross-HV resize revert."""
+        vm_ref = vm_util.search_vm_ref_by_identifier(
+            self._session, migration.uuid)
+        if not vm_ref:
+            raise exception.InstanceNotFound(instance_id=instance.uuid)
+
+        # Restore instanceUuid and NICs before volume re-attach.
+        config_spec = self._get_vm_networking_spec(instance, network_info)
+        config_spec.instanceUuid = instance.uuid
+        vm_util.reconfigure_vm(self._session, vm_ref, config_spec)
+        vm_util.vm_ref_cache_update(instance.uuid, vm_ref)
+        self._update_vnic_index(context, instance, network_info)
+
+        # Re-attach volumes.
+        vi = self._get_instance_config_info(context, instance)
+        self._attach_volumes(instance, block_device_info, vi.ii.adapter_type)
+
+        vm_util.rename_vm(self._session, vm_ref, instance)
 
     def _do_finish_revert_migration(self, context, instance,
                                     block_device_info, network_info,
