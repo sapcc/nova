@@ -62,6 +62,11 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         self.heal_reqspec_is_bfv_mock = _p.start()
         self.addCleanup(_p.stop)
 
+        _p = mock.patch('nova.compute.utils.sanitize_image_props_for_kvm')
+        self.sanitize_mock = _p.start()
+        self.sanitize_mock.return_value = {}
+        self.addCleanup(_p.stop)
+
         _p = mock.patch('nova.objects.RequestSpec.ensure_network_information')
         self.ensure_network_information_mock = _p.start()
         self.addCleanup(_p.stop)
@@ -392,6 +397,89 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         task = self._generate_task()
         selection = objects.Selection(cell_uuid=uuids.cell2, service_host='x')
         self.assertFalse(task._is_selected_host_in_source_cell(selection))
+
+    @mock.patch.object(objects.MigrationList, 'get_by_filters')
+    @mock.patch('nova.scheduler.client.report.SchedulerReportClient')
+    @mock.patch('nova.objects.ComputeNode.get_by_host_and_nodename')
+    @mock.patch('nova.objects.Migration.save')
+    @mock.patch('nova.objects.Migration.create')
+    @mock.patch('nova.objects.Service.get_minimum_version_multi')
+    @mock.patch('nova.availability_zones.get_host_availability_zone')
+    @mock.patch.object(scheduler_utils, 'setup_instance_group')
+    @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
+    @mock.patch.object(compute_rpcapi.ComputeAPI, 'prep_resize')
+    def test_execute_calls_sanitize_and_stashes_journal(
+            self, prep_resize_mock, sel_dest_mock, sig_mock, az_mock,
+            gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock, gbf_mock):
+        """Verify sanitize is called for cross-HV and result stashed."""
+        sel_dest_mock.return_value = self.host_lists
+        az_mock.return_value = 'myaz'
+        gbf_mock.return_value = objects.MigrationList()
+        mock_get_resources = \
+            self.mock_network_api.get_requested_resource_for_instance
+        mock_get_resources.return_value = ([], objects.RequestLevelParams())
+        gmv_mock.return_value = 23
+
+        fake_journal = {'img_hv_type': 'vmware', 'hw_disk_bus': 'scsi'}
+        self.sanitize_mock.return_value = fake_journal
+
+        task = self._generate_task()
+        task.instance.save = mock.Mock()
+
+        def set_migration_uuid(*a, **k):
+            task._migration.uuid = uuids.migration
+            task._migration.id = 1
+            return mock.MagicMock()
+
+        cn_mock.side_effect = set_migration_uuid
+
+        with mock.patch.object(task, '_is_vmware_to_kvm_resize',
+                               return_value=True):
+            task.execute()
+
+        self.sanitize_mock.assert_called_once_with(self.request_spec)
+        self.assertEqual(fake_journal, task._old_image_properties)
+        # Verify journal was persisted to migration_context
+        self.assertIsNotNone(task.instance.migration_context)
+        self.assertEqual(
+            fake_journal,
+            task.instance.migration_context.old_image_properties)
+        task.instance.save.assert_called()
+
+    @mock.patch.object(objects.MigrationList, 'get_by_filters')
+    @mock.patch('nova.scheduler.client.report.SchedulerReportClient')
+    @mock.patch('nova.objects.ComputeNode.get_by_host_and_nodename')
+    @mock.patch('nova.objects.Migration.save')
+    @mock.patch('nova.objects.Migration.create')
+    @mock.patch('nova.objects.Service.get_minimum_version_multi')
+    @mock.patch('nova.availability_zones.get_host_availability_zone')
+    @mock.patch.object(scheduler_utils, 'setup_instance_group')
+    @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
+    @mock.patch.object(compute_rpcapi.ComputeAPI, 'prep_resize')
+    def test_execute_skips_sanitize_for_same_hv(
+            self, prep_resize_mock, sel_dest_mock, sig_mock, az_mock,
+            gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock, gbf_mock):
+        """Verify sanitize is NOT called for same-HV resize."""
+        sel_dest_mock.return_value = self.host_lists
+        az_mock.return_value = 'myaz'
+        gbf_mock.return_value = objects.MigrationList()
+        mock_get_resources = \
+            self.mock_network_api.get_requested_resource_for_instance
+        mock_get_resources.return_value = ([], objects.RequestLevelParams())
+        gmv_mock.return_value = 23
+
+        task = self._generate_task()
+
+        def set_migration_uuid(*a, **k):
+            task._migration.uuid = uuids.migration
+            return mock.MagicMock()
+
+        cn_mock.side_effect = set_migration_uuid
+        # _is_vmware_to_kvm_resize stub returns False by default
+        task.execute()
+
+        self.sanitize_mock.assert_not_called()
+        self.assertEqual({}, task._old_image_properties)
 
 
 class MigrationTaskAllocationUtils(test.NoDBTestCase):

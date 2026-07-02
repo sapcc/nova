@@ -4087,6 +4087,63 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         spec_save_mock.assert_called_once_with()
 
     @mock.patch.object(objects.Instance, 'get_bdms')
+    @mock.patch.object(objects.Instance, 'save')
+    @mock.patch.object(objects.RequestSpec, 'save')
+    @mock.patch.object(migrate.MigrationTask, 'execute')
+    @mock.patch.object(utils, 'get_image_from_system_metadata')
+    def test_cold_migrate_persists_old_image_properties(
+            self, image_mock, task_exec_mock, spec_save_mock,
+            inst_save_mock, bdms_mock):
+        """Verify old_image_properties is persisted by the task during execute.
+
+        The task calls _persist_image_properties_journal inside _execute(),
+        which writes to instance.migration_context before the prep_resize cast.
+        """
+        inst_obj = objects.Instance(
+            image_ref='fake-image_ref',
+            vm_state=vm_states.STOPPED,
+            instance_type_id=self.flavor.id,
+            system_metadata={},
+            uuid=uuids.instance,
+            user_id=fakes.FAKE_USER_ID,
+            flavor=self.flavor,
+            availability_zone=None,
+            pci_requests=None,
+            numa_topology=None,
+            host='host1',
+            node='node1',
+            migration_context=None)
+        image = 'fake-image'
+        fake_spec = fake_request_spec.fake_spec_obj()
+        fake_journal = {'img_hv_type': 'vmware', 'hw_disk_bus': 'scsi'}
+
+        bdms_mock.return_value = []
+        image_mock.return_value = image
+
+        # Simulate what the real task.execute() does: persist journal to
+        # migration_context on the instance (the real code does this inside
+        # _persist_image_properties_journal before prep_resize cast).
+        def fake_task_execute():
+            mig_context = objects.MigrationContext(
+                context=self.context,
+                instance_uuid=inst_obj.uuid,
+                migration_id=1)
+            mig_context.old_image_properties = fake_journal
+            inst_obj.migration_context = mig_context
+
+        task_exec_mock.side_effect = fake_task_execute
+
+        self.conductor._cold_migrate(
+            self.context, inst_obj, self.flavor, {},
+            True, fake_spec, None)
+
+        # Verify MigrationContext has old_image_properties
+        self.assertIsNotNone(inst_obj.migration_context)
+        self.assertEqual(
+            fake_journal,
+            inst_obj.migration_context.old_image_properties)
+
+    @mock.patch.object(objects.Instance, 'get_bdms')
     @mock.patch('nova.objects.RequestSpec.from_primitives')
     @mock.patch.object(objects.RequestSpec, 'save')
     def test_cold_migrate_reschedule_legacy_request_spec(

@@ -133,6 +133,35 @@ class MigrationTask(base.TaskBase):
         self._held_allocations = None
         self._source_cn = None
 
+    def _is_vmware_to_kvm_resize(self):
+        """Return True if this resize is specifically VMware to KVM.
+
+        Stub — always returns False until VMware-to-KVM detection is
+        implemented (see: Add Cross-Hypervisor Resize Detection and
+        Guardrails ticket).
+        """
+        return False
+
+    def _persist_image_properties_journal(self, migration):
+        """Persist old_image_properties to MigrationContext before scheduling.
+
+        Must be called before prep_resize cast so the destination's
+        _move_claim can preserve the journal when rebuilding MigrationContext.
+        """
+        if not self._old_image_properties:
+            return
+        if (self.instance.obj_attr_is_set('migration_context') and
+                self.instance.migration_context is not None):
+            mig_context = self.instance.migration_context
+        else:
+            mig_context = objects.MigrationContext(
+                context=self.context,
+                instance_uuid=self.instance.uuid,
+                migration_id=migration.id)
+        mig_context.old_image_properties = self._old_image_properties
+        self.instance.migration_context = mig_context
+        self.instance.save()
+
     def _preallocate_migration(self):
         # If this is a rescheduled migration, don't create a new record.
         migration_type = ("resize" if self.instance.flavor.id != self.flavor.id
@@ -283,6 +312,17 @@ class MigrationTask(base.TaskBase):
         self.request_spec.ensure_network_information(self.instance)
         compute_utils.heal_reqspec_is_bfv(
             self.context, self.request_spec, self.instance)
+        self._old_image_properties = {}
+        if self._is_vmware_to_kvm_resize():
+            # Sanitize VMware-pinning image properties so the scheduler
+            # can select KVM/CH hosts.
+            self._old_image_properties = (
+                compute_utils.sanitize_image_props_for_kvm(
+                    self.request_spec))
+            # Persist the rollback journal to MigrationContext BEFORE the
+            # prep_resize cast so the destination's _move_claim can
+            # preserve it when rebuilding MigrationContext.
+            self._persist_image_properties_journal(migration)
         # On an initial call to migrate, 'self.host_list' will be None, so we
         # have to call the scheduler to get a list of acceptable hosts to
         # migrate to. That list will consist of a selected host, along with

@@ -6049,6 +6049,25 @@ class ComputeManager(manager.Manager):
             network_info = self.network_api.get_instance_nw_info(context,
                                                                  instance)
 
+            # For cross-HV resize, restore system_metadata image properties
+            # from the MigrationContext journal before volume attachments and
+            # driver calls, so both see the original VMware-era values.
+            # NOTE: Do NOT remove cross_hv_resize marker here — the VMware
+            # driver needs it to route to the cross-HV revert branch.
+            # Markers are cleaned by the driver's confirm/revert handlers.
+            mig_ctx = instance.migration_context
+            if (mig_ctx and
+                    mig_ctx.obj_attr_is_set('old_image_properties') and
+                    mig_ctx.old_image_properties):
+                restore = (
+                    compute_utils.restore_image_props_from_cross_hv_journal)
+                changed = restore(sysmeta=instance.system_metadata,
+                                  old_image_properties=(
+                                      mig_ctx.old_image_properties))
+                if changed:
+                    instance.save(
+                        expected_task_state=task_states.RESIZE_REVERTING)
+
             # revert_resize deleted any volume attachments for the instance
             # and created new ones to be used on this host, but we
             # have to update those attachments with the host connector so the
@@ -6065,6 +6084,11 @@ class ComputeManager(manager.Manager):
             self.driver.finish_revert_migration(
                 context, instance, network_info, migration, block_device_info,
                 power_on)
+
+            # Clean cross-HV markers after driver has completed revert.
+            sys_meta = instance.system_metadata
+            for key in [k for k in sys_meta if k.startswith('cross_hv_')]:
+                del sys_meta[key]
 
             instance.drop_migration_context()
             instance.launched_at = timeutils.utcnow()
