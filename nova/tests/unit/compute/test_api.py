@@ -1885,6 +1885,7 @@ class _ComputeAPIUnitTestMixIn(object):
             mock_get_numa, same_flavor):
         params = dict(vm_state=vm_states.RESIZED)
         fake_inst = self._create_instance_obj(params=params)
+        fake_inst.migration_context = None
         fake_inst.info_cache.network_info = model.NetworkInfo([
             model.VIF(id=uuids.port1, profile={'allocation': uuids.rp})])
         fake_mig = objects.Migration._from_db_object(
@@ -1978,6 +1979,69 @@ class _ComputeAPIUnitTestMixIn(object):
         """
         self._test_revert_resize(same_flavor=True)
 
+    @mock.patch('nova.network.neutron.API.get_requested_resource_for_instance',
+                return_value=([], objects.RequestLevelParams()))
+    @mock.patch('nova.availability_zones.get_host_availability_zone',
+                return_value='nova')
+    @mock.patch('nova.objects.Quotas.check_deltas')
+    @mock.patch('nova.objects.Migration.get_by_instance_and_status')
+    @mock.patch('nova.context.RequestContext.elevated')
+    @mock.patch('nova.objects.RequestSpec.get_by_instance_uuid')
+    @mock.patch('nova.compute.utils.restore_image_props_from_cross_hv_journal',
+                wraps=compute_utils.restore_image_props_from_cross_hv_journal)
+    def test_revert_resize_cross_hv_restores_image_properties(
+            self, mock_restore, mock_get_reqspec, mock_elevated,
+            mock_get_migration, mock_check, mock_get_host_az,
+            mock_get_requested_resources):
+        """On cross-HV revert, request_spec.image.properties is restored."""
+        params = dict(vm_state=vm_states.RESIZED)
+        fake_inst = self._create_instance_obj(params=params)
+        fake_inst.info_cache.network_info = model.NetworkInfo([])
+        fake_inst.old_flavor = fake_inst.flavor
+        # Set up migration context with image property journal
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=fake_inst.uuid, migration_id=1)
+        mig_ctx.old_image_properties = {
+            'img_hv_type': 'vmware',
+            'hw_disk_bus': 'scsi',
+            'hw_vif_model': 'vmxnet3',
+            'image_hw_disk_bus': 'scsi',
+        }
+        fake_inst.migration_context = mig_ctx
+
+        fake_mig = objects.Migration._from_db_object(
+            self.context, objects.Migration(),
+            test_migration.fake_db_migration())
+        fake_reqspec = objects.RequestSpec(
+            image=objects.ImageMeta(
+                properties=objects.ImageMetaProps(
+                    hw_disk_bus='virtio',
+                    hw_vif_model='virtio')))
+        fake_reqspec.is_bfv = True
+        fake_reqspec.flavor = fake_inst.flavor
+
+        mock_elevated.return_value = self.context
+        mock_get_migration.return_value = fake_mig
+        mock_get_reqspec.return_value = fake_reqspec
+
+        with test.nested(
+            mock.patch.object(fake_reqspec, 'save'),
+            mock.patch.object(fake_inst, 'save'),
+            mock.patch.object(fake_mig, 'save'),
+            mock.patch.object(self.compute_api, '_record_action_start'),
+            mock.patch.object(self.compute_api.compute_rpcapi, 'revert_resize')
+        ):
+            self.compute_api.revert_resize(self.context, fake_inst)
+
+        # Verify reqspec image properties restored from journal
+        props = fake_reqspec.image.properties
+        self.assertEqual('vmware', props.img_hv_type)
+        self.assertEqual('scsi', props.hw_disk_bus)
+        self.assertEqual('vmxnet3', props.hw_vif_model)
+        mock_restore.assert_called_once_with(
+            request_spec=fake_reqspec,
+            old_image_properties=mig_ctx.old_image_properties)
+
     @mock.patch('nova.network.neutron.API.get_requested_resource_for_instance')
     @mock.patch('nova.availability_zones.get_host_availability_zone',
                 return_value='nova')
@@ -1990,6 +2054,7 @@ class _ComputeAPIUnitTestMixIn(object):
             mock_get_host_az, mock_get_requested_resources):
         params = dict(vm_state=vm_states.RESIZED)
         fake_inst = self._create_instance_obj(params=params)
+        fake_inst.migration_context = None
         fake_inst.info_cache.network_info = model.NetworkInfo([])
         fake_inst.old_flavor = fake_inst.flavor
         fake_mig = objects.Migration._from_db_object(
