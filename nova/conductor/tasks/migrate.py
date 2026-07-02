@@ -133,23 +133,12 @@ class MigrationTask(base.TaskBase):
         self._held_allocations = None
         self._source_cn = None
 
-    def _is_vmware_to_kvm_resize(self):
-        """Return True if this resize is specifically VMware to KVM.
-
-        Stub — always returns False until VMware-to-KVM detection is
-        implemented (see: Add Cross-Hypervisor Resize Detection and
-        Guardrails ticket).
-        """
-        return False
-
     def _persist_image_properties_journal(self, migration):
         """Persist old_image_properties to MigrationContext before scheduling.
 
         Must be called before prep_resize cast so the destination's
         _move_claim can preserve the journal when rebuilding MigrationContext.
         """
-        if not self._old_image_properties:
-            return
         if (self.instance.obj_attr_is_set('migration_context') and
                 self.instance.migration_context is not None):
             mig_context = self.instance.migration_context
@@ -313,12 +302,12 @@ class MigrationTask(base.TaskBase):
         compute_utils.heal_reqspec_is_bfv(
             self.context, self.request_spec, self.instance)
         self._old_image_properties = {}
-        if self._is_vmware_to_kvm_resize():
-            # Sanitize VMware-pinning image properties so the scheduler
-            # can select KVM/CH hosts.
-            self._old_image_properties = (
-                compute_utils.sanitize_image_props_for_kvm(
-                    self.request_spec))
+        src_hv = self._source_cn.hypervisor_type if self._source_cn else None
+        dest_hv = self.flavor.extra_specs.get('capabilities:hypervisor_type')
+        if dest_hv and (
+                not src_hv or
+                compute_utils.is_cross_hypervisor_resize(src_hv, dest_hv)):
+            self._prep_cross_hv_resize(src_hv, dest_hv)
             # Persist the rollback journal to MigrationContext BEFORE the
             # prep_resize cast so the destination's _move_claim can
             # preserve it when rebuilding MigrationContext.
@@ -377,6 +366,16 @@ class MigrationTask(base.TaskBase):
             request_spec=self.request_spec, filter_properties=legacy_props,
             node=node, clean_shutdown=self.clean_shutdown,
             host_list=self.host_list)
+
+    def _prep_cross_hv_resize(self, src_hv, dest_hv):
+        compute_utils.raise_on_unsupported_cross_hypervisor_resize(
+            self.context, self.instance, self.request_spec, src_hv, dest_hv)
+        # Sanitize VMware-pinning image properties so the scheduler
+        # can select KVM/CH hosts.
+        self._old_image_properties = (
+            compute_utils.sanitize_image_props_for_kvm(self.request_spec))
+        self.instance.system_metadata['cross_hv_resize'] = 'true'
+        self.instance.system_metadata['cross_hv_source_prepared'] = 'false'
 
     def _schedule(self):
         selection_lists = self.query_client.select_destinations(

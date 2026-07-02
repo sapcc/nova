@@ -2079,27 +2079,11 @@ class AcceleratorRequestTestCase(test.NoDBTestCase):
 class IsCrossHypervisorResizeTestCase(test.NoDBTestCase):
     """Tests for compute_utils.is_cross_hypervisor_resize."""
 
-    def _make_flavor(self, extra_specs=None):
-        flavor = objects.Flavor(
-            id=1, name='test', memory_mb=512, vcpus=1, root_gb=10,
-            ephemeral_gb=0, swap=0, rxtx_factor=1.0, flavorid='fakeid',
-            disabled=False, is_public=True,
-            extra_specs=extra_specs or {})
-        return flavor
-
     def test_source_is_none_returns_false(self):
         """If source hypervisor type is None, returns False."""
-        dest_flavor = self._make_flavor(
-            {'capabilities:hypervisor_type': 'QEMU'})
+        dest_flavor = 'QEMU'
         self.assertFalse(
             compute_utils.is_cross_hypervisor_resize(None, dest_flavor))
-
-    def test_dest_has_no_hv_spec_returns_false(self):
-        """If dest flavor has no hypervisor_type spec, returns False."""
-        dest_flavor = self._make_flavor({})
-        self.assertFalse(
-            compute_utils.is_cross_hypervisor_resize(
-                'VMware vCenter Server', dest_flavor))
 
     def test_detects_cross_hv_resize(self):
         """Cross-hypervisor transitions return True."""
@@ -2109,22 +2093,30 @@ class IsCrossHypervisorResizeTestCase(test.NoDBTestCase):
                 if src == dest:
                     continue
                 with self.subTest(src=src, dest=dest):
-                    dest_flavor = self._make_flavor(
-                        {'capabilities:hypervisor_type': dest})
                     self.assertTrue(
                         compute_utils.is_cross_hypervisor_resize(
-                            src, dest_flavor))
+                            src, dest))
 
     def test_same_hv_returns_false(self):
         """Same-hypervisor resizes return False."""
         hv_types = ['VMware vCenter Server', 'CH', 'ironic']
         for hv in hv_types:
             with self.subTest(hv=hv):
-                dest_flavor = self._make_flavor(
-                    {'capabilities:hypervisor_type': hv})
                 self.assertFalse(
                     compute_utils.is_cross_hypervisor_resize(
-                        hv, dest_flavor))
+                        hv, hv))
+
+    def test_supported_cross_hv_resize_vmware_to_ch(self):
+        self.assertTrue(compute_utils.is_supported_cross_hypervisor_resize(
+            'VMware vCenter Server', 'CH'))
+
+    def test_supported_cross_hv_resize_rejects_vmware_to_qemu(self):
+        self.assertFalse(compute_utils.is_supported_cross_hypervisor_resize(
+            'VMware vCenter Server', 'QEMU'))
+
+    def test_supported_cross_hv_resize_rejects_reverse(self):
+        self.assertFalse(compute_utils.is_supported_cross_hypervisor_resize(
+            'CH', 'VMware vCenter Server'))
 
 
 class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
@@ -2162,6 +2154,20 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
         self.assertEqual('virtio', old['hw_disk_bus'])
 
     def test_hw_scsi_model_removed_and_journaled(self):
+        reqspec = self._make_request_spec(hw_scsi_model='lsiLogic')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertFalse(
+            reqspec.image.properties.obj_attr_is_set('hw_scsi_model'))
+        self.assertEqual('lsilogic', old['hw_scsi_model'])
+
+    def test_hw_scsi_model_paravirtual_removed_and_journaled(self):
+        reqspec = self._make_request_spec(hw_scsi_model='paravirtual')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertFalse(
+            reqspec.image.properties.obj_attr_is_set('hw_scsi_model'))
+        self.assertEqual('vmpvscsi', old['hw_scsi_model'])
+
+    def test_hw_scsi_model_removes_valid_kvm_model(self):
         reqspec = self._make_request_spec(hw_scsi_model='virtio-scsi')
         old = compute_utils.sanitize_image_props_for_kvm(reqspec)
         self.assertFalse(
@@ -2178,6 +2184,12 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
         old = compute_utils.sanitize_image_props_for_kvm(reqspec)
         self.assertEqual('virtio', reqspec.image.properties.hw_vif_model)
         self.assertEqual('vmxnet3', old['hw_vif_model'])
+
+    def test_hw_vif_model_replaces_valid_kvm_model(self):
+        reqspec = self._make_request_spec(hw_vif_model='e1000')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_vif_model)
+        self.assertEqual('e1000', old['hw_vif_model'])
 
     def test_hw_video_model_replaced_with_virtio(self):
         reqspec = self._make_request_spec(hw_video_model='vmvga')
@@ -2196,7 +2208,7 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
     def test_returns_complete_journal(self):
         reqspec = self._make_request_spec(
             img_hv_type='vmware', hw_disk_bus='scsi',
-            hw_cdrom_bus='ide', hw_scsi_model='virtio-scsi',
+            hw_cdrom_bus='ide', hw_scsi_model='lsiLogic',
             hw_vif_model='vmxnet3', hw_video_model='vmvga',
             img_hv_requested_version='>=6.0')
         old = compute_utils.sanitize_image_props_for_kvm(reqspec)
@@ -2204,7 +2216,7 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
             'img_hv_type': 'vmware',
             'hw_disk_bus': 'scsi',
             'hw_cdrom_bus': 'ide',
-            'hw_scsi_model': 'virtio-scsi',
+            'hw_scsi_model': 'lsilogic',
             'hw_vif_model': 'vmxnet3',
             'hw_video_model': 'vmvga',
             'img_hv_requested_version': '>=6.0',
@@ -2226,17 +2238,17 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
         self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
         self.assertEqual('ide', old['hw_cdrom_bus'])
 
+    def test_hw_cdrom_bus_virtio_still_journaled(self):
+        reqspec = self._make_request_spec(hw_cdrom_bus='virtio')
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
+        self.assertEqual('virtio', old['hw_cdrom_bus'])
+
     def test_hw_cdrom_bus_sata_replaced_with_virtio(self):
         reqspec = self._make_request_spec(hw_cdrom_bus='sata')
         old = compute_utils.sanitize_image_props_for_kvm(reqspec)
         self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
         self.assertEqual('sata', old['hw_cdrom_bus'])
-
-    def test_hw_cdrom_bus_already_virtio_still_journaled(self):
-        reqspec = self._make_request_spec(hw_cdrom_bus='virtio')
-        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
-        self.assertEqual('virtio', reqspec.image.properties.hw_cdrom_bus)
-        self.assertEqual('virtio', old['hw_cdrom_bus'])
 
     def test_img_hv_requested_version_removed_and_journaled(self):
         reqspec = self._make_request_spec(
