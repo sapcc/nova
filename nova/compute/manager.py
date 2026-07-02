@@ -6075,6 +6075,9 @@ class ComputeManager(manager.Manager):
             # _get_instance_block_device_info below with refresh_conn_info=True
             # and then the volumes can be re-connected via the driver on this
             # host.
+            if instance.system_metadata.get('cross_hv_resize') == 'true':
+                self._translate_cross_hv_device_names(
+                    instance, bdms, '/dev/vd', '/dev/sd')
             self._update_volume_attachments(context, instance, bdms)
 
             block_device_info = self._get_instance_block_device_info(
@@ -6810,6 +6813,26 @@ class ComputeManager(manager.Manager):
                         context, bdm.attachment_id, connector, bdm.volume_id,
                         bdm.device_name)
 
+    @staticmethod
+    def _translate_device_name_prefix(device_name, old_prefix, new_prefix):
+        if device_name and device_name.startswith(old_prefix):
+            return new_prefix + device_name[len(old_prefix):]
+        return device_name
+
+    def _translate_cross_hv_device_names(self, instance, bdms, old_prefix,
+                                         new_prefix):
+        root_device_name = self._translate_device_name_prefix(
+            instance.root_device_name, old_prefix, new_prefix)
+        if root_device_name != instance.root_device_name:
+            instance.root_device_name = root_device_name
+
+        for bdm in bdms:
+            device_name = self._translate_device_name_prefix(
+                bdm.device_name, old_prefix, new_prefix)
+            if device_name != bdm.device_name:
+                bdm.device_name = device_name
+                bdm.save()
+
     def _complete_volume_attachments(self, context, bdms):
         """Completes volume attachments for the instance
 
@@ -6877,6 +6900,9 @@ class ComputeManager(manager.Manager):
         # Note that _get_instance_block_device_info with
         # refresh_conn_info=True will update the BDM.connection_info value
         # in the database so we must do this before calling that method.
+        if instance.system_metadata.get('cross_hv_resize') == 'true':
+            self._translate_cross_hv_device_names(
+                instance, bdms, '/dev/sd', '/dev/vd')
         self._update_volume_attachments(context, instance, bdms)
 
         block_device_info = self._get_instance_block_device_info(

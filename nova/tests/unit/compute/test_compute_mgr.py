@@ -11370,6 +11370,124 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         do_revert_resize()
         do_finish_revert_resize()
 
+    def test_finish_resize_cross_hv_translates_bdm_device_names(self):
+        self.instance.system_metadata['cross_hv_resize'] = 'true'
+        self.instance.root_device_name = '/dev/sda'
+        self.instance.migration_context = objects.MigrationContext()
+        self.instance.task_state = task_states.RESIZE_MIGRATED
+        self.migration.old_instance_type_id = self.instance.flavor.id
+        self.migration.new_instance_type_id = self.instance.flavor.id
+
+        root_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.root_attachment,
+            volume_id=uuids.root_volume, device_name='/dev/sda')
+        data_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.data_attachment,
+            volume_id=uuids.data_volume, device_name='/dev/sdb')
+        bdms = objects.BlockDeviceMappingList(objects=[root_bdm, data_bdm])
+        for bdm in bdms:
+            bdm.save = mock.Mock()
+
+        with test.nested(
+            mock.patch.object(self.compute.network_api,
+                              'setup_networks_on_host'),
+            mock.patch.object(self.compute.network_api,
+                              'migrate_instance_finish'),
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info', return_value='nw'),
+            mock.patch.object(self.compute,
+                              '_send_finish_resize_notifications'),
+            mock.patch.object(self.instance, 'save'),
+            mock.patch.object(self.compute, '_get_instance_block_device_info',
+                              return_value='bdi'),
+            mock.patch.object(self.compute.driver, 'finish_migration'),
+            mock.patch.object(self.compute.reportclient,
+                              'get_allocs_for_consumer',
+                              return_value={'allocations': {}}),
+            mock.patch.object(self.compute.driver, 'get_volume_connector',
+                              return_value='connector'),
+            mock.patch.object(self.compute.volume_api, 'attachment_update'),
+            mock.patch.object(self.compute.volume_api, 'attachment_complete')
+        ) as (_setup_networks, _migrate_finish, _get_nw, _notify,
+              _instance_save, _get_bdi, _finish_migration, _get_allocs,
+              _get_connector, attachment_update, _attachment_complete):
+            self.compute._finish_resize(
+                self.context, self.instance, self.migration, '[]',
+                objects.ImageMeta.from_dict({}), bdms, objects.RequestSpec())
+
+        self.assertEqual('/dev/vda', self.instance.root_device_name)
+        self.assertEqual('/dev/vda', root_bdm.device_name)
+        self.assertEqual('/dev/vdb', data_bdm.device_name)
+        root_bdm.save.assert_called_once_with()
+        data_bdm.save.assert_called_once_with()
+        self.assertEqual([
+            mock.call(self.context, uuids.root_attachment, 'connector',
+                      uuids.root_volume, '/dev/vda'),
+            mock.call(self.context, uuids.data_attachment, 'connector',
+                      uuids.data_volume, '/dev/vdb')],
+            attachment_update.call_args_list)
+
+    def test_finish_revert_resize_cross_hv_translates_bdm_device_names(self):
+        self.instance.system_metadata['cross_hv_resize'] = 'true'
+        self.instance.root_device_name = '/dev/vda'
+        self.instance.migration_context = objects.MigrationContext()
+        self.instance.old_flavor = fake_flavor.fake_flavor_obj(self.context)
+        self.migration.source_compute = self.instance.host
+        self.migration.source_node = self.instance.node
+        self.compute.rt.compute_nodes[self.migration.source_node] = (
+            mock.MagicMock(id=123,
+                           hypervisor_hostname=self.migration.source_node))
+
+        root_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.root_attachment,
+            volume_id=uuids.root_volume, device_name='/dev/vda')
+        data_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.data_attachment,
+            volume_id=uuids.data_volume, device_name='/dev/vdb')
+        bdms = objects.BlockDeviceMappingList(objects=[root_bdm, data_bdm])
+        for bdm in bdms:
+            bdm.save = mock.Mock()
+
+        with test.nested(
+            mock.patch.object(objects.BlockDeviceMappingList,
+                              'get_by_instance_uuid', return_value=bdms),
+            mock.patch.object(self.compute, '_revert_allocation',
+                              return_value={}),
+            mock.patch.object(self.compute.network_api,
+                              'setup_networks_on_host'),
+            mock.patch.object(self.compute.network_api,
+                              'migrate_instance_finish'),
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info', return_value='nw'),
+            mock.patch.object(self.compute, '_get_instance_block_device_info',
+                              return_value='bdi'),
+            mock.patch.object(self.compute.driver, 'finish_revert_migration'),
+            mock.patch.object(self.compute.driver, 'get_volume_connector',
+                              return_value='connector'),
+            mock.patch.object(self.compute.volume_api, 'attachment_update'),
+            mock.patch.object(self.compute.volume_api, 'attachment_complete'),
+            mock.patch.object(self.instance, 'save'),
+            mock.patch.object(self.instance, 'drop_migration_context')
+        ) as (_get_bdms, _revert_alloc, _setup_networks, _migrate_finish,
+              _get_nw, _get_bdi, _finish_revert, _get_connector,
+              attachment_update, _attachment_complete, _instance_save,
+              _drop_migration_context):
+            self.compute._finish_revert_resize(
+                self.context, self.instance, self.migration,
+                request_spec=objects.RequestSpec())
+
+        self.assertEqual('/dev/sda', self.instance.root_device_name)
+        self.assertEqual('/dev/sda', root_bdm.device_name)
+        self.assertEqual('/dev/sdb', data_bdm.device_name)
+        root_bdm.save.assert_called_once_with()
+        data_bdm.save.assert_called_once_with()
+        self.assertEqual([
+            mock.call(self.context, uuids.root_attachment, 'connector',
+                      uuids.root_volume, '/dev/sda'),
+            mock.call(self.context, uuids.data_attachment, 'connector',
+                      uuids.data_volume, '/dev/sdb')],
+            attachment_update.call_args_list)
+
     @mock.patch.object(objects.Instance, 'drop_migration_context')
     @mock.patch('nova.network.neutron.API.migrate_instance_finish')
     @mock.patch('nova.scheduler.utils.'
