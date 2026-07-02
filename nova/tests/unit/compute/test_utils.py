@@ -2139,6 +2139,12 @@ class AcceleratorRequestTestCase(test.NoDBTestCase):
 class IsCrossHypervisorResizeTestCase(test.NoDBTestCase):
     """Tests for compute_utils.is_cross_hypervisor_resize."""
 
+    def _valid_cross_hv_request(self):
+        request_spec = objects.RequestSpec(is_bfv=True)
+        instance = fake_instance.fake_instance_obj(
+            context.get_admin_context(), power_state=power_state.RUNNING)
+        return request_spec, instance
+
     def test_source_is_none_returns_false(self):
         """If source hypervisor type is None, returns False."""
         dest_flavor = 'QEMU'
@@ -2177,6 +2183,23 @@ class IsCrossHypervisorResizeTestCase(test.NoDBTestCase):
     def test_supported_cross_hv_resize_rejects_reverse(self):
         self.assertFalse(compute_utils.is_supported_cross_hypervisor_resize(
             'CH', 'VMware vCenter Server'))
+
+    def test_cross_hv_resize_rejected_when_feature_flag_disabled(self):
+        request_spec, instance = self._valid_cross_hv_request()
+
+        self.assertRaises(
+            exception.InvalidCrossHvResize,
+            compute_utils.raise_on_unsupported_cross_hypervisor_resize,
+            context.get_admin_context(), instance, request_spec,
+            'VMware vCenter Server', 'CH')
+
+    def test_cross_hv_resize_allowed_when_feature_flag_enabled(self):
+        self.flags(enable_cross_hv_resize=True, group='workarounds')
+        request_spec, instance = self._valid_cross_hv_request()
+
+        compute_utils.raise_on_unsupported_cross_hypervisor_resize(
+            context.get_admin_context(), instance, request_spec,
+            'VMware vCenter Server', 'CH')
 
 
 class TestSanitizeImagePropsForKvm(test.NoDBTestCase):

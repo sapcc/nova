@@ -1910,6 +1910,11 @@ def raise_on_unsupported_cross_hypervisor_resize(context,
         cross hypervisor resize are not met even though source and destination
         hypervisor are valid.
     """
+    if not CONF.workarounds.enable_cross_hv_resize:
+        raise exception.InvalidCrossHvResize(
+            src_hv_type=source_hypervisor_type,
+            dest_hv_type=dest_hypervisor_type)
+
     if is_supported_cross_hypervisor_resize(
             source_hypervisor_type, dest_hypervisor_type):
         bfv = request_spec.is_bfv if "is_bfv" in request_spec else \
