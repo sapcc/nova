@@ -4332,15 +4332,15 @@ class API:
 
         source_hv_type = current_flavor.extra_specs.get(
             'capabilities:hypervisor_type')
+        dest_hv_type = new_flavor.extra_specs.get(
+                'capabilities:hypervisor_type')
+        request_spec = objects.RequestSpec.get_by_instance_uuid(
+            context, instance.uuid)
         if compute_utils.is_cross_hypervisor_resize(
-                source_hv_type, new_flavor):
-            # TODO(KVMotion): When specific transitions are allowed (e.g.
-            # VMware->KVM), replace this blanket rejection with an allow-list
-            # check and let permitted transitions through to the conductor
-            raise exception.InvalidCrossHvResize(
-                src_hv_type=source_hv_type,
-                dest_hv_type=new_flavor.extra_specs.get(
-                    'capabilities:hypervisor_type'))
+                source_hv_type, dest_hv_type):
+            compute_utils.raise_on_unsupported_cross_hypervisor_resize(
+                    context, instance, request_spec,
+                    source_hv_type, dest_hv_type)
 
         # ensure there is sufficient headroom for upsizes
         if flavor_id:
@@ -4390,8 +4390,6 @@ class API:
         if not self._allow_resize_to_same_host(same_flavor, instance):
             filter_properties['ignore_hosts'].append(instance.host)
 
-        request_spec = objects.RequestSpec.get_by_instance_uuid(
-            context, instance.uuid)
         request_spec.ignore_hosts = filter_properties['ignore_hosts']
 
         # don't recalculate the NUMA topology unless the flavor has changed
