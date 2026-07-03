@@ -11526,6 +11526,48 @@ class LibvirtDriver(driver.ComputeDriver):
                               'over_committed_disk_size': over_commit_size})
         return disk_info
 
+    def _get_instance_disk_info_from_dir(self, instance):
+        """Build disk_info by scanning the instance directory on disk.
+
+        Used as a fallback when the libvirt domain no longer exists (e.g. on
+        a cold migration/resize retry) but the disk files are still present.
+        """
+
+        # Assuming the instance path should not change on the source host.
+        inst_base = libvirt_utils.get_instance_path(instance)
+
+        disk_info = []
+        # Covers all persistent disk types from blockinfo.py.
+        # disk.swap (recreated on dest) and disk.rescue are excluded.
+        for pattern in ('disk', 'disk.local', 'disk.eph*', 'disk.config'):
+            for path in glob.glob(os.path.join(inst_base, pattern)):
+                if not os.path.isfile(path):
+                    continue
+
+                try:
+                    qemu_info = disk_api.get_disk_info(path)
+                    backing_file = libvirt_utils.get_disk_backing_file(path)
+                except Exception as e:
+                    raise exception.MigrationError(
+                        reason=_('Failed to get disk info for %s') % path
+                    ) from e
+
+                driver_format = qemu_info.file_format
+                virt_size = qemu_info.virtual_size
+                dk_size = qemu_info.disk_size
+                over_commit_size = max(0, int(virt_size) - dk_size)
+
+                disk_info.append({
+                    'type': driver_format,
+                    'path': path,
+                    'virt_disk_size': virt_size,
+                    'backing_file': backing_file,
+                    'disk_size': dk_size,
+                    'over_committed_disk_size': over_commit_size,
+                })
+
+        return disk_info
+
     def _get_instance_disk_info(self, instance, block_device_info):
         try:
             guest = self._host.get_guest(instance)
@@ -11795,7 +11837,15 @@ class LibvirtDriver(driver.ComputeDriver):
             connection_info = vol['connection_info']
             self._disconnect_volume(context, connection_info, instance)
 
-        disk_info = self._get_instance_disk_info(instance, block_device_info)
+        try:
+            disk_info = self._get_instance_disk_info(instance,
+                                                     block_device_info)
+        except exception.InstanceNotFound:
+            LOG.warning('Domain not found, falling back to directory scan '
+                      'for disk info.', instance=instance)
+            # CONF.instances_path is assumed stable across deployments.
+            # So we can fall back to scanning the instance directory.
+            disk_info = self._get_instance_disk_info_from_dir(instance)
 
         try:
             # If cleanup failed in previous resize attempts we try to remedy

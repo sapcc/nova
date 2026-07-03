@@ -18580,6 +18580,126 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         self.assertEqual(expected_over_committed_disk_size,
                          disk_info[0]['over_committed_disk_size'])
 
+    @mock.patch('nova.virt.libvirt.utils.get_instance_path',
+                return_value='/fake/instances/fake-uuid')
+    @mock.patch('os.path.isfile', return_value=True)
+    @mock.patch('glob.glob')
+    @mock.patch('nova.virt.libvirt.utils.get_disk_backing_file',
+                return_value='/fake/base/abc123')
+    @mock.patch('nova.virt.disk.api.get_disk_info')
+    def test_get_instance_disk_info_from_dir(
+            self, mock_disk_info, mock_backing_file, mock_glob,
+            mock_isfile, mock_inst_path):
+        """root disk + ephemeral disk are both included in the result."""
+        base = '/fake/instances/fake-uuid'
+        disk_path = base + '/disk'
+        eph_path = base + '/disk.local'
+        disk_eph_path = base + '/disk.eph*'
+        disk_config_path = base + '/disk.config'
+
+        def glob_side_effect(pattern):
+            if pattern.endswith('/disk'):
+                return [disk_path]
+            if pattern.endswith('/disk.local'):
+                return [eph_path]
+            if pattern.endswith('/disk.eph*'):
+                return [disk_eph_path]
+            if pattern.endswith('/disk.config'):
+                return [disk_config_path]
+            return []
+
+        mock_glob.side_effect = glob_side_effect
+        mock_disk_info.return_value = mock.Mock(
+            file_format='qcow2',
+            virtual_size=10737418240,
+            disk_size=1073741824)
+
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        instance = objects.Instance(**self.test_instance)
+        disk_info = drvr._get_instance_disk_info_from_dir(instance)
+
+        self.assertEqual(4, len(disk_info))
+        paths = {d['path'] for d in disk_info}
+        self.assertIn(disk_path, paths)
+        self.assertIn(eph_path, paths)
+        self.assertIn(disk_eph_path, paths)
+        self.assertIn(disk_config_path, paths)
+
+        expected_paths = [
+            disk_path, eph_path, disk_eph_path, disk_config_path]
+        for i, pattern in enumerate(expected_paths):
+            self.assertEqual('qcow2', disk_info[i]['type'])
+            self.assertEqual(pattern, disk_info[i]['path'])
+            self.assertEqual(
+                '/fake/base/abc123', disk_info[i]['backing_file'])
+            self.assertEqual(10737418240, disk_info[i]['virt_disk_size'])
+            self.assertEqual(1073741824, disk_info[i]['disk_size'])
+            self.assertEqual(
+                9663676416, disk_info[i]['over_committed_disk_size'])
+
+    @mock.patch('nova.virt.libvirt.utils.get_instance_path',
+                return_value='/fake/instances/fake-uuid')
+    @mock.patch('glob.glob', return_value=[])
+    def test_get_instance_disk_info_from_dir_empty(
+            self, mock_glob, mock_inst_path):
+        """Empty instance directory (e.g. boot-from-volume) returns []."""
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        instance = objects.Instance(**self.test_instance)
+        disk_info = drvr._get_instance_disk_info_from_dir(instance)
+        self.assertEqual([], disk_info)
+
+    @mock.patch('nova.virt.libvirt.utils.get_instance_path',
+                return_value='/fake/instances/fake-uuid')
+    @mock.patch('os.path.isfile', return_value=True)
+    @mock.patch('glob.glob',
+                return_value=['/fake/instances/fake-uuid/disk'])
+    @mock.patch('nova.virt.disk.api.get_disk_info',
+                side_effect=Exception('qemu-img failed'))
+    def test_get_instance_disk_info_from_dir_get_disk_info_fails(
+            self, mock_disk_info, mock_glob,
+            mock_isfile, mock_inst_path):
+        """get_disk_info failure raises MigrationError."""
+
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        instance = objects.Instance(**self.test_instance)
+        self.assertRaises(exception.MigrationError,
+                          drvr._get_instance_disk_info_from_dir, instance)
+
+    @mock.patch('nova.virt.libvirt.utils.get_instance_path',
+                return_value='/fake/instances/fake-uuid')
+    @mock.patch('os.path.isfile', return_value=True)
+    @mock.patch('glob.glob',
+                return_value=['/fake/instances/fake-uuid/disk'])
+    @mock.patch('nova.virt.libvirt.utils.get_disk_backing_file',
+                side_effect=Exception('backing file lookup failed'))
+    @mock.patch('nova.virt.disk.api.get_disk_info')
+    def test_get_instance_disk_info_from_dir_backing_file_fails(
+            self, mock_disk_info, mock_backing_file, mock_glob,
+            mock_isfile, mock_inst_path):
+        """get_disk_backing_file failure raises MigrationError."""
+        mock_disk_info.return_value = mock.Mock(
+            file_format='qcow2',
+            virtual_size=10737418240,
+            disk_size=1073741824)
+
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        instance = objects.Instance(**self.test_instance)
+        self.assertRaises(exception.MigrationError,
+                          drvr._get_instance_disk_info_from_dir, instance)
+
+    @mock.patch('nova.virt.libvirt.utils.get_instance_path',
+                return_value='/fake/instances/fake-uuid')
+    @mock.patch('os.path.isfile', return_value=False)
+    @mock.patch('glob.glob',
+                return_value=['/fake/instances/fake-uuid/disk'])
+    def test_get_instance_disk_info_from_dir_non_file_skipped(
+            self, mock_glob, mock_isfile, mock_inst_path):
+        """Glob matches that are not regular files (e.g. dirs) are skipped."""
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        instance = objects.Instance(**self.test_instance)
+        disk_info = drvr._get_instance_disk_info_from_dir(instance)
+        self.assertEqual([], disk_info)
+
     def test_cpu_info(self):
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
 
