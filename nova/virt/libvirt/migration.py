@@ -546,6 +546,10 @@ def _update_vif_xml(xml_doc, migrate_data, get_vif_config):
         # can't change during live migration.
         address = interface_dev.find('address')
         mtu = interface_dev.find('mtu')
+        queues = None
+        driver = interface_dev.find('driver')
+        if driver is not None:
+            queues = driver.get('queues')
         # Now clear the interface's current elements and insert everything
         # from the destination vif config xml.
         interface_dev.clear()
@@ -558,6 +562,8 @@ def _update_vif_xml(xml_doc, migrate_data, get_vif_config):
             #               the live migration will crash.
             if dest_interface_subelem.tag == 'mtu' and mtu is None:
                 continue
+            if dest_interface_subelem.tag == 'driver' and queues is not None:
+                dest_interface_subelem.set('queues', queues)
             interface_dev.insert(index, dest_interface_subelem)
         # And finally re-insert the hw address.
         interface_dev.insert(index + 1, address)
