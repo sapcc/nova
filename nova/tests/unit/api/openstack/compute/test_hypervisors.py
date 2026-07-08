@@ -1038,7 +1038,8 @@ class HypervisorsTestV253(HypervisorsTestV252):
 
     def test_show_with_servers(self):
         """Tests the show() result when servers are included in the output."""
-        instances = [(uuids.hyper1_instance1, "instance-00000001")]
+        instances = objects.InstanceList(objects=[objects.Instance(
+            id=1, uuid=uuids.hyper1_instance1)])
         hyper_id = self._get_hyper_id()
         req = self._get_request(
             use_admin_context=True,
