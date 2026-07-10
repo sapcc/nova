@@ -78,7 +78,7 @@ class VirtualInterfaceListMigrationTestCase(
 
         instances = []
         with context.target_cell(self.context, target_cell) as cctxt:
-            flav_dict = objects.Flavor._flavor_get_from_db(cctxt, 1)
+            flav_dict = objects.Flavor._flavor_get_from_db(cctxt, 1, False)
             flavor = objects.Flavor(**flav_dict)
             for i in range(0, total):
                 inst = objects.Instance(

@@ -15,6 +15,7 @@ from nova.db.api import api as api_db_api
 from nova.db.api import models as api_models
 from nova import exception
 from nova import objects
+from nova.objects import fields
 from nova import test
 from nova.tests import fixtures
 
@@ -53,7 +54,8 @@ class FlavorObjectTestCase(test.NoDBTestCase):
         self.assertIn('id', flavor)
 
         # Make sure we find this in the API database
-        flavor2 = objects.Flavor._flavor_get_from_db(self.context, flavor.id)
+        flavor2 = objects.Flavor._flavor_get_from_db(self.context, flavor.id,
+                                                     False)
         self.assertEqual(flavor.id, flavor2['id'])
 
     def test_get_with_no_projects(self):
@@ -175,3 +177,105 @@ class FlavorObjectTestCase(test.NoDBTestCase):
         flavor.create()
         self.assertRaises(exception.MarkerNotFound,
                           self._test_get_all, 2, marker='noflavoratall')
+
+
+class FlavorPermissionRuleFilterTestCase(test.NoDBTestCase):
+    """Tests for the flavor permission rule filtering in
+    _flavor_get_query_from_db.
+
+    Uses a non-admin context with both project_id and project_domain_id set.
+    All flavors are public so the is_public filter never blocks visibility --
+    only permission rules are tested here.
+    """
+    USES_DB_SELF = True
+
+    PROJECT_ID = 'fake-project'
+    DOMAIN_ID = 'fake-domain'
+    ALLOW = fields.FlavorPermissionRuleEffect.ALLOW
+    DENY = fields.FlavorPermissionRuleEffect.DENY
+
+    def _get_context(self, include_domain=True):
+        return context.RequestContext(
+            'fake-user', self.PROJECT_ID,
+            project_domain_id=self.DOMAIN_ID if include_domain else None)
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(fixtures.Database())
+        self.useFixture(fixtures.Database(database='api'))
+        self.context = self._get_context()
+        flavor = objects.Flavor(context=self.context,
+                                **dict(fake_api_flavor, is_public=True))
+        flavor.create()
+        self.flavor = flavor
+
+    def _create_rule(self, domain_id, effect, project_id=None,
+                     flavor_id=None):
+        rule = objects.FlavorPermissionRule(
+            context=self.context,
+            domain_id=domain_id,
+            project_id=project_id,
+            effect=effect,
+            flavor_id=flavor_id,
+        )
+        rule.create()
+        return rule
+
+    def _flavor_visible(self, skip_project_fprs=False, context=None):
+        flavors = objects.FlavorList.get_all(
+            context or self.context,
+            skip_project_fprs=skip_project_fprs)
+        return any(f.id == self.flavor.id for f in flavors)
+
+    def test_no_rules_flavor_accessible(self):
+        self.assertTrue(self._flavor_visible())
+
+    def test_domain_specific_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        self.assertFalse(self._flavor_visible())
+        # skip_project_fprs only bypasses project-level denial
+        self.assertFalse(self._flavor_visible(skip_project_fprs=True))
+
+    def test_domain_default_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY)
+        self.assertFalse(self._flavor_visible())
+        # skip_project_fprs only bypasses project-level denial
+        self.assertFalse(self._flavor_visible(skip_project_fprs=True))
+
+    def test_domain_default_deny_overridden_by_specific_allow(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY)
+        self._create_rule(self.DOMAIN_ID, self.ALLOW, flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible())
+
+    def test_project_specific_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        self.assertFalse(self._flavor_visible())
+        self.assertTrue(self._flavor_visible(skip_project_fprs=True))
+
+    def test_project_default_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, project_id=self.PROJECT_ID)
+        self.assertFalse(self._flavor_visible())
+        self.assertTrue(self._flavor_visible(skip_project_fprs=True))
+
+    def test_project_default_deny_overridden_by_specific_allow(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, project_id=self.PROJECT_ID)
+        self._create_rule(self.DOMAIN_ID, self.ALLOW, project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible())
+
+    def test_no_domain_id_in_context_skips_domain_filter(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible(
+            context=self._get_context(include_domain=False)))
+
+    def test_deny_for_other_project_does_not_affect_visibility(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, project_id='other-project',
+                          flavor_id=self.flavor.id)
+        self._create_rule(self.DOMAIN_ID, self.DENY, project_id='other-project')
+        self.assertTrue(self._flavor_visible())
+
+    def test_deny_for_other_domain_does_not_affect_visibility(self):
+        self._create_rule('other-domain', self.DENY, flavor_id=self.flavor.id)
+        self._create_rule('other-domain', self.DENY)
+        self.assertTrue(self._flavor_visible())

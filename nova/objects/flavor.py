@@ -310,7 +310,42 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
         return flavor
 
     @staticmethod
-    def _flavor_get_query_from_db(context):
+    def _flavor_not_denied_by_permission_rules(
+            project_id: str,
+            scope: str,
+    ) -> sa.sql.ColumnElement:
+        """Return a WHERE clause that is true when the flavor is not denied.
+
+        A flavor is denied for project_id at the given scope if:
+        - There is a 'deny' rule matching the flavor_id, OR
+        - There is a 'deny' rule with flavor_id=-1 (default deny) AND there
+          is no 'allow' rule matching the flavor_id.
+        """
+        FPR = api_models.FlavorPermissionRule
+        if scope == fields.FlavorPermissionRuleScope.DOMAIN:
+            scope_filter = sa.and_(
+                FPR.domain_id == project_id, FPR.project_id == '')
+        else:
+            scope_filter = FPR.project_id == project_id
+        specific_deny = sa.exists().where(sa.and_(
+            scope_filter,
+            FPR.effect == 'deny',
+            FPR.flavor_id == api_models.Flavors.id,
+        ))
+        default_deny = sa.exists().where(sa.and_(
+            scope_filter,
+            FPR.effect == 'deny',
+            FPR.flavor_id == -1,
+        ))
+        specific_allow = sa.exists().where(sa.and_(
+            scope_filter,
+            FPR.effect == 'allow',
+            FPR.flavor_id == api_models.Flavors.id,
+        ))
+        return ~sa.or_(specific_deny, sa.and_(default_deny, ~specific_allow))
+
+    @staticmethod
+    def _flavor_get_query_from_db(context, skip_project_fprs):
         # We don't use a database context decorator on this method because this
         # method is not executing a query, it's only building one.
         query = context.session.query(api_models.Flavors).options(
@@ -322,16 +357,28 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
                 api_models.Flavors.projects.any(project_id=context.project_id)
             ])
             query = query.filter(sa.or_(*the_filter))
+            if context.project_domain_id:
+                query = query.filter(
+                    Flavor._flavor_not_denied_by_permission_rules(
+                        context.project_domain_id,
+                        fields.FlavorPermissionRuleScope.DOMAIN))
+            if not skip_project_fprs and context.project_id:
+                query = query.filter(
+                    Flavor._flavor_not_denied_by_permission_rules(
+                        context.project_id,
+                        fields.FlavorPermissionRuleScope.PROJECT))
+
         return query
 
     @staticmethod
     @db_utils.require_context
     @api_db_api.context_manager.reader
-    def _flavor_get_from_db(context, id):
+    def _flavor_get_from_db(context, id, skip_project_fprs):
         """Returns a dict describing specific flavor."""
-        result = Flavor._flavor_get_query_from_db(context).\
-                        filter_by(id=id).\
-                        first()
+        result = Flavor._flavor_get_query_from_db(
+            context, skip_project_fprs=skip_project_fprs).\
+            filter_by(id=id).\
+            first()
         if not result:
             raise exception.FlavorNotFound(flavor_id=id)
         return _dict_with_extra_specs(result)
@@ -339,11 +386,12 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
     @staticmethod
     @db_utils.require_context
     @api_db_api.context_manager.reader
-    def _flavor_get_by_name_from_db(context, name):
+    def _flavor_get_by_name_from_db(context, name, skip_project_fprs):
         """Returns a dict describing specific flavor."""
-        result = Flavor._flavor_get_query_from_db(context).\
-                            filter_by(name=name).\
-                            first()
+        result = Flavor._flavor_get_query_from_db(
+            context, skip_project_fprs=skip_project_fprs).\
+            filter_by(name=name).\
+            first()
         if not result:
             raise exception.FlavorNotFoundByName(flavor_name=name)
         return _dict_with_extra_specs(result)
@@ -351,13 +399,15 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
     @staticmethod
     @db_utils.require_context
     @api_db_api.context_manager.reader
-    def _flavor_get_by_flavor_id_from_db(context, flavor_id):
+    def _flavor_get_by_flavor_id_from_db(context, flavor_id,
+                                         skip_project_fprs):
         """Returns a dict describing specific flavor_id."""
         flavor_id = _unaliased_flavor_id(flavor_id)
-        result = Flavor._flavor_get_query_from_db(context).\
-                        filter_by(flavorid=flavor_id).\
-                        order_by(expression.asc(api_models.Flavors.id)).\
-                        first()
+        result = Flavor._flavor_get_query_from_db(
+            context, skip_project_fprs=skip_project_fprs).\
+            filter_by(flavorid=flavor_id).\
+            order_by(expression.asc(api_models.Flavors.id)).\
+            first()
         if not result:
             raise exception.FlavorNotFound(flavor_id=flavor_id)
         return _dict_with_extra_specs(result)
@@ -420,21 +470,24 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
         return self
 
     @base.remotable_classmethod
-    def get_by_id(cls, context, id):
-        db_flavor = cls._flavor_get_from_db(context, id)
+    def get_by_id(cls, context, id, skip_project_fprs=False):
+        db_flavor = cls._flavor_get_from_db(
+            context, id, skip_project_fprs=skip_project_fprs)
         return cls._from_db_object(context, cls(context), db_flavor,
                                    expected_attrs=['extra_specs'])
 
     @base.remotable_classmethod
-    def get_by_name(cls, context, name):
-        db_flavor = cls._flavor_get_by_name_from_db(context, name)
+    def get_by_name(cls, context, name, skip_project_fprs=False):
+        db_flavor = cls._flavor_get_by_name_from_db(
+            context, name, skip_project_fprs=skip_project_fprs)
         return cls._from_db_object(context, cls(context), db_flavor,
                                    expected_attrs=['extra_specs'])
 
     @base.remotable_classmethod
-    def get_by_flavor_id(cls, context, flavor_id, read_deleted=None):
-        db_flavor = cls._flavor_get_by_flavor_id_from_db(context,
-                                                         flavor_id)
+    def get_by_flavor_id(cls, context, flavor_id, read_deleted=None,
+                         skip_project_fprs=False):
+        db_flavor = cls._flavor_get_by_flavor_id_from_db(
+            context, flavor_id, skip_project_fprs=skip_project_fprs)
         return cls._from_db_object(context, cls(context), db_flavor,
                                    expected_attrs=['extra_specs'])
 
@@ -632,12 +685,13 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
 
 @api_db_api.context_manager.reader
 def _flavor_get_all_from_db(context, inactive, filters, sort_key, sort_dir,
-                            limit, marker):
+                            limit, marker, skip_project_fprs):
     """Returns all flavors.
     """
     filters = filters or {}
 
-    query = Flavor._flavor_get_query_from_db(context)
+    query = Flavor._flavor_get_query_from_db(
+        context, skip_project_fprs=skip_project_fprs)
 
     if 'min_memory_mb' in filters:
         query = query.filter(
@@ -692,21 +746,20 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
 
     @base.remotable_classmethod
     def get_all(cls, context, inactive=False, filters=None,
-                sort_key='flavorid', sort_dir='asc', limit=None, marker=None):
-        api_db_flavors = _flavor_get_all_from_db(context,
-                                                 inactive=inactive,
-                                                 filters=filters,
-                                                 sort_key=sort_key,
-                                                 sort_dir=sort_dir,
-                                                 limit=limit,
-                                                 marker=marker)
+                sort_key='flavorid', sort_dir='asc', limit=None, marker=None,
+                skip_project_fprs=False):
+        api_db_flavors = _flavor_get_all_from_db(
+            context, inactive=inactive, filters=filters, sort_key=sort_key,
+            sort_dir=sort_dir, limit=limit, marker=marker,
+            skip_project_fprs=skip_project_fprs)
         return base.obj_make_list(context, cls(context), objects.Flavor,
                                   api_db_flavors,
                                   expected_attrs=['extra_specs'])
 
     @base.remotable_classmethod
-    def get_by_id(cls, context, ids):
-        query = Flavor._flavor_get_query_from_db(context).\
+    def get_by_id(cls, context, ids, skip_project_fprs=False):
+        query = Flavor._flavor_get_query_from_db(
+            context, skip_project_fprs=skip_project_fprs).\
             filter_by(disabled=False).\
             filter(api_models.Flavors.id.in_(ids))
 

@@ -74,21 +74,24 @@ class _TestFlavor(object):
         mock_get.return_value = fake_flavor
         flavor = flavor_obj.Flavor.get_by_id(self.context, 1)
         self._compare(self, fake_flavor, flavor)
-        mock_get.assert_called_once_with(self.context, 1)
+        mock_get.assert_called_once_with(self.context, 1,
+                                         skip_project_fprs=False)
 
     @mock.patch('nova.objects.Flavor._flavor_get_by_name_from_db')
     def test_get_by_name_from_api(self, mock_get):
         mock_get.return_value = fake_flavor
         flavor = flavor_obj.Flavor.get_by_name(self.context, 'm1.foo')
         self._compare(self, fake_flavor, flavor)
-        mock_get.assert_called_once_with(self.context, 'm1.foo')
+        mock_get.assert_called_once_with(self.context, 'm1.foo',
+                                         skip_project_fprs=False)
 
     @mock.patch('nova.objects.Flavor._flavor_get_by_flavor_id_from_db')
     def test_get_by_flavor_id_from_api(self, mock_get):
         mock_get.return_value = fake_flavor
         flavor = flavor_obj.Flavor.get_by_flavor_id(self.context, 'm1.foo')
         self._compare(self, fake_flavor, flavor)
-        mock_get.assert_called_once_with(self.context, 'm1.foo')
+        mock_get.assert_called_once_with(self.context, 'm1.foo',
+                                         skip_project_fprs=False)
 
     @staticmethod
     @api_db_api.context_manager.writer
@@ -383,7 +386,7 @@ class _TestFlavorList(object):
         api_flavors = flavor_obj._flavor_get_all_from_db(self.context,
                                                          False, None,
                                                          'flavorid', 'asc',
-                                                         None, None)
+                                                         None, None, False)
 
         flavors = objects.FlavorList.get_all(self.context)
         # Make sure we're getting all flavors from the api
@@ -411,7 +414,8 @@ class _TestFlavorList(object):
         mock_api_get.assert_called_once_with(self.context, inactive=False,
                                              filters=filters, sort_key='id',
                                              sort_dir='asc', limit=None,
-                                             marker=None)
+                                             marker=None,
+                                             skip_project_fprs=False)
 
     @mock.patch('nova.objects.flavor._flavor_get_all_from_db')
     def test_get_all_limit_applied_to_api(self, mock_api_get):
@@ -431,7 +435,8 @@ class _TestFlavorList(object):
         mock_api_get.assert_called_once_with(self.context, inactive=False,
                                              filters=filters, sort_key='id',
                                              sort_dir='asc', limit=1,
-                                             marker=None)
+                                             marker=None,
+                                             skip_project_fprs=False)
 
     def test_get_no_marker_in_api(self):
         self.assertRaises(exception.MarkerNotFound,

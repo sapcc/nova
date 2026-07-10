@@ -71,7 +71,7 @@ def fake_get_flavor_access_by_flavor_id(context, flavorid):
     return res
 
 
-def fake_get_flavor_by_flavor_id(context, flavorid):
+def fake_get_flavor_by_flavor_id(context, flavorid, skip_project_fprs=False):
     return FLAVORS[flavorid]
 
 
@@ -85,7 +85,8 @@ def _has_flavor_access(flavorid, projectid):
 
 def fake_get_all_flavors_sorted_list(context, inactive=False,
                                      filters=None, sort_key='flavorid',
-                                     sort_dir='asc', limit=None, marker=None):
+                                     sort_dir='asc', limit=None, marker=None,
+                                     skip_project_fprs=False):
     if filters is None or filters['is_public'] is None:
         return sorted(FLAVORS.values(), key=lambda item: item[sort_key])
 
