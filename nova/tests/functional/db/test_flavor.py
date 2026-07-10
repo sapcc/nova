@@ -15,6 +15,7 @@ from nova.db.api import api as api_db_api
 from nova.db.api import models as api_models
 from nova import exception
 from nova import objects
+from nova.objects import fields
 from nova import test
 from nova.tests import fixtures
 
@@ -175,3 +176,280 @@ class FlavorObjectTestCase(test.NoDBTestCase):
         flavor.create()
         self.assertRaises(exception.MarkerNotFound,
                           self._test_get_all, 2, marker='noflavoratall')
+
+    def test_get_flavor_ids_by_ids_maps_internal_ids(self):
+        flavor = objects.Flavor(context=self.context, **fake_api_flavor)
+        flavor.create()
+        result = objects.FlavorList.get_flavor_ids_by_ids(
+            self.context, {flavor.id})
+        self.assertEqual({flavor.id: flavor.flavorid}, result)
+
+    def test_get_flavor_ids_by_ids_omits_missing(self):
+        flavor = objects.Flavor(context=self.context, **fake_api_flavor)
+        flavor.create()
+        result = objects.FlavorList.get_flavor_ids_by_ids(
+            self.context, {flavor.id, 999999})
+        self.assertEqual({flavor.id: flavor.flavorid}, result)
+
+    def test_get_flavor_ids_by_ids_empty(self):
+        self.assertEqual(
+            {}, objects.FlavorList.get_flavor_ids_by_ids(self.context, set()))
+
+
+class FlavorPermissionTestCase(test.NoDBTestCase):
+    """Tests for the flavor permission rule handling.
+    """
+    USES_DB_SELF = True
+
+    PROJECT_ID = 'fake-project'
+    DOMAIN_ID = 'fake-domain'
+    ALLOW = fields.FlavorPermissionRuleEffect.ALLOW
+    DENY = fields.FlavorPermissionRuleEffect.DENY
+
+    def _get_context(self, include_domain=True):
+        return context.RequestContext(
+            'fake-user', self.PROJECT_ID,
+            project_domain_id=self.DOMAIN_ID if include_domain else None)
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(fixtures.Database())
+        self.useFixture(fixtures.Database(database='api'))
+        self.context = self._get_context()
+        flavor = objects.Flavor(context=self.context,
+                                **dict(fake_api_flavor, is_public=True))
+        flavor.create()
+        self.flavor = flavor
+
+    def _create_rule(self, domain_id, effect, project_id=None,
+                     flavor_id=None):
+        rule = objects.FlavorPermissionRule(
+            context=self.context,
+            domain_id=domain_id,
+            project_id=project_id,
+            effect=effect,
+            flavor_id=flavor_id,
+        )
+        rule.create()
+        return rule
+
+    def _flavor_visible(
+            self,
+            domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            project_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            context=None,
+    ):
+        flavors = objects.FlavorList.get_all(
+            context or self.context,
+            domain_permission=domain_permission,
+            project_permission=project_permission)
+        return any(f.id == self.flavor.id for f in flavors)
+
+    def test_no_rules_flavor_accessible(self):
+        self.assertTrue(self._flavor_visible())
+
+    def test_domain_specific_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        self.assertFalse(self._flavor_visible())
+        # domain_permission does not affect project-level denial
+        self.assertFalse(self._flavor_visible(
+            project_permission=None))
+
+    def test_domain_default_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY)
+        self.assertFalse(self._flavor_visible())
+        # domain_permission does not affect project-level denial
+        self.assertFalse(self._flavor_visible(
+            project_permission=None))
+
+    def test_domain_default_deny_overridden_by_specific_allow(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY)
+        self._create_rule(self.DOMAIN_ID, self.ALLOW, flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible())
+
+    def test_project_specific_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        self.assertFalse(self._flavor_visible())
+        self.assertTrue(self._flavor_visible(
+            project_permission=None))
+
+    def test_project_default_deny_hides_flavor(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID)
+        self.assertFalse(self._flavor_visible())
+        self.assertTrue(self._flavor_visible(
+            project_permission=None))
+
+    def test_project_default_deny_overridden_by_specific_allow(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID)
+        self._create_rule(self.DOMAIN_ID, self.ALLOW,
+                          project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible())
+
+    def test_no_domain_id_in_context_skips_domain_filter(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible(
+            context=self._get_context(include_domain=False)))
+
+    def test_deny_for_other_project_does_not_affect_visibility(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id='other-project',
+                          flavor_id=self.flavor.id)
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id='other-project')
+        self.assertTrue(self._flavor_visible())
+
+    def test_deny_for_other_domain_does_not_affect_visibility(self):
+        self._create_rule('other-domain', self.DENY, flavor_id=self.flavor.id)
+        self._create_rule('other-domain', self.DENY)
+        self.assertTrue(self._flavor_visible())
+
+    def test_denied_domain_filter_returns_denied_flavors(self):
+        # Flavor not in denied set without domain scope deny rule
+        self.assertFalse(self._flavor_visible(
+            domain_permission=fields.FlavorPermissionRuleEffect.DENY,
+            project_permission=None))
+        # Flavor in denied set with domain scope deny rule
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible(
+            domain_permission=fields.FlavorPermissionRuleEffect.DENY,
+            project_permission=None))
+
+    def test_denied_project_filter_returns_denied_flavors(self):
+        # Flavor not in denied set without project scope deny rule
+        self.assertFalse(self._flavor_visible(
+            domain_permission=None,
+            project_permission=fields.FlavorPermissionRuleEffect.DENY))
+        # Flavor in denied set with project scope deny rule
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        self.assertTrue(self._flavor_visible(
+            domain_permission=None,
+            project_permission=fields.FlavorPermissionRuleEffect.DENY))
+
+    def test_private_flavor_not_affected_by_fpr(self):
+        """Flavor permission rules do not hide PRIVATE flavors"""
+        private = objects.Flavor(
+            context=self.context,
+            **dict(fake_api_flavor,
+                   name='m1.private', flavorid='m1.private',
+                   is_public=False, projects=[self.PROJECT_ID]))
+        private.create()
+
+        # Domain-scope deny for all flavors
+        self._create_rule(self.DOMAIN_ID, self.DENY)
+        # Project-scope deny for all flavors
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID)
+
+        # Public flavor is denied by the rules
+        self.assertFalse(self._flavor_visible())
+        # Private flavor is NOT affected by FPRs; it passes through
+        flavors = objects.FlavorList.get_all(self.context)
+        self.assertIn(private.id, {f.id for f in flavors})
+
+    def test_admin_context_bypasses_permission_rules(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        admin_ctx = context.get_admin_context()
+        self.assertTrue(self._flavor_visible(context=admin_ctx))
+
+    def test_no_project_id_in_context_skips_project_filter(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY,
+                          project_id=self.PROJECT_ID,
+                          flavor_id=self.flavor.id)
+        ctx = context.RequestContext(
+            'fake-user', None, project_domain_id=self.DOMAIN_ID)
+        self.assertTrue(self._flavor_visible(context=ctx))
+
+    def test_get_permission_db(self):
+        # Flavor allowed at both scopes without deny rules
+        result = self.flavor.get_permission(
+            include_domain=True, include_project=True)
+        self.assertEqual({
+            fields.FlavorPermissionRuleScope.DOMAIN:
+                fields.FlavorPermissionRuleEffect.ALLOW,
+            fields.FlavorPermissionRuleScope.PROJECT:
+                fields.FlavorPermissionRuleEffect.ALLOW,
+        }, result)
+        # Flavor denied at domain scope with a domain deny rule
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        result = self.flavor.get_permission(
+            include_domain=True, include_project=True)
+        self.assertEqual({
+            fields.FlavorPermissionRuleScope.DOMAIN:
+                fields.FlavorPermissionRuleEffect.DENY,
+            fields.FlavorPermissionRuleScope.PROJECT:
+                fields.FlavorPermissionRuleEffect.ALLOW,
+        }, result)
+
+    def test_get_permissions_db(self):
+        flavor_list = objects.FlavorList(
+            context=self.context, objects=[self.flavor])
+        result = flavor_list.get_permissions(
+            include_domain=True, include_project=True)
+        self.assertEqual({
+            self.flavor.id: {
+                fields.FlavorPermissionRuleScope.DOMAIN:
+                    fields.FlavorPermissionRuleEffect.ALLOW,
+                fields.FlavorPermissionRuleScope.PROJECT:
+                    fields.FlavorPermissionRuleEffect.ALLOW,
+            }
+        }, result)
+
+    def test_get_permission_private_flavor_returns_empty(self):
+        private = objects.Flavor(
+            context=self.context,
+            **dict(fake_api_flavor,
+                   name='m1.private', flavorid='m1.private',
+                   is_public=False, projects=[]))
+        private.create()
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=private.id)
+        flavor = objects.Flavor(context=self.context, id=private.id)
+        result = flavor.get_permission(
+            include_domain=True, include_project=True)
+        self.assertEqual({}, result)
+
+    def test_get_permissions_omits_private_flavors(self):
+        private = objects.Flavor(
+            context=self.context,
+            **dict(fake_api_flavor,
+                   name='m1.private', flavorid='m1.private',
+                   is_public=False, projects=[]))
+        private.create()
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=private.id)
+        flavor_list = objects.FlavorList(
+            context=self.context, objects=[self.flavor, private])
+        result = flavor_list.get_permissions(
+            include_domain=True, include_project=True)
+        self.assertIn(self.flavor.id, result)
+        self.assertNotIn(private.id, result)
+
+    def test_get_permission_empty_context(self):
+        # Context with no project_domain_id and no project_id returns {}
+        ctx = context.RequestContext('fake-user', None)
+        flavor = objects.Flavor(context=ctx, id=self.flavor.id)
+        result = flavor.get_permission(
+            include_domain=True, include_project=True)
+        self.assertEqual({}, result)
+
+    def test_get_flavor_ids_by_ids_enforces_permission(self):
+        self._create_rule(self.DOMAIN_ID, self.DENY, flavor_id=self.flavor.id)
+        # Enforcing (default): the denied flavor is omitted
+        self.assertEqual(
+            {}, objects.FlavorList.get_flavor_ids_by_ids(
+                self.context, {self.flavor.id}))
+        # ALL bypasses permission filtering: the flavor is returned
+        self.assertEqual(
+            {self.flavor.id: self.flavor.flavorid},
+            objects.FlavorList.get_flavor_ids_by_ids(
+                self.context, {self.flavor.id},
+                domain_permission=None,
+                project_permission=None))

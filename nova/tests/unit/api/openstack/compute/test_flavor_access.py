@@ -24,6 +24,7 @@ from nova.api.openstack.compute import flavor_access
 from nova.api.openstack.compute import flavors as flavors_api
 from nova import context
 from nova import exception
+from nova.objects import fields
 from nova import test
 from nova.tests.unit.api.openstack import fakes
 
@@ -71,7 +72,11 @@ def fake_get_flavor_access_by_flavor_id(context, flavorid):
     return res
 
 
-def fake_get_flavor_by_flavor_id(context, flavorid):
+def fake_get_flavor_by_flavor_id(context, flavorid,
+                                 domain_permission=(
+                                     fields.FlavorPermissionRuleEffect.ALLOW),
+                                 project_permission=(
+                                     fields.FlavorPermissionRuleEffect.ALLOW)):
     return FLAVORS[flavorid]
 
 
@@ -83,9 +88,12 @@ def _has_flavor_access(flavorid, projectid):
     return False
 
 
-def fake_get_all_flavors_sorted_list(context, inactive=False,
-                                     filters=None, sort_key='flavorid',
-                                     sort_dir='asc', limit=None, marker=None):
+def fake_get_all_flavors_sorted_list(
+        context, inactive=False, filters=None, sort_key='flavorid',
+        sort_dir='asc', limit=None, marker=None,
+        domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+        project_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+        force_permission_filter=False):
     if filters is None or filters['is_public'] is None:
         return sorted(FLAVORS.values(), key=lambda item: item[sort_key])
 

@@ -14,6 +14,7 @@
 
 from copy import deepcopy
 from operator import itemgetter
+import typing as ty
 
 from oslo_db import exception as db_exc
 from oslo_utils import versionutils
@@ -32,6 +33,8 @@ from nova.notifications.objects import flavor as flavor_notification
 from nova import objects
 from nova.objects import base
 from nova.objects import fields
+from nova.objects.flavor_permission_rule import (
+    DB_NONE_SENTINELS as _FPR_SENTINELS)
 from nova import utils
 
 
@@ -43,6 +46,14 @@ DEPRECATED_FIELDS = ['deleted', 'deleted_at']
 MUTABLE_FIELDS = set(['description'])
 
 CONF = nova.conf.CONF
+
+# Define a constant for the 'allow' effect because:
+# - we cannot directly use 'fields.FlavorPermissionRuleEffect' for method
+#   default parameters since it is shadowed by the Flavor.fields dict
+# - we do not want to rename the existing 'fields' import
+# For consistency we also add a 'deny' constant
+_PERM_ALLOW = fields.FlavorPermissionRuleEffect.ALLOW
+_PERM_DENY = fields.FlavorPermissionRuleEffect.DENY
 
 
 def _dict_with_extra_specs(flavor_model):
@@ -310,9 +321,87 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
         return flavor
 
     @staticmethod
-    def _flavor_get_query_from_db(context):
+    def _flavor_query_allowed_clause(
+            project_id: str,
+            scope: str,
+    ) -> sa.sql.ColumnElement:
+        """Return a SQL column element that is true when the flavor is allowed.
+
+        :param project_id: Must be a domain ID for scope DOMAIN and a
+            non-domain project ID for scope PROJECT.
+
+        A flavor is NOT allowed for a project_id at the given scope if:
+        - There is a 'deny' rule matching the flavor_id, OR
+        - There is a 'deny' rule with flavor_id=-1 (default deny) AND there
+          is no 'allow' rule matching the flavor_id.
+        """
+        Rule = api_models.FlavorPermissionRule
+        if scope == fields.FlavorPermissionRuleScope.DOMAIN:
+            scope_filter = sa.and_(
+                Rule.domain_id == project_id,
+                Rule.project_id == _FPR_SENTINELS['project_id'])
+        else:
+            scope_filter = Rule.project_id == project_id
+        specific_deny = sa.exists().where(sa.and_(
+            scope_filter,
+            Rule.effect == _PERM_DENY,
+            Rule.flavor_id == api_models.Flavors.id,
+        ))
+        default_deny = sa.exists().where(sa.and_(
+            scope_filter,
+            Rule.effect == _PERM_DENY,
+            Rule.flavor_id == _FPR_SENTINELS['flavor_id'],
+        ))
+        specific_allow = sa.exists().where(sa.and_(
+            scope_filter,
+            Rule.effect == _PERM_ALLOW,
+            Rule.flavor_id == api_models.Flavors.id,
+        ))
+        return ~sa.or_(specific_deny, sa.and_(default_deny, ~specific_allow))
+
+    @staticmethod
+    def _flavor_query_permission_filter(
+            query: orm.Query,
+            project_id: str,
+            scope: str,
+            permission: str | None,
+    ) -> orm.Query:
+        """Filter a flavor query by flavor permission for one scope.
+
+        None bypasses all filtering by flavor permission rules. ALLOW enforces
+        permission rules by returning only non-public flavors and public
+        flavors allowed by flavor permission rules. DENY returns only public
+        flavors denied by flavor permission rules.
+        """
+        if permission is None:
+            return query
+        allowed = Flavor._flavor_query_allowed_clause(
+            project_id, scope)
+        if permission == _PERM_DENY:
+            return query.filter(
+                api_models.Flavors.is_public == sql.true(), ~allowed)
+        return query.filter(
+            sa.or_(api_models.Flavors.is_public == sql.false(), allowed))
+
+    @staticmethod
+    def _flavor_get_query_from_db(
+            context,
+            domain_permission: str | None = _PERM_ALLOW,
+            project_permission: str | None = _PERM_ALLOW,
+            force_permission_filter: bool = False,
+    ) -> orm.Query:
         # We don't use a database context decorator on this method because this
         # method is not executing a query, it's only building one.
+        #
+        # Permission filtering is controlled via:
+        # - domain_permission: ALLOW/DENY only returns flavors allowed/denied
+        #   at domain scope. None bypasses domain scope filtering.
+        # - project_permission: ALLOW/DENY only returns flavors allowed/denied
+        #   at project scope. None bypasses project scope filtering.
+        # - force_permission_filter: If True, apply permission filtering
+        #   also for admin contexts.
+        #
+        # The default values enforce permission rules for non-admin users.
         query = context.session.query(api_models.Flavors).options(
             orm.joinedload(api_models.Flavors.extra_specs)
         )
@@ -322,6 +411,18 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
                 api_models.Flavors.projects.any(project_id=context.project_id)
             ])
             query = query.filter(sa.or_(*the_filter))
+        if not context.is_admin or force_permission_filter:
+            if context.project_domain_id:
+                query = Flavor._flavor_query_permission_filter(
+                    query, context.project_domain_id,
+                    fields.FlavorPermissionRuleScope.DOMAIN,
+                    domain_permission)
+            if context.project_id:
+                query = Flavor._flavor_query_permission_filter(
+                    query, context.project_id,
+                    fields.FlavorPermissionRuleScope.PROJECT,
+                    project_permission)
+
         return query
 
     @staticmethod
@@ -351,13 +452,17 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
     @staticmethod
     @db_utils.require_context
     @api_db_api.context_manager.reader
-    def _flavor_get_by_flavor_id_from_db(context, flavor_id):
+    def _flavor_get_by_flavor_id_from_db(
+            context, flavor_id, domain_permission,
+            project_permission):
         """Returns a dict describing specific flavor_id."""
         flavor_id = _unaliased_flavor_id(flavor_id)
-        result = Flavor._flavor_get_query_from_db(context).\
-                        filter_by(flavorid=flavor_id).\
-                        order_by(expression.asc(api_models.Flavors.id)).\
-                        first()
+        result = Flavor._flavor_get_query_from_db(
+            context, domain_permission=domain_permission,
+            project_permission=project_permission).\
+            filter_by(flavorid=flavor_id).\
+            order_by(expression.asc(api_models.Flavors.id)).\
+            first()
         if not result:
             raise exception.FlavorNotFound(flavor_id=flavor_id)
         return _dict_with_extra_specs(result)
@@ -432,11 +537,25 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
                                    expected_attrs=['extra_specs'])
 
     @base.remotable_classmethod
-    def get_by_flavor_id(cls, context, flavor_id, read_deleted=None):
-        db_flavor = cls._flavor_get_by_flavor_id_from_db(context,
-                                                         flavor_id)
+    def get_by_flavor_id(
+            cls, context, flavor_id, read_deleted=None,
+            domain_permission=_PERM_ALLOW, project_permission=_PERM_ALLOW):
+        db_flavor = cls._flavor_get_by_flavor_id_from_db(
+            context, flavor_id, domain_permission=domain_permission,
+            project_permission=project_permission)
         return cls._from_db_object(context, cls(context), db_flavor,
                                    expected_attrs=['extra_specs'])
+
+    @base.remotable
+    def get_permission(
+        self,
+        include_domain: bool = False,
+        include_project: bool = False,
+    ) -> dict[str, str]:
+        result = _get_flavor_permissions_from_db(
+            self._context, {self.id}, include_domain=include_domain,
+            include_project=include_project)
+        return result.get(self.id, {})
 
     @staticmethod
     def _flavor_add_project(context, flavor_id, project_id):
@@ -632,12 +751,16 @@ class Flavor(base.NovaPersistentObject, base.NovaObject,
 
 @api_db_api.context_manager.reader
 def _flavor_get_all_from_db(context, inactive, filters, sort_key, sort_dir,
-                            limit, marker):
+                            limit, marker, domain_permission,
+                            project_permission, force_permission_filter):
     """Returns all flavors.
     """
     filters = filters or {}
 
-    query = Flavor._flavor_get_query_from_db(context)
+    query = Flavor._flavor_get_query_from_db(
+        context, domain_permission=domain_permission,
+        project_permission=project_permission,
+        force_permission_filter=force_permission_filter)
 
     if 'min_memory_mb' in filters:
         query = query.filter(
@@ -682,6 +805,69 @@ def _flavor_get_all_from_db(context, inactive, filters, sort_key, sort_dir,
     return all_flavors
 
 
+@api_db_api.context_manager.reader
+def _get_flavor_ids_by_ids_from_db(
+        context,
+        ids: ty.Collection[int],
+        domain_permission: str | None,
+        project_permission: str | None,
+) -> dict[int, str]:
+    """Map internal flavor ids to their public flavorid."""
+    query = Flavor._flavor_get_query_from_db(
+        context, domain_permission=domain_permission,
+        project_permission=project_permission).\
+        filter(api_models.Flavors.id.in_(ids))
+    return {row.id: row.flavorid for row in query}
+
+
+@api_db_api.context_manager.reader
+def _get_flavor_permissions_from_db(
+        context,
+        flavor_ids: ty.Collection[int],
+        include_domain: bool,
+        include_project: bool,
+) -> dict[int, dict[str, str]]:
+    """Return effective flavor permission per flavor ID and scope.
+
+    Only includes scopes whose context attribute is present. Returns an
+    empty dict if neither scope resolves to a context value.
+    """
+    include_domain = include_domain and bool(context.project_domain_id)
+    include_project = include_project and bool(context.project_id)
+    if not include_domain and not include_project:
+        return {}
+
+    columns = [api_models.Flavors.id]
+    if include_domain:
+        columns.append(
+            Flavor._flavor_query_allowed_clause(
+                context.project_domain_id,
+                fields.FlavorPermissionRuleScope.DOMAIN,
+            ).label('domain_allowed'))
+    if include_project:
+        columns.append(
+            Flavor._flavor_query_allowed_clause(
+                context.project_id,
+                fields.FlavorPermissionRuleScope.PROJECT,
+            ).label('project_allowed'))
+
+    rows = context.session.query(*columns).filter(
+        api_models.Flavors.id.in_(flavor_ids),
+        api_models.Flavors.is_public == sql.true()).all()
+
+    permissions = {}
+    for row in rows:
+        permission = {}
+        if include_domain:
+            permission[fields.FlavorPermissionRuleScope.DOMAIN] = (
+                _PERM_ALLOW if row.domain_allowed else _PERM_DENY)
+        if include_project:
+            permission[fields.FlavorPermissionRuleScope.PROJECT] = (
+                _PERM_ALLOW if row.project_allowed else _PERM_DENY)
+        permissions[row.id] = permission
+    return permissions
+
+
 @base.NovaObjectRegistry.register
 class FlavorList(base.ObjectListBase, base.NovaObject):
     VERSION = '1.1'
@@ -692,14 +878,15 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
 
     @base.remotable_classmethod
     def get_all(cls, context, inactive=False, filters=None,
-                sort_key='flavorid', sort_dir='asc', limit=None, marker=None):
-        api_db_flavors = _flavor_get_all_from_db(context,
-                                                 inactive=inactive,
-                                                 filters=filters,
-                                                 sort_key=sort_key,
-                                                 sort_dir=sort_dir,
-                                                 limit=limit,
-                                                 marker=marker)
+                sort_key='flavorid', sort_dir='asc', limit=None, marker=None,
+                domain_permission=_PERM_ALLOW, project_permission=_PERM_ALLOW,
+                force_permission_filter=False):
+        api_db_flavors = _flavor_get_all_from_db(
+            context, inactive=inactive, filters=filters, sort_key=sort_key,
+            sort_dir=sort_dir, limit=limit, marker=marker,
+            domain_permission=domain_permission,
+            project_permission=project_permission,
+            force_permission_filter=force_permission_filter)
         return base.obj_make_list(context, cls(context), objects.Flavor,
                                   api_db_flavors,
                                   expected_attrs=['extra_specs'])
@@ -724,3 +911,29 @@ class FlavorList(base.ObjectListBase, base.NovaObject):
             }
             res[x.id] = flavor_info
         return res
+
+    @base.remotable_classmethod
+    def get_flavor_ids_by_ids(
+            cls, context,
+            ids: ty.Collection[int],
+            domain_permission: str | None = _PERM_ALLOW,
+            project_permission: str | None = _PERM_ALLOW,
+    ) -> dict[int, str]:
+        """Map internal flavor ids to their public flavorid.
+
+        Internal ids without a matching flavor are omitted.
+        """
+        return _get_flavor_ids_by_ids_from_db(
+            context, ids, domain_permission=domain_permission,
+            project_permission=project_permission)
+
+    @base.remotable
+    def get_permissions(
+        self,
+        include_domain: bool = False,
+        include_project: bool = False,
+    ) -> dict[int, dict[str, str]]:
+        flavor_ids = {f.id for f in self.objects}
+        return _get_flavor_permissions_from_db(
+            self._context, flavor_ids, include_domain=include_domain,
+            include_project=include_project)
