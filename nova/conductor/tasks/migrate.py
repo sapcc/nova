@@ -10,8 +10,12 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import math
+
+from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
+from oslo_utils import units
 
 from nova import availability_zones
 from nova.compute import utils as compute_utils
@@ -23,6 +27,7 @@ from nova import objects
 from nova.scheduler.client import report
 from nova.scheduler import utils as scheduler_utils
 
+CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
 
@@ -115,7 +120,8 @@ def revert_allocation_for_migration(context, source_cn, instance, migration):
 class MigrationTask(base.TaskBase):
     def __init__(self, context, instance, flavor,
                  request_spec, clean_shutdown, compute_rpcapi,
-                 query_client, report_client, host_list, network_api):
+                 query_client, report_client, host_list, network_api,
+                 volume_api=None):
         super(MigrationTask, self).__init__(context, instance)
         self.clean_shutdown = clean_shutdown
         self.request_spec = request_spec
@@ -126,6 +132,7 @@ class MigrationTask(base.TaskBase):
         self.reportclient = report_client
         self.host_list = host_list
         self.network_api = network_api
+        self.volume_api = volume_api
 
         # Persist things from the happy path so we don't have to look
         # them up if we need to roll back
@@ -414,9 +421,9 @@ class MigrationTask(base.TaskBase):
 
         After removing the global BFV-only precondition, this guard ensures
         only root BDMs we explicitly handle reach prep_resize:
-          - image/local  \u2192 convert to BFV (handled by conversion path)
-          - */volume     \u2192 already BFV (handled by BFV-only path)
-          - anything else \u2192 not supported
+          - image/local  -> convert to BFV (handled by conversion path)
+          - */volume     -> already BFV (handled by BFV-only path)
+          - anything else -> not supported
 
         :raises InvalidCrossHvResizePrecondition: if root BDM shape is
             unsupported for cross-HV resize.
@@ -426,16 +433,108 @@ class MigrationTask(base.TaskBase):
                 reason='No root BDM found; cannot cross-HV resize '
                        'an instance without a root block device mapping')
         if root_bdm.destination_type == 'volume':
-            # Already BFV \u2014 allowed, skip conversion
+            # Already BFV, no conversion needed.
             return
         if self._is_image_backed_local_root(root_bdm):
-            # Image-backed ephemeral \u2014 allowed, will be converted
+            # Image-backed local roots convert before prep_resize.
             return
         raise exception.InvalidCrossHvResizePrecondition(
             reason='Root BDM has unsupported shape for cross-HV resize '
                    '(source_type=%s, destination_type=%s). Only image/local '
                    'or */volume root disks are supported.' %
                    (root_bdm.source_type, root_bdm.destination_type))
+
+    def _convert_image_backed_root_to_bfv(self, root_bdm):
+        """Convert an image-backed local root disk to a Cinder volume.
+
+        Powers off the source VM, detaches the root VMDK, and imports it
+        as a Cinder FCD volume via manage_existing. Once the volume is
+        available, a reserved attachment is created, the root BDM is
+        mutated to volume-backed, and the conversion is recorded in
+        system_metadata.
+
+        The conversion is permanent. Revert undoes the resize but the
+        instance comes back as BFV-on-VMware (asymmetric revert).
+        """
+        volume_type = CONF.cross_hv.fcd_volume_type
+        if not volume_type:
+            raise exception.InvalidConfiguration(
+                reason='[cross_hv] fcd_volume_type must be configured for '
+                       'image-backed cross-hypervisor resize conversion')
+
+        # Source prep powers off the VM and detaches the root VMDK.
+        prep = self.compute_rpcapi.prep_cross_hv_conversion(
+            self.context, self.instance)
+
+        size_gb = int(math.ceil(prep['size_bytes'] / units.Gi))
+
+        # Cinder manage_existing consumes a backend-specific ref.
+        ref = {
+            'source-name': prep['vmdk_path'],
+            'size_gb': size_gb,
+        }
+        if prep.get('source_fcd_id'):
+            ref['source-id'] = prep['source_fcd_id']
+
+        # Import the detached VMDK and wait for Cinder to finish.
+        try:
+            volume = self.volume_api.manage_existing(
+                self.context,
+                host=prep['cinder_host'],
+                ref=ref,
+                volume_type=volume_type,
+                name='cross-hv-%s' % self.instance.uuid,
+                description='Auto-converted from image-backed instance',
+                bootable=True)
+        except exception.CrossHvVolumeManageFailed as ex:
+            if ex.safe_to_abort:
+                try:
+                    self.compute_rpcapi.abort_cross_hv_conversion(
+                        self.context, self.instance, prep)
+                except Exception:
+                    LOG.exception('Failed to abort cross-HV conversion after '
+                                  'Cinder manage failure.',
+                                  instance=self.instance)
+            raise
+
+        # Reserve the future root-volume attachment.
+        try:
+            attachment = self.volume_api.attachment_create(
+                self.context, volume['id'], self.instance.uuid)
+        except Exception:
+            LOG.error('Failed to create attachment for volume %s. '
+                      'Leaving volume in place for manual cleanup.',
+                      volume['id'], instance=self.instance)
+            raise
+
+        # Switch the root BDM to the managed Cinder volume.
+        try:
+            root_bdm.destination_type = 'volume'
+            root_bdm.volume_id = volume['id']
+            root_bdm.volume_size = size_gb
+            root_bdm.connection_info = jsonutils.dumps(
+                {'cross_hv_placeholder': True})
+            root_bdm.attachment_id = attachment['id']
+            root_bdm.snapshot_id = None
+            # Keep source_type and image_id for image lineage.
+            root_bdm.save()
+        except Exception:
+            LOG.error('Failed to save root BDM mutation for instance %s. '
+                      'Deleting attachment %s, leaving volume %s.',
+                      self.instance.uuid, attachment['id'], volume['id'],
+                      instance=self.instance)
+            try:
+                self.volume_api.attachment_delete(
+                    self.context, attachment['id'])
+            except Exception:
+                LOG.warning('Failed to delete attachment %s during '
+                            'cleanup', attachment['id'],
+                            instance=self.instance)
+            raise
+
+        # Record the permanent conversion for later resize/revert paths.
+        self.instance.system_metadata['cross_hv_image_converted'] = 'True'
+        self.instance.save()
 
     def _schedule(self):
         selection_lists = self.query_client.select_destinations(

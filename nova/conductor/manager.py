@@ -587,7 +587,8 @@ class ComputeTaskManager:
                                      request_spec, clean_shutdown,
                                      self.compute_rpcapi,
                                      self.query_client, self.report_client,
-                                     host_list, self.network_api)
+                                     host_list, self.network_api,
+                                     self.volume_api)
 
     def _destroy_build_request(self, context, instance):
         # The BuildRequest needs to be stored until the instance is mapped to
