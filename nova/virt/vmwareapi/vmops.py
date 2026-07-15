@@ -472,6 +472,186 @@ class VMwareVMOps(object):
         if compute_utils.cleanup_cross_hv_markers(instance.system_metadata):
             instance.save()
 
+    def _get_root_disk_device(self, hardware_devices):
+        """Find the root VirtualDisk at SCSI controller unit 0.
+
+        Iterates hardware devices, identifies SCSI controllers, then
+        finds the VirtualDisk attached to a SCSI controller at unit
+        number 0.
+
+        :param hardware_devices: list of VirtualDevice objects
+        :returns: VirtualDisk device object
+        :raises DiskNotFound: if no qualifying VirtualDisk is found
+        """
+        scsi_controller_keys = set()
+        for device in hardware_devices:
+            if device.__class__.__name__ in vm_util.scsi_controller_classes:
+                scsi_controller_keys.add(device.key)
+
+        for device in hardware_devices:
+            if (device.__class__.__name__ == 'VirtualDisk' and
+                    hasattr(device, 'backing') and
+                    hasattr(device, 'unitNumber') and
+                    hasattr(device, 'controllerKey') and
+                    device.controllerKey in scsi_controller_keys and
+                    device.unitNumber == 0 and
+                    hasattr(device.backing, 'fileName')):
+                return device
+
+        raise exception.DiskNotFound(location='SCSI unit 0')
+
+    def _derive_cinder_host(self):
+        """Derive the Cinder volume host for this vCenter.
+
+        Convention: cinder-volume-vmware-{vc-name}@vmware_fcd
+        where vc-name is the first label of CONF.vmware.host_ip.
+        """
+        vc_fqdn = CONF.vmware.host_ip
+        vc_name = vc_fqdn.split('.')[0]
+        return 'cinder-volume-vmware-%s@vmware_fcd' % vc_name
+
+    def prep_cross_hv_conversion(self, context, instance):
+        """Power off VM and detach root disk for cross-HV conversion.
+
+        Retry-tolerant for the pre-detach phase: if the VM is already
+        powered off but the root disk is still attached, detachment
+        proceeds without re-issuing power-off.
+
+        If the VM was powered off by this call and the subsequent detach
+        fails, the VM is powered back on before the exception is
+        re-raised, so the instance is not left in a shutdown state.
+
+        :param context: nova request context
+        :param instance: nova Instance object
+        :returns: dict with vmdk_path, size_bytes, cinder_host,
+                  rollback data, and optional source_fcd_id
+        :raises DiskNotFound: if no SCSI unit-0 VirtualDisk is found
+        :raises InstanceInvalidState: if VM is in an unexpected state
+        """
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        hardware_devices = vm_util.get_hardware_devices(
+            self._session, vm_ref)
+
+        # Fail before changing power state if the root disk is missing.
+        root_disk = self._get_root_disk_device(hardware_devices)
+
+        # Capture disk metadata for the return contract.
+        vmdk_path = root_disk.backing.fileName
+        capacity_in_bytes = vm_util._get_device_capacity(root_disk)
+        controller_key = root_disk.controllerKey
+        unit_number = root_disk.unitNumber
+
+        # Check power state and power off if needed.
+        pstate = vm_util.get_vm_state(self._session, instance)
+        if pstate == power_state.RUNNING:
+            # Use the return value: power_off_instance returns True only if
+            # this call actually issued the power-off (returns False if the
+            # VM was already off when the call arrived, e.g. a race).
+            powered_off_by_us = vm_util.power_off_instance(
+                self._session, instance, vm_ref)
+        elif pstate == power_state.SHUTDOWN:
+            powered_off_by_us = False
+        else:
+            raise exception.InstanceInvalidState(
+                instance_uuid=instance.uuid,
+                attr='power_state',
+                state=pstate,
+                method='prep_cross_hv_conversion')
+
+        # Detach root disk (remove from VM config, keep VMDK file).
+        # If this fails after we powered the VM off, restore power so
+        # the instance is not left stranded in a shutdown state.
+        try:
+            detach_spec = vm_util.detach_virtual_disk_spec(
+                self._session.vim.client.factory,
+                root_disk, destroy_disk=False)
+            # deviceChange must be a list; vSphere WSDL defines it as an
+            # array type and existing helpers always wrap specs in a list.
+            vm_util.reconfigure_vm_device_change(
+                self._session, vm_ref, [detach_spec])
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                if powered_off_by_us:
+                    LOG.warning('Detach failed for instance %(instance)s; '
+                                'powering VM back on to restore state.',
+                                {'instance': instance.uuid})
+                    vm_util.power_on_instance(
+                        self._session, instance, vm_ref)
+
+        LOG.info('Detached root disk %(path)s from instance '
+                 '%(instance)s for cross-HV conversion.',
+                 {'path': vmdk_path, 'instance': instance.uuid})
+
+        result = {
+            'vmdk_path': vmdk_path,
+            'size_bytes': capacity_in_bytes,
+            'cinder_host': self._derive_cinder_host(),
+            'rollback': {
+                'controller_key': controller_key,
+                'unit_number': unit_number,
+                'capacity_in_bytes': capacity_in_bytes,
+            },
+        }
+
+        # Optional FCD ID for first-class disk awareness.
+        fcd_id = getattr(
+            getattr(root_disk, 'vDiskId', None), 'id', None)
+        if fcd_id:
+            result['source_fcd_id'] = fcd_id
+
+        return result
+
+    def abort_cross_hv_conversion(self, context, instance, prep_data):
+        """Revert prep_cross_hv_conversion: reattach disk, power on.
+
+        Skips reattach if the disk is already present, and skips power-on
+        if the VM is already running.
+
+        :param context: nova request context
+        :param instance: nova Instance object
+        :param prep_data: dict returned by prep_cross_hv_conversion
+        """
+        rollback = prep_data['rollback']
+        vmdk_path = prep_data['vmdk_path']
+        controller_key = rollback['controller_key']
+        unit_number = rollback['unit_number']
+        capacity_in_kb = rollback['capacity_in_bytes'] // 1024
+
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        hardware_devices = vm_util.get_hardware_devices(
+            self._session, vm_ref)
+
+        # Check if disk is already attached (match by backing fileName).
+        disk_attached = False
+        for device in hardware_devices:
+            backing = getattr(device, 'backing', None)
+            if (backing and
+                    getattr(backing, 'fileName', None) == vmdk_path):
+                disk_attached = True
+                break
+
+        if not disk_attached:
+            # Reattach the root disk at its original controller/unit
+            # position using the existing helper, which sets a negative
+            # device key so vCenter assigns the real one on reconfigure.
+            factory = self._session.vim.client.factory
+            config_spec = vm_util.get_vmdk_attach_config_spec(
+                factory,
+                file_path=vmdk_path,
+                disk_size=capacity_in_kb,
+                controller_key=controller_key,
+                unit_number=unit_number)
+            vm_util.reconfigure_vm(self._session, vm_ref, config_spec)
+            LOG.info('Reattached root disk %(path)s to instance '
+                     '%(instance)s during cross-HV abort.',
+                     {'path': vmdk_path, 'instance': instance.uuid})
+
+        # Power on if not already running.
+        pstate = vm_util.get_vm_state(self._session, instance)
+        if pstate != power_state.RUNNING:
+            vm_util.power_on_instance(
+                self._session, instance, vm_ref)
+
     def build_virtual_machine(self, instance, context, image_info, datastore,
                               network_info, extra_specs, metadata, vm_folder,
                               vm_name=None, host_ref=None):
@@ -2128,7 +2308,6 @@ class VMwareVMOps(object):
                 LOG.debug("No root disk defined. Unable to snapshot.",
                           instance=instance)
                 raise error_util.NoRootDiskDefined()
-
             lst_properties = ["datastore", "summary.config.guestId"]
             props = self._get_instance_props(instance, lst_properties)
             os_type = props['summary.config.guestId']
@@ -2815,8 +2994,7 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
         vm_util.rename_vm(self._session, vm_ref, instance)
 
-        # Power off; tolerate an already-powered-off shell from a
-        # previous attempt.
+        # Already-powered-off shells can come from a previous attempt.
         vm_state = vm_util.get_vm_state(self._session, instance)
         if vm_state != power_state.SHUTDOWN:
             vm_was_on = self._soft_shutdown(instance)
@@ -3630,9 +3808,14 @@ class VMwareVMOps(object):
         # Detach the volumes in reverse order, so if we roll it back
         # that the device order will still be preserved
         for disk in self._sort_disks(disks, reverse=True):
+            connection_info = disk['connection_info']
+            if connection_info.get('cross_hv_placeholder'):
+                LOG.debug('Skipping cross-HV converted root placeholder '
+                          'during VMware volume detach.',
+                          instance=instance)
+                continue
             try:
-                self._volumeops.detach_volume(disk['connection_info'],
-                                              instance)
+                self._volumeops.detach_volume(connection_info, instance)
             except exception.DiskNotFound:
                 LOG.warning(("Cannot find disk {}."
                              " Assuming it to be removed").format(disk))
