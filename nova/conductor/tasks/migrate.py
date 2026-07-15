@@ -308,7 +308,7 @@ class MigrationTask(base.TaskBase):
                 not src_hv or
                 compute_utils.is_cross_hypervisor_resize(src_hv, dest_hv)):
             self._prep_cross_hv_resize(src_hv, dest_hv)
-            # Persist the rollback journal to MigrationContext BEFORE the
+            # Persist the rollback journal to MigrationContext before the
             # prep_resize cast so the destination's _move_claim can
             # preserve it when rebuilding MigrationContext.
             self._persist_image_properties_journal(migration)
@@ -322,8 +322,19 @@ class MigrationTask(base.TaskBase):
         if self.host_list is None:
             selection = self._schedule()
             if not self._is_selected_host_in_source_cell(selection):
-                # If the selected host is in another cell, we need to execute
-                # another task to do the cross-cell migration.
+                # Cross-HV resize requires same-cell: the conversion
+                # pre-step and the VMware BFV-only source prep both
+                # target the source compute by cell-local RPC. Bail out
+                # early rather than handing off to the cross-cell task.
+                if self.instance.system_metadata.get(
+                        'cross_hv_resize') == 'true':
+                    raise exception.InvalidCrossHvResizePrecondition(
+                        reason='Scheduler selected a destination host in '
+                               'a different cell (%s) for a cross-HV '
+                               'resize. Cross-HV resize is same-cell '
+                               'only.' % selection.cell_uuid)
+                # If the selected host is in another cell, we need to
+                # execute another task to do the cross-cell migration.
                 LOG.info('Executing cross-cell resize task starting with '
                          'target host: %s', selection.service_host,
                          instance=self.instance)
@@ -351,6 +362,14 @@ class MigrationTask(base.TaskBase):
                 availability_zones.get_host_availability_zone(
                     self.context, host))
 
+        # Convert image/local roots before the BFV-only prep_resize path.
+        # Revert keeps the instance BFV-on-VMware.
+        if self.instance.system_metadata.get('cross_hv_resize') == 'true':
+            root_bdm = self._get_root_bdm()
+            self._validate_cross_hv_root_bdm(root_bdm)
+            if self._is_image_backed_local_root(root_bdm):
+                self._convert_image_backed_root_to_bfv(root_bdm)
+
         LOG.debug("Calling prep_resize with selected host: %s; "
                   "Selected node: %s; Alternates: %s", host, node,
                   self.host_list, instance=self.instance)
@@ -376,6 +395,47 @@ class MigrationTask(base.TaskBase):
             compute_utils.sanitize_image_props_for_kvm(self.request_spec))
         self.instance.system_metadata['cross_hv_resize'] = 'true'
         self.instance.system_metadata['cross_hv_source_prepared'] = 'false'
+
+    def _get_root_bdm(self):
+        """Load and return the root BDM for the instance, or None."""
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+            self.context, self.instance.uuid)
+        return bdms.root_bdm()
+
+    def _is_image_backed_local_root(self, root_bdm):
+        """Return True if root_bdm is an image-backed local ephemeral disk."""
+        if root_bdm is None:
+            return False
+        return (root_bdm.source_type == 'image' and
+                root_bdm.destination_type == 'local')
+
+    def _validate_cross_hv_root_bdm(self, root_bdm):
+        """Reject cross-HV resize if the root BDM shape is unsupported.
+
+        After removing the global BFV-only precondition, this guard ensures
+        only root BDMs we explicitly handle reach prep_resize:
+          - image/local  \u2192 convert to BFV (handled by conversion path)
+          - */volume     \u2192 already BFV (handled by BFV-only path)
+          - anything else \u2192 not supported
+
+        :raises InvalidCrossHvResizePrecondition: if root BDM shape is
+            unsupported for cross-HV resize.
+        """
+        if root_bdm is None:
+            raise exception.InvalidCrossHvResizePrecondition(
+                reason='No root BDM found; cannot cross-HV resize '
+                       'an instance without a root block device mapping')
+        if root_bdm.destination_type == 'volume':
+            # Already BFV \u2014 allowed, skip conversion
+            return
+        if self._is_image_backed_local_root(root_bdm):
+            # Image-backed ephemeral \u2014 allowed, will be converted
+            return
+        raise exception.InvalidCrossHvResizePrecondition(
+            reason='Root BDM has unsupported shape for cross-HV resize '
+                   '(source_type=%s, destination_type=%s). Only image/local '
+                   'or */volume root disks are supported.' %
+                   (root_bdm.source_type, root_bdm.destination_type))
 
     def _schedule(self):
         selection_lists = self.query_client.select_destinations(

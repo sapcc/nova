@@ -2815,7 +2815,8 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
         vm_util.rename_vm(self._session, vm_ref, instance)
 
-        # Power off — tolerate already-powered-off (Phase 2 idempotency).
+        # Power off; tolerate an already-powered-off shell from a
+        # previous attempt.
         vm_state = vm_util.get_vm_state(self._session, instance)
         if vm_state != power_state.SHUTDOWN:
             vm_was_on = self._soft_shutdown(instance)
