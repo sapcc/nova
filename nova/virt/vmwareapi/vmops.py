@@ -532,7 +532,8 @@ class VMwareVMOps(object):
         hardware_devices = vm_util.get_hardware_devices(
             self._session, vm_ref)
 
-        # Fail before changing power state if the root disk is missing.
+        # Locate root disk before any power state change so we fail
+        # fast without side effects if the disk is missing.
         root_disk = self._get_root_disk_device(hardware_devices)
 
         # Capture disk metadata for the return contract.
@@ -604,8 +605,8 @@ class VMwareVMOps(object):
     def abort_cross_hv_conversion(self, context, instance, prep_data):
         """Revert prep_cross_hv_conversion: reattach disk, power on.
 
-        Skips reattach if the disk is already present, and skips power-on
-        if the VM is already running.
+        Idempotent: skips reattach if the disk is already present,
+        skips power-on if the VM is already running.
 
         :param context: nova request context
         :param instance: nova Instance object
@@ -2994,7 +2995,8 @@ class VMwareVMOps(object):
                                        total_steps=RESIZE_TOTAL_STEPS)
         vm_util.rename_vm(self._session, vm_ref, instance)
 
-        # Already-powered-off shells can come from a previous attempt.
+        # Power off; tolerate an already-powered-off shell from a
+        # previous attempt.
         vm_state = vm_util.get_vm_state(self._session, instance)
         if vm_state != power_state.SHUTDOWN:
             vm_was_on = self._soft_shutdown(instance)
