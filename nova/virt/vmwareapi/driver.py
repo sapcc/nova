@@ -347,6 +347,15 @@ class VMwareVCDriver(driver.ComputeDriver):
         self._vmops.confirm_migration(context, migration, instance,
                                       network_info)
 
+    def prep_cross_hv_conversion(self, context, instance):
+        """Prepare source VM for cross-hypervisor conversion."""
+        return self._vmops.prep_cross_hv_conversion(context, instance)
+
+    def abort_cross_hv_conversion(self, context, instance, prep_data):
+        """Abort a cross-hypervisor conversion, restoring the VM."""
+        return self._vmops.abort_cross_hv_conversion(
+            context, instance, prep_data)
+
     def finish_revert_migration(self, context, instance, network_info,
                                 migration, block_device_info=None,
                                 power_on=True):

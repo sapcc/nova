@@ -31,7 +31,7 @@ LOG = logging.getLogger(__name__)
 
 
 # NOTE(danms): This is the global service version counter
-SERVICE_VERSION = 68
+SERVICE_VERSION = 69
 
 
 # NOTE(danms): This is our SERVICE_VERSION history. The idea is that any
@@ -237,6 +237,9 @@ SERVICE_VERSION_HISTORY = (
     # Version 68: Compute RPC v6.4:
     # Add support for shares
     {'compute_rpc': '6.4'},
+    # Version 69: Compute RPC v6.5 (SAP patch):
+    # Add prep_cross_hv_conversion and abort_cross_hv_conversion
+    {'compute_rpc': '6.5'},
 )
 
 # This is the version after which we can rely on having a persistent

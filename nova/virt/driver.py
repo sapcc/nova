@@ -863,6 +863,32 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def prep_cross_hv_conversion(self, context, instance):
+        """Prepare source VM for cross-hypervisor conversion.
+
+        Powers off the VM and detaches the root disk so it can be
+        managed into Cinder as an FCD.
+
+        :param context: nova request context
+        :param instance: nova.objects.instance.Instance
+        :returns: dict with vmdk_path, size_bytes, cinder_host,
+                  rollback, and optional source_fcd_id
+        :raises NotImplementedError: by default
+        """
+        raise NotImplementedError()
+
+    def abort_cross_hv_conversion(self, context, instance, prep_data):
+        """Abort a cross-hypervisor conversion, restoring the VM.
+
+        Reattaches the root disk and powers the VM back on.
+
+        :param context: nova request context
+        :param instance: nova.objects.instance.Instance
+        :param prep_data: dict returned by prep_cross_hv_conversion
+        :raises NotImplementedError: by default
+        """
+        raise NotImplementedError()
+
     def snapshot(self, context, instance, image_id, update_task_state):
         """Snapshots the specified instance.
 
