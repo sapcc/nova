@@ -264,6 +264,12 @@ class FakeDriver(driver.ComputeDriver):
                                    timeout=0, retry_interval=0):
         pass
 
+    def prep_cross_hv_conversion(self, context, instance):
+        raise NotImplementedError()
+
+    def abort_cross_hv_conversion(self, context, instance, prep_data):
+        raise NotImplementedError()
+
     def finish_revert_migration(self, context, instance, network_info,
                                 migration, block_device_info=None,
                                 power_on=True):

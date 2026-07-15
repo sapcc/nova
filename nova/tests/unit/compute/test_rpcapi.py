@@ -1354,3 +1354,25 @@ class ComputeRpcAPITestCase(test.NoDBTestCase):
             instance=self.fake_instance_obj,
             share_mapping=self.get_fake_share_mapping(),
             version='6.4')
+
+    def test_prep_cross_hv_conversion(self):
+        self._test_compute_api(
+            'prep_cross_hv_conversion', 'call',
+            instance=self.fake_instance_obj,
+            version='6.5',
+            call_monitor_timeout=60,
+            timeout=180)
+
+    def test_abort_cross_hv_conversion(self):
+        self._test_compute_api(
+            'abort_cross_hv_conversion', 'call',
+            instance=self.fake_instance_obj,
+            prep_data={'vmdk_path': '[ds] x/x.vmdk',
+                       'size_bytes': 1024,
+                       'cinder_host': 'host@vmware_fcd',
+                       'rollback': {'controller_key': 1000,
+                                    'unit_number': 0,
+                                    'capacity_in_bytes': 1024}},
+            version='6.5',
+            call_monitor_timeout=60,
+            timeout=180)

@@ -406,6 +406,8 @@ class ComputeAPI(object):
         * 6.2 - Add target_state parameter to rebuild_instance()
         * 6.3 - Add delete_attachment parameter to remove_volume_connection
         * 6.4 - Add allow_share() and deny_share()
+        * 6.5 - Add prep_cross_hv_conversion() and
+                abort_cross_hv_conversion() (SAP patch)
     '''
 
     VERSION_ALIASES = {
@@ -1596,3 +1598,34 @@ class ComputeAPI(object):
         cctxt = client.prepare(server=host, version=version)
         return cctxt.cast(ctxt, "in_cluster_vmotion",
                           instance=instance, host_moref_value=host_moref_value)
+
+    def prep_cross_hv_conversion(self, ctxt, instance, host=None):
+        version = '6.5'
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            raise exception.UnsupportedRPCVersion(
+                api='prep_cross_hv_conversion',
+                required='6.5')
+        cctxt = client.prepare(
+            server=_compute_host(host, instance),
+            version=version,
+            call_monitor_timeout=CONF.rpc_response_timeout,
+            timeout=180)
+        return cctxt.call(ctxt, 'prep_cross_hv_conversion',
+                          instance=instance)
+
+    def abort_cross_hv_conversion(self, ctxt, instance, prep_data,
+                                  host=None):
+        version = '6.5'
+        client = self.router.client(ctxt)
+        if not client.can_send_version(version):
+            raise exception.UnsupportedRPCVersion(
+                api='abort_cross_hv_conversion',
+                required='6.5')
+        cctxt = client.prepare(
+            server=_compute_host(host, instance),
+            version=version,
+            call_monitor_timeout=CONF.rpc_response_timeout,
+            timeout=180)
+        return cctxt.call(ctxt, 'abort_cross_hv_conversion',
+                          instance=instance, prep_data=prep_data)

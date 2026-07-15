@@ -627,7 +627,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.Manager):
     """Manages the running instances from creation to destruction."""
 
-    target = messaging.Target(version='6.4')
+    target = messaging.Target(version='6.5')
 
     def __init__(self, compute_driver=None, *args, **kwargs):
         """Load configuration options and connect to the hypervisor."""
@@ -6503,6 +6503,30 @@ class ComputeManager(manager.Manager):
 
         # ResourceTracker.resize_claim() sets instance.migration_context.
         return instance.migration_context
+
+    @messaging.expected_exceptions(exception.DiskNotFound,
+                                   exception.InstanceInvalidState)
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def prep_cross_hv_conversion(self, ctxt, instance):
+        """RPC endpoint: power off VM and detach root disk.
+
+        Called by conductor to prepare a VMware ephemeral instance
+        for cross-hypervisor migration to KVM.
+        """
+        return self.driver.prep_cross_hv_conversion(ctxt, instance)
+
+    @wrap_exception()
+    @wrap_instance_event(prefix='compute')
+    @wrap_instance_fault
+    def abort_cross_hv_conversion(self, ctxt, instance, prep_data):
+        """RPC endpoint: reattach root disk and power VM back on.
+
+        Called by conductor to abort a cross-hypervisor conversion
+        that has not yet passed the point of no return.
+        """
+        self.driver.abort_cross_hv_conversion(ctxt, instance, prep_data)
 
     @messaging.expected_exceptions(exception.InstancePowerOffFailure)
     @wrap_exception()
