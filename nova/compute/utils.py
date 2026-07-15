@@ -1873,12 +1873,6 @@ def raise_on_unsupported_cross_hypervisor_resize(context,
 
     if is_supported_cross_hypervisor_resize(
             source_hypervisor_type, dest_hypervisor_type):
-        bfv = request_spec.is_bfv if "is_bfv" in request_spec else \
-                is_volume_backed_instance(context, instance)
-
-        if not bfv:
-            raise exception.InvalidCrossHvResizePrecondition(
-                    reason='Must be BFV instance')
         if instance.power_state != power_state.RUNNING:
             raise exception.InvalidCrossHvResizePrecondition(
                     reason='Instance must be running for cross-hypervisor '

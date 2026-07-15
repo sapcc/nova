@@ -12,6 +12,8 @@
 
 from unittest import mock
 
+import contextlib
+
 from oslo_serialization import jsonutils
 from oslo_utils.fixture import uuidsentinel as uuids
 
@@ -409,9 +411,10 @@ class MigrationTaskTestCase(test.NoDBTestCase):
     @mock.patch.object(scheduler_utils, 'setup_instance_group')
     @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'prep_resize')
+    @mock.patch.object(migrate.MigrationTask, '_get_root_bdm')
     def test_execute_calls_sanitize_and_stashes_journal(
-            self, prep_resize_mock, sel_dest_mock, sig_mock, az_mock,
-            gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock, gbf_mock):
+            self, mock_get_bdm, prep_resize_mock, sel_dest_mock, sig_mock,
+            az_mock, gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock, gbf_mock):
         """Verify sanitize is called for cross-HV and result stashed."""
         sel_dest_mock.return_value = self.host_lists
         az_mock.return_value = 'myaz'
@@ -420,6 +423,12 @@ class MigrationTaskTestCase(test.NoDBTestCase):
             self.mock_network_api.get_requested_resource_for_instance
         mock_get_resources.return_value = ([], objects.RequestLevelParams())
         gmv_mock.return_value = 23
+        # BFV instance: root BDM is volume-backed — passes validation,
+        # skips conversion
+        bfv_bdm = mock.Mock()
+        bfv_bdm.destination_type = 'volume'
+        bfv_bdm.source_type = 'volume'
+        mock_get_bdm.return_value = bfv_bdm
 
         fake_journal = {'img_hv_type': 'vmware', 'hw_disk_bus': 'scsi'}
         self.sanitize_mock.return_value = fake_journal
@@ -585,11 +594,16 @@ class CrossHvResizeTestCase(test.NoDBTestCase):
         self.assertRaises(exception.InvalidCrossHvResize,
                           self.task._prep_cross_hv_resize, None, self.HV_CH)
 
-    def test_prep_raises_not_bfv(self):
+    @mock.patch('nova.compute.utils.sanitize_image_props_for_kvm',
+                return_value={'img_hv_type': 'vmware'})
+    def test_prep_allows_non_bfv(self, mock_sanitize):
+        """Non-BFV instances are now allowed for cross-HV resize."""
         self.task.request_spec.is_bfv = False
-        self.assertRaises(
-            exception.InvalidCrossHvResizePrecondition,
-            self.task._prep_cross_hv_resize, self.HV_VMWARE, self.HV_CH)
+        # Should NOT raise
+        self.task._prep_cross_hv_resize(self.HV_VMWARE, self.HV_CH)
+        mock_sanitize.assert_called_once_with(self.task.request_spec)
+        self.assertEqual('true',
+                         self.instance.system_metadata['cross_hv_resize'])
 
     def test_prep_raises_not_running(self):
         for ps in (power_state.SHUTDOWN, power_state.PAUSED,
@@ -600,6 +614,126 @@ class CrossHvResizeTestCase(test.NoDBTestCase):
                     exception.InvalidCrossHvResizePrecondition,
                     self.task._prep_cross_hv_resize, self.HV_VMWARE,
                     self.HV_CH)
+
+
+class CrossHvImageConversionDetectionTestCase(test.NoDBTestCase):
+    """Tests for image-backed root BDM detection in MigrationTask."""
+
+    def setUp(self):
+        super().setUp()
+        ctx = FakeContext('fake', 'fake')
+        flavor = fake_flavor.fake_flavor_obj(ctx)
+        flavor.extra_specs = {}
+        inst = fake_instance.fake_db_instance(flavor=flavor)
+        inst_obj = objects.Instance(
+            flavor=flavor, numa_topology=None,
+            pci_requests=None, system_metadata={})
+        self.instance = objects.Instance._from_db_object(
+            ctx, inst_obj, inst, [])
+        self.instance.power_state = power_state.RUNNING
+        self.instance.save = mock.Mock()
+        request_spec = objects.RequestSpec(image=objects.ImageMeta())
+        request_spec.is_bfv = False
+        self.task = migrate.MigrationTask(
+            ctx, self.instance, flavor, request_spec,
+            clean_shutdown=True,
+            compute_rpcapi=mock.Mock(),
+            query_client=mock.Mock(),
+            report_client=mock.Mock(),
+            host_list=None,
+            network_api=mock.Mock())
+
+    def _make_bdm(self, source_type='image', destination_type='local',
+                  boot_index=0, volume_id=None, image_id='fake-image'):
+        bdm = objects.BlockDeviceMapping(
+            source_type=source_type,
+            destination_type=destination_type,
+            boot_index=boot_index,
+            volume_id=volume_id,
+            image_id=image_id)
+        return bdm
+
+    @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    def test_get_root_bdm_returns_root(self, mock_get_bdms):
+        root = self._make_bdm(boot_index=0)
+        non_root = self._make_bdm(boot_index=1, source_type='blank',
+                                  destination_type='local')
+        mock_get_bdms.return_value = objects.BlockDeviceMappingList(
+            objects=[root, non_root])
+        result = self.task._get_root_bdm()
+        self.assertIs(result, root)
+
+    @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    def test_get_root_bdm_returns_none_if_no_root(self, mock_get_bdms):
+        non_root = self._make_bdm(boot_index=1)
+        mock_get_bdms.return_value = objects.BlockDeviceMappingList(
+            objects=[non_root])
+        result = self.task._get_root_bdm()
+        self.assertIsNone(result)
+
+    def test_is_image_backed_local_root_true(self):
+        bdm = self._make_bdm(source_type='image', destination_type='local')
+        self.assertTrue(self.task._is_image_backed_local_root(bdm))
+
+    def test_is_image_backed_local_root_false_for_volume(self):
+        bdm = self._make_bdm(source_type='volume', destination_type='volume',
+                             volume_id='vol-1')
+        self.assertFalse(self.task._is_image_backed_local_root(bdm))
+
+    def test_is_image_backed_local_root_false_for_none(self):
+        self.assertFalse(self.task._is_image_backed_local_root(None))
+
+    def test_is_image_backed_local_root_false_for_image_volume(self):
+        """image/volume (BFV from image) is not a conversion candidate."""
+        bdm = self._make_bdm(source_type='image', destination_type='volume',
+                             volume_id='vol-1')
+        self.assertFalse(self.task._is_image_backed_local_root(bdm))
+
+    def test_already_converted_bdm_skips_conversion(self):
+        """If root BDM is already volume-backed after conversion, skip."""
+        bdm = self._make_bdm(source_type='image', destination_type='volume',
+                             volume_id='vol-converted')
+        # This simulates a reschedule where conversion already happened
+        self.assertFalse(self.task._is_image_backed_local_root(bdm))
+
+    def test_metadata_set_but_bdm_volume_still_skips(self):
+        """Even if metadata says converted, BDM shape is the real guard."""
+        self.instance.system_metadata['cross_hv_image_converted'] = 'True'
+        bdm = self._make_bdm(source_type='image', destination_type='volume',
+                             volume_id='vol-123')
+        self.assertFalse(self.task._is_image_backed_local_root(bdm))
+
+    def test_validate_cross_hv_root_bdm_allows_image_local(self):
+        bdm = self._make_bdm(source_type='image', destination_type='local')
+        # Should not raise
+        self.task._validate_cross_hv_root_bdm(bdm)
+
+    def test_validate_cross_hv_root_bdm_allows_volume_backed(self):
+        bdm = self._make_bdm(source_type='volume', destination_type='volume',
+                             volume_id='vol-1')
+        # Should not raise
+        self.task._validate_cross_hv_root_bdm(bdm)
+
+    def test_validate_cross_hv_root_bdm_allows_image_volume(self):
+        """BFV-from-image (image/volume) is also allowed."""
+        bdm = self._make_bdm(source_type='image', destination_type='volume',
+                             volume_id='vol-1')
+        self.task._validate_cross_hv_root_bdm(bdm)
+
+    def test_validate_cross_hv_root_bdm_rejects_none(self):
+        self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self.task._validate_cross_hv_root_bdm, None)
+
+    def test_validate_cross_hv_root_bdm_rejects_blank_local(self):
+        """blank/local swap disk is not a supported root for cross-HV."""
+        bdm = self._make_bdm(source_type='blank', destination_type='local')
+        self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self.task._validate_cross_hv_root_bdm, bdm)
+
+
+
 
 
 class MigrationTaskAllocationUtils(test.NoDBTestCase):
