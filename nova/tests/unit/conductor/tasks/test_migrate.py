@@ -14,6 +14,7 @@ from unittest import mock
 
 import contextlib
 
+from oslo_config import cfg
 from oslo_serialization import jsonutils
 from oslo_utils.fixture import uuidsentinel as uuids
 
@@ -423,7 +424,7 @@ class MigrationTaskTestCase(test.NoDBTestCase):
             self.mock_network_api.get_requested_resource_for_instance
         mock_get_resources.return_value = ([], objects.RequestLevelParams())
         gmv_mock.return_value = 23
-        # BFV instance: root BDM is volume-backed — passes validation,
+        # BFV instance: root BDM is volume-backed - passes validation,
         # skips conversion
         bfv_bdm = mock.Mock()
         bfv_bdm.destination_type = 'volume'
@@ -779,6 +780,439 @@ class MigrationTaskAllocationUtils(test.NoDBTestCase):
         mock_pa.return_value = False
 
         self.assertRaises(exception.NoValidHost,
-                          migrate.replace_allocation_with_migration,
-                          ctxt,
-                          instance, migration)
+                           migrate.replace_allocation_with_migration,
+                           ctxt,
+                           instance, migration)
+
+
+class CrossHvImageConversionTestCase(test.NoDBTestCase):
+    """Tests for _convert_image_backed_root_to_bfv orchestration."""
+
+    @staticmethod
+    def _ensure_cross_hv_conf():
+        """Register [cross_hv] group and fcd_volume_type if not present."""
+        _CONF = cfg.CONF
+        try:
+            _CONF.cross_hv.fcd_volume_type
+        except (cfg.NoSuchGroupError, cfg.NoSuchOptError):
+            try:
+                _CONF.register_group(cfg.OptGroup('cross_hv'))
+            except cfg.DuplicateOptError:
+                pass
+            try:
+                _CONF.register_opt(
+                    cfg.StrOpt('fcd_volume_type', default='vmware'),
+                    group='cross_hv')
+            except cfg.DuplicateOptError:
+                pass
+
+    def setUp(self):
+        super().setUp()
+        self._ensure_cross_hv_conf()
+        self.flags(enable_cross_hv_resize=True, group='workarounds')
+        self.flags(fcd_volume_type='vmware', group='cross_hv')
+        ctx = FakeContext('fake', 'fake')
+        flavor = fake_flavor.fake_flavor_obj(ctx)
+        flavor.extra_specs = {}
+        inst = fake_instance.fake_db_instance(flavor=flavor)
+        inst_obj = objects.Instance(
+            flavor=flavor, numa_topology=None,
+            pci_requests=None, system_metadata={},
+            image_ref='original-image-ref')
+        self.instance = objects.Instance._from_db_object(
+            ctx, inst_obj, inst, [])
+        self.instance.power_state = power_state.RUNNING
+        self.instance.save = mock.Mock()
+
+        request_spec = objects.RequestSpec(image=objects.ImageMeta())
+        request_spec.is_bfv = False
+
+        self.mock_compute_rpcapi = mock.Mock()
+        self.mock_volume_api = mock.Mock()
+
+        self.task = migrate.MigrationTask(
+            ctx, self.instance, flavor, request_spec,
+            clean_shutdown=True,
+            compute_rpcapi=self.mock_compute_rpcapi,
+            query_client=mock.Mock(),
+            report_client=mock.Mock(),
+            host_list=None,
+            network_api=mock.Mock(),
+            volume_api=self.mock_volume_api)
+
+        # Standard prep response
+        self.prep_response = {
+            'vmdk_path': '[datastore1] vm-uuid/vm-uuid.vmdk',
+            'size_bytes': 10 * 1024 * 1024 * 1024,  # 10 GiB
+            'cinder_host': 'cinder-vol@vmware_fcd',
+            'source_fcd_id': 'fcd-123',
+            'rollback': {'disk_key': 2000, 'controller_key': 1000},
+        }
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
+            self.prep_response)
+
+        # manage_existing (ticket 672) polls until available and raises on
+        # failure. The conductor gets back an already-available volume dict.
+        self.mock_volume_api.manage_existing.return_value = {
+            'id': uuids.volume, 'status': 'available'}
+
+        # Standard attachment response
+        self.mock_volume_api.attachment_create.return_value = {
+            'id': uuids.attachment}
+
+    def _make_root_bdm(self):
+        bdm = objects.BlockDeviceMapping(
+            context=self.task.context,
+            source_type='image',
+            destination_type='local',
+            boot_index=0,
+            volume_id=None,
+            image_id=uuids.image,
+            volume_size=None,
+            connection_info=None,
+            attachment_id=None,
+            snapshot_id=None)
+        bdm.save = mock.Mock()
+        return bdm
+
+    def test_happy_path_converts_root_bdm(self):
+        root_bdm = self._make_root_bdm()
+
+        self.task._convert_image_backed_root_to_bfv(root_bdm)
+
+        # Verify prep was called
+        self.mock_compute_rpcapi.prep_cross_hv_conversion \
+            .assert_called_once_with(self.task.context, self.instance)
+
+        # Verify manage_existing called with correct args including size_gb
+        # and the full prep payload for rollback/abort decisions.
+        self.mock_volume_api.manage_existing.assert_called_once_with(
+            self.task.context,
+            host='cinder-vol@vmware_fcd',
+            ref={'source-name': '[datastore1] vm-uuid/vm-uuid.vmdk',
+                 'size_gb': 10,
+                 'source-id': 'fcd-123'},
+            volume_type='vmware',
+            name='cross-hv-%s' % self.instance.uuid,
+            description='Auto-converted from image-backed instance',
+            bootable=True,
+            rollback=self.prep_response)
+
+        # Verify attachment created
+        self.mock_volume_api.attachment_create.assert_called_once_with(
+            self.task.context, uuids.volume, self.instance.uuid)
+
+        # Verify BDM mutation
+        self.assertEqual('volume', root_bdm.destination_type)
+        self.assertEqual(uuids.volume, root_bdm.volume_id)
+        self.assertEqual(10, root_bdm.volume_size)
+        self.assertEqual(uuids.attachment, root_bdm.attachment_id)
+        self.assertIsNone(root_bdm.snapshot_id)
+        root_bdm.save.assert_called_once()
+
+        # source_type and image_id preserved
+        self.assertEqual('image', root_bdm.source_type)
+        self.assertEqual(uuids.image, root_bdm.image_id)
+
+        # System metadata set
+        self.assertEqual(
+            'True',
+            self.instance.system_metadata['cross_hv_image_converted'])
+        self.instance.save.assert_called()
+
+        # connection_info has placeholder
+        conn_info = jsonutils.loads(root_bdm.connection_info)
+        self.assertTrue(conn_info['cross_hv_placeholder'])
+
+        # abort was NOT called
+        self.mock_compute_rpcapi.abort_cross_hv_conversion \
+            .assert_not_called()
+
+    def test_manage_receives_full_prep_payload_for_rollback(self):
+        """The placeholder wrapper needs enough data to call abort RPC."""
+        root_bdm = self._make_root_bdm()
+
+        self.task._convert_image_backed_root_to_bfv(root_bdm)
+
+        rollback_payload = (
+            self.mock_volume_api.manage_existing.call_args[1]['rollback'])
+        self.assertIs(self.prep_response, rollback_payload)
+        self.assertEqual('[datastore1] vm-uuid/vm-uuid.vmdk',
+                         rollback_payload['vmdk_path'])
+        self.assertEqual(
+            {'disk_key': 2000, 'controller_key': 1000},
+            rollback_payload['rollback'])
+
+    def test_prep_rpc_failure_does_not_abort(self):
+        """If prep_cross_hv_conversion fails, no abort is called."""
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
+            Exception('RPC timeout'))
+        root_bdm = self._make_root_bdm()
+
+        self.assertRaises(Exception,
+                          self.task._convert_image_backed_root_to_bfv,
+                          root_bdm)
+        self.mock_volume_api.manage_existing.assert_not_called()
+        self.mock_compute_rpcapi.abort_cross_hv_conversion \
+            .assert_not_called()
+        self.assertEqual('local', root_bdm.destination_type)
+
+    def test_manage_exception_does_not_abort(self):
+        """manage_existing raising -> exception propagates, conductor does not abort.
+
+        Error/abort semantics on manage failure are handled by manage_existing
+        in ticket 672. The conductor lets exceptions propagate unchanged.
+        """
+        self.mock_volume_api.manage_existing.side_effect = (
+            Exception('manage failed'))
+        root_bdm = self._make_root_bdm()
+
+        self.assertRaises(Exception,
+                          self.task._convert_image_backed_root_to_bfv,
+                          root_bdm)
+        self.mock_compute_rpcapi.abort_cross_hv_conversion \
+            .assert_not_called()
+        self.assertEqual('local', root_bdm.destination_type)
+
+    def test_attachment_failure_leaves_volume(self):
+        """attachment_create failure: volume left, no abort."""
+        self.mock_volume_api.attachment_create.side_effect = (
+            Exception('attachment failed'))
+        root_bdm = self._make_root_bdm()
+
+        self.assertRaises(Exception,
+                          self.task._convert_image_backed_root_to_bfv,
+                          root_bdm)
+        self.mock_compute_rpcapi.abort_cross_hv_conversion \
+            .assert_not_called()
+        self.mock_volume_api.manage_existing.assert_called_once()
+        self.assertEqual('local', root_bdm.destination_type)
+
+    def test_bdm_save_failure_deletes_attachment(self):
+        """BDM save failure -> delete attachment, leave volume."""
+        root_bdm = self._make_root_bdm()
+        root_bdm.save = mock.Mock(side_effect=Exception('db error'))
+
+        self.assertRaises(Exception,
+                          self.task._convert_image_backed_root_to_bfv,
+                          root_bdm)
+        self.mock_volume_api.attachment_delete.assert_called_once_with(
+            self.task.context, uuids.attachment)
+        self.mock_compute_rpcapi.abort_cross_hv_conversion \
+            .assert_not_called()
+
+    def test_size_rounded_up(self):
+        """size_bytes not evenly divisible by GiB rounds up."""
+        # 10 GiB + 1 byte -> 11 GiB
+        self.prep_response['size_bytes'] = 10 * 1024 * 1024 * 1024 + 1
+        root_bdm = self._make_root_bdm()
+
+        self.task._convert_image_backed_root_to_bfv(root_bdm)
+
+        self.assertEqual(11, root_bdm.volume_size)
+        call_kwargs = self.mock_volume_api.manage_existing.call_args[1]
+        self.assertEqual(11, call_kwargs['ref']['size_gb'])
+
+    def test_source_fcd_id_omitted_when_absent(self):
+        """ref does not include source-id when source_fcd_id is absent."""
+        self.prep_response.pop('source_fcd_id')
+        root_bdm = self._make_root_bdm()
+
+        self.task._convert_image_backed_root_to_bfv(root_bdm)
+
+        call_kwargs = self.mock_volume_api.manage_existing.call_args[1]
+        self.assertNotIn('source-id', call_kwargs['ref'])
+        self.assertIn('source-name', call_kwargs['ref'])
+        self.assertIn('size_gb', call_kwargs['ref'])
+
+    def test_image_ref_preserved(self):
+        """instance.image_ref must not be cleared."""
+        self.instance.image_ref = 'precious-image-ref'
+        root_bdm = self._make_root_bdm()
+
+        self.task._convert_image_backed_root_to_bfv(root_bdm)
+
+        self.assertEqual('precious-image-ref', self.instance.image_ref)
+
+
+class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
+    """Tests for conversion ordering in MigrationTask._execute().
+
+    Exercises the full _execute() path with controlled mocks to verify
+    that conversion happens before prep_resize, BFV skips conversion,
+    unsupported roots are rejected, and cross-cell cross-HV raises.
+    """
+
+    HV_VMWARE = 'VMware vCenter Server'
+    HV_CH = 'CH'
+
+    def setUp(self):
+        super().setUp()
+        CrossHvImageConversionTestCase._ensure_cross_hv_conf()
+        self.flags(enable_cross_hv_resize=True, group='workarounds')
+        self.flags(fcd_volume_type='vmware', group='cross_hv')
+
+        self.ctx = FakeContext('fake', 'fake')
+        self.ctx.cell_uuid = uuids.cell1
+
+        flavor = fake_flavor.fake_flavor_obj(self.ctx)
+        flavor.extra_specs = {'capabilities:hypervisor_type': self.HV_CH}
+        inst = fake_instance.fake_db_instance(flavor=flavor)
+        inst_obj = objects.Instance(
+            flavor=flavor, numa_topology=None,
+            pci_requests=None, system_metadata={},
+            image_ref=uuids.image)
+        self.instance = objects.Instance._from_db_object(
+            self.ctx, inst_obj, inst, [])
+        self.instance.power_state = power_state.RUNNING
+        self.instance.save = mock.Mock()
+
+        self.request_spec = objects.RequestSpec(image=objects.ImageMeta())
+        self.request_spec.is_bfv = False
+
+        self.mock_compute_rpcapi = mock.Mock()
+        self.mock_volume_api = mock.Mock()
+        self.mock_network_api = mock.Mock()
+        self.mock_network_api.get_requested_resource_for_instance \
+            .return_value = ([], objects.RequestLevelParams())
+
+        self.task = migrate.MigrationTask(
+            self.ctx, self.instance, flavor, self.request_spec,
+            clean_shutdown=True,
+            compute_rpcapi=self.mock_compute_rpcapi,
+            query_client=query.SchedulerQueryClient(),
+            report_client=report.SchedulerReportClient(),
+            host_list=None,
+            network_api=self.mock_network_api,
+            volume_api=self.mock_volume_api)
+
+        source_cn = mock.Mock()
+        source_cn.hypervisor_type = self.HV_VMWARE
+        self.task._source_cn = source_cn
+
+        self.selection = objects.Selection(
+            service_host='kvm-host', nodename='kvm-node',
+            cell_uuid=uuids.cell1, availability_zone='az1')
+
+    def _make_bdm(self, source_type, destination_type, volume_id=None):
+        bdm = mock.Mock()
+        bdm.source_type = source_type
+        bdm.destination_type = destination_type
+        bdm.volume_id = volume_id
+        return bdm
+
+    def _execute_with_mocks(self, root_bdm):
+        """Run _execute() with all external dependencies patched."""
+        patches = [
+            mock.patch('nova.compute.utils.heal_reqspec_is_bfv'),
+            mock.patch('nova.compute.utils.sanitize_image_props_for_kvm',
+                       return_value={}),
+            mock.patch.object(objects.RequestSpec,
+                               'ensure_network_information'),
+            mock.patch.object(self.task, '_preallocate_migration',
+                              return_value=mock.Mock(id=1,
+                                                    uuid=uuids.migration)),
+            mock.patch.object(self.task, '_schedule',
+                              return_value=self.selection),
+            mock.patch.object(self.task, '_is_selected_host_in_source_cell',
+                              return_value=True),
+            mock.patch.object(self.task, '_persist_image_properties_journal'),
+            mock.patch.object(self.task, '_get_root_bdm',
+                              return_value=root_bdm),
+            mock.patch('nova.scheduler.utils.setup_instance_group'),
+            mock.patch('nova.scheduler.utils.populate_retry'),
+            mock.patch('nova.scheduler.utils.populate_filter_properties'),
+        ]
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            self.task.execute()
+
+    @mock.patch.object(migrate.MigrationTask,
+                       '_convert_image_backed_root_to_bfv')
+    def test_image_backed_triggers_conversion_before_prep_resize(
+            self, mock_convert):
+        """image/local root: conversion called, then prep_resize."""
+        root_bdm = self._make_bdm('image', 'local')
+        call_order = []
+        mock_convert.side_effect = lambda _: call_order.append('convert')
+        self.mock_compute_rpcapi.prep_resize.side_effect = (
+            lambda *a, **k: call_order.append('prep_resize'))
+
+        self._execute_with_mocks(root_bdm)
+
+        self.assertEqual(['convert', 'prep_resize'], call_order)
+
+    @mock.patch.object(migrate.MigrationTask,
+                       '_convert_image_backed_root_to_bfv')
+    def test_bfv_root_skips_conversion(self, mock_convert):
+        """volume-backed root: conversion skipped, prep_resize called."""
+        root_bdm = self._make_bdm('volume', 'volume', volume_id=uuids.vol)
+
+        self._execute_with_mocks(root_bdm)
+
+        mock_convert.assert_not_called()
+        self.mock_compute_rpcapi.prep_resize.assert_called_once()
+
+    def test_unsupported_root_raises_before_prep_resize(self):
+        """blank/local root: ValidationError before prep_resize."""
+        root_bdm = self._make_bdm('blank', 'local')
+
+        self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self._execute_with_mocks, root_bdm)
+
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    def test_cross_hv_cross_cell_raises_before_conversion(self):
+        """Cross-HV resize must be same-cell; cross-cell selection raises."""
+        cross_cell_selection = objects.Selection(
+            service_host='kvm-host-other-cell', nodename='kvm-node',
+            cell_uuid=uuids.cell2, availability_zone='az1')
+
+        base_patches = [
+            mock.patch('nova.compute.utils.heal_reqspec_is_bfv'),
+            mock.patch('nova.compute.utils.sanitize_image_props_for_kvm',
+                       return_value={}),
+            mock.patch.object(objects.RequestSpec,
+                               'ensure_network_information'),
+            mock.patch.object(self.task, '_preallocate_migration',
+                              return_value=mock.Mock(id=1,
+                                                    uuid=uuids.migration)),
+            mock.patch.object(self.task, '_schedule',
+                              return_value=cross_cell_selection),
+            mock.patch.object(self.task, '_is_selected_host_in_source_cell',
+                              return_value=False),
+            mock.patch.object(self.task, '_persist_image_properties_journal'),
+            mock.patch.object(self.task, '_get_root_bdm',
+                              return_value=self._make_bdm('image', 'local')),
+            mock.patch('nova.scheduler.utils.setup_instance_group'),
+            mock.patch('nova.scheduler.utils.populate_retry'),
+            mock.patch('nova.scheduler.utils.populate_filter_properties'),
+        ]
+        with contextlib.ExitStack() as stack:
+            for p in base_patches:
+                stack.enter_context(p)
+            mock_conv = stack.enter_context(
+                mock.patch.object(migrate.MigrationTask,
+                                  '_convert_image_backed_root_to_bfv'))
+            self.assertRaises(
+                exception.InvalidCrossHvResizePrecondition,
+                self.task.execute)
+
+        mock_conv.assert_not_called()
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    @mock.patch.object(migrate.MigrationTask,
+                       '_convert_image_backed_root_to_bfv')
+    def test_conversion_failure_blocks_prep_resize(self, mock_convert):
+        """If conversion raises, prep_resize must not be called."""
+        root_bdm = self._make_bdm('image', 'local')
+        mock_convert.side_effect = exception.VolumeMigrationError(
+            volume_id=uuids.vol, reason='manage failed')
+
+        self.assertRaises(
+            exception.VolumeMigrationError,
+            self._execute_with_mocks, root_bdm)
+
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
