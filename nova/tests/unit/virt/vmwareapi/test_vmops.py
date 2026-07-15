@@ -1742,7 +1742,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock_rename, mock_shutdown, mock_get_state, mock_detach,
             mock_remove_nic, mock_reconfig, mock_change_uuid,
             mock_search_shell, mock_get_hardware):
-        """VM already powered off: shutdown is skipped."""
+        """VM is already powered off; shutdown is skipped."""
         migration = objects.Migration(uuid=uuids.migration)
         mock_mig_get.return_value = migration
         mig_ctx = objects.MigrationContext(
@@ -1784,7 +1784,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock_rename, mock_shutdown, mock_get_state, mock_detach,
             mock_remove_nic, mock_reconfig, mock_change_uuid,
             mock_search_shell, mock_get_hardware):
-        """No VirtualDisk for root BDM means the disk is already detached.
+        """No VirtualDisk on VM for root BDM means already detached.
 
         _detach_volumes tolerates missing disks; verify it does not raise.
         """
@@ -1796,7 +1796,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._instance.migration_context = mig_ctx
         self._instance.system_metadata = {}
         self._instance.save = mock.Mock()
-        # Missing disk is handled inside _detach_volumes.
+        # Simulate _detach_volumes encountering no matching disk; it
+        # should not raise because DiskNotFound is caught internally.
         mock_detach.return_value = None
 
         with mock.patch.object(self._vmops, '_is_cross_hv_resize',
@@ -4866,7 +4867,7 @@ class VMwareVMOpsTestCase(test.TestCase):
                                 unit_number=0,
                                 capacity=68719476736,
                                 filename='[ds1] vm-uuid/vm-uuid.vmdk'):
-        """Return [controller, root_disk] device list."""
+        """Helper: return [controller, root_disk] device list."""
         controller = vmwareapi_fake.VirtualLsiLogicController(
             key=controller_key)
         root_disk = vmwareapi_fake.VirtualDisk()
@@ -4903,7 +4904,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_detach_spec.assert_called_once_with(
             self._vmops._session.vim.client.factory,
             root_disk, destroy_disk=False)
-        # vSphere deviceChange is an array type.
+        # detach_spec must be wrapped in a list; vSphere deviceChange is
+        # an array type and existing helpers always pass lists.
         mock_reconfig.assert_called_once_with(
             self._vmops._session, 'fake-vm-ref', ['fake-detach-spec'])
         self.assertEqual(result['vmdk_path'],
@@ -5027,7 +5029,7 @@ class VMwareVMOpsTestCase(test.TestCase):
     def test_abort_cross_hv_conversion_already_attached_and_running(
             self, mock_get_ref, mock_get_hw, mock_reconfig_vm,
             mock_power_on, mock_get_state):
-        """Already-attached disk and running VM is a no-op."""
+        """Already-attached disk and running VM = no-op."""
         mock_get_ref.return_value = 'fake-vm-ref'
         mock_get_state.return_value = power_state.RUNNING
 
@@ -5154,7 +5156,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         """
         mock_get_ref.return_value = 'fake-vm-ref'
         mock_get_state.return_value = power_state.RUNNING
-        # The VM is already off when the power-off task arrives.
+        # Simulate the race: power_off_instance returns False because the
+        # VM was already off when the task arrived.
         mock_power_off.return_value = False
         controller, root_disk = self._make_root_disk_devices()
         mock_get_hw.return_value = [controller, root_disk]
@@ -5168,7 +5171,8 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._context, self._instance)
 
         mock_power_off.assert_called_once()
-        # Nova did not power the VM off, so it must not power it on.
+        # powered_off_by_us=False because the helper returned False, so
+        # no recovery power-on should be issued.
         mock_power_on.assert_not_called()
 
     @mock.patch.object(vm_util, 'get_vm_state')
@@ -5187,7 +5191,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         root_disk = vmwareapi_fake.VirtualDisk()
         root_disk.controllerKey = 1000
         root_disk.unitNumber = 0
-        # Pre-vSphere-5.5 devices expose only capacityInKB.
+        # Simulate a pre-vSphere-5.5 device: only capacityInKB, no
+        # capacityInBytes attribute.
         root_disk.capacityInKB = 67108864
         backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
         backing.fileName = '[ds1] vm-uuid/vm-uuid.vmdk'
