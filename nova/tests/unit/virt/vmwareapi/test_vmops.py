@@ -4787,3 +4787,416 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._vmops.trigger_crash_dump(self._instance)
         mock_trigger_crash_dump.assert_called_once_with(self._session,
                                                         self._instance)
+
+    # --- cross-HV conversion helper tests ---
+
+    def test_get_root_disk_device_finds_scsi_unit_zero(self):
+        """Root disk is the VirtualDisk on a SCSI controller at unit 0."""
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        root_disk = vmwareapi_fake.VirtualDisk()
+        root_disk.controllerKey = 1000
+        root_disk.unitNumber = 0
+        root_disk.capacityInBytes = 68719476736
+        backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
+        backing.fileName = '[ds1] vm-uuid/vm-uuid.vmdk'
+        root_disk.backing = backing
+
+        other_disk = vmwareapi_fake.VirtualDisk()
+        other_disk.controllerKey = 1000
+        other_disk.unitNumber = 1
+        other_disk.backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
+        other_disk.backing.fileName = '[ds1] vm-uuid/data.vmdk'
+
+        devices = [controller, root_disk, other_disk]
+        result = self._vmops._get_root_disk_device(devices)
+        self.assertEqual(result, root_disk)
+
+    def test_get_root_disk_device_ignores_ide_unit_zero(self):
+        """IDE disks at unit 0 are NOT considered root disks."""
+        ide_ctrl = vmwareapi_fake.VirtualIDEController(key=200)
+        ide_disk = vmwareapi_fake.VirtualDisk()
+        ide_disk.controllerKey = 200
+        ide_disk.unitNumber = 0
+        ide_disk.backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
+        ide_disk.backing.fileName = '[ds1] vm-uuid/ide.vmdk'
+
+        devices = [ide_ctrl, ide_disk]
+        self.assertRaises(
+            exception.DiskNotFound,
+            self._vmops._get_root_disk_device, devices)
+
+    def test_get_root_disk_device_raises_when_no_disk(self):
+        """Raises DiskNotFound when no SCSI unit-0 VirtualDisk exists."""
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        devices = [controller]
+        self.assertRaises(
+            exception.DiskNotFound,
+            self._vmops._get_root_disk_device, devices)
+
+    def test_get_root_disk_device_ignores_non_vdisk_at_scsi_unit_zero(self):
+        """Non-VirtualDisk objects at SCSI unit 0 are skipped."""
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        # Simulate a non-VirtualDisk device (e.g. a CDROM proxy) that happens
+        # to sit on the same controller at unit 0.
+        impostor = vmwareapi_fake.DataObject()
+        impostor.__class__ = type('VirtualCdrom',
+                                  (vmwareapi_fake.DataObject,), {})
+        impostor.controllerKey = 1000
+        impostor.unitNumber = 0
+        impostor.backing = vmwareapi_fake.DataObject()
+        impostor.backing.fileName = '[ds1] vm-uuid/cdrom.iso'
+
+        devices = [controller, impostor]
+        self.assertRaises(
+            exception.DiskNotFound,
+            self._vmops._get_root_disk_device, devices)
+
+    # --- prep_cross_hv_conversion tests ---
+
+    def _make_root_disk_devices(self, controller_key=1000,
+                                unit_number=0,
+                                capacity=68719476736,
+                                filename='[ds1] vm-uuid/vm-uuid.vmdk'):
+        """Helper: return [controller, root_disk] device list."""
+        controller = vmwareapi_fake.VirtualLsiLogicController(
+            key=controller_key)
+        root_disk = vmwareapi_fake.VirtualDisk()
+        root_disk.controllerKey = controller_key
+        root_disk.unitNumber = unit_number
+        root_disk.capacityInBytes = capacity
+        backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
+        backing.fileName = filename
+        root_disk.backing = backing
+        return controller, root_disk
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_running_vm(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_detach_spec, mock_reconfig, mock_get_state):
+        """Running VM is powered off and root disk is detached."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+        controller, root_disk = self._make_root_disk_devices()
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        self.flags(host_ip='vc-b-2.cc.region.cloud.sap', group='vmware')
+
+        result = self._vmops.prep_cross_hv_conversion(
+            self._context, self._instance)
+
+        mock_power_off.assert_called_once_with(
+            self._vmops._session, self._instance, 'fake-vm-ref')
+        mock_detach_spec.assert_called_once_with(
+            self._vmops._session.vim.client.factory,
+            root_disk, destroy_disk=False)
+        # detach_spec must be wrapped in a list; vSphere deviceChange is
+        # an array type and existing helpers always pass lists.
+        mock_reconfig.assert_called_once_with(
+            self._vmops._session, 'fake-vm-ref', ['fake-detach-spec'])
+        self.assertEqual(result['vmdk_path'],
+                         '[ds1] vm-uuid/vm-uuid.vmdk')
+        self.assertEqual(result['size_bytes'], 68719476736)
+        self.assertEqual(
+            result['cinder_host'],
+            'cinder-volume-vmware-vc-b-2@vmware_fcd')
+        self.assertEqual(result['rollback'], {
+            'controller_key': 1000,
+            'unit_number': 0,
+            'capacity_in_bytes': 68719476736,
+        })
+        self.assertNotIn('source_fcd_id', result)
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_already_off(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_detach_spec, mock_reconfig, mock_get_state):
+        """Already powered-off VM with disk attached continues."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.SHUTDOWN
+        controller, root_disk = self._make_root_disk_devices()
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        self.flags(host_ip='vc-a-1.example.com', group='vmware')
+
+        result = self._vmops.prep_cross_hv_conversion(
+            self._context, self._instance)
+
+        mock_power_off.assert_not_called()
+        mock_reconfig.assert_called_once()
+        self.assertEqual(result['vmdk_path'],
+                         '[ds1] vm-uuid/vm-uuid.vmdk')
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_no_root_disk_raises(
+            self, mock_get_ref, mock_get_hw, mock_get_state):
+        """Missing root disk raises before any power state change."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        mock_get_hw.return_value = [controller]
+
+        self.assertRaises(
+            exception.DiskNotFound,
+            self._vmops.prep_cross_hv_conversion,
+            self._context, self._instance)
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_with_fcd_id(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_detach_spec, mock_reconfig, mock_get_state):
+        """source_fcd_id included when vDiskId is present."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+        controller, root_disk = self._make_root_disk_devices()
+        vdisk_id = type('obj', (object,), {'id': 'fcd-12345'})()
+        root_disk.vDiskId = vdisk_id
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        self.flags(host_ip='vc-b-2.cc.region.cloud.sap', group='vmware')
+
+        result = self._vmops.prep_cross_hv_conversion(
+            self._context, self._instance)
+
+        self.assertEqual(result['source_fcd_id'], 'fcd-12345')
+
+    # --- abort_cross_hv_conversion tests ---
+
+    def _prep_data(self, vmdk_path='[ds1] vm-uuid/vm-uuid.vmdk',
+                   controller_key=1000, unit_number=0,
+                   capacity=68719476736):
+        return {
+            'vmdk_path': vmdk_path,
+            'size_bytes': capacity,
+            'cinder_host': 'cinder-volume-vmware-vc-b-2@vmware_fcd',
+            'rollback': {
+                'controller_key': controller_key,
+                'unit_number': unit_number,
+                'capacity_in_bytes': capacity,
+            },
+        }
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'reconfigure_vm')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_abort_cross_hv_conversion_reattaches_and_powers_on(
+            self, mock_get_ref, mock_get_hw, mock_reconfig_vm,
+            mock_power_on, mock_get_state):
+        """Missing disk is reattached and VM is powered on."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.SHUTDOWN
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        mock_get_hw.return_value = [controller]
+
+        self._vmops.abort_cross_hv_conversion(
+            self._context, self._instance, self._prep_data())
+
+        mock_reconfig_vm.assert_called_once()
+        mock_power_on.assert_called_once_with(
+            self._vmops._session, self._instance, 'fake-vm-ref')
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'reconfigure_vm')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_abort_cross_hv_conversion_already_attached_and_running(
+            self, mock_get_ref, mock_get_hw, mock_reconfig_vm,
+            mock_power_on, mock_get_state):
+        """Already-attached disk and running VM = no-op."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        existing_disk = vmwareapi_fake.VirtualDisk()
+        existing_disk.controllerKey = 1000
+        existing_disk.unitNumber = 0
+        backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
+        backing.fileName = '[ds1] vm-uuid/vm-uuid.vmdk'
+        existing_disk.backing = backing
+        mock_get_hw.return_value = [controller, existing_disk]
+
+        self._vmops.abort_cross_hv_conversion(
+            self._context, self._instance, self._prep_data())
+
+        mock_reconfig_vm.assert_not_called()
+        mock_power_on.assert_not_called()
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'reconfigure_vm')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_abort_cross_hv_conversion_verifies_spec(
+            self, mock_get_ref, mock_get_hw, mock_reconfig_vm,
+            mock_power_on, mock_get_state):
+        """Abort builds the correct VirtualMachineConfigSpec."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.SHUTDOWN
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        mock_get_hw.return_value = [controller]
+
+        self._vmops.abort_cross_hv_conversion(
+            self._context, self._instance, self._prep_data())
+
+        mock_reconfig_vm.assert_called_once()
+        session_arg, vm_ref_arg, config_spec = (
+            mock_reconfig_vm.call_args[0])
+        device_specs = config_spec.deviceChange
+        self.assertEqual(1, len(device_specs))
+        disk_spec = device_specs[0]
+        self.assertEqual('add', disk_spec.operation)
+        vdisk = disk_spec.device
+        self.assertEqual(-100, vdisk.key)
+        self.assertEqual(1000, vdisk.controllerKey)
+        self.assertEqual(0, vdisk.unitNumber)
+        # 68719476736 bytes // 1024 = 67108864 KB
+        self.assertEqual(67108864, vdisk.capacityInKB)
+        self.assertEqual('[ds1] vm-uuid/vm-uuid.vmdk', vdisk.backing.fileName)
+        self.assertEqual('persistent', vdisk.backing.diskMode)
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_powers_on_if_detach_fails(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_power_on, mock_detach_spec, mock_reconfig, mock_get_state):
+        """If detach fails after power-off, VM is powered back on."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+        mock_power_off.return_value = True  # power-off actually happened
+        controller, root_disk = self._make_root_disk_devices()
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        mock_reconfig.side_effect = exception.NovaException('vSphere error')
+        self.flags(host_ip='vc-b-2.cc.region.cloud.sap', group='vmware')
+
+        self.assertRaises(
+            exception.NovaException,
+            self._vmops.prep_cross_hv_conversion,
+            self._context, self._instance)
+
+        mock_power_off.assert_called_once()
+        mock_power_on.assert_called_once_with(
+            self._vmops._session, self._instance, 'fake-vm-ref')
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_no_power_on_if_already_off_and_fails(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_power_on, mock_detach_spec, mock_reconfig, mock_get_state):
+        """No power-on if detach fails for a VM that was already off."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.SHUTDOWN
+        controller, root_disk = self._make_root_disk_devices()
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        mock_reconfig.side_effect = exception.NovaException('vSphere error')
+        self.flags(host_ip='vc-b-2.cc.region.cloud.sap', group='vmware')
+
+        self.assertRaises(
+            exception.NovaException,
+            self._vmops.prep_cross_hv_conversion,
+            self._context, self._instance)
+
+        mock_power_off.assert_not_called()
+        mock_power_on.assert_not_called()
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_on_instance')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_no_power_on_if_race_and_fails(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_power_on, mock_detach_spec, mock_reconfig, mock_get_state):
+        """power_off_instance returns False (race) → no recovery on failure.
+
+        If the VM powered itself off between our get_vm_state and the
+        PowerOffVM_Task call, power_off_instance returns False. In that
+        case powered_off_by_us is False and we must not power the VM on
+        during error recovery, since we didn't initiate the shutdown.
+        """
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+        # Simulate the race: power_off_instance returns False (VM was
+        # already off when the task arrived).
+        mock_power_off.return_value = False
+        controller, root_disk = self._make_root_disk_devices()
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        mock_reconfig.side_effect = exception.NovaException('vSphere error')
+        self.flags(host_ip='vc-b-2.cc.region.cloud.sap', group='vmware')
+
+        self.assertRaises(
+            exception.NovaException,
+            self._vmops.prep_cross_hv_conversion,
+            self._context, self._instance)
+
+        mock_power_off.assert_called_once()
+        # powered_off_by_us=False because the helper returned False, so
+        # no recovery power-on should be issued.
+        mock_power_on.assert_not_called()
+
+    @mock.patch.object(vm_util, 'get_vm_state')
+    @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
+    @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
+    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vm_util, 'get_hardware_devices')
+    @mock.patch.object(vm_util, 'get_vm_ref')
+    def test_prep_cross_hv_conversion_capacity_kb_fallback(
+            self, mock_get_ref, mock_get_hw, mock_power_off,
+            mock_detach_spec, mock_reconfig, mock_get_state):
+        """size_bytes is derived from capacityInKB on old vSphere devices."""
+        mock_get_ref.return_value = 'fake-vm-ref'
+        mock_get_state.return_value = power_state.RUNNING
+        controller = vmwareapi_fake.VirtualLsiLogicController(key=1000)
+        root_disk = vmwareapi_fake.VirtualDisk()
+        root_disk.controllerKey = 1000
+        root_disk.unitNumber = 0
+        # Simulate a pre-vSphere-5.5 device: only capacityInKB, no
+        # capacityInBytes attribute.
+        root_disk.capacityInKB = 67108864
+        backing = vmwareapi_fake.VirtualDiskFlatVer2BackingInfo()
+        backing.fileName = '[ds1] vm-uuid/vm-uuid.vmdk'
+        root_disk.backing = backing
+        mock_get_hw.return_value = [controller, root_disk]
+        mock_detach_spec.return_value = 'fake-detach-spec'
+        self.flags(host_ip='vc-b-2.cc.region.cloud.sap', group='vmware')
+
+        result = self._vmops.prep_cross_hv_conversion(
+            self._context, self._instance)
+
+        # 67108864 KB * 1024 = 68719476736 bytes
+        self.assertEqual(68719476736, result['size_bytes'])
+        self.assertEqual(68719476736,
+                         result['rollback']['capacity_in_bytes'])
