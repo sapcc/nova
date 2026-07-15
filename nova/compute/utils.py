@@ -302,7 +302,7 @@ def heal_reqspec_is_bfv(ctxt, request_spec, instance):
     request_spec.save()
 
 
-# Fields sanitized for cross-HV resize (VMware → KVM/CH).
+# Fields sanitized for cross-HV resize (VMware to KVM/CH).
 # Each tuple: (image_property_name, replacement_value_or_None_to_remove).
 # Used by both the reqspec sanitizer (conductor, before scheduling) and the
 # system_metadata sanitizer (vmware driver, before returning the shell).
@@ -1929,12 +1929,6 @@ def raise_on_unsupported_cross_hypervisor_resize(context,
 
     if is_supported_cross_hypervisor_resize(
             source_hypervisor_type, dest_hypervisor_type):
-        bfv = request_spec.is_bfv if "is_bfv" in request_spec else \
-                is_volume_backed_instance(context, instance)
-
-        if not bfv:
-            raise exception.InvalidCrossHvResizePrecondition(
-                    reason='Instance must be Boot-from-Volume (BFV)')
         if instance.power_state != power_state.RUNNING:
             raise exception.InvalidCrossHvResizePrecondition(
                     reason='Instance must be running for cross-hypervisor '
