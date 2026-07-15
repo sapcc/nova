@@ -6052,7 +6052,7 @@ class ComputeManager(manager.Manager):
             # For cross-HV resize, restore system_metadata image properties
             # from the MigrationContext journal before volume attachments and
             # driver calls, so both see the original VMware-era values.
-            # NOTE: Do NOT remove cross_hv_resize marker here — the VMware
+            # NOTE: Do NOT remove cross_hv_resize marker here, the VMware
             # driver needs it to route to the cross-HV revert branch.
             # Markers are cleaned by the driver's confirm/revert handlers.
             mig_ctx = instance.migration_context

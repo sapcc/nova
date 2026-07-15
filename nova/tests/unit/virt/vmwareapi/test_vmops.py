@@ -1539,8 +1539,6 @@ class VMwareVMOpsTestCase(test.TestCase):
                                                fake_get_vm_ref.return_value,
                                                self._instance)
 
-    # --- Cross-HV resize tests ---
-
     def test_is_cross_hv_resize_true_for_supported_flavor(self):
         flavor = fake_flavor.fake_flavor_obj(self._context)
         flavor.extra_specs = {'capabilities:hypervisor_type': 'CH'}
@@ -1727,7 +1725,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock_rename, mock_shutdown, mock_get_state, mock_detach,
             mock_remove_nic, mock_reconfig, mock_change_uuid,
             mock_search_shell, mock_get_hardware):
-        """VM is already powered off (Phase 2 pre-step). Shutdown skipped."""
+        """VM is already powered off; shutdown is skipped."""
         migration = objects.Migration(uuid=uuids.migration)
         mock_mig_get.return_value = migration
         mig_ctx = objects.MigrationContext(
@@ -1769,9 +1767,9 @@ class VMwareVMOpsTestCase(test.TestCase):
             mock_rename, mock_shutdown, mock_get_state, mock_detach,
             mock_remove_nic, mock_reconfig, mock_change_uuid,
             mock_search_shell, mock_get_hardware):
-        """No VirtualDisk on VM for root BDM (Phase 2: already detached).
+        """No VirtualDisk on VM for root BDM means already detached.
 
-        _detach_volumes tolerates missing disks — verify it does not raise.
+        _detach_volumes tolerates missing disks; verify it does not raise.
         """
         migration = objects.Migration(uuid=uuids.migration)
         mock_mig_get.return_value = migration
@@ -1781,8 +1779,8 @@ class VMwareVMOpsTestCase(test.TestCase):
         self._instance.migration_context = mig_ctx
         self._instance.system_metadata = {}
         self._instance.save = mock.Mock()
-        # Simulate _detach_volumes encountering no matching disk — it
-        # should not raise (DiskNotFound is caught internally).
+        # Simulate _detach_volumes encountering no matching disk; it
+        # should not raise because DiskNotFound is caught internally.
         mock_detach.return_value = None
 
         with mock.patch.object(self._vmops, '_is_cross_hv_resize',
