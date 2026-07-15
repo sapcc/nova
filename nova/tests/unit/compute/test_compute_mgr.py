@@ -6547,6 +6547,42 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
                               self.compute.init_host, None)
             m.assert_called_once_with(mock_nodes.return_value)
 
+    @mock.patch.object(fake_driver.FakeDriver, 'prep_cross_hv_conversion')
+    def test_prep_cross_hv_conversion(self, mock_prep):
+        mock_prep.return_value = {
+            'vmdk_path': '[ds] uuid/uuid.vmdk',
+            'size_bytes': 68719476736,
+            'cinder_host': 'cinder-volume-vmware-vc@vmware_fcd',
+            'rollback': {
+                'controller_key': 1000,
+                'unit_number': 0,
+                'capacity_in_bytes': 68719476736,
+            },
+        }
+        instance = fake_instance.fake_instance_obj(self.context)
+        result = self.compute.prep_cross_hv_conversion(
+            self.context, instance=instance)
+        mock_prep.assert_called_once_with(self.context, instance)
+        self.assertEqual(result['vmdk_path'], '[ds] uuid/uuid.vmdk')
+
+    @mock.patch.object(fake_driver.FakeDriver, 'abort_cross_hv_conversion')
+    def test_abort_cross_hv_conversion(self, mock_abort):
+        instance = fake_instance.fake_instance_obj(self.context)
+        prep_data = {
+            'vmdk_path': '[ds] uuid/uuid.vmdk',
+            'size_bytes': 68719476736,
+            'cinder_host': 'cinder-volume-vmware-vc@vmware_fcd',
+            'rollback': {
+                'controller_key': 1000,
+                'unit_number': 0,
+                'capacity_in_bytes': 68719476736,
+            },
+        }
+        self.compute.abort_cross_hv_conversion(
+            self.context, instance=instance, prep_data=prep_data)
+        mock_abort.assert_called_once_with(
+            self.context, instance, prep_data)
+
 
 class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
     def setUp(self):
