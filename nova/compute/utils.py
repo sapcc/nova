@@ -412,6 +412,18 @@ def restore_image_props_from_cross_hv_journal(request_spec=None, sysmeta=None,
     return changed
 
 
+def cleanup_cross_hv_markers(sysmeta):
+    """Remove all cross_hv_* keys from instance.system_metadata in-place.
+
+    Returns True if any keys were removed. Does not save the instance;
+    the caller is responsible for persisting the change.
+    """
+    keys = [k for k in sysmeta if k.startswith('cross_hv_')]
+    for key in keys:
+        del sysmeta[key]
+    return bool(keys)
+
+
 def convert_mb_to_ceil_gb(mb_value):
     gb_int = 0
     if mb_value:

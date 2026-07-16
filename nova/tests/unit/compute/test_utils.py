@@ -2371,3 +2371,26 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
         self.assertEqual('scsi', reqspec.image.properties.hw_disk_bus)
         self.assertEqual('vmware', sysmeta['image_img_hv_type'])
         self.assertEqual('scsi', sysmeta['image_hw_disk_bus'])
+
+
+class TestCleanupCrossHvMarkers(test.NoDBTestCase):
+
+    def test_removes_cross_hv_keys(self):
+        sysmeta = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true',
+            'cross_hv_orig_bdm_disk_bus_abc': 'scsi',
+            'unrelated_key': 'untouched',
+        }
+        result = compute_utils.cleanup_cross_hv_markers(sysmeta)
+        self.assertTrue(result)
+        self.assertNotIn('cross_hv_resize', sysmeta)
+        self.assertNotIn('cross_hv_source_prepared', sysmeta)
+        self.assertNotIn('cross_hv_orig_bdm_disk_bus_abc', sysmeta)
+        self.assertIn('unrelated_key', sysmeta)
+
+    def test_returns_false_when_nothing_to_clean(self):
+        sysmeta = {'unrelated_key': 'untouched'}
+        result = compute_utils.cleanup_cross_hv_markers(sysmeta)
+        self.assertFalse(result)
+        self.assertEqual({'unrelated_key': 'untouched'}, sysmeta)

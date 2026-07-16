@@ -11380,10 +11380,12 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
 
         root_bdm = objects.BlockDeviceMapping(
             destination_type='volume', attachment_id=uuids.root_attachment,
-            volume_id=uuids.root_volume, device_name='/dev/sda')
+            volume_id=uuids.root_volume, device_name='/dev/sda',
+            disk_bus='scsi')
         data_bdm = objects.BlockDeviceMapping(
             destination_type='volume', attachment_id=uuids.data_attachment,
-            volume_id=uuids.data_volume, device_name='/dev/sdb')
+            volume_id=uuids.data_volume, device_name='/dev/sdb',
+            disk_bus='scsi')
         bdms = objects.BlockDeviceMappingList(objects=[root_bdm, data_bdm])
         for bdm in bdms:
             bdm.save = mock.Mock()
@@ -11418,6 +11420,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         self.assertEqual('/dev/vda', self.instance.root_device_name)
         self.assertEqual('/dev/vda', root_bdm.device_name)
         self.assertEqual('/dev/vdb', data_bdm.device_name)
+        self.assertEqual('virtio', root_bdm.disk_bus)
+        self.assertEqual('virtio', data_bdm.disk_bus)
         root_bdm.save.assert_called_once_with()
         data_bdm.save.assert_called_once_with()
         self.assertEqual([
@@ -11426,6 +11430,77 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             mock.call(self.context, uuids.data_attachment, 'connector',
                       uuids.data_volume, '/dev/vdb')],
             attachment_update.call_args_list)
+
+    def test_finish_resize_cross_hv_saves_instance_before_attachment_update(
+            self):
+        # The BDM disk_bus journal is written into instance.system_metadata.
+        # The instance must be saved AFTER journaling and BEFORE
+        # _update_volume_attachments so the journal is durable if
+        # attachment_update subsequently fails.
+        self.instance.system_metadata['cross_hv_resize'] = 'true'
+        self.instance.root_device_name = '/dev/sda'
+        self.instance.migration_context = objects.MigrationContext()
+        self.instance.task_state = task_states.RESIZE_MIGRATED
+        self.migration.old_instance_type_id = self.instance.flavor.id
+        self.migration.new_instance_type_id = self.instance.flavor.id
+
+        root_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.root_attachment,
+            volume_id=uuids.root_volume, device_name='/dev/sda',
+            disk_bus=None)
+        bdms = objects.BlockDeviceMappingList(objects=[root_bdm])
+        root_bdm.save = mock.Mock()
+
+        journal_key = ('cross_hv_orig_bdm_disk_bus_%s' % uuids.root_volume)
+        # Record (event, sysmeta snapshot) pairs in call order.
+        events = []
+
+        def record_save(*args, **kwargs):
+            events.append(('save', dict(self.instance.system_metadata)))
+
+        def record_attachment_update(*args, **kwargs):
+            events.append(('attach', None))
+
+        with test.nested(
+            mock.patch.object(self.compute.network_api,
+                              'setup_networks_on_host'),
+            mock.patch.object(self.compute.network_api,
+                              'migrate_instance_finish'),
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info', return_value='nw'),
+            mock.patch.object(self.compute,
+                              '_send_finish_resize_notifications'),
+            mock.patch.object(self.instance, 'save',
+                              side_effect=record_save),
+            mock.patch.object(self.compute, '_get_instance_block_device_info',
+                              return_value='bdi'),
+            mock.patch.object(self.compute.driver, 'finish_migration'),
+            mock.patch.object(self.compute.reportclient,
+                              'get_allocs_for_consumer',
+                              return_value={'allocations': {}}),
+            mock.patch.object(self.compute.driver, 'get_volume_connector',
+                              return_value='connector'),
+            mock.patch.object(self.compute.volume_api, 'attachment_update',
+                              side_effect=record_attachment_update),
+            mock.patch.object(self.compute.volume_api, 'attachment_complete')
+        ):
+            self.compute._finish_resize(
+                self.context, self.instance, self.migration, '[]',
+                objects.ImageMeta.from_dict({}), bdms, objects.RequestSpec())
+
+        # A save with the journal key present must precede the first
+        # attachment_update call.
+        first_attach = next(
+            (i for i, (ev, _) in enumerate(events) if ev == 'attach'), None)
+        self.assertIsNotNone(first_attach,
+                             'attachment_update was never called')
+        save_with_journal_before_attach = any(
+            ev == 'save' and journal_key in snap
+            for ev, snap in events[:first_attach])
+        self.assertTrue(
+            save_with_journal_before_attach,
+            'instance was not saved with the BDM bus journal key before '
+            'attachment_update was called')
 
     def test_finish_revert_resize_cross_hv_translates_bdm_device_names(self):
         self.instance.system_metadata['cross_hv_resize'] = 'true'
@@ -11440,10 +11515,12 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
 
         root_bdm = objects.BlockDeviceMapping(
             destination_type='volume', attachment_id=uuids.root_attachment,
-            volume_id=uuids.root_volume, device_name='/dev/vda')
+            volume_id=uuids.root_volume, device_name='/dev/vda',
+            disk_bus='virtio')
         data_bdm = objects.BlockDeviceMapping(
             destination_type='volume', attachment_id=uuids.data_attachment,
-            volume_id=uuids.data_volume, device_name='/dev/vdb')
+            volume_id=uuids.data_volume, device_name='/dev/vdb',
+            disk_bus='virtio')
         bdms = objects.BlockDeviceMappingList(objects=[root_bdm, data_bdm])
         for bdm in bdms:
             bdm.save = mock.Mock()
@@ -11479,6 +11556,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
         self.assertEqual('/dev/sda', self.instance.root_device_name)
         self.assertEqual('/dev/sda', root_bdm.device_name)
         self.assertEqual('/dev/sdb', data_bdm.device_name)
+        self.assertIsNone(root_bdm.disk_bus)
+        self.assertIsNone(data_bdm.disk_bus)
         root_bdm.save.assert_called_once_with()
         data_bdm.save.assert_called_once_with()
         self.assertEqual([
@@ -11487,6 +11566,135 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             mock.call(self.context, uuids.data_attachment, 'connector',
                       uuids.data_volume, '/dev/sdb')],
             attachment_update.call_args_list)
+
+    def test_cross_hv_translate_fixes_stale_bus_when_already_forward(self):
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/vdb', disk_bus='scsi')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/sd', '/dev/vd', 'virtio')
+
+        self.assertEqual('/dev/vdb', bdm.device_name)
+        self.assertEqual('virtio', bdm.disk_bus)
+        bdm.save.assert_called_once_with()
+
+    def test_cross_hv_translate_fixes_stale_bus_when_already_reverted(self):
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/sdb', disk_bus='virtio')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/vd', '/dev/sd', None)
+
+        self.assertEqual('/dev/sdb', bdm.device_name)
+        self.assertIsNone(bdm.disk_bus)
+        bdm.save.assert_called_once_with()
+
+    def test_sanitize_cross_hv_bdms_forward_journals_original_bus(self):
+        # Forward pass should save the original disk_bus to system_metadata
+        # before overwriting it, keyed by volume_id.
+        self.instance.system_metadata = {}
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/sdb', disk_bus='lsiLogicsas')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/sd', '/dev/vd', 'virtio')
+
+        self.assertEqual('virtio', bdm.disk_bus)
+        journal_key = 'cross_hv_orig_bdm_disk_bus_%s' % uuids.data_volume
+        self.assertEqual(
+            'lsiLogicsas',
+            self.instance.system_metadata[journal_key])
+
+    def test_sanitize_cross_hv_bdms_forward_journals_none_as_sentinel(self):
+        # When original disk_bus is None, journal it as the sentinel '__NONE__'
+        self.instance.system_metadata = {}
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/sdb', disk_bus=None)
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/sd', '/dev/vd', 'virtio')
+
+        self.assertEqual('virtio', bdm.disk_bus)
+        journal_key = 'cross_hv_orig_bdm_disk_bus_%s' % uuids.data_volume
+        self.assertEqual(
+            '__NONE__',
+            self.instance.system_metadata[journal_key])
+
+    def test_sanitize_cross_hv_bdms_forward_idempotent_journal(self):
+        # Retry: if journal entry already exists, do not overwrite it.
+        journal_key = 'cross_hv_orig_bdm_disk_bus_%s' % uuids.data_volume
+        self.instance.system_metadata = {journal_key: 'lsiLogicsas'}
+        # BDM already translated (name already vd*, bus already virtio)
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/vdb', disk_bus='virtio')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/sd', '/dev/vd', 'virtio')
+
+        # Journal must still hold the original, not the current value.
+        self.assertEqual(
+            'lsiLogicsas',
+            self.instance.system_metadata[journal_key])
+
+    def test_sanitize_cross_hv_bdms_revert_restores_journaled_bus(self):
+        # Revert should restore the exact original bus from the journal.
+        journal_key = 'cross_hv_orig_bdm_disk_bus_%s' % uuids.data_volume
+        self.instance.system_metadata = {journal_key: 'lsiLogicsas'}
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/vdb', disk_bus='virtio')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/vd', '/dev/sd', None)
+
+        self.assertEqual('/dev/sdb', bdm.device_name)
+        self.assertEqual('lsiLogicsas', bdm.disk_bus)
+        # Journal key left; cleanup_cross_hv_markers owns deletion.
+        self.assertIn(journal_key, self.instance.system_metadata)
+
+    def test_sanitize_cross_hv_bdms_revert_restores_none_from_sentinel(self):
+        # Revert should restore None when the journal holds '__NONE__'.
+        journal_key = 'cross_hv_orig_bdm_disk_bus_%s' % uuids.data_volume
+        self.instance.system_metadata = {journal_key: '__NONE__'}
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/vdb', disk_bus='virtio')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/vd', '/dev/sd', None)
+
+        self.assertEqual('/dev/sdb', bdm.device_name)
+        self.assertIsNone(bdm.disk_bus)
+        # Journal key left; cleanup_cross_hv_markers owns deletion.
+        self.assertIn(journal_key, self.instance.system_metadata)
+
+    def test_sanitize_cross_hv_bdms_revert_falls_back_without_journal(self):
+        # Revert without a journal entry falls back to the disk_bus argument
+        # (None), preserving existing behaviour for instances migrated before
+        # journaling was added.
+        self.instance.system_metadata = {}
+        bdm = objects.BlockDeviceMapping(
+            destination_type='volume', volume_id=uuids.data_volume,
+            device_name='/dev/vdb', disk_bus='virtio')
+        bdm.save = mock.Mock()
+
+        self.compute._sanitize_cross_hv_bdms(
+            self.instance, [bdm], '/dev/vd', '/dev/sd', None)
+
+        self.assertEqual('/dev/sdb', bdm.device_name)
+        self.assertIsNone(bdm.disk_bus)
 
     @mock.patch.object(objects.Instance, 'drop_migration_context')
     @mock.patch('nova.network.neutron.API.migrate_instance_finish')
