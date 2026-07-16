@@ -469,11 +469,7 @@ class VMwareVMOps(object):
                 'true')
 
     def _cleanup_cross_hv_markers(self, instance):
-        sysmeta = instance.system_metadata
-        keys_to_remove = [k for k in sysmeta if k.startswith('cross_hv_')]
-        for key in keys_to_remove:
-            del sysmeta[key]
-        if keys_to_remove:
+        if compute_utils.cleanup_cross_hv_markers(instance.system_metadata):
             instance.save()
 
     def build_virtual_machine(self, instance, context, image_info, datastore,
