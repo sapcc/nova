@@ -5530,8 +5530,8 @@ class ComputeManager(manager.Manager):
             # and then the volumes can be re-connected via the driver on this
             # host.
             if instance.system_metadata.get('cross_hv_resize') == 'true':
-                self._translate_cross_hv_device_names(
-                    instance, bdms, '/dev/vd', '/dev/sd')
+                self._sanitize_cross_hv_bdms(
+                    instance, bdms, '/dev/vd', '/dev/sd', None)
             self._update_volume_attachments(context, instance, bdms)
 
             block_device_info = self._get_instance_block_device_info(
@@ -5543,9 +5543,7 @@ class ComputeManager(manager.Manager):
                 power_on)
 
             # Clean cross-HV markers after driver has completed revert.
-            sys_meta = instance.system_metadata
-            for key in [k for k in sys_meta if k.startswith('cross_hv_')]:
-                del sys_meta[key]
+            compute_utils.cleanup_cross_hv_markers(instance.system_metadata)
 
             instance.drop_migration_context()
             instance.launched_at = timeutils.utcnow()
@@ -6273,18 +6271,47 @@ class ComputeManager(manager.Manager):
             return new_prefix + device_name[len(old_prefix):]
         return device_name
 
-    def _translate_cross_hv_device_names(self, instance, bdms, old_prefix,
-                                         new_prefix):
+    def _sanitize_cross_hv_bdms(self, instance, bdms, old_prefix,
+                                         new_prefix, disk_bus):
+        # Sentinel used to represent a None disk_bus in system_metadata,
+        # which only stores strings.
+        _DISK_BUS_NONE = '__NONE__'
+
         root_device_name = self._translate_device_name_prefix(
             instance.root_device_name, old_prefix, new_prefix)
         if root_device_name != instance.root_device_name:
             instance.root_device_name = root_device_name
 
+        sysmeta = instance.system_metadata
         for bdm in bdms:
+            changed = False
             device_name = self._translate_device_name_prefix(
                 bdm.device_name, old_prefix, new_prefix)
             if device_name != bdm.device_name:
                 bdm.device_name = device_name
+                changed = True
+            # Apply bus changes based on the resulting device name, not on
+            # whether this call changed the name. Retries can reach this point
+            # with names already translated, but the BDM bus still stale. Once
+            # the name has the target prefix, make the bus match that target.
+            has_target_prefix = (device_name and
+                                 device_name.startswith(new_prefix))
+            if has_target_prefix:
+                journal_key = ('cross_hv_orig_bdm_disk_bus_%s' %
+                               bdm.volume_id)
+                if disk_bus is not None:
+                    if journal_key not in sysmeta:
+                        orig = bdm.get('disk_bus')
+                        sysmeta[journal_key] = (orig if orig is not None
+                                                else _DISK_BUS_NONE)
+                    target_bus = disk_bus
+                else:
+                    stored = sysmeta.get(journal_key, _DISK_BUS_NONE)
+                    target_bus = None if stored == _DISK_BUS_NONE else stored
+                if bdm.get('disk_bus') != target_bus:
+                    bdm.disk_bus = target_bus
+                    changed = True
+            if changed:
                 bdm.save()
 
     def _complete_volume_attachments(self, context, bdms):
@@ -6355,8 +6382,11 @@ class ComputeManager(manager.Manager):
         # refresh_conn_info=True will update the BDM.connection_info value
         # in the database so we must do this before calling that method.
         if instance.system_metadata.get('cross_hv_resize') == 'true':
-            self._translate_cross_hv_device_names(
-                instance, bdms, '/dev/sd', '/dev/vd')
+            self._sanitize_cross_hv_bdms(
+                instance, bdms, '/dev/sd', '/dev/vd', 'virtio')
+            # Persist the BDM disk_bus journal before volume attachments so
+            # the journal survives if _update_volume_attachments fails.
+            instance.save(expected_task_state=task_states.RESIZE_FINISH)
         self._update_volume_attachments(context, instance, bdms)
 
         block_device_info = self._get_instance_block_device_info(
