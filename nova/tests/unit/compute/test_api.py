@@ -2652,7 +2652,49 @@ class _ComputeAPIUnitTestMixIn(object):
                               fake_inst, flavor_id='flavor-id')
 
     @mock.patch('nova.servicegroup.api.API.service_is_up',
-                new=mock.Mock(return_value=True))
+                 new=mock.Mock(return_value=True))
+    @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
+    @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_resize_to_zero_disk_flavor_cross_hv_non_bfv_raises_precondition(
+            self, bdm_get_by_instance_uuid, get_flavor_by_flavor_id,
+            mock_get_reqspec):
+        """A non-BFV VMware VM resizing to a CH flavor (root_gb=0) should
+        raise InvalidCrossHvResizePrecondition rather than CannotResizeDisk.
+
+        Regression test: the zero-disk flavor guard used to fire before the
+        cross-hypervisor check, producing a misleading error message.
+        """
+        self.flags(enable_cross_hv_resize=True, group='workarounds')
+        bdms = objects.BlockDeviceMappingList()
+        bdm_get_by_instance_uuid.return_value = bdms
+        # Current flavor: VMware, root_gb > 0
+        current_flavor = self._create_flavor(
+            id=100, flavorid='vmware-flavor',
+            name='vmware.small', root_gb=10,
+            extra_specs={'capabilities:hypervisor_type': 'VMware vCenter '
+                         'Server'})
+        fake_inst = self._create_instance_obj(flavor=current_flavor)
+        # Destination flavor: CH, root_gb=0
+        dest_flavor = self._create_flavor(
+            id=200, flavorid='ch-flavor',
+            name='ch.small', root_gb=0,
+            extra_specs={'capabilities:hypervisor_type': 'CH'})
+        get_flavor_by_flavor_id.return_value = dest_flavor
+
+        mock_reqspec = mock.MagicMock()
+        mock_reqspec.is_bfv = False
+        mock_get_reqspec.return_value = mock_reqspec
+
+        with mock.patch.object(compute_utils, 'is_volume_backed_instance',
+                               return_value=False):
+            self.assertRaises(
+                exception.InvalidCrossHvResizePrecondition,
+                self.compute_api.resize, self.context,
+                fake_inst, flavor_id='ch-flavor')
+
+    @mock.patch('nova.servicegroup.api.API.service_is_up',
+                 new=mock.Mock(return_value=True))
     @mock.patch('nova.compute.api.API._validate_flavor_image_nostatus')
     @mock.patch.object(objects.RequestSpec, 'get_by_instance_uuid')
     @mock.patch('nova.compute.api.API._record_action_start')
