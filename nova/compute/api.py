@@ -4302,6 +4302,22 @@ class API:
             # reject resize with new flavor with accelerator.
             if new_flavor.extra_specs.get('accel:device_profile'):
                 raise exception.ForbiddenWithAccelerators()
+            # Reject unsupported cross-hypervisor resizes before the
+            # zero-disk guard below. CH flavors have root_gb=0, so a
+            # VMware-to-CH resize would otherwise trip the generic
+            # zero-disk check and raise a misleading error instead of the
+            # specific cross-hypervisor precondition (e.g. must be BFV).
+            source_hv_type = current_flavor.extra_specs.get(
+                'capabilities:hypervisor_type')
+            dest_hv_type = new_flavor.extra_specs.get(
+                'capabilities:hypervisor_type')
+            if compute_utils.is_cross_hypervisor_resize(
+                    source_hv_type, dest_hv_type):
+                request_spec = objects.RequestSpec.get_by_instance_uuid(
+                    context, instance.uuid)
+                compute_utils.raise_on_unsupported_cross_hypervisor_resize(
+                    context, instance, request_spec,
+                    source_hv_type, dest_hv_type)
             # Check to see if we're resizing to a zero-disk flavor which is
             # only supported with volume-backed servers.
             if (new_flavor.get('root_gb') == 0 and
@@ -4329,18 +4345,6 @@ class API:
 
         if same_flavor and flavor_id:
             raise exception.CannotResizeToSameFlavor()
-
-        source_hv_type = current_flavor.extra_specs.get(
-            'capabilities:hypervisor_type')
-        dest_hv_type = new_flavor.extra_specs.get(
-                'capabilities:hypervisor_type')
-        request_spec = objects.RequestSpec.get_by_instance_uuid(
-            context, instance.uuid)
-        if compute_utils.is_cross_hypervisor_resize(
-                source_hv_type, dest_hv_type):
-            compute_utils.raise_on_unsupported_cross_hypervisor_resize(
-                    context, instance, request_spec,
-                    source_hv_type, dest_hv_type)
 
         # ensure there is sufficient headroom for upsizes
         if flavor_id:
@@ -4390,6 +4394,8 @@ class API:
         if not self._allow_resize_to_same_host(same_flavor, instance):
             filter_properties['ignore_hosts'].append(instance.host)
 
+        request_spec = objects.RequestSpec.get_by_instance_uuid(
+            context, instance.uuid)
         request_spec.ignore_hosts = filter_properties['ignore_hosts']
 
         # don't recalculate the NUMA topology unless the flavor has changed

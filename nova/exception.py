@@ -2678,4 +2678,4 @@ class InvalidCrossHvResize(NovaException):
 
 
 class InvalidCrossHvResizePrecondition(NovaException):
-    msg_fmt = _('Cross-hypervisor resize precondition not met: %(reason)s')
+    msg_fmt = _('Cross-hypervisor resize not allowed: %(reason)s')
