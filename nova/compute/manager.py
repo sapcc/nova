@@ -9597,7 +9597,14 @@ class ComputeManager(manager.Manager):
 
                     # update the bdm with the new attachment_id.
                     bdm.attachment_id = attach_ref['id']
-                    bdm.save()
+                    try:
+                        bdm.save()
+                    except Exception:
+                        with excutils.save_and_reraise_exception():
+                            self.volume_api.attachment_delete(
+                                migrate_data.old_vol_attachment_ids[
+                                    bdm.volume_id
+                                ])
 
             # Retrieve connection_info for the destination. Note that it is not
             # saved back to the database yet.
