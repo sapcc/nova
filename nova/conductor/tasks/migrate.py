@@ -375,6 +375,7 @@ class MigrationTask(base.TaskBase):
             root_bdm = self._get_root_bdm()
             self._validate_cross_hv_root_bdm(root_bdm)
             if self._is_image_backed_local_root(root_bdm):
+                self._validate_cross_hv_manage_config()
                 self._convert_image_backed_root_to_bfv(root_bdm)
 
         LOG.debug("Calling prep_resize with selected host: %s; "
@@ -402,6 +403,12 @@ class MigrationTask(base.TaskBase):
             compute_utils.sanitize_image_props_for_kvm(self.request_spec))
         self.instance.system_metadata['cross_hv_resize'] = 'true'
         self.instance.system_metadata['cross_hv_source_prepared'] = 'false'
+
+    @staticmethod
+    def _validate_cross_hv_manage_config():
+        if not CONF.cross_hv.fcd_volume_type:
+            raise exception.CrossHVConfigurationMissing(
+                option='fcd_volume_type')
 
     def _get_root_bdm(self):
         """Load and return the root BDM for the instance, or None."""
@@ -471,18 +478,23 @@ class MigrationTask(base.TaskBase):
             ref['source-id'] = prep['source_fcd_id']
 
         # 3. Import the VMDK as a Cinder volume and wait for it to be ready.
-        #    manage_existing polls until available, raises on error, and
-        #    receives the full prep payload so the wrapper can call
-        #    abort_cross_hv_conversion on pre-relocate failure.
-        volume = self.volume_api.manage_existing(
-            self.context,
-            host=prep['cinder_host'],
-            ref=ref,
-            volume_type=CONF.cross_hv.fcd_volume_type,
-            name='cross-hv-%s' % self.instance.uuid,
-            description='Auto-converted from image-backed instance',
-            bootable=True,
-            rollback=prep)
+        #    manage_existing polls until available and classifies failures by
+        #    whether aborting the VMware conversion is still safe.
+        try:
+            volume = self.volume_api.manage_existing(
+                self.context,
+                host=prep['cinder_host'],
+                ref=ref,
+                volume_type=CONF.cross_hv.fcd_volume_type,
+                name='cross-hv-%s' % self.instance.uuid,
+                description='Auto-converted from image-backed instance',
+                bootable=True)
+        except exception.VolumeManageFailedNoAbort:
+            raise
+        except exception.VolumeManageFailed:
+            self.compute_rpcapi.abort_cross_hv_conversion(
+                self.context, self.instance, prep)
+            raise
 
         # Reserve the future root-volume attachment.
         try:
