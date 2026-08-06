@@ -4318,15 +4318,20 @@ class API:
                 compute_utils.raise_on_unsupported_cross_hypervisor_resize(
                     context, instance, request_spec,
                     source_hv_type, dest_hv_type)
-            # Check to see if we're resizing to a zero-disk flavor which is
-            # only supported with volume-backed servers.
-            if (new_flavor.get('root_gb') == 0 and
-                    current_flavor.get('root_gb') != 0):
-                volume_backed = compute_utils.is_volume_backed_instance(
-                        context, instance)
-                if not volume_backed:
-                    reason = _('Resize to zero disk flavor is not allowed.')
-                    raise exception.CannotResizeDisk(reason=reason)
+                # Unconditionally set this to true, for vmware-to-ch resize,
+                # because all instances will end up BFV, regardless of source.
+                volume_backed = True
+            else:
+                # Check to see if we're resizing to a zero-disk flavor which is
+                # only supported with volume-backed servers.
+                if (new_flavor.get('root_gb') == 0 and
+                        current_flavor.get('root_gb') != 0):
+                    volume_backed = compute_utils.is_volume_backed_instance(
+                            context, instance)
+                    if not volume_backed:
+                        reason = _(
+                            'Resize to zero disk flavor is not allowed.')
+                        raise exception.CannotResizeDisk(reason=reason)
 
         current_flavor_name = current_flavor['name']
         new_flavor_name = new_flavor['name']
