@@ -5530,8 +5530,7 @@ class ComputeManager(manager.Manager):
             # and then the volumes can be re-connected via the driver on this
             # host.
             if instance.system_metadata.get('cross_hv_resize') == 'true':
-                self._sanitize_cross_hv_bdms(
-                    instance, bdms, '/dev/vd', '/dev/sd', None)
+                self._restore_cross_hv_bdms(instance, bdms)
             self._update_volume_attachments(context, instance, bdms)
 
             block_device_info = self._get_instance_block_device_info(
@@ -6266,52 +6265,137 @@ class ComputeManager(manager.Manager):
                         bdm.device_name)
 
     @staticmethod
-    def _translate_device_name_prefix(device_name, old_prefix, new_prefix):
-        if device_name and device_name.startswith(old_prefix):
-            return new_prefix + device_name[len(old_prefix):]
-        return device_name
+    def _cross_hv_journal_value(value):
+        return value if value is not None else '__NONE__'
 
-    def _sanitize_cross_hv_bdms(self, instance, bdms, old_prefix,
-                                         new_prefix, disk_bus):
-        # Sentinel used to represent a None disk_bus in system_metadata,
-        # which only stores strings.
-        _DISK_BUS_NONE = '__NONE__'
+    @staticmethod
+    def _cross_hv_restore_journal_value(value):
+        return None if value == '__NONE__' else value
 
-        root_device_name = self._translate_device_name_prefix(
-            instance.root_device_name, old_prefix, new_prefix)
-        if root_device_name != instance.root_device_name:
-            instance.root_device_name = root_device_name
+    @staticmethod
+    def _original_cross_hv_bdm_device_name(sysmeta, bdm):
+        bdm_name_key = (
+            'cross_hv_orig_bdm_device_name_%s' % bdm.volume_id)
+        if bdm_name_key in sysmeta:
+            return ComputeManager._cross_hv_restore_journal_value(
+                sysmeta[bdm_name_key])
+        return bdm.device_name
 
+    def _journal_cross_hv_bdms(self, instance, bdms):
         sysmeta = instance.system_metadata
+        root_name_key = 'cross_hv_orig_root_device_name'
+        changed = False
+
         for bdm in bdms:
-            changed = False
-            device_name = self._translate_device_name_prefix(
-                bdm.device_name, old_prefix, new_prefix)
-            if device_name != bdm.device_name:
-                bdm.device_name = device_name
+            bdm_name_key = (
+                'cross_hv_orig_bdm_device_name_%s' % bdm.volume_id)
+            bdm_bus_key = (
+                'cross_hv_orig_bdm_disk_bus_%s' % bdm.volume_id)
+            if bdm_name_key not in sysmeta:
+                sysmeta[bdm_name_key] = self._cross_hv_journal_value(
+                    bdm.device_name)
                 changed = True
-            # Apply bus changes based on the resulting device name, not on
-            # whether this call changed the name. Retries can reach this point
-            # with names already translated, but the BDM bus still stale. Once
-            # the name has the target prefix, make the bus match that target.
-            has_target_prefix = (device_name and
-                                 device_name.startswith(new_prefix))
-            if has_target_prefix:
-                journal_key = ('cross_hv_orig_bdm_disk_bus_%s' %
-                               bdm.volume_id)
-                if disk_bus is not None:
-                    if journal_key not in sysmeta:
-                        orig = bdm.get('disk_bus')
-                        sysmeta[journal_key] = (orig if orig is not None
-                                                else _DISK_BUS_NONE)
-                    target_bus = disk_bus
-                else:
-                    stored = sysmeta.get(journal_key, _DISK_BUS_NONE)
-                    target_bus = None if stored == _DISK_BUS_NONE else stored
+            if bdm_bus_key not in sysmeta:
+                sysmeta[bdm_bus_key] = self._cross_hv_journal_value(
+                    bdm.get('disk_bus'))
+                changed = True
+
+        if root_name_key not in sysmeta:
+            root_device_name = instance.root_device_name
+            for bdm in bdms:
+                if bdm.device_name == instance.root_device_name:
+                    root_device_name = self._original_cross_hv_bdm_device_name(
+                        sysmeta, bdm)
+                    break
+            else:
+                for bdm in bdms:
+                    if (bdm.obj_attr_is_set('boot_index') and
+                            bdm.boot_index == 0):
+                        root_device_name = (
+                            self._original_cross_hv_bdm_device_name(
+                                sysmeta, bdm))
+                        break
+            sysmeta[root_name_key] = self._cross_hv_journal_value(
+                root_device_name)
+            changed = True
+
+        return changed
+
+    def _sanitize_cross_hv_bdms(self, instance, bdms, disk_bus, new_prefix):
+        """Assign KVM device names and disk bus for cross-HV resize."""
+        sysmeta = instance.system_metadata
+        root_name_key = 'cross_hv_orig_root_device_name'
+
+        def boot_index(bdm):
+            if bdm.obj_attr_is_set('boot_index'):
+                return bdm.boot_index
+
+        root_device_name = self._cross_hv_restore_journal_value(
+            sysmeta[root_name_key])
+
+        def is_root_bdm(bdm):
+            return (boot_index(bdm) == 0 or
+                    self._original_cross_hv_bdm_device_name(
+                        sysmeta, bdm) == root_device_name)
+
+        # Keep the root disk first. Order remaining volumes by the original
+        # VMware device name.
+        def root_first_sort_key(bdm):
+            original_name = self._original_cross_hv_bdm_device_name(
+                sysmeta, bdm)
+            # Match VMware ordering for known names; keep missing names last
+            # instead of sorting them before real device names.
+            return (not is_root_bdm(bdm),
+                    original_name is None,
+                    original_name or '')
+
+        target_prefix = block_device.strip_dev(new_prefix)
+        for index, bdm in enumerate(sorted(bdms, key=root_first_sort_key)):
+            bdm_changed = False
+            device_name = block_device.prepend_dev(
+                block_device.generate_device_name(target_prefix, index))
+            if bdm.device_name != device_name:
+                bdm.device_name = device_name
+                bdm_changed = True
+            if bdm.get('disk_bus') != disk_bus:
+                bdm.disk_bus = disk_bus
+                bdm_changed = True
+            if is_root_bdm(bdm):
+                instance.root_device_name = device_name
+            if bdm_changed:
+                bdm.save()
+
+    def _restore_cross_hv_bdms(self, instance, bdms):
+        """Restore journaled VMware-era BDM device names and buses."""
+        sysmeta = instance.system_metadata
+        root_name_key = 'cross_hv_orig_root_device_name'
+
+        if root_name_key in sysmeta:
+            instance.root_device_name = self._cross_hv_restore_journal_value(
+                sysmeta[root_name_key])
+
+        for bdm in bdms:
+            bdm_changed = False
+            bdm_name_key = (
+                'cross_hv_orig_bdm_device_name_%s' % bdm.volume_id)
+            bdm_bus_key = (
+                'cross_hv_orig_bdm_disk_bus_%s' % bdm.volume_id)
+
+            if bdm_name_key in sysmeta:
+                device_name = self._cross_hv_restore_journal_value(
+                    sysmeta[bdm_name_key])
+                if bdm.device_name != device_name:
+                    bdm.device_name = device_name
+                    bdm_changed = True
+
+            if bdm_bus_key in sysmeta:
+                target_bus = self._cross_hv_restore_journal_value(
+                    sysmeta[bdm_bus_key])
                 if bdm.get('disk_bus') != target_bus:
                     bdm.disk_bus = target_bus
-                    changed = True
-            if changed:
+                    bdm_changed = True
+
+            if bdm_changed:
                 bdm.save()
 
     def _complete_volume_attachments(self, context, bdms):
@@ -6382,10 +6466,14 @@ class ComputeManager(manager.Manager):
         # refresh_conn_info=True will update the BDM.connection_info value
         # in the database so we must do this before calling that method.
         if instance.system_metadata.get('cross_hv_resize') == 'true':
+            if self._journal_cross_hv_bdms(instance, bdms):
+                # Save the original names and buses before BDM saves
+                # replace them with KVM values for failure tolerance.
+                instance.save(expected_task_state=task_states.RESIZE_FINISH)
             self._sanitize_cross_hv_bdms(
-                instance, bdms, '/dev/sd', '/dev/vd', 'virtio')
-            # Persist the BDM disk_bus journal before volume attachments so
-            # the journal survives if _update_volume_attachments fails.
+                instance, bdms, disk_bus='virtio', new_prefix='/dev/vd')
+            # Persist the translated root device name before volume
+            # attachments so it survives if _update_volume_attachments fails.
             instance.save(expected_task_state=task_states.RESIZE_FINISH)
         self._update_volume_attachments(context, instance, bdms)
 
