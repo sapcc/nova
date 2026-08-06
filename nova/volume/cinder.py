@@ -22,6 +22,7 @@ import collections
 import copy
 import functools
 import sys
+import time
 import urllib
 
 from cinderclient import api_versions as cinder_api_versions
@@ -395,6 +396,45 @@ def _translate_attachment_ref(attachment_ref):
     return attachment_ref
 
 
+VOLUME_MANAGE_EXCEPTIONS = (
+    cinder_exception.ClientException,
+    cinder_exception.ConnectionError,
+    keystone_exception.ClientException,
+    keystone_exception.ConnectionError,
+)
+
+
+def _volume_manage_exception_message(exc):
+    message = encodeutils.exception_to_unicode(exc)
+    if isinstance(exc, cinder_exception.OverLimit):
+        return _('Quota exceeded: %s') % message
+    if isinstance(exc, (cinder_exception.ConnectionError,
+                        keystone_exception.ConnectionError)):
+        return _('Cinder service unavailable: %s') % message
+    return message
+
+
+def _volume_manage_error_message(volume):
+    fault = getattr(volume, 'fault', None)
+    if isinstance(fault, dict):
+        fault = fault.get('message') or fault.get('details')
+    return (getattr(volume, 'error_message', None) or
+            getattr(volume, 'message', None) or
+            getattr(volume, 'reason', None) or fault or
+            _('Volume entered %(status)s during manage_existing.') % {
+                'status': getattr(volume, 'status', 'unknown')})
+
+
+def _raise_for_volume_manage_status(volume, volume_id):
+    if volume.status == 'error':
+        raise exception.VolumeManageFailed(
+            reason=_volume_manage_error_message(volume))
+    if volume.status == 'error_managing':
+        raise exception.VolumeManageFailedNoAbort(
+            volume_id=volume_id,
+            reason=_volume_manage_error_message(volume))
+
+
 def translate_cinder_exception(method):
     """Transforms a cinder exception but keeps its traceback intact."""
     @functools.wraps(method)
@@ -430,6 +470,18 @@ def translate_create_exception(method):
             _reraise(exception.OverQuota(message=e.message))
         return res
     return translate_cinder_exception(wrapper)
+
+
+def translate_volume_manage_exception(method):
+    """Transforms exceptions for manage_existing operations."""
+
+    def wrapper(self, ctx, *args, **kwargs):
+        try:
+            return method(self, ctx, *args, **kwargs)
+        except VOLUME_MANAGE_EXCEPTIONS as exc:
+            _reraise(exception.VolumeManageFailed(
+                reason=_volume_manage_exception_message(exc)))
+    return wrapper
 
 
 def translate_volume_exception(method):
@@ -745,6 +797,42 @@ class API(object):
     @translate_snapshot_exception
     def delete_snapshot(self, context, snapshot_id):
         cinderclient(context).volume_snapshots.delete(snapshot_id)
+
+    @translate_volume_manage_exception
+    def manage_existing(self, context, host, ref, volume_type, name=None,
+                        description=None, bootable=False, timeout=None):
+        timeout = timeout or CONF.cross_hv.fcd_manage_timeout
+        client = cinderclient(context)
+
+        volume = client.volumes.manage(
+            host=host, ref=ref, volume_type=volume_type, name=name,
+            description=description, bootable=bootable)
+
+        volume_id = volume.id
+        deadline = time.time() + timeout
+        last_error = None
+        while True:
+            try:
+                volume = client.volumes.get(volume_id)
+                last_error = None
+            except VOLUME_MANAGE_EXCEPTIONS as exc:
+                last_error = _volume_manage_exception_message(exc)
+                volume = None
+            if volume and volume.status == 'available':
+                return _untranslate_volume_summary_view(context, volume)
+            if volume:
+                _raise_for_volume_manage_status(volume, volume_id)
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                try:
+                    volume = client.volumes.get(volume_id)
+                    _raise_for_volume_manage_status(volume, volume_id)
+                except VOLUME_MANAGE_EXCEPTIONS as exc:
+                    last_error = _volume_manage_exception_message(exc)
+                raise exception.VolumeManageTimeout(
+                    volume_id=volume_id, seconds=timeout,
+                    reason=last_error or 'timeout')
+            time.sleep(min(5, remaining))
 
     @translate_cinder_exception
     def get_all_volume_types(self, context):

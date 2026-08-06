@@ -154,6 +154,24 @@ class CinderAPIVersionNotAvailable(NovaException):
     msg_fmt = _('Cinder API version %(version)s is not available.')
 
 
+class VolumeManageFailed(NovaException):
+    msg_fmt = _('Cinder manage_existing failed: %(reason)s')
+
+
+class VolumeManageFailedNoAbort(VolumeManageFailed):
+    msg_fmt = _('Cinder manage_existing failed for volume %(volume_id)s: '
+                '%(reason)s')
+
+
+class VolumeManageTimeout(VolumeManageFailedNoAbort):
+    msg_fmt = _('Cinder manage_existing for volume %(volume_id)s did not '
+                'complete within %(seconds)s seconds (%(reason)s).')
+
+
+class CrossHVConfigurationMissing(NovaException):
+    msg_fmt = _('[cross_hv] %(option)s must be set.')
+
+
 class Forbidden(NovaException):
     msg_fmt = _("Forbidden")
     code = 403

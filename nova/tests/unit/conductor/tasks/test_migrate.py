@@ -869,6 +869,11 @@ class CrossHvImageConversionTestCase(test.NoDBTestCase):
         bdm.save = mock.Mock()
         return bdm
 
+    def test_validate_manage_config_missing_volume_type(self):
+        self.flags(fcd_volume_type='', group='cross_hv')
+        self.assertRaises(exception.CrossHVConfigurationMissing,
+                          self.task._validate_cross_hv_manage_config)
+
     def test_happy_path_converts_root_bdm(self):
         root_bdm = self._make_root_bdm()
 
@@ -878,8 +883,7 @@ class CrossHvImageConversionTestCase(test.NoDBTestCase):
         self.mock_compute_rpcapi.prep_cross_hv_conversion \
             .assert_called_once_with(self.task.context, self.instance)
 
-        # Verify manage_existing called with correct args including size_gb
-        # and the full prep payload for rollback/abort decisions.
+        # Verify manage_existing called with correct args including size_gb.
         self.mock_volume_api.manage_existing.assert_called_once_with(
             self.task.context,
             host='cinder-vol@vmware_fcd',
@@ -889,8 +893,7 @@ class CrossHvImageConversionTestCase(test.NoDBTestCase):
             volume_type='vmware',
             name='cross-hv-%s' % self.instance.uuid,
             description='Auto-converted from image-backed instance',
-            bootable=True,
-            rollback=self.prep_response)
+            bootable=True)
 
         # Verify attachment created
         self.mock_volume_api.attachment_create.assert_called_once_with(
@@ -922,21 +925,6 @@ class CrossHvImageConversionTestCase(test.NoDBTestCase):
         self.mock_compute_rpcapi.abort_cross_hv_conversion \
             .assert_not_called()
 
-    def test_manage_receives_full_prep_payload_for_rollback(self):
-        """The placeholder wrapper needs enough data to call abort RPC."""
-        root_bdm = self._make_root_bdm()
-
-        self.task._convert_image_backed_root_to_bfv(root_bdm)
-
-        rollback_payload = (
-            self.mock_volume_api.manage_existing.call_args[1]['rollback'])
-        self.assertIs(self.prep_response, rollback_payload)
-        self.assertEqual('[datastore1] vm-uuid/vm-uuid.vmdk',
-                         rollback_payload['vmdk_path'])
-        self.assertEqual(
-            {'disk_key': 2000, 'controller_key': 1000},
-            rollback_payload['rollback'])
-
     def test_prep_rpc_failure_does_not_abort(self):
         """If prep_cross_hv_conversion fails, no abort is called."""
         self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
@@ -951,17 +939,26 @@ class CrossHvImageConversionTestCase(test.NoDBTestCase):
             .assert_not_called()
         self.assertEqual('local', root_bdm.destination_type)
 
-    def test_manage_exception_does_not_abort(self):
-        """manage_existing raising -> exception propagates, conductor does not abort.
-
-        Error/abort semantics on manage failure are handled by manage_existing
-        in ticket 672. The conductor lets exceptions propagate unchanged.
-        """
+    def test_abort_safe_manage_exception_aborts(self):
         self.mock_volume_api.manage_existing.side_effect = (
-            Exception('manage failed'))
+            exception.VolumeManageFailed(reason='manage failed'))
         root_bdm = self._make_root_bdm()
 
-        self.assertRaises(Exception,
+        self.assertRaises(exception.VolumeManageFailed,
+                          self.task._convert_image_backed_root_to_bfv,
+                          root_bdm)
+        self.mock_compute_rpcapi.abort_cross_hv_conversion \
+            .assert_called_once_with(
+                self.task.context, self.instance, self.prep_response)
+        self.assertEqual('local', root_bdm.destination_type)
+
+    def test_no_abort_manage_exception_does_not_abort(self):
+        self.mock_volume_api.manage_existing.side_effect = (
+            exception.VolumeManageFailedNoAbort(
+                volume_id=uuids.volume, reason='manage failed'))
+        root_bdm = self._make_root_bdm()
+
+        self.assertRaises(exception.VolumeManageFailedNoAbort,
                           self.task._convert_image_backed_root_to_bfv,
                           root_bdm)
         self.mock_compute_rpcapi.abort_cross_hv_conversion \

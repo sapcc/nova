@@ -1,0 +1,41 @@
+# Copyright 2026 SAP SE
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
+from oslo_config import cfg
+
+cross_hv_group = cfg.OptGroup(
+    'cross_hv',
+    title='Cross Hypervisor Options',
+    help='Configuration options for cross-hypervisor resize flows.')
+
+cross_hv_opts = [
+    cfg.StrOpt(
+        'fcd_volume_type',
+        help='Cinder volume type used when managing detached VMware disks.'),
+
+    cfg.IntOpt(
+        'fcd_manage_timeout',
+        default=600,
+        min=1,
+        help='Seconds to wait for Cinder manage_existing to complete.'),
+]
+
+
+def register_opts(conf):
+    conf.register_group(cross_hv_group)
+    conf.register_opts(cross_hv_opts, group=cross_hv_group)
+
+
+def list_opts():
+    return {cross_hv_group: cross_hv_opts}
