@@ -51,6 +51,10 @@ class FakeVolume(object):
         self.snapshot_id = 'snap_id_1'
         self.metadata = {}
         self.multiattach = multiattach
+        self.error_message = None
+        self.message = None
+        self.reason = None
+        self.fault = None
 
     def get(self, volume_id):
         return self.volume_id
@@ -230,6 +234,154 @@ class CinderApiTestCase(test.NoDBTestCase):
             1, imageRef=None, availability_zone=None,
             volume_type=None, description='', snapshot_id=None, name='',
             scheduler_hints=None, metadata=None)
+
+    @mock.patch('nova.volume.cinder.time.sleep')
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_polls_until_available(
+            self, mock_cinderclient, mock_sleep):
+        managing = FakeVolume(uuids.volume_id)
+        managing.status = 'managing'
+        available = FakeVolume(uuids.volume_id)
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = managing
+        mock_volumes.get.side_effect = [managing, available]
+
+        volume = self.api.manage_existing(
+            self.ctx, 'host@backend#pool',
+            {'source-name': 'disk@vm', 'size_gb': 64}, 'fcd',
+            name='root', bootable=True)
+
+        self.assertEqual(uuids.volume_id, volume['id'])
+        mock_volumes.manage.assert_called_once_with(
+            host='host@backend#pool',
+            ref={'source-name': 'disk@vm', 'size_gb': 64},
+            volume_type='fcd', name='root', description=None, bootable=True)
+
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_with_source_id(self, mock_cinderclient):
+        volume = FakeVolume(uuids.volume_id)
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = volume
+        mock_volumes.get.return_value = volume
+
+        self.api.manage_existing(
+            self.ctx, 'host',
+            {'source-name': 'disk@vm', 'size_gb': 64,
+             'source-id': 'fcd-id'}, 'fcd')
+
+        mock_volumes.manage.assert_called_once_with(
+            host='host',
+            ref={'source-name': 'disk@vm', 'size_gb': 64,
+                 'source-id': 'fcd-id'},
+            volume_type='fcd', name=None, description=None, bootable=False)
+
+    @mock.patch('nova.volume.cinder.time.sleep')
+    @mock.patch('nova.volume.cinder.time.time', side_effect=[0, 0, 601])
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_timeout(
+            self, mock_cinderclient, mock_time, mock_sleep):
+        managing = FakeVolume(uuids.volume_id)
+        managing.status = 'managing'
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = managing
+        mock_volumes.get.return_value = managing
+
+        self.assertRaises(
+            exception.VolumeManageTimeout, self.api.manage_existing,
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+
+    @mock.patch('nova.volume.cinder.time.time', side_effect=[0, 601])
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_timeout_uses_final_error_state(
+            self, mock_cinderclient, mock_time):
+        managing = FakeVolume(uuids.volume_id)
+        managing.status = 'managing'
+        error = FakeVolume(uuids.volume_id)
+        error.status = 'error'
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = managing
+        mock_volumes.get.side_effect = [managing, error]
+
+        self.assertRaises(
+            exception.VolumeManageFailed, self.api.manage_existing,
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+
+    @mock.patch('nova.volume.cinder.time.time', side_effect=[0, 601])
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_timeout_uses_final_error_managing_state(
+            self, mock_cinderclient, mock_time):
+        managing = FakeVolume(uuids.volume_id)
+        managing.status = 'managing'
+        error = FakeVolume(uuids.volume_id)
+        error.status = 'error_managing'
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = managing
+        mock_volumes.get.side_effect = [managing, error]
+
+        self.assertRaises(
+            exception.VolumeManageFailedNoAbort, self.api.manage_existing,
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+
+    @mock.patch('nova.volume.cinder.time.sleep')
+    @mock.patch('nova.volume.cinder.time.time', side_effect=[0, 0])
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_retries_poll_error(
+            self, mock_cinderclient, mock_time, mock_sleep):
+        managing = FakeVolume(uuids.volume_id)
+        available = FakeVolume(uuids.volume_id)
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = managing
+        mock_volumes.get.side_effect = [
+            cinder_exception.ConnectionError('temporary'), available]
+
+        volume = self.api.manage_existing(
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+
+        self.assertEqual(uuids.volume_id, volume['id'])
+        mock_sleep.assert_called_once_with(5)
+
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_error_state(self, mock_cinderclient):
+        error = FakeVolume(uuids.volume_id)
+        error.status = 'error'
+        error.error_message = 'quota exceeded'
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = error
+        mock_volumes.get.return_value = error
+
+        ex = self.assertRaises(
+            exception.VolumeManageFailed, self.api.manage_existing,
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+        self.assertIn('quota exceeded', str(ex))
+
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_error_managing_state(self, mock_cinderclient):
+        error = FakeVolume(uuids.volume_id)
+        error.status = 'error_managing'
+        mock_volumes = mock_cinderclient.return_value.volumes
+        mock_volumes.manage.return_value = error
+        mock_volumes.get.return_value = error
+
+        self.assertRaises(
+            exception.VolumeManageFailedNoAbort, self.api.manage_existing,
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_manage_existing_synchronous_error(self, mock_cinderclient):
+        mock_cinderclient.return_value.volumes.manage.side_effect = (
+            cinder_exception.BadRequest(400, 'bad ref'))
+
+        ex = self.assertRaises(
+            exception.VolumeManageFailed, self.api.manage_existing,
+            self.ctx, 'host', {'source-name': 'disk@vm', 'size_gb': 64},
+            'fcd')
+        self.assertIn('bad ref', str(ex))
 
     @mock.patch('nova.volume.cinder.cinderclient')
     def test_get_all(self, mock_cinderclient):

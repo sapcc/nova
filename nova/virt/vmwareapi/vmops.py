@@ -2971,11 +2971,11 @@ class VMwareVMOps(object):
 
     def _migrate_disk_and_power_off_cross_hv(self, context, instance, flavor,
                                              network_info, block_device_info):
-        """Prepare the source VM as an empty shell for cross-HV BFV resize.
+        """Prepare the source VM as an empty shell for cross-HV resize.
 
         Powers off, detaches volumes and NICs, swaps instanceUuid to
         migration.uuid, and renames the shell for operator visibility.
-        The KVM/CH destination boots from the existing volume directly.
+        The KVM/CH destination boots from the Cinder-managed root disk.
         """
         migration = objects.Migration.get_by_id_and_instance(
             context, instance.migration_context.migration_id, instance.uuid)
