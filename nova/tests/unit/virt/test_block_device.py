@@ -571,6 +571,107 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             delete_attachment_raises=exception.VolumeAttachmentNotFound(
                 attachment_id=uuids.attachment_id))
 
+    def _test_detach_connection_info(
+        self,
+        expected_connection_info,
+        attachment_connection_info=None,
+        attachment_get_side_effect=None,
+        bdm_connection_info=None,
+        attachment_id=ATTACHMENT_ID,
+    ):
+        """Detach a volume from the local host and assert that the virt
+        driver was called with the expected connection_info.
+        """
+        self.flags(host='fake-host')
+        instance = fake_instance.fake_instance_obj(
+            self.context, host='fake-host', uuid=uuids.uuid)
+        driver_bdm = self.driver_classes['volume'](self.volume_bdm)
+        driver_bdm['attachment_id'] = attachment_id
+        if bdm_connection_info is not None:
+            driver_bdm['connection_info'] = bdm_connection_info
+        volume = {'id': driver_bdm.volume_id,
+                  'attach_status': 'attached',
+                  'status': 'in-use'}
+        self.virt_driver.get_volume_connector.return_value = {
+            'ip': 'fake_ip', 'host': 'fake-host'}
+        self.volume_api.attachment_get.side_effect = attachment_get_side_effect
+        self.volume_api.attachment_get.return_value = {
+            'connection_info': attachment_connection_info}
+
+        with test.nested(
+            mock.patch.object(driver_bdm, '_get_volume', return_value=volume),
+            mock.patch('os_brick.initiator.utils.guard_connection'),
+            mock.patch.object(encryptors, 'get_encryption_metadata',
+                              return_value={}),
+        ):
+            driver_bdm.detach(self.context, instance, self.volume_api,
+                              self.virt_driver, attachment_id=attachment_id)
+
+        self.assertEqual(expected_connection_info,
+                         driver_bdm['connection_info'])
+        self.virt_driver.detach_volume.assert_called_once_with(
+            self.context, expected_connection_info, instance,
+            driver_bdm['mount_device'], encryption={})
+
+    def test_detach_uses_cinder_connection_info(self):
+        """The connection_info of the attachment wins over the possibly stale
+        one of the BDM, e.g. when the volume got migrated to another backend.
+        """
+        self._test_detach_connection_info(
+            bdm_connection_info={'driver_volume_type': 'vmdk',
+                                 'data': {'volume': 'vm-1'}},
+            attachment_connection_info={'driver_volume_type': 'fcd',
+                                        'data': {'id': 'fcd-1'}},
+            expected_connection_info={
+                'driver_volume_type': 'fcd',
+                'data': {'id': 'fcd-1'},
+                'serial': 'fake-volume-id-1'})
+
+    def test_detach_preserves_local_connection_info(self):
+        """The multipath_id is only known to this host and the multiattach flag
+        is only stashed in the BDM, so both survive the refresh.
+        """
+        self._test_detach_connection_info(
+            bdm_connection_info={'driver_volume_type': 'iscsi',
+                                 'multiattach': True,
+                                 'data': {'multipath_id': 'fake-multipath-id',
+                                          'target_lun': 0}},
+            attachment_connection_info={'driver_volume_type': 'iscsi',
+                                        'data': {'target_lun': 1}},
+            expected_connection_info={
+                'driver_volume_type': 'iscsi',
+                'multiattach': True,
+                'data': {'target_lun': 1,
+                         'multipath_id': 'fake-multipath-id'},
+                'serial': 'fake-volume-id-1'})
+
+    def test_detach_falls_back_to_bdm_when_attachment_get_fails(self):
+        self._test_detach_connection_info(
+            bdm_connection_info={'driver_volume_type': 'vmdk',
+                                 'data': {'volume': 'vm-1'}},
+            attachment_get_side_effect=exception.VolumeAttachmentNotFound(
+                attachment_id=ATTACHMENT_ID),
+            expected_connection_info={'driver_volume_type': 'vmdk',
+                                      'data': {'volume': 'vm-1'}})
+
+    def test_detach_falls_back_to_bdm_without_attachment_connection_info(self):
+        self._test_detach_connection_info(
+            bdm_connection_info={'driver_volume_type': 'vmdk',
+                                 'data': {'volume': 'vm-1'}},
+            attachment_connection_info=None,
+            expected_connection_info={'driver_volume_type': 'vmdk',
+                                      'data': {'volume': 'vm-1'}})
+
+    def test_detach_without_attachment_id_does_not_query_cinder(self):
+        """The legacy attach flow has no attachment record to ask."""
+        self._test_detach_connection_info(
+            attachment_id=None,
+            bdm_connection_info={'driver_volume_type': 'vmdk',
+                                 'data': {'volume': 'vm-1'}},
+            expected_connection_info={'driver_volume_type': 'vmdk',
+                                      'data': {'volume': 'vm-1'}})
+        self.volume_api.attachment_get.assert_not_called()
+
     @mock.patch.object(encryptors, 'get_encryption_metadata')
     @mock.patch.object(driver_block_device,
         '_get_volume_create_scheduler_hints',
