@@ -360,15 +360,6 @@ class MigrationTask(base.TaskBase):
 
         (host, node) = (selection.service_host, selection.nodename)
 
-        # The availability_zone field was added in v1.1 of the Selection
-        # object so make sure to handle the case where it is missing.
-        if 'availability_zone' in selection:
-            self.instance.availability_zone = selection.availability_zone
-        else:
-            self.instance.availability_zone = (
-                availability_zones.get_host_availability_zone(
-                    self.context, host))
-
         # Convert image/local roots before the BFV-only prep_resize path.
         # Revert keeps the instance BFV-on-VMware.
         if self.instance.system_metadata.get('cross_hv_resize') == 'true':
@@ -377,6 +368,20 @@ class MigrationTask(base.TaskBase):
             if self._is_image_backed_local_root(root_bdm):
                 self._validate_cross_hv_manage_config()
                 self._convert_image_backed_root_to_bfv(root_bdm)
+
+        # NOTE: set after the conversion above, which saves the instance
+        # both before and after its source RPC. Assigning earlier would
+        # let those saves (and rollback's) persist the destination AZ
+        # for a resize that never happened. On success it rides the
+        # prep_resize RPC below, so nothing here needs to save it.
+        # The availability_zone field was added in v1.1 of the Selection
+        # object so make sure to handle the case where it is missing.
+        if 'availability_zone' in selection:
+            self.instance.availability_zone = selection.availability_zone
+        else:
+            self.instance.availability_zone = (
+                availability_zones.get_host_availability_zone(
+                    self.context, host))
 
         LOG.debug("Calling prep_resize with selected host: %s; "
                   "Selected node: %s; Alternates: %s", host, node,
@@ -451,6 +456,30 @@ class MigrationTask(base.TaskBase):
                    'or */volume root disks are supported.' %
                    (root_bdm.source_type, root_bdm.destination_type))
 
+    def _set_cross_hv_root_detach_state(self, value):
+        """Set or clear cross_hv_root_detach_state and save the instance.
+
+        Keeps the in-memory system_metadata in sync with the persisted
+        value. If save() fails, undo the in-memory change, so rollback()
+        never trusts a state that was not written to the database.
+
+        :param value: 'unknown', 'detached', or None to clear the key.
+        """
+        sysmeta = self.instance.system_metadata
+        previous = sysmeta.get('cross_hv_root_detach_state')
+        if value is None:
+            sysmeta.pop('cross_hv_root_detach_state', None)
+        else:
+            sysmeta['cross_hv_root_detach_state'] = value
+        try:
+            self.instance.save()
+        except Exception:
+            if previous is None:
+                sysmeta.pop('cross_hv_root_detach_state', None)
+            else:
+                sysmeta['cross_hv_root_detach_state'] = previous
+            raise
+
     def _convert_image_backed_root_to_bfv(self, root_bdm):
         """Convert an image-backed local root disk to a Cinder volume.
 
@@ -463,9 +492,29 @@ class MigrationTask(base.TaskBase):
         The conversion is permanent. Revert undoes the resize but the
         instance comes back as BFV-on-VMware (asymmetric revert).
         """
-        # Source prep powers off the VM and detaches the root VMDK.
-        prep = self.compute_rpcapi.prep_cross_hv_conversion(
-            self.context, self.instance)
+        # cross_hv_root_detach_state tracks the source RPC outcome for
+        # rollback(). It is a distinct key from vmops.py's
+        # cross_hv_source_prepared, which means something else (the
+        # source VM was renamed to a migration-uuid shell). Three
+        # states:
+        #   absent    -> the source was never touched.
+        #   'unknown' -> the RPC was sent but its outcome is unknown
+        #                (e.g. a timeout). The disk may already be
+        #                detached. Treat this like 'detached'.
+        #   'detached' -> the RPC returned. The source VM is off and
+        #                its root disk is detached.
+        # Set 'unknown' before dispatch, so a lost reply still leaves a
+        # safe marker instead of looking like "never touched".
+        self._set_cross_hv_root_detach_state('unknown')
+        try:
+            prep = self.compute_rpcapi.prep_cross_hv_conversion(
+                self.context, self.instance)
+        except exception.UnsupportedRPCVersion:
+            # The RPC client rejects this locally, before the call
+            # reaches the host. The source was never touched.
+            self._set_cross_hv_root_detach_state(None)
+            raise
+        self._set_cross_hv_root_detach_state('detached')
 
         size_gb = int(math.ceil(prep['size_bytes'] / units.Gi))
 
@@ -494,6 +543,9 @@ class MigrationTask(base.TaskBase):
         except exception.VolumeManageFailed:
             self.compute_rpcapi.abort_cross_hv_conversion(
                 self.context, self.instance, prep)
+            # Abort reattached the disk and powered the VM back on.
+            # The source is back to normal.
+            self._set_cross_hv_root_detach_state(None)
             raise
 
         # Reserve the future root-volume attachment.
@@ -589,19 +641,61 @@ class MigrationTask(base.TaskBase):
             raise exception.MaxRetriesExceeded(reason=reason)
         return selection
 
+    def _cleanup_cross_hv_markers_on_rollback(self):
+        """Restore image properties and clear cross-HV markers, if safe.
+
+        Only runs when cross_hv_resize is 'true' and
+        cross_hv_root_detach_state is absent -- i.e. the source RPC was
+        rejected before it ran, or a successful abort already reset it.
+        In every other case the source may be detached, so real
+        recovery state exists and must not be touched.
+
+        The image-property restore is in-memory only: the sanitized
+        spec is never persisted on this path (_cold_migrate saves the
+        request spec only after a successful task), so there is nothing
+        in the DB to undo, and saving here would write an abandoned
+        resize's in-flight spec.
+
+        Errors here are logged, not raised, so a failure cannot mask
+        the original exception or block the allocation revert in
+        rollback().
+        """
+        sysmeta = self.instance.system_metadata
+        if not (sysmeta.get('cross_hv_resize') == 'true' and
+                'cross_hv_root_detach_state' not in sysmeta):
+            return
+        try:
+            mig_ctx = (self.instance.migration_context
+                       if self.instance.obj_attr_is_set('migration_context')
+                       else None)
+            if (mig_ctx and
+                    mig_ctx.obj_attr_is_set('old_image_properties') and
+                    mig_ctx.old_image_properties):
+                compute_utils.restore_image_props_from_cross_hv_journal(
+                    request_spec=self.request_spec,
+                    old_image_properties=mig_ctx.old_image_properties)
+            compute_utils.cleanup_cross_hv_markers(sysmeta)
+            self.instance.drop_migration_context()
+            self.instance.save()
+        except Exception:
+            LOG.exception('Failed to clean up cross-HV markers during '
+                          'rollback for instance %s.', self.instance.uuid,
+                          instance=self.instance)
+
     def rollback(self, ex):
         if self._migration:
             self._migration.status = 'error'
             self._migration.save()
 
-        if not self._held_allocations:
-            return
-
-        # NOTE(danms): We created new-style migration-based
-        # allocations for the instance, but failed before we kicked
-        # off the migration in the compute. Normally the latter would
-        # do that cleanup but we never got that far, so do it here and
-        # now.
-
-        revert_allocation_for_migration(self.context, self._source_cn,
-                                        self.instance, self._migration)
+        try:
+            if self._held_allocations:
+                # NOTE(danms): We created new-style migration-based
+                # allocations for the instance, but failed before we
+                # kicked off the migration in the compute. Normally the
+                # latter would do that cleanup but we never got that
+                # far, so do it here and now.
+                revert_allocation_for_migration(
+                    self.context, self._source_cn, self.instance,
+                    self._migration)
+        finally:
+            self._cleanup_cross_hv_markers_on_rollback()
