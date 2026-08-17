@@ -15,11 +15,14 @@ from unittest import mock
 import contextlib
 
 from oslo_config import cfg
+import oslo_messaging as messaging
 from oslo_serialization import jsonutils
 from oslo_utils.fixture import uuidsentinel as uuids
+from oslo_utils import units
 
 from nova.compute import power_state
 from nova.compute import rpcapi as compute_rpcapi
+from nova.compute import utils as compute_utils
 from nova.conductor.tasks import migrate
 from nova import context
 from nova import exception
@@ -1057,6 +1060,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
             self.ctx, inst_obj, inst, [])
         self.instance.power_state = power_state.RUNNING
         self.instance.save = mock.Mock()
+        self.instance.drop_migration_context = mock.Mock()
 
         self.request_spec = objects.RequestSpec(image=objects.ImageMeta())
         self.request_spec.is_bfv = False
@@ -1207,3 +1211,235 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
             self._execute_with_mocks, root_bdm)
 
         self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    def _prep_result(self):
+        return {
+            'size_bytes': 10 * units.Gi,
+            'vmdk_path': '[ds1] fake/fake.vmdk',
+            'cinder_host': 'host1',
+        }
+
+    def test_rollback_clears_cross_hv_markers_when_prep_rejected(self):
+        """rollback() clears markers when prep_cross_hv_conversion is
+        rejected before it runs (e.g. an unpatched host rejects the RPC
+        version). The source was never touched, so it is safe to clear
+        the markers. Otherwise a later, unrelated confirm_migration()
+        could mistake this instance for one still mid conversion.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
+            exception.UnsupportedRPCVersion(api='compute',
+                                             required='6.2.1'))
+
+        self.assertRaises(
+            exception.UnsupportedRPCVersion,
+            self._execute_with_mocks, root_bdm)
+
+        self.assertNotIn('cross_hv_resize', self.instance.system_metadata)
+        self.assertNotIn(
+            'cross_hv_root_detach_state', self.instance.system_metadata)
+        self.instance.drop_migration_context.assert_called_once()
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    def test_rollback_preserves_markers_when_prep_outcome_unknown(self):
+        """rollback() must not touch markers when the RPC outcome is
+        unknown, for example after a timeout. The disk may already be
+        detached, so treat this like a completed prep and keep the
+        markers for manual recovery.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
+            messaging.MessagingTimeout('timed out'))
+
+        self.assertRaises(
+            messaging.MessagingTimeout,
+            self._execute_with_mocks, root_bdm)
+
+        self.assertEqual(
+            'true', self.instance.system_metadata['cross_hv_resize'])
+        self.assertEqual(
+            'unknown',
+            self.instance.system_metadata['cross_hv_root_detach_state'])
+        self.instance.drop_migration_context.assert_not_called()
+
+    def test_rollback_preserves_markers_after_volume_manage_failed_no_abort(
+            self):
+        """rollback() must not touch markers once the source is prepared.
+
+        A successful prep_cross_hv_conversion powers off the source VM
+        and sets cross_hv_root_detach_state to 'detached'. If
+        manage_existing then raises VolumeManageFailedNoAbort, abort is
+        unsafe. The source stays in that state for manual recovery, so
+        rollback() must not erase the markers.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
+            self._prep_result())
+        self.mock_volume_api.manage_existing.side_effect = (
+            exception.VolumeManageFailedNoAbort(
+                volume_id=uuids.vol, reason='manage failed'))
+
+        self.assertRaises(
+            exception.VolumeManageFailedNoAbort,
+            self._execute_with_mocks, root_bdm)
+
+        self.assertEqual(
+            'true', self.instance.system_metadata['cross_hv_resize'])
+        self.assertEqual(
+            'detached',
+            self.instance.system_metadata['cross_hv_root_detach_state'])
+        self.instance.drop_migration_context.assert_not_called()
+        self.mock_compute_rpcapi.abort_cross_hv_conversion.\
+            assert_not_called()
+
+    def test_rollback_clears_markers_after_successful_abort(self):
+        """rollback() clears markers after a successful abort.
+
+        If manage_existing raises the abortable VolumeManageFailed,
+        _convert_image_backed_root_to_bfv calls abort_cross_hv_
+        conversion and clears cross_hv_root_detach_state. The source is
+        back to normal, so rollback() can clear the remaining markers
+        and the migration context.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
+            self._prep_result())
+        self.mock_volume_api.manage_existing.side_effect = (
+            exception.VolumeManageFailed(
+                volume_id=uuids.vol, reason='manage failed'))
+
+        self.assertRaises(
+            exception.VolumeManageFailed,
+            self._execute_with_mocks, root_bdm)
+
+        self.mock_compute_rpcapi.abort_cross_hv_conversion.\
+            assert_called_once()
+        self.assertNotIn('cross_hv_resize', self.instance.system_metadata)
+        self.assertNotIn(
+            'cross_hv_root_detach_state', self.instance.system_metadata)
+        self.instance.drop_migration_context.assert_called_once()
+
+    def test_rollback_preserves_markers_when_abort_itself_fails(self):
+        """rollback() must not touch markers if abort_cross_hv_
+        conversion itself raises. The source disk state is now unknown,
+        so keep the markers instead of assuming the abort worked.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
+            self._prep_result())
+        self.mock_volume_api.manage_existing.side_effect = (
+            exception.VolumeManageFailed(
+                volume_id=uuids.vol, reason='manage failed'))
+        self.mock_compute_rpcapi.abort_cross_hv_conversion.side_effect = (
+            messaging.MessagingTimeout('timed out'))
+
+        self.assertRaises(
+            messaging.MessagingTimeout,
+            self._execute_with_mocks, root_bdm)
+
+        self.assertEqual(
+            'true', self.instance.system_metadata['cross_hv_resize'])
+        self.assertEqual(
+            'detached',
+            self.instance.system_metadata['cross_hv_root_detach_state'])
+        self.instance.drop_migration_context.assert_not_called()
+
+    def test_rollback_preserves_markers_when_attachment_create_fails(self):
+        """rollback() must not touch markers once the source is detached.
+
+        attachment_create failing happens after the source RPC already
+        succeeded, so cross_hv_root_detach_state is 'detached' and the
+        markers must survive rollback().
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
+            self._prep_result())
+        self.mock_volume_api.manage_existing.return_value = {'id': uuids.vol}
+        self.mock_volume_api.attachment_create.side_effect = (
+            exception.NovaException())
+
+        self.assertRaises(
+            exception.NovaException,
+            self._execute_with_mocks, root_bdm)
+
+        self.assertEqual(
+            'true', self.instance.system_metadata['cross_hv_resize'])
+        self.assertEqual(
+            'detached',
+            self.instance.system_metadata['cross_hv_root_detach_state'])
+        self.instance.drop_migration_context.assert_not_called()
+
+    def test_rollback_restores_image_properties_from_journal(self):
+        """rollback() restores sanitized image properties from the
+        journal when the source was never touched, so the request_spec
+        is not left with VMware-only values pointed at a KVM/CH host.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
+            exception.UnsupportedRPCVersion(api='compute',
+                                             required='6.2.1'))
+        self.request_spec.image.properties = objects.ImageMetaProps(
+            hw_disk_bus='virtio')
+        self.request_spec.save = mock.Mock()
+        self.instance.migration_context = objects.MigrationContext(
+            old_image_properties={'hw_disk_bus': 'ide'})
+
+        with mock.patch.object(
+                compute_utils, 'restore_image_props_from_cross_hv_journal',
+                wraps=compute_utils.restore_image_props_from_cross_hv_journal
+        ) as mock_restore:
+            self.assertRaises(
+                exception.UnsupportedRPCVersion,
+                self._execute_with_mocks, root_bdm)
+
+        mock_restore.assert_called_once_with(
+            request_spec=self.request_spec,
+            old_image_properties={'hw_disk_bus': 'ide'})
+        self.assertEqual(
+            'ide', self.request_spec.image.properties.hw_disk_bus)
+        # In-memory only: the sanitized spec was never persisted, so
+        # rollback must not write the abandoned resize's spec back.
+        self.request_spec.save.assert_not_called()
+
+    def test_rollback_cleans_up_markers_when_allocation_revert_fails(self):
+        """rollback() must clean up cross-HV markers even if the
+        allocation revert itself raises. A failure there must not skip
+        the marker cleanup, since that would leave the stale markers
+        this fix exists to remove.
+        """
+        self.instance.system_metadata['cross_hv_resize'] = 'true'
+        self.task._migration = mock.Mock(status=None)
+        self.task._held_allocations = True
+        self.task._source_cn = mock.Mock()
+
+        with mock.patch.object(
+                migrate, 'revert_allocation_for_migration',
+                side_effect=exception.NovaException()):
+            self.assertRaises(
+                exception.NovaException, self.task.rollback, Exception())
+
+        self.assertNotIn('cross_hv_resize', self.instance.system_metadata)
+        self.instance.drop_migration_context.assert_called_once()
+
+    def test_failed_conversion_does_not_persist_destination_az(self):
+        """The conversion saves the instance before and after its source
+        RPC. The destination availability_zone must not be assigned
+        until after the conversion, or a rejected prep would commit the
+        destination AZ for a resize that never happened, leaving a
+        running instance reporting the wrong AZ.
+        """
+        self.instance.availability_zone = 'az-source'
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
+            exception.UnsupportedRPCVersion(api='compute',
+                                            required='6.2.1'))
+        seen = []
+        self.instance.save.side_effect = (
+            lambda *a, **kw: seen.append(self.instance.availability_zone))
+
+        self.assertRaises(
+            exception.UnsupportedRPCVersion,
+            self._execute_with_mocks, root_bdm)
+
+        self.assertTrue(seen, 'expected at least one instance.save()')
+        self.assertEqual(['az-source'] * len(seen), seen)
