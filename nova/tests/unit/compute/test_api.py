@@ -2620,7 +2620,9 @@ class _ComputeAPIUnitTestMixIn(object):
             name='vmware.small', root_gb=10,
             extra_specs={'capabilities:hypervisor_type': 'VMware vCenter '
                          'Server'})
-        fake_inst = self._create_instance_obj(flavor=current_flavor)
+        fake_inst = self._create_instance_obj(
+            flavor=current_flavor,
+            params={'power_state': power_state.SHUTDOWN})
         # Destination flavor: CH, root_gb=0
         dest_flavor = self._create_flavor(
             id=200, flavorid='ch-flavor',
