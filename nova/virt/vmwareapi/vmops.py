@@ -545,11 +545,10 @@ class VMwareVMOps(object):
         # Check power state and power off if needed.
         pstate = vm_util.get_vm_state(self._session, instance)
         if pstate == power_state.RUNNING:
-            # Use the return value: power_off_instance returns True only if
+            # Use the return value: _soft_shutdown returns True only if
             # this call actually issued the power-off (returns False if the
             # VM was already off when the call arrived, e.g. a race).
-            powered_off_by_us = vm_util.power_off_instance(
-                self._session, instance, vm_ref)
+            powered_off_by_us = self._soft_shutdown(instance)
         elif pstate == power_state.SHUTDOWN:
             powered_off_by_us = False
         else:
