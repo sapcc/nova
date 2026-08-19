@@ -4882,11 +4882,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'get_vm_state')
     @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
     @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
     @mock.patch.object(vm_util, 'get_hardware_devices')
     @mock.patch.object(vm_util, 'get_vm_ref')
     def test_prep_cross_hv_conversion_running_vm(
-            self, mock_get_ref, mock_get_hw, mock_power_off,
+            self, mock_get_ref, mock_get_hw, mock_soft_shutdown,
             mock_detach_spec, mock_reconfig, mock_get_state):
         """Running VM is powered off and root disk is detached."""
         mock_get_ref.return_value = 'fake-vm-ref'
@@ -4899,8 +4899,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         result = self._vmops.prep_cross_hv_conversion(
             self._context, self._instance)
 
-        mock_power_off.assert_called_once_with(
-            self._vmops._session, self._instance, 'fake-vm-ref')
+        mock_soft_shutdown.assert_called_once_with(self._instance)
         mock_detach_spec.assert_called_once_with(
             self._vmops._session.vim.client.factory,
             root_disk, destroy_disk=False)
@@ -4924,11 +4923,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'get_vm_state')
     @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
     @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
     @mock.patch.object(vm_util, 'get_hardware_devices')
     @mock.patch.object(vm_util, 'get_vm_ref')
     def test_prep_cross_hv_conversion_already_off(
-            self, mock_get_ref, mock_get_hw, mock_power_off,
+            self, mock_get_ref, mock_get_hw, mock_soft_shutdown,
             mock_detach_spec, mock_reconfig, mock_get_state):
         """Already powered-off VM with disk attached continues."""
         mock_get_ref.return_value = 'fake-vm-ref'
@@ -4941,7 +4940,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         result = self._vmops.prep_cross_hv_conversion(
             self._context, self._instance)
 
-        mock_power_off.assert_not_called()
+        mock_soft_shutdown.assert_not_called()
         mock_reconfig.assert_called_once()
         self.assertEqual(result['vmdk_path'],
                          '[ds1] vm-uuid/vm-uuid.vmdk')
@@ -4965,11 +4964,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'get_vm_state')
     @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
     @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
     @mock.patch.object(vm_util, 'get_hardware_devices')
     @mock.patch.object(vm_util, 'get_vm_ref')
     def test_prep_cross_hv_conversion_with_fcd_id(
-            self, mock_get_ref, mock_get_hw, mock_power_off,
+            self, mock_get_ref, mock_get_hw, mock_soft_shutdown,
             mock_detach_spec, mock_reconfig, mock_get_state):
         """source_fcd_id included when vDiskId is present."""
         mock_get_ref.return_value = 'fake-vm-ref'
@@ -5085,16 +5084,16 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
     @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
     @mock.patch.object(vm_util, 'power_on_instance')
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
     @mock.patch.object(vm_util, 'get_hardware_devices')
     @mock.patch.object(vm_util, 'get_vm_ref')
     def test_prep_cross_hv_conversion_powers_on_if_detach_fails(
-            self, mock_get_ref, mock_get_hw, mock_power_off,
+            self, mock_get_ref, mock_get_hw, mock_soft_shutdown,
             mock_power_on, mock_detach_spec, mock_reconfig, mock_get_state):
         """If detach fails after power-off, VM is powered back on."""
         mock_get_ref.return_value = 'fake-vm-ref'
         mock_get_state.return_value = power_state.RUNNING
-        mock_power_off.return_value = True  # power-off actually happened
+        mock_soft_shutdown.return_value = True  # power-off actually happened
         controller, root_disk = self._make_root_disk_devices()
         mock_get_hw.return_value = [controller, root_disk]
         mock_detach_spec.return_value = 'fake-detach-spec'
@@ -5106,7 +5105,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._vmops.prep_cross_hv_conversion,
             self._context, self._instance)
 
-        mock_power_off.assert_called_once()
+        mock_soft_shutdown.assert_called_once()
         mock_power_on.assert_called_once_with(
             self._vmops._session, self._instance, 'fake-vm-ref')
 
@@ -5141,11 +5140,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
     @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
     @mock.patch.object(vm_util, 'power_on_instance')
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
     @mock.patch.object(vm_util, 'get_hardware_devices')
     @mock.patch.object(vm_util, 'get_vm_ref')
     def test_prep_cross_hv_conversion_no_power_on_if_race_and_fails(
-            self, mock_get_ref, mock_get_hw, mock_power_off,
+            self, mock_get_ref, mock_get_hw, mock_soft_shutdown,
             mock_power_on, mock_detach_spec, mock_reconfig, mock_get_state):
         """power_off_instance returns False: no recovery on failure.
 
@@ -5158,7 +5157,7 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_get_state.return_value = power_state.RUNNING
         # Simulate the race: power_off_instance returns False because the
         # VM was already off when the task arrived.
-        mock_power_off.return_value = False
+        mock_soft_shutdown.return_value = False
         controller, root_disk = self._make_root_disk_devices()
         mock_get_hw.return_value = [controller, root_disk]
         mock_detach_spec.return_value = 'fake-detach-spec'
@@ -5170,7 +5169,7 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._vmops.prep_cross_hv_conversion,
             self._context, self._instance)
 
-        mock_power_off.assert_called_once()
+        mock_soft_shutdown.assert_called_once()
         # powered_off_by_us=False because the helper returned False, so
         # no recovery power-on should be issued.
         mock_power_on.assert_not_called()
@@ -5178,11 +5177,11 @@ class VMwareVMOpsTestCase(test.TestCase):
     @mock.patch.object(vm_util, 'get_vm_state')
     @mock.patch.object(vm_util, 'reconfigure_vm_device_change')
     @mock.patch.object(vm_util, 'detach_virtual_disk_spec')
-    @mock.patch.object(vm_util, 'power_off_instance')
+    @mock.patch.object(vmops.VMwareVMOps, '_soft_shutdown')
     @mock.patch.object(vm_util, 'get_hardware_devices')
     @mock.patch.object(vm_util, 'get_vm_ref')
     def test_prep_cross_hv_conversion_capacity_kb_fallback(
-            self, mock_get_ref, mock_get_hw, mock_power_off,
+            self, mock_get_ref, mock_get_hw, mock_soft_shutdown,
             mock_detach_spec, mock_reconfig, mock_get_state):
         """size_bytes is derived from capacityInKB on old vSphere devices."""
         mock_get_ref.return_value = 'fake-vm-ref'
