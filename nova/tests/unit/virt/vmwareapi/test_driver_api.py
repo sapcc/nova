@@ -1596,8 +1596,10 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
             return {'connection_info': connection_info,
                     'device_name': device_name}
 
-        disk_1 = _mock_bdm(mock.sentinel.connection_info_1, 'dev1')
-        disk_2 = _mock_bdm(mock.sentinel.connection_info_2, 'dev2')
+        connection_info_1 = {'id': 'volume-1'}
+        connection_info_2 = {'id': 'volume-2'}
+        disk_1 = _mock_bdm(connection_info_1, 'dev1')
+        disk_2 = _mock_bdm(connection_info_2, 'dev2')
         block_device_info_get_mapping.return_value = [disk_1, disk_2]
 
         detach_volume.side_effect = [None, exception.DiskNotFound("Error")]
@@ -1611,8 +1613,40 @@ class VMwareAPIVMTestCase(test.NoDBTestCase,
                 block_device_info)
             vmops.power_off.assert_called_once_with(self.instance)
             exp_detach_calls = [
-                mock.call(mock.sentinel.connection_info_1, self.instance),
-                mock.call(mock.sentinel.connection_info_2, self.instance)]
+                mock.call(connection_info_1, self.instance),
+                mock.call(connection_info_2, self.instance)]
+            self.assertEqual(exp_detach_calls, detach_volume.call_args_list)
+
+    @mock.patch('nova.virt.driver.block_device_info_get_mapping')
+    @mock.patch.object(volumeops.VMwareVolumeOps, 'detach_volume')
+    def test_detach_instance_volumes_skips_cross_hv_placeholder(
+            self, detach_volume, block_device_info_get_mapping):
+        self._create_vm()
+
+        def _mock_bdm(connection_info, device_name):
+            return {'connection_info': connection_info,
+                    'device_name': device_name}
+
+        disk_placeholder = _mock_bdm({'cross_hv_placeholder': True},
+                                     '/dev/sda')
+        connection_info_1 = {'id': 'volume-1'}
+        connection_info_2 = {'id': 'volume-2'}
+        disk_normal_1 = _mock_bdm(connection_info_1, '/dev/sdb')
+        disk_normal_2 = _mock_bdm(connection_info_2, '/dev/sdc')
+        block_device_info_get_mapping.return_value = [
+            disk_placeholder, disk_normal_1, disk_normal_2]
+
+        with mock.patch.object(self.conn, '_vmops') as vmops:
+            block_device_info = mock.sentinel.block_device_info
+            self.conn._detach_instance_volumes(self.instance,
+                                               block_device_info)
+
+            block_device_info_get_mapping.assert_called_once_with(
+                block_device_info)
+            vmops.power_off.assert_called_once_with(self.instance)
+            exp_detach_calls = [
+                mock.call(connection_info_1, self.instance),
+                mock.call(connection_info_2, self.instance)]
             self.assertEqual(exp_detach_calls, detach_volume.call_args_list)
 
     def test_destroy(self):

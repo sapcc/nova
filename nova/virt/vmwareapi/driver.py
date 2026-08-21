@@ -715,6 +715,10 @@ class VMwareVCDriver(driver.ComputeDriver):
             self._vmops.power_off(instance)
             for disk in block_device_mapping:
                 connection_info = disk['connection_info']
+                if connection_info.get('cross_hv_placeholder'):
+                    LOG.debug('Skipping cross-HV placeholder BDM during '
+                              'instance destroy.', instance=instance)
+                    continue
                 try:
                     self._volumeops.detach_volume(connection_info, instance)
                 except exception.DiskNotFound:
