@@ -346,6 +346,28 @@ class TestOpenStackClient(object):
 
         return self.api_put(url, body)
 
+    def get_flavor_permission_rule(self, rule_id):
+        return self.api_get(
+            f'/flavor-permission-rules/{rule_id}').body[
+                'flavor_permission_rule']
+
+    def get_flavor_permission_rules(self):
+        return self.api_get(
+            '/flavor-permission-rules').body['flavor_permission_rules']
+
+    def post_flavor_permission_rule(self, rule):
+        return self.api_post(
+            '/flavor-permission-rules', rule).body['flavor_permission_rule']
+
+    def put_flavor_permission_rule(self, rule_id, effect):
+        return self.api_put(
+            f'/flavor-permission-rules/{rule_id}',
+            {'flavor_permission_rule': {'effect': effect}}
+        )
+
+    def delete_flavor_permission_rule(self, rule_id):
+        return self.api_delete(f'/flavor-permission-rules/{rule_id}')
+
     def get_volume(self, volume_id):
         return self.api_get('/os-volumes/%s' % volume_id).body['volume']
 
