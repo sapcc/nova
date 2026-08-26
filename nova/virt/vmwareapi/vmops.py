@@ -1494,6 +1494,13 @@ class VMwareVMOps(object):
                                                 vm_group_name, vm_ref,
                                                 remove=remove)
 
+    def _get_external_customer_hostgroups(self):
+        hg_prefixes = tuple(prefix.removesuffix('-')
+            for prefix in CONF.external_customer_domain_name_prefixes)
+        hostgroups = [hg_name for hg_name in self._vc_state.hostgroups
+                      if hg_name.startswith(hg_prefixes)]
+        return hostgroups
+
     def _get_external_customer_vm_group_for_instance(self, instance,
                                                      hostgroups):
         """Return the VmGroup name for the specific instance"""
@@ -1533,7 +1540,7 @@ class VMwareVMOps(object):
         instances = InstanceList.get_by_filters(
             context, filters, expected_attrs=['system_metadata'])
 
-        hostgroups = self._vc_state.hostgroups
+        hostgroups = self._get_external_customer_hostgroups()
 
         grouped_instances = defaultdict(list)
         for instance in instances:
@@ -1546,10 +1553,7 @@ class VMwareVMOps(object):
     def update_external_customer_placement(self, context, instance,
                                            remove=False):
         """Ensure DRS rules and VmGroup assignment for the instance"""
-        hg_prefixes = tuple(prefix.removesuffix('-')
-            for prefix in CONF.external_customer_domain_name_prefixes)
-        hostgroups = [hg_name for hg_name in self._vc_state.hostgroups
-                      if hg_name.startswith(hg_prefixes)]
+        hostgroups = self._get_external_customer_hostgroups()
 
         if not hostgroups:
             # This cluster does not manage external customer VMs.
@@ -5065,14 +5069,21 @@ class VMwareVMOps(object):
         config_spec.version = extra_specs.hw_version
         placement_spec.configSpec = config_spec
 
-        vm_group_name = self._get_admin_group_name_for_instance(instance)
-        if vm_group_name:
+        # Derive intended VM groups
+        vm_group_names = [
+            self._get_admin_group_name_for_instance(instance),
+            self._get_external_customer_vm_group_for_instance(
+                instance, self._get_external_customer_hostgroups())
+        ]
+        vm_group_names = [name for name in vm_group_names if name]
+        # Set DRS rules for intended VM groups
+        if vm_group_names:
             placement_rules = []
             placement_spec.rules = placement_rules
             cluster_rules = cluster_util.fetch_cluster_rules(self._session,
                                                              self._cluster)
             for rule in cluster_rules.values():
-                if getattr(rule, "vmGroupName", None) == vm_group_name:
+                if getattr(rule, "vmGroupName", None) in vm_group_names:
                     placement_rules.append(rule)
 
         result = self._session._call_method(self._session.vim, "PlaceVm",
