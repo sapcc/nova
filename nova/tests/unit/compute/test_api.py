@@ -555,6 +555,8 @@ class _ComputeAPIUnitTestMixIn(object):
             volume_id='fake-volume-id')
 
         fake_bdm = mock.MagicMock(spec=objects.BlockDeviceMapping)
+        # BDM has no attachment_id yet, so it's safe to delete
+        fake_bdm.attachment_id = None
         mock_get_by_volume_and_instance.return_value = fake_bdm
         instance = self._create_instance_obj()
         volume = fake_volume.fake_volume(1, 'test-vol', 'test-vol',
@@ -568,11 +570,52 @@ class _ComputeAPIUnitTestMixIn(object):
         with mock_volume_api as mock_v_api:
             mock_v_api.get.return_value = volume
             self.assertRaises(oslo_exceptions.MessagingTimeout,
-                                self.compute_api.attach_volume,
-                                self.context, instance, volume['id'])
+                              self.compute_api.attach_volume,
+                              self.context, instance, volume['id'])
             mock_get_by_volume_and_instance.assert_called_once_with(
                 self.context, volume['id'], instance.uuid)
             fake_bdm.destroy.assert_called_once_with()
+
+    @mock.patch.object(compute_rpcapi.ComputeAPI, 'reserve_block_device_name')
+    @mock.patch.object(
+        objects.BlockDeviceMapping, 'get_by_volume_and_instance')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_volume')
+    def test_attach_volume_reserve_bdm_timeout_with_attachment_id(
+            self, mock_get_by_volume, mock_get_by_volume_and_instance,
+            mock_reserve):
+        """Test that BDM with attachment_id is not deleted on timeout.
+
+        This tests the race condition fix: if a second attachment request
+        comes in while we're waiting for the RPC timeout, the BDM might
+        already have attachment_id set. In this case, we should NOT
+        delete the BDM as it belongs to the second request.
+        """
+        mock_get_by_volume.side_effect = exception.VolumeBDMNotFound(
+            volume_id='fake-volume-id')
+
+        fake_bdm = mock.MagicMock(spec=objects.BlockDeviceMapping)
+        # BDM has attachment_id set, indicating a second request has
+        # already progressed past the reserve_block_device_name RPC
+        fake_bdm.attachment_id = 'fake-attachment-id'
+        mock_get_by_volume_and_instance.return_value = fake_bdm
+        instance = self._create_instance_obj()
+        volume = fake_volume.fake_volume(1, 'test-vol', 'test-vol',
+                                         None, None, None, None, None)
+
+        mock_reserve.side_effect = oslo_exceptions.MessagingTimeout()
+
+        mock_volume_api = mock.patch.object(self.compute_api, 'volume_api',
+                                            mock.MagicMock(spec=cinder.API))
+
+        with mock_volume_api as mock_v_api:
+            mock_v_api.get.return_value = volume
+            self.assertRaises(oslo_exceptions.MessagingTimeout,
+                              self.compute_api.attach_volume,
+                              self.context, instance, volume['id'])
+            mock_get_by_volume_and_instance.assert_called_once_with(
+                self.context, volume['id'], instance.uuid)
+            # destroy() should NOT be called when attachment_id is set
+            fake_bdm.destroy.assert_not_called()
 
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'reserve_block_device_name')
     @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_volume')
