@@ -38,6 +38,7 @@ from nova.api.openstack.compute import extension_info
 from nova.api.openstack.compute import fixed_ips
 from nova.api.openstack.compute import flavor_access
 from nova.api.openstack.compute import flavor_manage
+from nova.api.openstack.compute import flavor_permission_rules
 from nova.api.openstack.compute import flavors
 from nova.api.openstack.compute import flavors_extraspecs
 from nova.api.openstack.compute import floating_ip_dns
@@ -156,6 +157,10 @@ flavor_access_controller = functools.partial(_create_controller,
 
 flavor_extraspec_controller = functools.partial(_create_controller,
     flavors_extraspecs.FlavorExtraSpecsController, [])
+
+
+flavor_permission_rules_controller = functools.partial(_create_controller,
+    flavor_permission_rules.FlavorPermissionRulesController, [])
 
 
 floating_ip_dns_controller = functools.partial(_create_controller,
@@ -414,6 +419,15 @@ ROUTE_LIST = (
     }),
     ('/flavors/{flavor_id}/os-flavor-access', {
         'GET': [flavor_access_controller, 'index']
+    }),
+    ('/flavor-permission-rules', {
+        'GET': [flavor_permission_rules_controller, 'index'],
+        'POST': [flavor_permission_rules_controller, 'create']
+    }),
+    ('/flavor-permission-rules/{id}', {
+        'GET': [flavor_permission_rules_controller, 'show'],
+        'PUT': [flavor_permission_rules_controller, 'update'],
+        'DELETE': [flavor_permission_rules_controller, 'delete']
     }),
     ('/images', {
         'GET': [images_controller, 'index']

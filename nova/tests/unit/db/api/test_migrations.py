@@ -196,6 +196,36 @@ class NovaMigrationsWalk(
         # removal without creating it first, which is dumb
         pass
 
+    def _pre_upgrade_f177f53f978b(self, connection):
+        # we use the inspector here rather than oslo_db.utils.column_exists,
+        # since the latter will create a new connection
+        inspector = sqlalchemy.inspect(connection)
+        self.assertFalse(inspector.has_table('flavor_permission_rules'))
+
+    def _check_f177f53f978b(self, connection):
+        # we use the inspector here rather than oslo_db.utils.column_exists,
+        # since the latter will create a new connection
+        inspector = sqlalchemy.inspect(connection)
+        self.assertTrue(inspector.has_table('flavor_permission_rules'))
+        columns = {x['name'] for x in
+                   inspector.get_columns('flavor_permission_rules')}
+        expected_columns = {'id', 'uuid', 'project_id', 'flavor_id', 'type',
+                            'scope', 'created_at', 'updated_at'}
+        self.assertEqual(expected_columns, columns)
+        unique_constraints = [
+            set(c['column_names']) for c in inspector.get_unique_constraints(
+                'flavor_permission_rules')]
+        expected_unique_constraints = [
+            {'uuid'}, {'flavor_id', 'project_id', 'scope'}]
+        for c in expected_unique_constraints:
+            self.assertIn(c, unique_constraints)
+        indexes = [
+            set(idx['column_names']) for idx in inspector.get_indexes(
+                'flavor_permission_rules')]
+        expected_indexes = [{'uuid'}, {'project_id', 'scope', 'flavor_id'}]
+        for idx in expected_indexes:
+            self.assertIn(idx, indexes)
+
     def test_single_base_revision(self):
         """Ensure we only have a single base revision.
 
