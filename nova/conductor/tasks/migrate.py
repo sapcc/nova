@@ -121,7 +121,7 @@ class MigrationTask(base.TaskBase):
     def __init__(self, context, instance, flavor,
                  request_spec, clean_shutdown, compute_rpcapi,
                  query_client, report_client, host_list, network_api,
-                 volume_api=None):
+                 volume_api=None, get_volume_types_fn=None):
         super(MigrationTask, self).__init__(context, instance)
         self.clean_shutdown = clean_shutdown
         self.request_spec = request_spec
@@ -133,6 +133,10 @@ class MigrationTask(base.TaskBase):
         self.host_list = host_list
         self.network_api = network_api
         self.volume_api = volume_api
+        # Callable(context) -> list of volume type dicts.  Provided by
+        # ComputeTaskManager so the list is cached per conductor process
+        # rather than fetched from Cinder on every cross-HV resize.
+        self._get_volume_types_fn = get_volume_types_fn
 
         # Persist things from the happy path so we don't have to look
         # them up if we need to roll back
@@ -428,11 +432,22 @@ class MigrationTask(base.TaskBase):
         return bdms.root_bdm()
 
     def _get_cross_hv_expected_volume_type(self):
-        """Resolve the configured FCD volume type."""
+        """Resolve the configured FCD volume type against the type list.
+
+        Uses the injected get_volume_types_fn when available so the caller
+        (ComputeTaskManager) can cache the list for the conductor process
+        lifetime.  Falls back to a direct Cinder call for tests or callers
+        that do not supply the function.
+        """
         self._validate_cross_hv_manage_config()
         configured_type = CONF.cross_hv.fcd_volume_type
 
-        for volume_type in self.volume_api.get_all_volume_types(self.context):
+        if self._get_volume_types_fn is not None:
+            volume_types = self._get_volume_types_fn(self.context)
+        else:
+            volume_types = self.volume_api.get_all_volume_types(self.context)
+
+        for volume_type in volume_types:
             if configured_type in (volume_type['id'], volume_type['name']):
                 return volume_type
 

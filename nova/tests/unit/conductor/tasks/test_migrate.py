@@ -24,6 +24,7 @@ from nova.compute import power_state
 from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import utils as compute_utils
 from nova.conductor.tasks import migrate
+from nova.conductor import manager as conductor_manager
 from nova import context
 from nova import exception
 from nova import objects
@@ -838,6 +839,75 @@ class CrossHvImageConversionDetectionTestCase(test.NoDBTestCase):
 
         self.assertIn('volume type vmware', str(ex))
         self.assertIn(str(uuids.data_volume), str(ex))
+
+
+class CrossHvVolumeTypeCacheTestCase(test.NoDBTestCase):
+    """Tests for the volume-type list cache in ComputeTaskManager."""
+
+    def setUp(self):
+        super().setUp()
+        self.manager = conductor_manager.ComputeTaskManager()
+        self.context = context.get_admin_context()
+        self.manager.volume_api = mock.Mock()
+
+    def _vmware_types(self):
+        return [{'id': uuids.vmware_type, 'name': 'vmware'}]
+
+    def test_successful_list_is_cached(self):
+        """get_all_volume_types runs once for two consecutive calls."""
+        self.manager.volume_api.get_all_volume_types.return_value = (
+            self._vmware_types())
+
+        first = self.manager.get_cross_hv_volume_types(self.context)
+        second = self.manager.get_cross_hv_volume_types(self.context)
+
+        self.assertEqual(list(first), list(second))
+        self.manager.volume_api.get_all_volume_types.assert_called_once_with(
+            self.context)
+
+    def test_absent_type_remains_absent_after_caching(self):
+        """A type missing from the cached snapshot stays missing.
+
+        Even if someone creates the type later, the existing conductor
+        does not discover it until restart.
+        """
+        # First call: snapshot does not contain 'vmware'.
+        self.manager.volume_api.get_all_volume_types.return_value = [
+            {'id': uuids.other_type, 'name': 'other'}]
+        first = self.manager.get_cross_hv_volume_types(self.context)
+
+        # Cinder now returns the type -- but we do not call it again.
+        self.manager.volume_api.get_all_volume_types.return_value = (
+            self._vmware_types())
+        second = self.manager.get_cross_hv_volume_types(self.context)
+
+        self.assertEqual(list(first), list(second))
+        self.manager.volume_api.get_all_volume_types.assert_called_once_with(
+            self.context)
+
+    def test_cinder_error_is_not_cached(self):
+        """A Cinder connection failure does not poison the cache.
+
+        The next cross-HV resize performs a fresh lookup and succeeds.
+        """
+        self.manager.volume_api.get_all_volume_types.side_effect = [
+            exception.CinderConnectionFailed(reason='timeout'),
+            self._vmware_types(),
+        ]
+
+        self.assertRaises(
+            exception.CinderConnectionFailed,
+            self.manager.get_cross_hv_volume_types, self.context)
+
+        # Cache was not populated; second call succeeds.
+        result = self.manager.get_cross_hv_volume_types(self.context)
+        self.assertEqual(self._vmware_types(), list(result))
+        self.assertEqual(
+            2, self.manager.volume_api.get_all_volume_types.call_count)
+
+    def test_cache_starts_empty_no_cinder_call(self):
+        """Constructing ComputeTaskManager does not call Cinder."""
+        self.manager.volume_api.get_all_volume_types.assert_not_called()
 
 
 class MigrationTaskAllocationUtils(test.NoDBTestCase):
