@@ -249,6 +249,9 @@ class ComputeTaskManager:
         self.notifier = rpc.get_notifier('compute')
         # Help us to record host in EventReporter
         self.host = CONF.host
+        # Volume types from Cinder change rarely; cache the first successful
+        # list for the conductor process lifetime. None means not yet loaded.
+        self._cross_hv_volume_types = None
 
         try:
             # Test our placement client during initialization
@@ -277,6 +280,19 @@ class ComputeTaskManager:
             # Unknown/unexpected errors here are fatal
             LOG.error('Fatal error initializing placement client: %s', e)
             raise
+
+    def get_cross_hv_volume_types(self, context):
+        """Return all Cinder volume types, cached for this conductor process.
+
+        The first successful call fetches from Cinder and caches the result.
+        A Cinder failure is not cached: the next cross-HV resize will retry.
+        The cache is intentionally permanent until conductor restart so that
+        a misconfigured type cannot silently start working after deployment.
+        """
+        if self._cross_hv_volume_types is None:
+            self._cross_hv_volume_types = tuple(
+                self.volume_api.get_all_volume_types(context))
+        return self._cross_hv_volume_types
 
     @property
     def report_client(self):
@@ -588,7 +604,8 @@ class ComputeTaskManager:
                                      self.compute_rpcapi,
                                      self.query_client, self.report_client,
                                      host_list, self.network_api,
-                                     self.volume_api)
+                                     self.volume_api,
+                                     self.get_cross_hv_volume_types)
 
     def _destroy_build_request(self, context, instance):
         # The BuildRequest needs to be stored until the instance is mapped to

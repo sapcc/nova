@@ -24,6 +24,7 @@ from nova.compute import power_state
 from nova.compute import rpcapi as compute_rpcapi
 from nova.compute import utils as compute_utils
 from nova.conductor.tasks import migrate
+from nova.conductor import manager as conductor_manager
 from nova import context
 from nova import exception
 from nova import objects
@@ -419,10 +420,13 @@ class MigrationTaskTestCase(test.NoDBTestCase):
     @mock.patch.object(scheduler_utils, 'setup_instance_group')
     @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'prep_resize')
-    @mock.patch.object(migrate.MigrationTask, '_get_root_bdm')
+    @mock.patch.object(migrate.MigrationTask, '_get_bdms')
+    @mock.patch.object(migrate.MigrationTask,
+                       '_validate_cross_hv_attached_volume_types')
     def test_execute_calls_sanitize_and_stashes_journal(
-            self, mock_get_bdm, prep_resize_mock, sel_dest_mock, sig_mock,
-            az_mock, gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock, gbf_mock):
+            self, mock_validate_vol_types, mock_get_bdms, prep_resize_mock,
+            sel_dest_mock, sig_mock, az_mock, gmv_mock, cm_mock, sm_mock,
+            cn_mock, rc_mock, gbf_mock):
         """Verify sanitize is called for cross-HV and result stashed."""
         sel_dest_mock.return_value = self.host_lists
         az_mock.return_value = 'myaz'
@@ -436,7 +440,9 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         bfv_bdm = mock.Mock()
         bfv_bdm.destination_type = 'volume'
         bfv_bdm.source_type = 'volume'
-        mock_get_bdm.return_value = bfv_bdm
+        bdms = mock.Mock()
+        bdms.root_bdm.return_value = bfv_bdm
+        mock_get_bdms.return_value = bdms
 
         fake_journal = {'img_hv_type': 'vmware', 'hw_disk_bus': 'scsi'}
         self.sanitize_mock.return_value = fake_journal
@@ -483,9 +489,12 @@ class MigrationTaskTestCase(test.NoDBTestCase):
     @mock.patch.object(scheduler_utils, 'setup_instance_group')
     @mock.patch.object(query.SchedulerQueryClient, 'select_destinations')
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'prep_resize')
+    @mock.patch.object(migrate.MigrationTask,
+                       '_validate_cross_hv_attached_volume_types')
     def test_execute_skips_sanitize_for_same_hv(
-            self, prep_resize_mock, sel_dest_mock, sig_mock, az_mock,
-            gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock, gbf_mock):
+            self, mock_validate_vol_types, prep_resize_mock, sel_dest_mock,
+            sig_mock, az_mock, gmv_mock, cm_mock, sm_mock, cn_mock, rc_mock,
+            gbf_mock):
         """Verify sanitize is NOT called for same-HV resize."""
         sel_dest_mock.return_value = self.host_lists
         az_mock.return_value = 'myaz'
@@ -505,6 +514,7 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         task.execute()
 
         self.sanitize_mock.assert_not_called()
+        mock_validate_vol_types.assert_not_called()
         self.assertEqual({}, task._old_image_properties)
 
 
@@ -650,6 +660,23 @@ class CrossHvImageConversionDetectionTestCase(test.NoDBTestCase):
             report_client=mock.Mock(),
             host_list=None,
             network_api=mock.Mock())
+        try:
+            cfg.CONF.cross_hv.fcd_volume_type
+        except (cfg.NoSuchGroupError, cfg.NoSuchOptError):
+            try:
+                cfg.CONF.register_group(cfg.OptGroup('cross_hv'))
+            except cfg.DuplicateOptError:
+                pass
+            try:
+                cfg.CONF.register_opt(
+                    cfg.StrOpt('fcd_volume_type', default='vmware'),
+                    group='cross_hv')
+            except cfg.DuplicateOptError:
+                pass
+        self.flags(fcd_volume_type='vmware', group='cross_hv')
+        self.task.volume_api = mock.Mock()
+        self.task.volume_api.get_all_volume_types.return_value = [
+            {'id': uuids.vmware_type, 'name': 'vmware'}]
 
     def _make_bdm(self, source_type='image', destination_type='local',
                   boot_index=0, volume_id=None, image_id='fake-image'):
@@ -660,6 +687,15 @@ class CrossHvImageConversionDetectionTestCase(test.NoDBTestCase):
             volume_id=volume_id,
             image_id=image_id)
         return bdm
+
+    @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
+    def test_get_bdms_returns_instance_bdms(self, mock_get_bdms):
+        bdms = objects.BlockDeviceMappingList(objects=[self._make_bdm()])
+        mock_get_bdms.return_value = bdms
+
+        result = self.task._get_bdms()
+
+        self.assertIs(result, bdms)
 
     @mock.patch('nova.objects.BlockDeviceMappingList.get_by_instance_uuid')
     def test_get_root_bdm_returns_root(self, mock_get_bdms):
@@ -732,6 +768,146 @@ class CrossHvImageConversionDetectionTestCase(test.NoDBTestCase):
         self.assertRaises(
             exception.InvalidCrossHvResizePrecondition,
             self.task._validate_cross_hv_root_bdm, bdm)
+
+    def test_validate_volume_types_allows_expected_type(self):
+        root = self._make_bdm(source_type='volume', destination_type='volume',
+                              volume_id=uuids.root_volume)
+        data = self._make_bdm(source_type='blank', destination_type='volume',
+                              boot_index=1, volume_id=uuids.data_volume)
+        bdms = objects.BlockDeviceMappingList(objects=[root, data])
+        self.task.volume_api.get.side_effect = [
+            {'volume_type_id': uuids.vmware_type},
+            {'volume_type_id': 'vmware'},
+        ]
+
+        self.task._validate_cross_hv_attached_volume_types(bdms)
+
+        self.assertEqual(2, self.task.volume_api.get.call_count)
+
+    def test_validate_volume_types_accepts_config_name_and_id(self):
+        root = self._make_bdm(source_type='volume', destination_type='volume',
+                              volume_id=uuids.root_volume)
+        bdms = objects.BlockDeviceMappingList(objects=[root])
+        self.task.volume_api.get.return_value = {
+            'volume_type_id': uuids.vmware_type}
+
+        self.task._validate_cross_hv_attached_volume_types(bdms)
+
+        self.task.volume_api.get_all_volume_types.assert_called_once_with(
+            self.task.context)
+
+    def test_validate_volume_types_rejects_bfv_root_mismatch(self):
+        root = self._make_bdm(source_type='volume', destination_type='volume',
+                              volume_id=uuids.root_volume)
+        bdms = objects.BlockDeviceMappingList(objects=[root])
+        self.task.volume_api.get.return_value = {
+            'volume_type_id': uuids.premium_type}
+
+        ex = self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self.task._validate_cross_hv_attached_volume_types, bdms)
+
+        self.assertIn(str(uuids.root_volume), str(ex))
+        self.assertIn('volume type vmware', str(ex))
+
+    def test_validate_volume_types_rejects_unknown_config(self):
+        root = self._make_bdm(source_type='volume', destination_type='volume',
+                              volume_id=uuids.root_volume)
+        bdms = objects.BlockDeviceMappingList(objects=[root])
+        self.flags(fcd_volume_type='missing-type', group='cross_hv')
+        self.task.volume_api.get_all_volume_types.return_value = [
+            {'id': uuids.vmware_type, 'name': 'vmware'}]
+
+        ex = self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self.task._validate_cross_hv_attached_volume_types, bdms)
+
+        self.assertIn('Configured [cross_hv] fcd_volume_type missing-type',
+                      str(ex))
+
+    def test_validate_cross_hv_attached_volume_types_rejects_mismatch(self):
+        root = self._make_bdm(source_type='image', destination_type='local')
+        data = self._make_bdm(source_type='blank', destination_type='volume',
+                              boot_index=1, volume_id=uuids.data_volume)
+        bdms = objects.BlockDeviceMappingList(objects=[root, data])
+        self.task.volume_api.get.return_value = {
+            'volume_type_id': uuids.premium_type}
+
+        ex = self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self.task._validate_cross_hv_attached_volume_types, bdms)
+
+        self.assertIn('volume type vmware', str(ex))
+        self.assertIn(str(uuids.data_volume), str(ex))
+
+
+class CrossHvVolumeTypeCacheTestCase(test.NoDBTestCase):
+    """Tests for the volume-type list cache in ComputeTaskManager."""
+
+    def setUp(self):
+        super().setUp()
+        self.manager = conductor_manager.ComputeTaskManager()
+        self.context = context.get_admin_context()
+        self.manager.volume_api = mock.Mock()
+
+    def _vmware_types(self):
+        return [{'id': uuids.vmware_type, 'name': 'vmware'}]
+
+    def test_successful_list_is_cached(self):
+        """get_all_volume_types runs once for two consecutive calls."""
+        self.manager.volume_api.get_all_volume_types.return_value = (
+            self._vmware_types())
+
+        first = self.manager.get_cross_hv_volume_types(self.context)
+        second = self.manager.get_cross_hv_volume_types(self.context)
+
+        self.assertEqual(list(first), list(second))
+        self.manager.volume_api.get_all_volume_types.assert_called_once_with(
+            self.context)
+
+    def test_absent_type_remains_absent_after_caching(self):
+        """A type missing from the cached snapshot stays missing.
+
+        Even if someone creates the type later, the existing conductor
+        does not discover it until restart.
+        """
+        # First call: snapshot does not contain 'vmware'.
+        self.manager.volume_api.get_all_volume_types.return_value = [
+            {'id': uuids.other_type, 'name': 'other'}]
+        first = self.manager.get_cross_hv_volume_types(self.context)
+
+        # Cinder now returns the type -- but we do not call it again.
+        self.manager.volume_api.get_all_volume_types.return_value = (
+            self._vmware_types())
+        second = self.manager.get_cross_hv_volume_types(self.context)
+
+        self.assertEqual(list(first), list(second))
+        self.manager.volume_api.get_all_volume_types.assert_called_once_with(
+            self.context)
+
+    def test_cinder_error_is_not_cached(self):
+        """A Cinder connection failure does not poison the cache.
+
+        The next cross-HV resize performs a fresh lookup and succeeds.
+        """
+        self.manager.volume_api.get_all_volume_types.side_effect = [
+            exception.CinderConnectionFailed(reason='timeout'),
+            self._vmware_types(),
+        ]
+
+        self.assertRaises(
+            exception.CinderConnectionFailed,
+            self.manager.get_cross_hv_volume_types, self.context)
+
+        # Cache was not populated; second call succeeds.
+        result = self.manager.get_cross_hv_volume_types(self.context)
+        self.assertEqual(self._vmware_types(), list(result))
+        self.assertEqual(
+            2, self.manager.volume_api.get_all_volume_types.call_count)
+
+    def test_cache_starts_empty_no_cinder_call(self):
+        """Constructing ComputeTaskManager does not call Cinder."""
+        self.manager.volume_api.get_all_volume_types.assert_not_called()
 
 
 class MigrationTaskAllocationUtils(test.NoDBTestCase):
@@ -1067,6 +1243,8 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
 
         self.mock_compute_rpcapi = mock.Mock()
         self.mock_volume_api = mock.Mock()
+        self.mock_volume_api.get_all_volume_types.return_value = [
+            {'id': uuids.vmware_type, 'name': 'vmware'}]
         self.mock_network_api = mock.Mock()
         self.mock_network_api.get_requested_resource_for_instance \
             .return_value = ([], objects.RequestLevelParams())
@@ -1096,7 +1274,13 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         bdm.volume_id = volume_id
         return bdm
 
-    def _execute_with_mocks(self, root_bdm):
+    def _make_bdms(self, *bdms):
+        bdms_obj = mock.MagicMock()
+        bdms_obj.root_bdm.return_value = bdms[0] if bdms else None
+        bdms_obj.__iter__.return_value = iter(bdms)
+        return bdms_obj
+
+    def _execute_with_mocks(self, bdms):
         """Run _execute() with all external dependencies patched."""
         patches = [
             mock.patch('nova.compute.utils.heal_reqspec_is_bfv'),
@@ -1112,8 +1296,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
             mock.patch.object(self.task, '_is_selected_host_in_source_cell',
                               return_value=True),
             mock.patch.object(self.task, '_persist_image_properties_journal'),
-            mock.patch.object(self.task, '_get_root_bdm',
-                              return_value=root_bdm),
+            mock.patch.object(self.task, '_get_bdms', return_value=bdms),
             mock.patch('nova.scheduler.utils.setup_instance_group'),
             mock.patch('nova.scheduler.utils.populate_retry'),
             mock.patch('nova.scheduler.utils.populate_filter_properties'),
@@ -1129,12 +1312,13 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
             self, mock_convert):
         """image/local root: conversion called, then prep_resize."""
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         call_order = []
         mock_convert.side_effect = lambda _: call_order.append('convert')
         self.mock_compute_rpcapi.prep_resize.side_effect = (
             lambda *a, **k: call_order.append('prep_resize'))
 
-        self._execute_with_mocks(root_bdm)
+        self._execute_with_mocks(bdms)
 
         self.assertEqual(['convert', 'prep_resize'], call_order)
 
@@ -1143,8 +1327,11 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
     def test_bfv_root_skips_conversion(self, mock_convert):
         """volume-backed root: conversion skipped, prep_resize called."""
         root_bdm = self._make_bdm('volume', 'volume', volume_id=uuids.vol)
+        bdms = self._make_bdms(root_bdm)
+        self.mock_volume_api.get.return_value = {
+            'volume_type_id': uuids.vmware_type}
 
-        self._execute_with_mocks(root_bdm)
+        self._execute_with_mocks(bdms)
 
         mock_convert.assert_not_called()
         self.mock_compute_rpcapi.prep_resize.assert_called_once()
@@ -1152,10 +1339,11 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
     def test_unsupported_root_raises_before_prep_resize(self):
         """blank/local root: ValidationError before prep_resize."""
         root_bdm = self._make_bdm('blank', 'local')
+        bdms = self._make_bdms(root_bdm)
 
         self.assertRaises(
             exception.InvalidCrossHvResizePrecondition,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.mock_compute_rpcapi.prep_resize.assert_not_called()
 
@@ -1179,8 +1367,9 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
             mock.patch.object(self.task, '_is_selected_host_in_source_cell',
                               return_value=False),
             mock.patch.object(self.task, '_persist_image_properties_journal'),
-            mock.patch.object(self.task, '_get_root_bdm',
-                              return_value=self._make_bdm('image', 'local')),
+            mock.patch.object(self.task, '_get_bdms',
+                              return_value=self._make_bdms(
+                                  self._make_bdm('image', 'local'))),
             mock.patch('nova.scheduler.utils.setup_instance_group'),
             mock.patch('nova.scheduler.utils.populate_retry'),
             mock.patch('nova.scheduler.utils.populate_filter_properties'),
@@ -1203,13 +1392,63 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
     def test_conversion_failure_blocks_prep_resize(self, mock_convert):
         """If conversion raises, prep_resize must not be called."""
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         mock_convert.side_effect = exception.VolumeMigrationError(
             volume_id=uuids.vol, reason='manage failed')
 
         self.assertRaises(
             exception.VolumeMigrationError,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    def test_mismatched_attached_volume_type_blocks_prep_resize(self):
+        root_bdm = self._make_bdm('volume', 'volume', volume_id=uuids.root)
+        data_bdm = self._make_bdm('blank', 'volume', volume_id=uuids.data)
+        bdms = self._make_bdms(root_bdm, data_bdm)
+        self.mock_volume_api.get.side_effect = [
+            {'volume_type_id': uuids.vmware_type},
+            {'volume_type_id': uuids.premium_type},
+        ]
+
+        ex = self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self._execute_with_mocks, bdms)
+
+        self.assertIn('volume type vmware', str(ex))
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    @mock.patch.object(migrate.MigrationTask,
+                       '_convert_image_backed_root_to_bfv')
+    def test_ephemeral_attached_type_mismatch_blocks_before_conversion(
+            self, mock_convert):
+        root_bdm = self._make_bdm('image', 'local')
+        data_bdm = self._make_bdm('blank', 'volume', volume_id=uuids.data)
+        bdms = self._make_bdms(root_bdm, data_bdm)
+        self.mock_volume_api.get.return_value = {
+            'volume_type_id': uuids.premium_type}
+
+        ex = self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self._execute_with_mocks, bdms)
+
+        self.assertIn(str(uuids.data), str(ex))
+        self.assertIn('volume type vmware', str(ex))
+        mock_convert.assert_not_called()
+        self.mock_compute_rpcapi.prep_resize.assert_not_called()
+
+    def test_mismatched_bfv_root_volume_type_blocks_prep_resize(self):
+        root_bdm = self._make_bdm('volume', 'volume', volume_id=uuids.root)
+        bdms = self._make_bdms(root_bdm)
+        self.mock_volume_api.get.return_value = {
+            'volume_type_id': uuids.premium_type}
+
+        ex = self.assertRaises(
+            exception.InvalidCrossHvResizePrecondition,
+            self._execute_with_mocks, bdms)
+
+        self.assertIn(str(uuids.root), str(ex))
+        self.assertIn('volume type vmware', str(ex))
         self.mock_compute_rpcapi.prep_resize.assert_not_called()
 
     def _prep_result(self):
@@ -1227,13 +1466,14 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         could mistake this instance for one still mid conversion.
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
             exception.UnsupportedRPCVersion(api='compute',
                                              required='6.2.1'))
 
         self.assertRaises(
             exception.UnsupportedRPCVersion,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.assertNotIn('cross_hv_resize', self.instance.system_metadata)
         self.assertNotIn(
@@ -1248,12 +1488,13 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         markers for manual recovery.
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
             messaging.MessagingTimeout('timed out'))
 
         self.assertRaises(
             messaging.MessagingTimeout,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.assertEqual(
             'true', self.instance.system_metadata['cross_hv_resize'])
@@ -1273,6 +1514,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         rollback() must not erase the markers.
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
             self._prep_result())
         self.mock_volume_api.manage_existing.side_effect = (
@@ -1281,7 +1523,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
 
         self.assertRaises(
             exception.VolumeManageFailedNoAbort,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.assertEqual(
             'true', self.instance.system_metadata['cross_hv_resize'])
@@ -1302,6 +1544,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         and the migration context.
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
             self._prep_result())
         self.mock_volume_api.manage_existing.side_effect = (
@@ -1310,7 +1553,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
 
         self.assertRaises(
             exception.VolumeManageFailed,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.mock_compute_rpcapi.abort_cross_hv_conversion.\
             assert_called_once()
@@ -1325,6 +1568,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         so keep the markers instead of assuming the abort worked.
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
             self._prep_result())
         self.mock_volume_api.manage_existing.side_effect = (
@@ -1335,7 +1579,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
 
         self.assertRaises(
             messaging.MessagingTimeout,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.assertEqual(
             'true', self.instance.system_metadata['cross_hv_resize'])
@@ -1352,6 +1596,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         markers must survive rollback().
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.return_value = (
             self._prep_result())
         self.mock_volume_api.manage_existing.return_value = {'id': uuids.vol}
@@ -1360,7 +1605,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
 
         self.assertRaises(
             exception.NovaException,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.assertEqual(
             'true', self.instance.system_metadata['cross_hv_resize'])
@@ -1375,6 +1620,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         is not left with VMware-only values pointed at a KVM/CH host.
         """
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
             exception.UnsupportedRPCVersion(api='compute',
                                              required='6.2.1'))
@@ -1390,7 +1636,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         ) as mock_restore:
             self.assertRaises(
                 exception.UnsupportedRPCVersion,
-                self._execute_with_mocks, root_bdm)
+                self._execute_with_mocks, bdms)
 
         mock_restore.assert_called_once_with(
             request_spec=self.request_spec,
@@ -1430,6 +1676,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
         """
         self.instance.availability_zone = 'az-source'
         root_bdm = self._make_bdm('image', 'local')
+        bdms = self._make_bdms(root_bdm)
         self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
             exception.UnsupportedRPCVersion(api='compute',
                                             required='6.2.1'))
@@ -1439,7 +1686,7 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
 
         self.assertRaises(
             exception.UnsupportedRPCVersion,
-            self._execute_with_mocks, root_bdm)
+            self._execute_with_mocks, bdms)
 
         self.assertTrue(seen, 'expected at least one instance.save()')
         self.assertEqual(['az-source'] * len(seen), seen)
