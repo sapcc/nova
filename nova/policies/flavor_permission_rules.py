@@ -30,16 +30,34 @@ flavor_permission_rules_policies = [
     policy.DocumentedRuleDefault(
         name=POLICY_ROOT % 'index:domain',
         check_str=base.ADMIN,
-        description='List flavor permission rules for the context domain.',
+        description='List flavor permission rules for the context domain. '
+                    'Include context domain permission annotations in flavor '
+                    'detail/show responses and allow filtering flavor '
+                    'index/detail by context domain permission.',
         operations=[{'method': 'GET',
-                     'path': '/flavor-permission-rules'}],
+                     'path': '/flavor-permission-rules'},
+                    {'method': 'GET',
+                     'path': '/flavors'},
+                    {'method': 'GET',
+                     'path': '/flavors/detail'},
+                    {'method': 'GET',
+                     'path': '/flavors/{flavor_id}'}],
         scope_types=['project']),
     policy.DocumentedRuleDefault(
         name=POLICY_ROOT % 'index:project',
         check_str=base.ADMIN,
-        description='List flavor permission rules for the context project.',
+        description='List flavor permission rules for the context project. '
+                    'Include context project permission annotations in flavor '
+                    'detail/show responses and allow filtering flavor '
+                    'index/detail by context project permission.',
         operations=[{'method': 'GET',
-                     'path': '/flavor-permission-rules'}],
+                     'path': '/flavor-permission-rules'},
+                    {'method': 'GET',
+                     'path': '/flavors'},
+                    {'method': 'GET',
+                     'path': '/flavors/detail'},
+                    {'method': 'GET',
+                     'path': '/flavors/{flavor_id}'}],
         scope_types=['project']),
     policy.DocumentedRuleDefault(
         name=POLICY_ROOT % 'show:domain',
