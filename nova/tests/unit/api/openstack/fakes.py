@@ -38,6 +38,7 @@ from nova.db.main import models
 from nova import exception as exc
 from nova import objects
 from nova.objects import base
+from nova.objects import fields
 from nova import quota
 from nova.tests.unit import fake_block_device
 from nova.tests.unit.objects import test_keypair
@@ -741,7 +742,11 @@ FLAVORS = {
 
 def stub_out_flavor_get_by_flavor_id(test):
     @classmethod
-    def fake_get_by_flavor_id(cls, context, flavor_id, read_deleted=None):
+    def fake_get_by_flavor_id(cls, context, flavor_id, read_deleted=None,
+                              domain_permission=(
+                                  fields.FlavorPermissionRuleEffect.ALLOW),
+                              project_permission=(
+                                  fields.FlavorPermissionRuleEffect.ALLOW)):
         return FLAVORS[flavor_id]
 
     test.stub_out('nova.objects.Flavor.get_by_flavor_id',
@@ -752,7 +757,12 @@ def stub_out_flavor_get_all(test):
     @staticmethod
     def fake_get_all(context, inactive=False, filters=None,
                      sort_key='flavorid', sort_dir='asc', limit=None,
-                     marker=None):
+                     marker=None,
+                     domain_permission=(
+                         fields.FlavorPermissionRuleEffect.ALLOW),
+                     project_permission=(
+                         fields.FlavorPermissionRuleEffect.ALLOW),
+                     force_permission_filter=False):
         if marker in ['99999']:
             raise exc.MarkerNotFound(marker)
 
