@@ -15,6 +15,7 @@
 import copy
 
 from nova.api.validation import parameter_types
+from nova.objects.fields import FlavorPermissionRuleEffect
 
 # NOTE(takashin): The following sort keys are defined for backward
 # compatibility. If they are changed, the API microversion should be bumped.
@@ -25,6 +26,8 @@ VALID_SORT_KEYS = [
 ]
 
 VALID_SORT_DIR = ['asc', 'desc']
+
+VALID_PERMISSION_VALUES = [*FlavorPermissionRuleEffect.ALL, 'all']
 
 create = {
     'type': 'object',
@@ -127,7 +130,11 @@ index_query = {
         'sort_key': parameter_types.multi_params({'type': 'string',
                                                   'enum': VALID_SORT_KEYS}),
         'sort_dir': parameter_types.multi_params({'type': 'string',
-                                                  'enum': VALID_SORT_DIR})
+                                                  'enum': VALID_SORT_DIR}),
+        'domain_permission': parameter_types.multi_params(
+            {'type': 'string', 'enum': VALID_PERMISSION_VALUES}),
+        'project_permission': parameter_types.multi_params(
+            {'type': 'string', 'enum': VALID_PERMISSION_VALUES}),
     },
     # NOTE(gmann): This is kept True to keep backward compatibility.
     # As of now Schema validation stripped out the additional parameters and
@@ -201,6 +208,10 @@ _flavor = {
         'vcpus': {'type': 'integer'},
         'OS-FLV-EXT-DATA:ephemeral': {'type': 'integer'},
         'OS-FLV-DISABLED:disabled': {'type': 'boolean'},
+        'permissions': {
+            'type': 'object',
+            'additionalProperties': {'type': 'string'},
+        },
     },
     'required': [
         'disk',
