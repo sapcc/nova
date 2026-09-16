@@ -119,7 +119,7 @@ def fake_compute_node_get_all(context, limit=None, marker=None,
         raise exception.MarkerNotFound(marker)
     marker_found = True if marker is None else False
     output = []
-    services = []
+    services_by_compute_node = {}
     instances_by_host = {}
     for hyper in TEST_HYPERS_OBJ:
         # Starting with the 2.53 microversion, the marker is a uuid.
@@ -128,17 +128,19 @@ def fake_compute_node_get_all(context, limit=None, marker=None,
         elif marker_found:
             if limit is None or len(output) < int(limit):
                 output.append(hyper)
-                services.append(next(s for s in TEST_SERVICES
-                                     if hyper.host == s.host))
+                s = next(s for s in TEST_SERVICES if hyper.host == s.host)
+                services_by_compute_node[hyper.uuid] = s
                 if with_servers:
                     instances_by_host[hyper.host] = TEST_SERVERS[hyper.host]
-    return (output, services, instances_by_host)
+    return (output, services_by_compute_node, instances_by_host)
 
 
 def fake_compute_node_search_by_hypervisor(context, hypervisor_re,
                                            with_servers=False):
     servers = TEST_SERVERS if with_servers else {}
-    return (TEST_HYPERS_OBJ, TEST_SERVICES, servers)
+    services_by_compute_node = {cn['uuid']: cn['service']
+        for cn in TEST_HYPERS}
+    return (TEST_HYPERS_OBJ, services_by_compute_node, servers)
 
 
 def fake_compute_node_get(context, compute_id):
@@ -491,7 +493,7 @@ class HypervisorsTestV21(test.NoDBTestCase):
     def test_search_non_exist(self):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = ([], [], {})
+        m_search.return_value = ([], {}, {})
 
         req = self._get_request(True)
         self.assertRaises(exc.HTTPNotFound, self.controller.search, req, 'a')
@@ -520,7 +522,7 @@ class HypervisorsTestV21(test.NoDBTestCase):
     def test_servers_non_id(self):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = ([], [], {})
+        m_search.return_value = ([], {}, {})
 
         req = self._get_request(True)
         self.assertRaises(exc.HTTPNotFound,
@@ -531,7 +533,7 @@ class HypervisorsTestV21(test.NoDBTestCase):
     def test_servers_with_non_integer_hypervisor_id(self):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
-        m_search.return_value = ([], [], {})
+        m_search.return_value = ([], {}, {})
 
         req = self._get_request(True)
         self.assertRaises(
@@ -540,9 +542,9 @@ class HypervisorsTestV21(test.NoDBTestCase):
 
     def test_servers_with_no_servers(self):
         def fake(*args, **kwargs):
-            (compute_nodes, services, _) = \
+            (compute_nodes, services_by_compute_node, _) = \
                 fake_compute_node_search_by_hypervisor(*args, **kwargs)
-            return (compute_nodes, services, {})
+            return (compute_nodes, services_by_compute_node, {})
 
         f = self.controller.host_api.compute_node_search_by_hypervisor
         f.side_effect = fake
@@ -946,7 +948,7 @@ class HypervisorsTestV253(HypervisorsTestV252):
         m_search = self.controller.host_api.compute_node_search_by_hypervisor
         m_search.side_effect = None
         m_search.return_value = (
-            objects.ComputeNodeList(), objects.ServiceList(), {})
+            objects.ComputeNodeList(), {}, {})
 
         self.assertRaises(exc.HTTPNotFound, self.controller.index, req)
         m_search.assert_called_once_with(
@@ -963,7 +965,7 @@ class HypervisorsTestV253(HypervisorsTestV252):
         m_search.side_effect = None
         m_search.return_value = (
             objects.ComputeNodeList(objects=[TEST_HYPERS_OBJ[0]]),
-            objects.ServiceList(objects=[TEST_SERVICES[0]]),
+            {TEST_HYPERS_OBJ[0].uuid: TEST_SERVICES[0]},
             {})
 
         result = self.controller.detail(req)
