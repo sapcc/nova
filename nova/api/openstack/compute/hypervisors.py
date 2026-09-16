@@ -137,7 +137,7 @@ class HypervisorsController(wsgi.Controller):
 
     def _get_compute_nodes_by_name_pattern(self, context, hostname_match,
             with_servers=False):
-        compute_nodes, services, instances_by_host = \
+        compute_nodes, services_by_compute_node, instances_by_host = \
             self.host_api.compute_node_search_by_hypervisor(
                 context, hostname_match, with_servers=with_servers)
         if not compute_nodes:
@@ -145,8 +145,7 @@ class HypervisorsController(wsgi.Controller):
                    hostname_match)
             raise webob.exc.HTTPNotFound(explanation=msg)
 
-        services_by_id = {s.id: s for s in services}
-        return compute_nodes, services_by_id, instances_by_host
+        return compute_nodes, services_by_compute_node, instances_by_host
 
     def _get_hypervisors(self, req, detail=False, limit=None, marker=None,
                          links=False):
@@ -189,13 +188,13 @@ class HypervisorsController(wsgi.Controller):
 
             # Get all compute nodes with a hypervisor_hostname that matches
             # the given pattern. If none are found then it's a 404 error.
-            compute_nodes, services_by_id, instances_by_host = \
+            compute_nodes, services_by_compute_node, instances_by_host = \
                 self._get_compute_nodes_by_name_pattern(
                     context, hypervisor_match, with_servers=with_servers)
         else:
             # Get all compute nodes.
             try:
-                compute_nodes, services, instances_by_host = \
+                compute_nodes, services_by_compute_node, instances_by_host = \
                     self.host_api.compute_node_get_all(
                         context, limit=limit, marker=marker,
                         with_servers=with_servers)
@@ -203,13 +202,11 @@ class HypervisorsController(wsgi.Controller):
                 msg = _('marker [%s] not found') % marker
                 raise webob.exc.HTTPBadRequest(explanation=msg)
 
-            services_by_id = {s.id: s for s in services}
-
         hypervisors_list = []
         for hyp in compute_nodes:
             instances = instances_by_host.get(hyp.host)
             try:
-                service = services_by_id[hyp.service_id]
+                service = services_by_compute_node[hyp.uuid]
             except KeyError:
                 # The compute service could be deleted which doesn't delete
                 # the compute node record, that has to be manually removed
@@ -448,13 +445,13 @@ class HypervisorsController(wsgi.Controller):
 
         # Get all compute nodes with a hypervisor_hostname that matches
         # the given pattern. If none are found then it's a 404 error.
-        compute_nodes, services_by_id, _ = \
+        compute_nodes, services_by_compute_node, _ = \
             self._get_compute_nodes_by_name_pattern(context, id)
 
         hypervisors = []
         for compute_node in compute_nodes:
             try:
-                service = services_by_id[compute_node.service_id]
+                service = services_by_compute_node[compute_node.uuid]
             except KeyError:
                 # The compute service could be deleted which doesn't delete
                 # the compute node record, that has to be manually removed
@@ -485,7 +482,7 @@ class HypervisorsController(wsgi.Controller):
 
         # Get all compute nodes with a hypervisor_hostname that matches
         # the given pattern. If none are found then it's a 404 error.
-        compute_nodes, services_by_id, instances_by_host = \
+        compute_nodes, services_by_compute_node, instances_by_host = \
             self._get_compute_nodes_by_name_pattern(context, id,
                                                     with_servers=True)
 
@@ -494,7 +491,7 @@ class HypervisorsController(wsgi.Controller):
             instances = instances_by_host.get(compute_node.host)
 
             try:
-                service = services_by_id[compute_node.service_id]
+                service = services_by_compute_node[compute_node.uuid]
             except KeyError:
                 # The compute service could be deleted which doesn't delete
                 # the compute node record, that has to be manually removed
