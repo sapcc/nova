@@ -6658,7 +6658,7 @@ class HostAPI:
         load_cells()
 
         computes = []
-        services = []
+        services_by_compute_node = {}
         instances_by_host = {}
         uuid_marker = marker and uuidutils.is_uuid_like(marker)
         for cell in CELLS:
@@ -6687,13 +6687,30 @@ class HostAPI:
                     continue
                 computes.extend(cell_computes)
 
-                services.extend(objects.ServiceList.get_all(
-                    cctxt, ids=[cn.service_id for cn in cell_computes]))
+                # NOTE(jkulik): We query the HostMapping from the DB here,
+                # because there can only be one, but there could
+                # theoretically multiple compute nodes with the same name
+                # in multiple cells.
+                cell_mapped_hosts = set(hm.host
+                    for hm in objects.HostMappingList.get_by_cell_id(context,
+                                                                     cell.id))
+                cell_service_ids = [cn.service_id for cn in cell_computes
+                                    if cn.host in cell_mapped_hosts]
+                if cell_service_ids:
+                    services_by_id = {s.id: s
+                        for s in objects.ServiceList.get_all(
+                            cctxt, ids=cell_service_ids)}
+                    services_by_compute_node.update({
+                        cn.uuid: services_by_id[cn.service_id]
+                        for cn in cell_computes
+                        if cn.service_id in services_by_id})
 
                 if with_servers:
-                    instances_by_host.update(
-                        objects.InstanceList.get_names_and_uuids_by_hosts(
-                            cctxt, [cn.host for cn in cell_computes]))
+                    cell_hosts = [cn.host for cn in cell_computes]
+                    if cell_hosts:
+                        instances_by_host.update(
+                            objects.InstanceList.get_names_and_uuids_by_hosts(
+                                cctxt, cell_hosts))
 
                 # NOTE(danms): We must have found the marker, so continue on
                 # without one
@@ -6709,15 +6726,14 @@ class HostAPI:
             raise exception.MarkerNotFound(marker=marker)
 
         return (objects.ComputeNodeList(objects=computes),
-                objects.ServiceList(objects=services),
-                instances_by_host)
+                services_by_compute_node, instances_by_host)
 
     def compute_node_search_by_hypervisor(self, context, hypervisor_match,
                                           with_servers=False):
         load_cells()
 
         computes = []
-        services = []
+        services_by_compute_node = {}
         instances_by_host = {}
         for cell in CELLS:
             if cell.uuid == objects.CellMapping.CELL0_UUID:
@@ -6726,18 +6742,35 @@ class HostAPI:
                 cell_computes = objects.ComputeNodeList.get_by_hypervisor(
                     cctxt, hypervisor_match)
 
-                services.extend(objects.ServiceList.get_all(
-                    cctxt, ids=[cn.service_id for cn in cell_computes]))
+                # NOTE(jkulik): We query the HostMapping from the DB here,
+                # because there can only be one, but there could
+                # theoretically multiple compute nodes with the same name
+                # in multiple cells.
+                cell_mapped_hosts = set(hm.host
+                    for hm in objects.HostMappingList.get_by_cell_id(context,
+                                                                     cell.id))
+                cell_service_ids = [cn.service_id for cn in cell_computes
+                                    if cn.host in cell_mapped_hosts]
+                if cell_service_ids:
+                    services_by_id = {s.id: s
+                        for s in objects.ServiceList.get_all(
+                            cctxt, ids=cell_service_ids)}
+                    services_by_compute_node.update({
+                        cn.uuid: services_by_id[cn.service_id]
+                        for cn in cell_computes
+                        if cn.service_id in services_by_id})
 
+                cell_hosts = set(cn.host for cn in cell_computes)
                 if with_servers:
-                    instances_by_host.update(
-                        objects.InstanceList.get_names_and_uuids_by_hosts(
-                            cctxt, [cn.host for cn in cell_computes]))
+                    if cell_hosts:
+                        instances_by_host.update(
+                            objects.InstanceList.get_names_and_uuids_by_hosts(
+                                cctxt, cell_hosts))
 
             computes.extend(cell_computes)
+
         return (objects.ComputeNodeList(objects=computes),
-                objects.ServiceList(objects=services),
-                instances_by_host)
+                services_by_compute_node, instances_by_host)
 
     def compute_node_statistics(self, context):
         load_cells()
