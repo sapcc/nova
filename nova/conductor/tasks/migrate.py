@@ -121,7 +121,7 @@ class MigrationTask(base.TaskBase):
     def __init__(self, context, instance, flavor,
                  request_spec, clean_shutdown, compute_rpcapi,
                  query_client, report_client, host_list, network_api,
-                 volume_api=None):
+                 volume_api=None, get_volume_types_fn=None):
         super(MigrationTask, self).__init__(context, instance)
         self.clean_shutdown = clean_shutdown
         self.request_spec = request_spec
@@ -133,6 +133,10 @@ class MigrationTask(base.TaskBase):
         self.host_list = host_list
         self.network_api = network_api
         self.volume_api = volume_api
+        # Callable(context) -> list of volume type dicts.  Provided by
+        # ComputeTaskManager so the list is cached per conductor process
+        # rather than fetched from Cinder on every cross-HV resize.
+        self._get_volume_types_fn = get_volume_types_fn
 
         # Persist things from the happy path so we don't have to look
         # them up if we need to roll back
@@ -363,10 +367,11 @@ class MigrationTask(base.TaskBase):
         # Convert image/local roots before the BFV-only prep_resize path.
         # Revert keeps the instance BFV-on-VMware.
         if self.instance.system_metadata.get('cross_hv_resize') == 'true':
-            root_bdm = self._get_root_bdm()
+            bdms = self._get_bdms()
+            root_bdm = self._get_root_bdm(bdms)
             self._validate_cross_hv_root_bdm(root_bdm)
+            self._validate_cross_hv_attached_volume_types(bdms)
             if self._is_image_backed_local_root(root_bdm):
-                self._validate_cross_hv_manage_config()
                 self._convert_image_backed_root_to_bfv(root_bdm)
 
         # NOTE: set after the conversion above, which saves the instance
@@ -415,11 +420,40 @@ class MigrationTask(base.TaskBase):
             raise exception.CrossHVConfigurationMissing(
                 option='fcd_volume_type')
 
-    def _get_root_bdm(self):
-        """Load and return the root BDM for the instance, or None."""
-        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+    def _get_bdms(self):
+        """Load and return all BDMs for the instance."""
+        return objects.BlockDeviceMappingList.get_by_instance_uuid(
             self.context, self.instance.uuid)
+
+    def _get_root_bdm(self, bdms=None):
+        """Load and return the root BDM for the instance, or None."""
+        if bdms is None:
+            bdms = self._get_bdms()
         return bdms.root_bdm()
+
+    def _get_cross_hv_expected_volume_type(self):
+        """Resolve the configured FCD volume type against the type list.
+
+        Uses the injected get_volume_types_fn when available so the caller
+        (ComputeTaskManager) can cache the list for the conductor process
+        lifetime.  Falls back to a direct Cinder call for tests or callers
+        that do not supply the function.
+        """
+        self._validate_cross_hv_manage_config()
+        configured_type = CONF.cross_hv.fcd_volume_type
+
+        if self._get_volume_types_fn is not None:
+            volume_types = self._get_volume_types_fn(self.context)
+        else:
+            volume_types = self.volume_api.get_all_volume_types(self.context)
+
+        for volume_type in volume_types:
+            if configured_type in (volume_type['id'], volume_type['name']):
+                return volume_type
+
+        raise exception.InvalidCrossHvResizePrecondition(
+            reason='Configured [cross_hv] fcd_volume_type %s was not found '
+                   'in Cinder volume types.' % configured_type)
 
     def _is_image_backed_local_root(self, root_bdm):
         """Return True if root_bdm is an image-backed local ephemeral disk."""
@@ -455,6 +489,27 @@ class MigrationTask(base.TaskBase):
                    '(source_type=%s, destination_type=%s). Only image/local '
                    'or */volume root disks are supported.' %
                    (root_bdm.source_type, root_bdm.destination_type))
+
+    def _validate_cross_hv_attached_volume_types(self, bdms):
+        """Ensure every attached Cinder volume matches the supported type."""
+        expected_type = self._get_cross_hv_expected_volume_type()
+        expected_types = {expected_type['id'], expected_type['name']}
+        expected_type_name = expected_type['name']
+        unsupported = []
+
+        for bdm in bdms:
+            if bdm.destination_type != 'volume' or not bdm.volume_id:
+                continue
+            volume = self.volume_api.get(self.context, bdm.volume_id)
+            volume_type = volume.get('volume_type_id') or '<unset>'
+            if volume_type not in expected_types:
+                unsupported.append('%s (%s)' % (bdm.volume_id, volume_type))
+
+        if unsupported:
+            raise exception.InvalidCrossHvResizePrecondition(
+                reason='All attached Cinder volumes must use volume type %s '
+                       'for cross-HV resize. Unsupported volumes: %s' %
+                       (expected_type_name, ', '.join(unsupported)))
 
     def _set_cross_hv_root_detach_state(self, value):
         """Set or clear cross_hv_root_detach_state and save the instance.
