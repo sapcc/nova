@@ -1174,9 +1174,8 @@ class TestNetworkMetadata(test.NoDBTestCase):
         self.assertEqual('vlan', subport_links[0]['type'])
 
     def test_get_network_metadata_json_trunk_subport_no_parent(self):
-        # A top-level trunk-subport VIF whose parent is not in network_info
-        # (e.g. cache built before trunk_details was populated on the parent)
-        # is skipped from metadata entirely rather than crashing.
+        # A subport whose parent is not in network_info is rendered as a
+        # plain link.
         subport_vif = fake_network_cache_model.new_vif(
             {'type': 'trunk-subport', 'devname': 'tapsubport1',
              'id': 'subport1',
@@ -1186,7 +1185,31 @@ class TestNetworkMetadata(test.NoDBTestCase):
 
         net_metadata = netutils.get_network_metadata(netinfo)
 
-        self.assertEqual([], net_metadata['links'])
+        self.assertEqual(1, len(net_metadata['links']))
+        link = net_metadata['links'][0]
+        self.assertEqual('phy', link['type'])
+        self.assertEqual('subport1', link['vif_id'])
+        self.assertEqual('tapsubport1', link['id'])
+        self.assertNotIn('vlan_link', link)
+        self.assertNotIn('vlan_id', link)
+        self.assertEqual(1, len(net_metadata['networks']))
+        self.assertEqual('tapsubport1', net_metadata['networks'][0]['link'])
+
+    def test_get_network_metadata_json_aci_orphan_subport(self):
+        # ACI subports on baremetal have no parent in network_info and no
+        # 'tag' in their binding profile.
+        subport_vif = fake_network_cache_model.new_vif(
+            {'type': 'trunk-subport', 'devname': 'tapsubport1',
+             'id': 'subport1',
+             'profile': {'aci_trunk': {'segmentation_type': 'vlan',
+                                       'segmentation_id': 1001}}})
+
+        netinfo = model.NetworkInfo([subport_vif])
+
+        net_metadata = netutils.get_network_metadata(netinfo)
+
+        self.assertEqual(1, len(net_metadata['links']))
+        self.assertEqual('phy', net_metadata['links'][0]['type'])
 
     def test__get_nets(self):
         expected_net = {

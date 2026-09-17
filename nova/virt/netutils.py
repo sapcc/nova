@@ -186,9 +186,15 @@ def get_network_metadata(network_info):
     ifc_num = -1
     net_num = -1
 
+    # Subports without a parent in network_info are rendered as top-level
+    # links instead of being dropped.
+    claimed_subport_ids = {subport['id'] for vif in network_info
+                           for subport in vif.get('trunk_vifs', ())}
+
     vifs_with_parent = []
     for vif in network_info:
-        if vif.get('type') != model.VIF_TYPE_TRUNK_SUBPORT:
+        if (vif.get('type') != model.VIF_TYPE_TRUNK_SUBPORT or
+                vif['id'] not in claimed_subport_ids):
             vifs_with_parent.append((vif, None))
         for subport in vif.get('trunk_vifs', ()):
             vifs_with_parent.append((subport, vif))
@@ -253,6 +259,7 @@ def _get_eth_link(vif, ifc_num, parent_vif=None):
     :param vif: Neutron VIF
     :param ifc_num: Interface index for generating name if the VIF's
         'devname' isn't defined.
+    :param parent_vif: The trunk parent VIF, if ``vif`` is a subport.
     :return: A dict with 'id', 'vif_id', 'type', 'mtu' and
         'ethernet_mac_address' as keys
     """
@@ -263,7 +270,8 @@ def _get_eth_link(vif, ifc_num, parent_vif=None):
     # Use 'phy' for physical links. Ethernet can be confusing
     if vif.get('type') in model.LEGACY_EXPOSED_VIF_TYPES:
         nic_type = vif.get('type')
-    elif vif.get('type') == model.VIF_TYPE_TRUNK_SUBPORT:
+    elif (vif.get('type') == model.VIF_TYPE_TRUNK_SUBPORT and
+            parent_vif is not None):
         nic_type = 'vlan'
     else:
         nic_type = 'phy'
