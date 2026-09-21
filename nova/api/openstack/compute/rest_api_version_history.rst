@@ -1300,3 +1300,19 @@ The ``GET /servers/{server_id}``, ``GET /servers/detail``
 ``PUT /servers/{server_id}`` and ``POST /server/{server_id}/action``
 (rebuild) responses now include the scheduler hints provided during
 server creation.
+
+Add flavor permission rule APIs for managing which domains and projects can use
+a given public flavor:
+
+* ``GET /flavor-permission-rules`` lists rules
+* ``POST /flavor-permission-rules`` creates a rule
+* ``GET /flavor-permission-rules/{id}`` shows a rule
+* ``PUT /flavor-permission-rules/{id}`` updates a rule's effect
+* ``DELETE /flavor-permission-rules/{id}`` deletes a rule
+
+The ``GET /flavors`` and ``GET /flavors/detail`` APIs gain optional
+``domain_permission`` and ``project_permission`` query parameters to filter
+flavors by their permission for the caller's domain or project. The
+``GET /flavors/{id}`` and ``GET /flavors/detail`` responses include the
+``domain_permission`` and ``project_permission`` for callers with the
+appropriate policy.

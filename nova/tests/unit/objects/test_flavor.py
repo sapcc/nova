@@ -13,6 +13,7 @@
 #    under the License.
 
 import datetime
+import ddt
 from unittest import mock
 
 from oslo_db import exception as db_exc
@@ -88,7 +89,10 @@ class _TestFlavor(object):
         mock_get.return_value = fake_flavor
         flavor = flavor_obj.Flavor.get_by_flavor_id(self.context, 'm1.foo')
         self._compare(self, fake_flavor, flavor)
-        mock_get.assert_called_once_with(self.context, 'm1.foo')
+        mock_get.assert_called_once_with(
+            self.context, 'm1.foo',
+            domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            project_permission=fields.FlavorPermissionRuleEffect.ALLOW)
 
     @staticmethod
     @api_db_api.context_manager.writer
@@ -279,6 +283,24 @@ class _TestFlavor(object):
         mock_destroy.assert_called_once_with(self.context,
                                              flavorid=flavor.flavorid)
 
+    @mock.patch('nova.objects.flavor._get_flavor_permissions_from_db')
+    def test_get_permission(self, mock_get_perms):
+        flavor = flavor_obj.Flavor(
+            context=self.context, id=fake_flavor['id'])
+        expected = {
+            fields.FlavorPermissionRuleScope.DOMAIN:
+                fields.FlavorPermissionRuleEffect.ALLOW,
+            fields.FlavorPermissionRuleScope.PROJECT:
+                fields.FlavorPermissionRuleEffect.DENY,
+        }
+        mock_get_perms.return_value = {fake_flavor['id']: expected}
+        result = flavor.get_permission(
+            include_domain=True, include_project=True)
+        self.assertEqual(expected, result)
+        mock_get_perms.assert_called_once_with(
+            self.context, {fake_flavor['id']},
+            include_domain=True, include_project=True)
+
     def test_load_projects_from_api(self):
         mock_get_projects = mock.Mock(return_value=['a', 'b'])
         objects.Flavor._get_projects_from_db = mock_get_projects
@@ -383,7 +405,8 @@ class _TestFlavorList(object):
         api_flavors = flavor_obj._flavor_get_all_from_db(self.context,
                                                          False, None,
                                                          'flavorid', 'asc',
-                                                         None, None)
+                                                         None, None, None,
+                                                         None, False)
 
         flavors = objects.FlavorList.get_all(self.context)
         # Make sure we're getting all flavors from the api
@@ -408,10 +431,13 @@ class _TestFlavorList(object):
                                                 sort_dir='asc')
         self.assertEqual(1, len(flavors))
         _TestFlavor._compare(self, _fake_flavor, flavors[0])
-        mock_api_get.assert_called_once_with(self.context, inactive=False,
-                                             filters=filters, sort_key='id',
-                                             sort_dir='asc', limit=None,
-                                             marker=None)
+        mock_api_get.assert_called_once_with(
+            self.context, inactive=False,
+            filters=filters, sort_key='id',
+            sort_dir='asc', limit=None, marker=None,
+            domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            project_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            force_permission_filter=False)
 
     @mock.patch('nova.objects.flavor._flavor_get_all_from_db')
     def test_get_all_limit_applied_to_api(self, mock_api_get):
@@ -428,10 +454,33 @@ class _TestFlavorList(object):
                                                 sort_dir='asc')
         self.assertEqual(1, len(flavors))
         _TestFlavor._compare(self, _fake_flavor, flavors[0])
-        mock_api_get.assert_called_once_with(self.context, inactive=False,
-                                             filters=filters, sort_key='id',
-                                             sort_dir='asc', limit=1,
-                                             marker=None)
+        mock_api_get.assert_called_once_with(
+            self.context, inactive=False,
+            filters=filters, sort_key='id',
+            sort_dir='asc', limit=1, marker=None,
+            domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            project_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            force_permission_filter=False)
+
+    @mock.patch('nova.objects.flavor._get_flavor_permissions_from_db')
+    def test_get_permissions(self, mock_get_perms):
+        flavor = flavor_obj.Flavor(
+            context=self.context, id=fake_flavor['id'])
+        flavor_list = flavor_obj.FlavorList(
+            context=self.context, objects=[flavor])
+        expected = {
+            fake_flavor['id']: {
+                fields.FlavorPermissionRuleScope.DOMAIN:
+                    fields.FlavorPermissionRuleEffect.ALLOW,
+            },
+        }
+        mock_get_perms.return_value = expected
+        result = flavor_list.get_permissions(
+            include_domain=True, include_project=False)
+        self.assertEqual(expected, result)
+        mock_get_perms.assert_called_once_with(
+            self.context, {fake_flavor['id']},
+            include_domain=True, include_project=False)
 
     def test_get_no_marker_in_api(self):
         self.assertRaises(exception.MarkerNotFound,
@@ -573,3 +622,22 @@ class TestFlavorFiltering(test.TestCase):
         filters = {'min_memory_mb': 16384, 'min_root_gb': 80}
         expected = ['m1.xlarge']
         self.assertFilterResults(filters, expected)
+
+
+@ddt.ddt
+class TestFlavorQueryPermissionFilter(test.NoDBTestCase):
+
+    @ddt.data(
+        (None, False),
+        (fields.FlavorPermissionRuleEffect.ALLOW, True),
+        (fields.FlavorPermissionRuleEffect.DENY, True),
+    )
+    @ddt.unpack
+    @mock.patch.object(flavor_obj.Flavor, '_flavor_query_allowed_clause')
+    def test_filter(self, permission, expect_filter, mock_clause):
+        mock_clause.return_value = True
+        query = mock.MagicMock()
+        flavor_obj.Flavor._flavor_query_permission_filter(
+            query, 'proj1', 'project', permission)
+        self.assertEqual(expect_filter, mock_clause.called)
+        self.assertEqual(expect_filter, query.filter.called)

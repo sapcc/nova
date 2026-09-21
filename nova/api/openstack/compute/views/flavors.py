@@ -18,6 +18,7 @@ from nova.api.openstack import common
 
 FLAVOR_DESCRIPTION_MICROVERSION = '2.55'
 FLAVOR_EXTRA_SPECS_MICROVERSION = '2.61'
+FLAVOR_PERMISSION_RULES_MICROVERSION = '2.100'
 
 
 class ViewBuilder(common.ViewBuilder):
@@ -25,7 +26,7 @@ class ViewBuilder(common.ViewBuilder):
     _collection_name = "flavors"
 
     def basic(self, request, flavor, include_description=False,
-              include_extra_specs=False):
+              include_extra_specs=False, flavor_permission=None):
         # include_extra_specs is placeholder param which is not used in
         # this method as basic() method is used by index() (GET /flavors)
         # which does not return those keys in response.
@@ -42,10 +43,13 @@ class ViewBuilder(common.ViewBuilder):
         if include_description:
             flavor_dict['flavor']['description'] = flavor.description
 
+        if flavor_permission is not None:
+            flavor_dict['flavor']['permissions'] = flavor_permission
+
         return flavor_dict
 
     def show(self, request, flavor, include_description=False,
-             include_extra_specs=False):
+             include_extra_specs=False, flavor_permission=None):
         flavor_dict = {
             "flavor": {
                 "id": flavor["flavorid"],
@@ -73,6 +77,9 @@ class ViewBuilder(common.ViewBuilder):
         if api_version_request.is_supported(request, '2.75'):
             flavor_dict['flavor']['swap'] = flavor["swap"] or 0
 
+        if flavor_permission is not None:
+            flavor_dict['flavor']['permissions'] = flavor_permission
+
         return flavor_dict
 
     def index(self, request, flavors):
@@ -83,17 +90,20 @@ class ViewBuilder(common.ViewBuilder):
         return self._list_view(self.basic, request, flavors, coll_name,
                                include_description=include_description)
 
-    def detail(self, request, flavors, include_extra_specs=False):
+    def detail(self, request, flavors, include_extra_specs=False,
+               flavor_permissions=None):
         """Return the 'detail' view of flavors."""
         coll_name = self._collection_name + '/detail'
         include_description = api_version_request.is_supported(
             request, FLAVOR_DESCRIPTION_MICROVERSION)
         return self._list_view(self.show, request, flavors, coll_name,
                                include_description=include_description,
-                               include_extra_specs=include_extra_specs)
+                               include_extra_specs=include_extra_specs,
+                               flavor_permissions=flavor_permissions)
 
     def _list_view(self, func, request, flavors, coll_name,
-                   include_description=False, include_extra_specs=False):
+                   include_description=False, include_extra_specs=False,
+                   flavor_permissions=None):
         """Provide a view for a list of flavors.
 
         :param func: Function used to format the flavor data
@@ -105,11 +115,17 @@ class ViewBuilder(common.ViewBuilder):
                                     included in the response dict.
         :param include_extra_specs: If the flavor.extra_specs should be
                                     included in the response dict.
+        :param flavor_permissions: Dict of flavor id → permission dict, or
+                                   None when permissions are not requested.
 
         :returns: Flavor reply data in dictionary format
         """
         flavor_list = [func(request, flavor, include_description,
-                            include_extra_specs)["flavor"]
+                            include_extra_specs,
+                            flavor_permission=(
+                                None if flavor_permissions is None
+                                else flavor_permissions.get(
+                                    flavor['id'], {})))["flavor"]
                        for flavor in flavors]
         flavors_links = self._get_collection_links(request,
                                                    flavors,
