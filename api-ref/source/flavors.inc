@@ -33,6 +33,8 @@ Request
   - minDisk: minDisk
   - minRam: minRam
   - is_public: flavor_is_public_query
+  - domain_permission: flavor_domain_permission_query
+  - project_permission: flavor_project_permission_query
 
 Response
 --------
@@ -145,6 +147,9 @@ Request
   - minDisk: minDisk
   - minRam: minRam
   - is_public: flavor_is_public_query
+  - domain_permission: flavor_domain_permission_query
+  - project_permission: flavor_project_permission_query
+  - with_permissions: flavor_with_permissions_query
 
 
 Response
@@ -166,10 +171,16 @@ Response
    - rxtx_factor: flavor_rxtx_factor
    - os-flavor-access:is_public: flavor_is_public
    - extra_specs: extra_specs_2_61
+   - permissions: flavor_permissions_resp
 
 **Example List Flavors With Details (v2.75)**
 
 .. literalinclude:: ../../doc/api_samples/flavors/v2.75/flavors-detail-resp.json
+   :language: javascript
+
+**Example List Flavors With Details With Permissions (v2.75)**
+
+.. literalinclude:: ../../doc/api_samples/flavors/v2.75/flavors-detail-with-permissions-resp.json
    :language: javascript
 
 Show Flavor Details
@@ -181,7 +192,7 @@ Shows details for a flavor.
 
 Normal response codes: 200
 
-Error response codes: unauthorized(401), forbidden(403), itemNotFound(404)
+Error response codes: badRequest(400), unauthorized(401), forbidden(403), itemNotFound(404)
 
 Request
 -------
@@ -189,6 +200,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
   - flavor_id: flavor_id
+  - with_permissions: flavor_with_permissions_query
 
 Response
 --------
@@ -209,10 +221,16 @@ Response
    - rxtx_factor: flavor_rxtx_factor
    - os-flavor-access:is_public: flavor_is_public
    - extra_specs: extra_specs_2_61
+   - permissions: flavor_permissions_resp
 
 **Example Show Flavor Details (v2.75)**
 
 .. literalinclude:: ../../doc/api_samples/flavors/v2.75/flavor-get-resp.json
+   :language: javascript
+
+**Example Show Flavor Details With Permissions (v2.75)**
+
+.. literalinclude:: ../../doc/api_samples/flavors/v2.75/flavor-get-with-permissions-resp.json
    :language: javascript
 
 Update Flavor Description
