@@ -766,6 +766,59 @@ class DbCommands(object):
         # Return 1 if we soft-deleted something
         return int(bool(cell_to_rows_deleted))
 
+    @args('--verbose', action='store_true', dest='verbose', default=False,
+          help='Print how many rows were changed per cell.')
+    @args('--all-cells', action='store_true', dest='all_cells',
+          default=False, help='Run command across all cells.')
+    def error_out_orphaned_migrations(self, all_cells=False, verbose=False):
+        """Error-out orphaned migrations.
+
+        Returns 0 if nothing was changed, 1 if at least one row was
+        changed, 3 if no connection could be established to the API DB.
+        """
+
+        ctxt = context.get_admin_context()
+        try:
+            cell_mappings = objects.CellMappingList.get_all(ctxt)
+        except db_exc.CantStartEngineError:
+            print(_('Failed to connect to API DB so aborting this '
+                    'change attempt. Please check your config file to '
+                    'make sure that [api_database]/connection is set and run '
+                    'this command again.'))
+            return 3
+
+        cell_to_rows_changed = {}
+        if not all_cells:
+            cell_mappings = [None]
+        for cell_mapping in cell_mappings:
+            with context.target_cell(ctxt, cell_mapping) as cctxt:
+                # If all_cells=False, cell_mapping is None
+                cell_name = cell_mapping.name if cell_mapping else ''
+                try:
+                    while True:
+                        rows_deleted = \
+                            db.error_out_orphaned_migrations(cctxt)
+                        if rows_deleted:
+                            cell_to_rows_changed.setdefault(cell_name, 0)
+                            cell_to_rows_changed[cell_name] += rows_deleted
+                        if verbose:
+                            print('.', end='')
+                except KeyboardInterrupt:
+                    break
+
+        if verbose:
+            if cell_to_rows_changed:
+                print(format_dict(
+                    cell_to_rows_changed,
+                    dict_property=_('Cell'),
+                    dict_value=_('Number of Changed Rows'),
+                ))
+            else:
+                print(_('No row was changed.'))
+
+        # Return 1 if we changed something
+        return int(bool(cell_to_rows_changed))
+
 
 class ApiDbCommands(object):
     """Class for managing the api database."""

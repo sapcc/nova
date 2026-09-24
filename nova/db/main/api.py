@@ -4745,6 +4745,31 @@ def soft_delete_excessive_instance_faults(context, max_rows, max_faults):
     return deleted
 
 
+@pick_context_manager_writer
+def error_out_orphaned_migrations(context):
+    """Error-out orphaned migrations.
+
+    We occasionally end up with instances in a running/stopped state without
+    any task, but the migrations are still "running".
+    As a workaround, we simply error them out.
+
+    :returns: The number of soft-deleted rows.
+    """
+
+    when = timeutils.utcnow() - datetime.timedelta(seconds=10)
+    mig = models.Migration
+    migrations = mig.__table__
+    subquery = sa.select(mig.id).join(mig.instance).where(
+        sa.and_(mig.status == 'running',
+                models.Instance.task_state == sa.null(),
+                models.Instance.updated_at < when)
+    )
+    query = sa.update(migrations).where(
+        migrations.c.id.in_(subquery)).values(status='error')
+    rowcount = context.session.execute(query).rowcount
+    return rowcount
+
+
 ####################
 
 
