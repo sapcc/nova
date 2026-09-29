@@ -54,3 +54,30 @@ a discussion of the `impact on performance`_.
 .. _mailing list thread: https://lists.launchpad.net/openstack/msg08118.html
 .. _impact on performance: https://lists.launchpad.net/openstack/msg08217.html
 .. _PyMySQL: https://wiki.openstack.org/wiki/PyMySQL_evaluation
+
+Native threading
+----------------
+Since the Flamingo release OpenStack started to transition away form
+``eventlet``. During this transition Nova maintains support for running
+services with ``eventlet`` while working to add support for running services
+with ``native threading``.
+
+To support both modes with the same codebase Nova started using the
+`futurist`_ library. In native threading mode ``futurist.ThreadPoolsExecutors``
+are used to run concurrent tasks and both the oslo.service and the
+oslo.messaging libraries are configured to use native threads to execute tasks
+like periodics and RPC message handlers.
+
+New code should avoid adding eventlet-specific primitives or spawning APIs.
+Nova is transitioning toward native threading, and ``tox -e pep8`` enforces
+several related rules, including N340, N373, and N374. Prefer Nova
+compatibility helpers and standard-library primitives where applicable.
+
+New code should not introduce ``asyncio``. Nova services use native threading
+(via futurist and oslo libraries) or, during transition, eventlet. Mixing
+``asyncio`` into this model is unsupported.
+
+.. _futurist: https://docs.openstack.org/futurist/latest/
+
+To see how to configure and tune the native threading mode read the
+:doc:`/admin/concurrency` guide.
