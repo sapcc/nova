@@ -16,6 +16,7 @@
 from unittest import mock
 from urllib import parse as urlparse
 
+import ddt
 import webob
 
 from nova.api.openstack import common
@@ -23,6 +24,8 @@ from nova.api.openstack.compute import flavors as flavors_v21
 from nova import context
 from nova import exception
 from nova import objects
+from nova.objects import fields
+from nova.policies import flavor_permission_rules as fpr_policies
 from nova import test
 from nova.tests.unit.api.openstack import fakes
 from nova.tests.unit import matchers
@@ -40,8 +43,21 @@ def fake_get_limit_and_marker(request, max_limit=1):
     return limit, marker
 
 
-def return_flavor_not_found(context, flavor_id, read_deleted=None):
+def return_flavor_not_found(context, flavor_id, *args, **kwargs):
     raise exception.FlavorNotFound(flavor_id=flavor_id)
+
+
+def _fpr_can(*fpr_suffixes: str):
+    allowed = {fpr_policies.POLICY_ROOT % s for s in fpr_suffixes}
+
+    def can(self, action: str, target=None, fatal: bool = True) -> bool:
+        if action in allowed:
+            return True
+        if fatal:
+            raise exception.PolicyNotAuthorized(action=action)
+        return False
+
+    return can
 
 
 class FlavorsTestV21(test.TestCase):
@@ -55,6 +71,8 @@ class FlavorsTestV21(test.TestCase):
     expect_description = False
     # Flag to tell the test if a extra_specs should be expected in a response.
     expect_extra_specs = False
+    # Flag to tell the test if permissions should be expected in a response.
+    expect_permissions = False
 
     def setUp(self):
         super(FlavorsTestV21, self).setUp()
@@ -63,9 +81,9 @@ class FlavorsTestV21(test.TestCase):
         fakes.stub_out_flavor_get_by_flavor_id(self)
         self.controller = self.Controller()
 
-    def _build_request(self, url):
-        return self.fake_request.blank(
-            self._prefix + url, version=self.microversion)
+    def _build_request(self, url, **kwargs):
+        kwargs.setdefault('version', self.microversion)
+        return self.fake_request.blank(self._prefix + url, **kwargs)
 
     def _set_expected_body(self, expected, flavor):
         expected['OS-FLV-EXT-DATA:ephemeral'] = flavor.ephemeral_gb
@@ -143,6 +161,25 @@ class FlavorsTestV21(test.TestCase):
         }
         self._set_expected_body(expected['flavor'], fakes.FLAVORS['1'])
         self.assertEqual(expected, flavor)
+
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:domain'))
+    @mock.patch('nova.objects.Flavor.get_permission')
+    def test_show_includes_permissions(self, mock_perm):
+        req = self._build_request('/flavors/1')
+        if self.expect_permissions:
+            perm = {
+                fields.FlavorPermissionRuleScope.DOMAIN:
+                    fields.FlavorPermissionRuleEffect.ALLOW,
+                fields.FlavorPermissionRuleScope.PROJECT:
+                    fields.FlavorPermissionRuleEffect.ALLOW,
+            }
+            mock_perm.return_value = perm
+            result = self.controller.show(req, '1')
+            self.assertEqual(perm, result['flavor']['permissions'])
+        else:
+            result = self.controller.show(req, '1')
+            self.assertNotIn('permissions', result['flavor'])
 
     def test_get_flavor_list(self):
         req = self._build_request('/flavors')
@@ -415,6 +452,28 @@ class FlavorsTestV21(test.TestCase):
         self._set_expected_body(expected['flavors'][0], fakes.FLAVORS['1'])
         self._set_expected_body(expected['flavors'][1], fakes.FLAVORS['2'])
         self.assertEqual(expected, flavor)
+
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:domain'))
+    @mock.patch('nova.objects.FlavorList.get_permissions')
+    def test_list_detail_flavors_includes_permissions(self, mock_perms):
+        req = self._build_request('/flavors/detail')
+        if self.expect_permissions:
+            perms = {
+                1: {fields.FlavorPermissionRuleScope.DOMAIN:
+                    fields.FlavorPermissionRuleEffect.ALLOW},
+                2: {fields.FlavorPermissionRuleScope.DOMAIN:
+                    fields.FlavorPermissionRuleEffect.DENY},
+            }
+            mock_perms.return_value = perms
+            result = self.controller.detail(req)
+            self.assertEqual(perms[fakes.FLAVORS['1'].id],
+                             result['flavors'][0]['permissions'])
+            self.assertEqual(perms[fakes.FLAVORS['2'].id],
+                             result['flavors'][1]['permissions'])
+        else:
+            result = self.controller.detail(req)
+            self.assertNotIn('permissions', result['flavors'][0])
 
     @mock.patch('nova.objects.FlavorList.get_all',
                 return_value=objects.FlavorList())
@@ -795,6 +854,7 @@ class FlavorsTestV2_61(FlavorsTestV2_55):
     expect_extra_specs = True
 
 
+@ddt.ddt
 class FlavorsTestV2_75(FlavorsTestV2_61):
     microversion = '2.75'
 
@@ -898,6 +958,151 @@ class FlavorsTestV2_75(FlavorsTestV2_61):
         response = self.controller.show(req, 1)
         response_list = response["flavor"]
         self.assertEqual(response_list['swap'], 0)
+
+    @ddt.data(
+        ('domain_permission', fields.FlavorPermissionRuleEffect.ALLOW),
+        ('domain_permission', fields.FlavorPermissionRuleEffect.DENY),
+        ('domain_permission', 'all'),
+        ('project_permission', fields.FlavorPermissionRuleEffect.ALLOW),
+        ('project_permission', fields.FlavorPermissionRuleEffect.DENY),
+        ('project_permission', 'all'),
+    )
+    @ddt.unpack
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:domain'))
+    @mock.patch('nova.objects.FlavorList.get_all')
+    def test_list_flavors_permission_filters(self, param, value, mock_get_all):
+        mock_get_all.return_value = objects.FlavorList()
+        req = self._build_request(f'/flavors?{param}={value}')
+        if self.expect_permissions:
+            self.controller.index(req)
+            expected = None if value == 'all' else value
+            self.assertEqual(
+                expected if param == 'domain_permission' else
+                fields.FlavorPermissionRuleEffect.ALLOW,
+                mock_get_all.call_args[1]['domain_permission'])
+            self.assertEqual(
+                expected if param == 'project_permission' else
+                fields.FlavorPermissionRuleEffect.ALLOW,
+                mock_get_all.call_args[1]['project_permission'])
+        else:
+            ex = self.assertRaises(
+                exception.ValidationError, self.controller.index, req)
+            self.assertIn('Additional properties are not allowed', str(ex))
+
+
+@ddt.ddt
+class FlavorsTestV2_100(FlavorsTestV2_75):
+    microversion = '2.100'
+    expect_permissions = True
+
+    @ddt.data(
+        dict(query=f'?domain_permission='
+                   f'{fields.FlavorPermissionRuleEffect.DENY}',
+             expected_force=True,
+             expected_domain=fields.FlavorPermissionRuleEffect.DENY),
+        dict(query='',
+             expected_force=False,
+             expected_domain=fields.FlavorPermissionRuleEffect.ALLOW),
+    )
+    @ddt.unpack
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:domain'))
+    @mock.patch('nova.objects.FlavorList.get_all')
+    def test_list_flavors_admin_force_permission_filter(
+            self, mock_get_all, query, expected_force, expected_domain):
+        mock_get_all.return_value = objects.FlavorList()
+        req = self._build_request(f'/flavors{query}', use_admin_context=True)
+        self.controller.index(req)
+        self.assertEqual(
+            expected_force,
+            mock_get_all.call_args[1]['force_permission_filter'])
+        self.assertEqual(
+            expected_domain,
+            mock_get_all.call_args[1]['domain_permission'])
+
+    @mock.patch('nova.context.RequestContext.can', new=_fpr_can())
+    @mock.patch('nova.objects.FlavorList.get_all')
+    @mock.patch('nova.objects.FlavorList.get_permissions')
+    def test_list_detail_flavors_no_fpr_policy_skips_get_permissions(
+            self, mock_gp, mock_get_all):
+        mock_get_all.return_value = objects.FlavorList()
+        req = self._build_request('/flavors/detail')
+        self.controller.detail(req)
+        mock_gp.assert_not_called()
+
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:domain'))
+    @mock.patch('nova.objects.FlavorList.get_all')
+    @mock.patch('nova.objects.FlavorList.get_permissions')
+    def test_list_detail_flavors_domain_policy_calls_get_permissions(
+            self, mock_gp, mock_get_all):
+        mock_gp.return_value = {}
+        mock_get_all.return_value = objects.FlavorList()
+        req = self._build_request('/flavors/detail')
+        self.controller.detail(req)
+        mock_gp.assert_called_once_with(
+            include_domain=True, include_project=True)
+
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:project'))
+    @mock.patch('nova.objects.FlavorList.get_all')
+    @mock.patch('nova.objects.FlavorList.get_permissions')
+    def test_list_detail_flavors_project_policy_calls_get_permissions(
+            self, mock_gp, mock_get_all):
+        mock_gp.return_value = {}
+        mock_get_all.return_value = objects.FlavorList()
+        req = self._build_request('/flavors/detail')
+        self.controller.detail(req)
+        mock_gp.assert_called_once_with(
+            include_domain=False, include_project=True)
+
+    @mock.patch('nova.context.RequestContext.can', new=_fpr_can())
+    @mock.patch('nova.compute.flavors.get_flavor_by_flavor_id')
+    @mock.patch('nova.objects.Flavor.get_permission')
+    def test_show_no_fpr_policy_no_permission_filters(
+            self, mock_perm, mock_get):
+        mock_get.return_value = fakes.FLAVORS['1']
+        req = self._build_request('/flavors/m1.tiny')
+        self.controller.show(req, 'm1.tiny')
+        mock_get.assert_called_once_with(
+            'm1.tiny', ctxt=mock.ANY,
+            domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            project_permission=fields.FlavorPermissionRuleEffect.ALLOW)
+        mock_perm.assert_not_called()
+
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:domain'))
+    @mock.patch('nova.compute.flavors.get_flavor_by_flavor_id')
+    @mock.patch('nova.objects.Flavor.get_permission')
+    def test_show_domain_policy_uses_all_filter(self, mock_perm, mock_get):
+        mock_perm.return_value = {}
+        mock_get.return_value = fakes.FLAVORS['1']
+        req = self._build_request('/flavors/m1.tiny')
+        self.controller.show(req, 'm1.tiny')
+        mock_get.assert_called_once_with(
+            'm1.tiny', ctxt=mock.ANY,
+            domain_permission=None,
+            project_permission=None)
+        mock_perm.assert_called_once_with(
+            include_domain=True, include_project=True)
+
+    @mock.patch('nova.context.RequestContext.can',
+                new=_fpr_can('index:project'))
+    @mock.patch('nova.compute.flavors.get_flavor_by_flavor_id')
+    @mock.patch('nova.objects.Flavor.get_permission')
+    def test_show_project_policy_project_filter_only(
+            self, mock_perm, mock_get):
+        mock_perm.return_value = {}
+        mock_get.return_value = fakes.FLAVORS['1']
+        req = self._build_request('/flavors/m1.tiny')
+        self.controller.show(req, 'm1.tiny')
+        mock_get.assert_called_once_with(
+            'm1.tiny', ctxt=mock.ANY,
+            domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+            project_permission=None)
+        mock_perm.assert_called_once_with(
+            include_domain=False, include_project=True)
 
 
 class DisabledFlavorsWithRealDBTestV21(test.TestCase):

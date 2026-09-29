@@ -1075,6 +1075,20 @@ class InstanceTaskState(BaseNovaEnum):
            SHELVING_OFFLOADING, UNSHELVING, IN_CLUSTER_VMOTION)
 
 
+class FlavorPermissionRuleEffect(BaseNovaEnum):
+    ALLOW = 'allow'
+    DENY = 'deny'
+
+    ALL = (ALLOW, DENY)
+
+
+class FlavorPermissionRuleScope(BaseNovaEnum):
+    DOMAIN = 'domain'
+    PROJECT = 'project'
+
+    ALL = (DOMAIN, PROJECT)
+
+
 class InstancePowerState(Enum):
     _UNUSED = '_unused'
     NOSTATE = 'pending'
@@ -1430,6 +1444,10 @@ class InstanceStateField(BaseEnumField):
 
 class InstanceTaskStateField(BaseEnumField):
     AUTO_TYPE = InstanceTaskState()
+
+
+class FlavorPermissionRuleEffectField(BaseEnumField):
+    AUTO_TYPE = FlavorPermissionRuleEffect()
 
 
 class InstancePowerStateField(BaseEnumField):
