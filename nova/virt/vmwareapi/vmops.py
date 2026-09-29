@@ -77,6 +77,7 @@ from nova.virt.vmwareapi import special_spawning
 from nova.virt.vmwareapi import vif as vmwarevif
 from nova.virt.vmwareapi import vim_util
 from nova.virt.vmwareapi import vm_util
+from nova.volume import cinder
 
 
 CONF = nova.conf.CONF
@@ -3609,6 +3610,18 @@ class VMwareVMOps(object):
                 if not target_mapping:  # Not a volume
                     locator.datastore = datastore
                 else:
+                    if target is not self and volume_mapping:
+                        # We cannot migrate volumes with snapshots across
+                        # vCenters.
+                        if volume_id := target_mapping.get('volume_id'):
+                            snapshots = cinder.cinderclient(context) \
+                                .volume_snapshots.list(
+                                    search_opts={'volume_id': volume_id})
+                            if snapshots:
+                                reason = _("Volume %s has snapshots and "
+                                           "cannot be migrated across "
+                                           "vCenter instances.") % volume_id
+                                raise exception.MigrationError(reason=reason)
                     locator.datastore = target_mapping["datastore_ref"]
                     profile_id = target_mapping.get("profile_id")
                     if profile_id:
