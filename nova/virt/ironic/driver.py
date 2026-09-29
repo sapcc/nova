@@ -528,7 +528,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         if node.provision_state == ironic_states.AVAILABLE:
             # job is done
             LOG.debug("Ironic node %(node)s is now AVAILABLE",
-                      dict(node=node.uuid), instance=instance)
+                      dict(node=node.id), instance=instance)
             raise loopingcall.LoopingCallDone()
 
         if (node.target_provision_state in abort_ironic_states or
