@@ -3305,7 +3305,8 @@ class VolumeAttachmentCommands(object):
                 new_attachment_id and
                 bdm.attachment_id != new_attachment_id
             ):
-                volume_api.attachment_delete(cctxt, new_attachment_id)
+                volume_api.attachment_delete(cctxt, new_attachment_id,
+                                             volume_id=volume_id)
 
             # If we failed during attachment_update the bdm.attachment_id
             # has already been deleted so recreate it now to ensure the

@@ -6740,8 +6740,8 @@ class ComputeTestCase(BaseTestCase,
         # All the fake BDMs we've generated, in order
         fake_bdms = []
 
-        # A list of the attachment_ids returned by gen_fake_bdms
-        fake_attachment_ids = []
+        # A list of (attachment_id, volume_id) tuples returned by gen_fake_bdms
+        fake_attachment_info = []
 
         def gen_fake_bdms(obj, instance):
             # generate a unique fake connection_info and attachment_id every
@@ -6767,7 +6767,8 @@ class ComputeTestCase(BaseTestCase,
             ])
             for bdm in bdms:
                 bdm.save = mock.Mock()
-                fake_attachment_ids.append(bdm.attachment_id)
+                fake_attachment_info.append(
+                    (bdm.attachment_id, bdm.volume_id))
             fake_bdms.append(bdms)
             return bdms
 
@@ -6839,9 +6840,11 @@ class ComputeTestCase(BaseTestCase,
                 migrate_data_obj.LibvirtLiveMigrateData))
         # Assert that the final attachment_ids returned by
         # BlockDeviceMappingList.get_by_instance_uuid are then deleted.
+        att_id2, vol_id2 = fake_attachment_info.pop()
+        att_id1, vol_id1 = fake_attachment_info.pop()
         mock_attachment_delete.assert_has_calls([
-            mock.call(c, fake_attachment_ids.pop()),
-            mock.call(c, fake_attachment_ids.pop())], any_order=True)
+            mock.call(c, att_id2, volume_id=vol_id2),
+            mock.call(c, att_id1, volume_id=vol_id1)], any_order=True)
 
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'pre_live_migration')
     @mock.patch.object(compute_rpcapi.ComputeAPI,
@@ -12251,7 +12254,8 @@ class ComputeAPITestCase(BaseTestCase):
         mock_elevated.return_value = admin
         self.compute._shutdown_instance(admin, instance, bdms)
 
-        mock_attach_delete.assert_called_once_with(admin, attachment_id)
+        mock_attach_delete.assert_called_once_with(
+            admin, attachment_id, volume_id=uuids.volume_id)
         # we shouldn't try to get a connector for a cinder v3-style attachment
         mock_get_connector.assert_not_called()
 

@@ -565,7 +565,8 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
                               attachment_id)
         else:
             try:
-                volume_api.attachment_delete(context, self['attachment_id'])
+                volume_api.attachment_delete(context, self['attachment_id'],
+                                             volume_id=volume_id)
             except exception.VolumeAttachmentNotFound:
                 LOG.info(
                     "Ignoring a volume attachment deletion failure as the "
