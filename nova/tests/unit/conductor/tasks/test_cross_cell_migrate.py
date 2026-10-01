@@ -629,6 +629,7 @@ class PrepResizeAtDestTaskTestCase(test.NoDBTestCase):
             host_selection=host_selection,
             network_api=mock.Mock(),
             volume_api=mock.Mock())
+        self.task.instance.get_bdms = mock.Mock(return_value=[])
 
     def test_create_port_bindings(self):
         """Happy path test for creating port bindings"""
@@ -764,6 +765,17 @@ class PrepResizeAtDestTaskTestCase(test.NoDBTestCase):
         self.task._created_volume_attachment_ids = [
             uuids.attachment_id1, uuids.attachment_id2
         ]
+        bdms = [
+            objects.BlockDeviceMapping(
+                attachment_id=uuids.attachment_id1,
+                volume_id=uuids.volume_id1,
+                destination_type='volume'),
+            objects.BlockDeviceMapping(
+                attachment_id=uuids.attachment_id2,
+                volume_id=uuids.volume_id2,
+                destination_type='volume'),
+        ]
+        self.task.instance.get_bdms = mock.Mock(return_value=bdms)
         with test.nested(
             mock.patch.object(
                 self.task.network_api, 'delete_port_binding',
@@ -784,9 +796,11 @@ class PrepResizeAtDestTaskTestCase(test.NoDBTestCase):
             for port_id in self.task._bindings_by_port_id],
             any_order=True)
         attachment_delete.assert_has_calls([
-            mock.call(self.task.context, attachment_id)
-            for attachment_id in self.task._created_volume_attachment_ids],
-            any_order=True)
+            mock.call(self.task.context, uuids.attachment_id1,
+                      volume_id=uuids.volume_id1),
+            mock.call(self.task.context, uuids.attachment_id2,
+                      volume_id=uuids.volume_id2),
+        ], any_order=True)
         # Should have logged both exceptions.
         self.assertEqual(2, mock_log_exception.call_count)
 
