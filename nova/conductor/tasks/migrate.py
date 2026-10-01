@@ -576,7 +576,8 @@ class MigrationTask(base.TaskBase):
                       instance=self.instance)
             try:
                 self.volume_api.attachment_delete(
-                    self.context, attachment['id'])
+                    self.context, attachment['id'],
+                    volume_id=volume['id'])
             except Exception:
                 LOG.warning('Failed to delete attachment %s during '
                             'cleanup', attachment['id'],

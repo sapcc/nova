@@ -365,9 +365,16 @@ class PrepResizeAtDestTask(base.TaskBase):
         # Cleanup any destination host volume attachments.
         LOG.debug(
             'Cleaning up volume attachments for destination host %s', host)
+        attachments_to_vols = {
+            bdm.attachment_id: bdm.volume_id
+            for bdm in self.instance.get_bdms()
+            if bdm.is_volume and bdm.attachment_id
+        }
         for attachment_id in self._created_volume_attachment_ids:
             try:
-                self.volume_api.attachment_delete(self.context, attachment_id)
+                self.volume_api.attachment_delete(
+                    self.context, attachment_id,
+                    volume_id=attachments_to_vols.get(attachment_id))
             except Exception:
                 # Don't raise if we fail to cleanup, just log it.
                 LOG.exception('An error occurred while cleaning up volume '

@@ -991,7 +991,8 @@ class CrossHvImageConversionTestCase(test.NoDBTestCase):
                           self.task._convert_image_backed_root_to_bfv,
                           root_bdm)
         self.mock_volume_api.attachment_delete.assert_called_once_with(
-            self.task.context, uuids.attachment)
+            self.task.context, uuids.attachment,
+            volume_id=uuids.volume)
         self.mock_compute_rpcapi.abort_cross_hv_conversion \
             .assert_not_called()
 

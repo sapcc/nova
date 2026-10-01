@@ -591,7 +591,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
             mock_guard.assert_called_once_with(volume)
             self.volume_api.attachment_delete.assert_called_once_with(
-                elevated_context, attachment_id)
+                elevated_context, attachment_id,
+                volume_id=driver_bdm.volume_id)
 
     def test_volume_delete_attachment_with_shared_targets(self):
         self.test_volume_delete_attachment(include_shared_targets=True)
