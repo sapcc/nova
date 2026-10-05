@@ -3013,6 +3013,29 @@ def block_device_mapping_get_by_instance_and_volume_id(
 
 
 @require_context
+@pick_context_manager_reader
+def block_device_mapping_get_duplicates(context):
+    """Get all block device mappings that are invalidly duplicated
+
+    i.e. more than one for the same (instance, volume_id) and not deleted.
+    """
+    bdm = models.BlockDeviceMapping
+    duplicates = sql.select(bdm.instance_uuid, bdm.volume_id).\
+        filter(
+            bdm.deleted == 0,
+            bdm.volume_id.is_not(None)).\
+        group_by(bdm.instance_uuid, bdm.volume_id).\
+        having(func.count() > 1).\
+        subquery(name="duplicates")
+    return _block_device_mapping_get_query(context).\
+        filter(
+            bdm.instance_uuid == duplicates.c.instance_uuid,
+            bdm.volume_id == duplicates.c.volume_id,
+            bdm.deleted == 0).\
+        all()
+
+
+@require_context
 @pick_context_manager_writer
 def block_device_mapping_destroy(context, bdm_id):
     """Destroy the block device mapping."""

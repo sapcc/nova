@@ -379,6 +379,18 @@ class NovaMigrationsWalk(
                                 'console_auth_tokens',
                                 'tls_port')
 
+    def _pre_upgrade_962491bdc721(self, connection):
+        # TODO(jkulik): Have a test like the one mentioned below.
+        # Verifying the presence or absence of the uniqueness constraint
+        # does not seem trivial, especially for SQLite. Instead of checking
+        # here, the test "test_block_device_mapping_duplicate" ensures that we
+        # cannot introduce two identical (instance_uuid, volume_id, deleted)
+        # into the block_device_mapping table.
+        pass
+
+    def _check_962491bdc721(self, connection):
+        pass
+
     def test_single_base_revision(self):
         """Ensure we only have a single base revision.
 
