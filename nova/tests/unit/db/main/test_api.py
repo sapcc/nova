@@ -4843,8 +4843,8 @@ class BlockDeviceMappingTestCase(test.TestCase):
         self.assertEqual(bdms[0]['device_name'], '/dev/vda')
 
     def test_block_device_mapping_get_all_by_volume_id(self):
-        self._create_bdm({'volume_id': 'fake_id'})
-        self._create_bdm({'volume_id': 'fake_id'})
+        self._create_bdm({'volume_id': 'fake_id', 'instance_uuid': 'fake1'})
+        self._create_bdm({'volume_id': 'fake_id', 'instance_uuid': 'fake2'})
         bdms = db.block_device_mapping_get_all_by_volume_id(self.ctxt,
                                                             'fake_id')
         self.assertEqual(bdms[0]['volume_id'], 'fake_id')
@@ -4866,17 +4866,6 @@ class BlockDeviceMappingTestCase(test.TestCase):
         self.assertEqual(bdm['volume_id'], 'fake_id')
         self.assertEqual(bdm['instance_uuid'], self.instance['uuid'])
 
-    def test_block_device_mapping_get_by_instance_and_volume_id_multiplebdms(
-            self):
-        self._create_bdm({'volume_id': 'fake_id',
-                          'instance_uuid': self.instance['uuid']})
-        self._create_bdm({'volume_id': 'fake_id',
-                          'instance_uuid': self.instance['uuid']})
-        db_bdm = db.block_device_mapping_get_by_instance_and_volume_id(
-            self.ctxt, 'fake_id', self.instance['uuid'])
-        self.assertIsNotNone(db_bdm)
-        self.assertEqual(self.instance['uuid'], db_bdm['instance_uuid'])
-
     def test_block_device_mapping_get_by_instance_and_volume_id_multiattach(
             self):
         self.instance2 = db.instance_create(self.ctxt, {})
@@ -4893,6 +4882,25 @@ class BlockDeviceMappingTestCase(test.TestCase):
                 self.ctxt, 'fake_id', self.instance2['uuid'])
         self.assertEqual(bdm2['volume_id'], 'fake_id')
         self.assertEqual(bdm2['instance_uuid'], self.instance2['uuid'])
+
+    def test_block_device_mapping_duplicate(self):
+        self._create_bdm({'volume_id': 'fake_id'})
+
+        exc = self.assertRaises(
+            db_exc.DBDuplicateEntry,
+            self._create_bdm,
+            {'volume_id': 'fake_id'}
+        )
+
+        self.assertIn(
+            (
+                "UNIQUE constraint failed: "
+                "block_device_mapping.instance_uuid, "
+                "block_device_mapping.volume_id, "
+                "block_device_mapping.deleted"
+            ),
+            str(exc),
+        )
 
 
 class VirtualInterfaceTestCase(test.TestCase, ModelsObjectComparatorMixin):

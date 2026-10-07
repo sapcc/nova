@@ -26,6 +26,7 @@ import typing as ty
 
 from castellan import key_manager
 import os_traits
+from oslo_db import exception as db_exc
 from oslo_log import log as logging
 from oslo_messaging import exceptions as oslo_exceptions
 from oslo_serialization import base64 as base64utils
@@ -5094,7 +5095,11 @@ class API:
                 device_name=None, guest_format=None,
                 disk_bus=disk_bus, device_type=device_type,
                 delete_on_termination=delete_on_termination)
-            volume_bdm.create()
+            try:
+                volume_bdm.create()
+            except db_exc.DBDuplicateEntry:
+                msg = _("volume %s already attached") % volume_id
+                raise exception.InvalidVolume(reason=msg)
         else:
             # NOTE(vish): This is done on the compute host because we want
             #             to avoid a race where two devices are requested at
