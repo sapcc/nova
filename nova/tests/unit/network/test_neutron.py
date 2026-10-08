@@ -4775,6 +4775,71 @@ class TestAPI(TestAPIBase):
                       'device_owner': 'compute:%s' %
                                       instance.availability_zone}})
 
+    @mock.patch(
+        'nova.network.neutron.API.has_extended_resource_request_extension',
+        new=mock.Mock(return_value=False),
+    )
+    @mock.patch.object(neutronapi, 'get_client', return_value=mock.Mock())
+    def test_update_port_bindings_for_instance_retry_on_transient_error(
+            self, get_client_mock
+    ):
+        instance = fake_instance.fake_instance_obj(self.context)
+
+        # The port is bound to a different host, so an update is computed and
+        # sent; the mocked update_port fails with transient 500s twice before
+        # succeeding, so the per-port retry should make three identical calls.
+        fake_ports = {'ports': [
+                        {'id': 'fake-port-1',
+                         constants.BINDING_HOST_ID: 'fake-host-old'}]}
+        list_ports_mock = mock.Mock(return_value=fake_ports)
+        get_client_mock.return_value.list_ports = list_ports_mock
+
+        update_port_mock = mock.Mock()
+        get_client_mock.return_value.update_port = update_port_mock
+        update_port_mock.side_effect = [
+            exceptions.InternalServerError(),
+            exceptions.InternalServerError(),
+            mock.DEFAULT,
+        ]
+
+        self.api._update_port_binding_for_instance(self.context, instance,
+                                                   'new-host')
+
+        # No exception should have escaped: the third attempt succeeded.
+        self.assertEqual(3, update_port_mock.call_count)
+        # Every attempt must send the exact same arguments (same port id and
+        # same payload), since the retry re-sends the computed update verbatim.
+        call_args = update_port_mock.call_args_list
+        for call in call_args[1:]:
+            self.assertEqual(call_args[0], call)
+
+    @mock.patch(
+        'nova.network.neutron.API.has_extended_resource_request_extension',
+        new=mock.Mock(return_value=False),
+    )
+    @mock.patch.object(neutronapi, 'get_client', return_value=mock.Mock())
+    def test_update_port_bindings_for_instance_retry_exhausted(
+            self, get_client_mock
+    ):
+        instance = fake_instance.fake_instance_obj(self.context)
+
+        fake_ports = {'ports': [
+                        {'id': 'fake-port-1',
+                         constants.BINDING_HOST_ID: 'fake-host-old'}]}
+        list_ports_mock = mock.Mock(return_value=fake_ports)
+        get_client_mock.return_value.list_ports = list_ports_mock
+
+        update_port_mock = mock.Mock()
+        get_client_mock.return_value.update_port = update_port_mock
+        # Every update_port call raises a 500, so the retry is exhausted.
+        update_port_mock.side_effect = exceptions.InternalServerError()
+
+        self.assertRaises(exceptions.InternalServerError,
+                          self.api._update_port_binding_for_instance,
+                          self.context, instance, 'new-host')
+        # stop_max_attempt_number=5, so update_port is called exactly 5 times.
+        self.assertEqual(5, update_port_mock.call_count)
+
     @mock.patch.object(neutronapi.API, '_get_vf_pci_device_profile',
                        new=mock.Mock(return_value={}))
     @mock.patch(
@@ -8586,6 +8651,102 @@ class TestAPIPortbinding(TestAPIBase):
                                               instance,
                                               migration,
                                               {})
+
+    def _test_migrate_instance_finish_retry(self, list_ports_return,
+                                            update_port_side_effect,
+                                            expected_exc,
+                                            update_port_call_count,
+                                            list_ports_call_count=1):
+        """Shared helper for the migrate_instance_finish retry tests.
+
+        The ports are fetched once via list_ports; only the individual
+        update_port call is retried, so list_ports_return is either a
+        static value or a side_effect list.
+        """
+        migration = objects.Migration(source_compute=self.instance.get('host'),
+                                      dest_compute='dest_host')
+        instance = self._fake_instance_object(self.instance)
+
+        mocked_client = mock.create_autospec(client.Client)
+        if isinstance(list_ports_return, dict):
+            mocked_client.list_ports.return_value = list_ports_return
+        else:
+            # A single Exception instance raises on every call; a list is a
+            # sequence of per-call side effects (e.g. an error followed by a
+            # successful re-fetch on retry).
+            mocked_client.list_ports.side_effect = list_ports_return
+        if update_port_side_effect is not None:
+            mocked_client.update_port.side_effect = update_port_side_effect
+        else:
+            mocked_client.update_port.return_value = None
+        with mock.patch.object(neutronapi, 'get_client',
+                return_value=mocked_client) as mock_get_client:
+            if expected_exc:
+                self.assertRaises(expected_exc,
+                                  self.api.migrate_instance_finish,
+                                  self.context, instance, migration, {})
+            else:
+                self.api.migrate_instance_finish(
+                    self.context, instance, migration, {})
+
+        mock_get_client.assert_called_with(mock.ANY, admin=True)
+        self.assertEqual(list_ports_call_count,
+                         mocked_client.list_ports.call_count)
+        self.assertEqual(update_port_call_count,
+                         mocked_client.update_port.call_count)
+
+    def test_migrate_instance_finish_internal_server_error_do_not_raise(
+            self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            [exceptions.NeutronClientException(status_code=500),
+             exceptions.NeutronClientException(status_code=500),
+             None],
+            None, 3, list_ports_call_count=1)
+
+    def test_migrate_instance_finish_gateway_timeout_do_not_raise(self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            [exceptions.NeutronClientException(status_code=504),
+             exceptions.NeutronClientException(status_code=504),
+             None],
+            None, 3, list_ports_call_count=1)
+
+    def test_migrate_instance_finish_service_unavailable_no_retry(self):
+        # 503 signals an overloaded service; retrying without backoff
+        # would hammer it, so it is deliberately not retried here.
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            exceptions.ServiceUnavailable(),
+            exceptions.ServiceUnavailable, 1,
+            list_ports_call_count=1)
+
+    def test_migrate_instance_finish_internal_server_error(self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            exceptions.NeutronClientException(status_code=500),
+            exceptions.NeutronClientException, 5,
+            list_ports_call_count=1)
+
+    def test_migrate_instance_finish_client_error_no_retry(self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            exceptions.NeutronClientException(status_code=400),
+            exceptions.NeutronClientException, 1)
+
+    def test_migrate_instance_finish_list_ports_500_no_retry(self):
+        # Only the update_port call is retried; a list_ports failure fails
+        # the operation before any update is sent.
+        self._test_migrate_instance_finish_retry(
+            exceptions.NeutronClientException(status_code=500),
+            None,
+            exceptions.NeutronClientException, 0,
+            list_ports_call_count=1)
 
     def test_setup_instance_network_on_host_true(self):
         instance = self._fake_instance_object(self.instance)
