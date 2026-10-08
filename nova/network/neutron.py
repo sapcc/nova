@@ -34,6 +34,7 @@ from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import strutils
 from oslo_utils import uuidutils
+import retrying
 
 from nova.accelerator import cyborg
 from nova.compute import utils as compute_utils
@@ -3845,6 +3846,11 @@ class API:
             return None
         return device
 
+    @retrying.retry(stop_max_attempt_number=5,
+                    retry_on_exception=lambda e:
+                    (isinstance(e, neutron_client_exc.
+                                NeutronClientException) and
+                     e.status_code in (500, 504)))
     def _update_port_binding_for_instance(
             self, context, instance, host, migration=None,
             provider_mappings=None):

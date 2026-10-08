@@ -8587,6 +8587,95 @@ class TestAPIPortbinding(TestAPIBase):
                                               migration,
                                               {})
 
+    def _test_migrate_instance_finish_retry(self, list_ports_return,
+                                            update_port_side_effect,
+                                            expected_exc,
+                                            update_port_call_count,
+                                            list_ports_call_count=1):
+        """Shared helper for the migrate_instance_finish retry tests.
+
+        The retry loop re-fetches the ports via list_ports on each attempt so
+        list_ports_return is either a static value or a side_effect list.
+        """
+        migration = objects.Migration(source_compute=self.instance.get('host'),
+                                      dest_compute='dest_host')
+        instance = self._fake_instance_object(self.instance)
+
+        mocked_client = mock.create_autospec(client.Client)
+        if isinstance(list_ports_return, dict):
+            mocked_client.list_ports.return_value = list_ports_return
+        else:
+            # A single Exception instance raises on every call; a list is a
+            # sequence of per-call side effects (e.g. an error followed by a
+            # successful re-fetch on retry).
+            mocked_client.list_ports.side_effect = list_ports_return
+        if update_port_side_effect is not None:
+            mocked_client.update_port.side_effect = update_port_side_effect
+        else:
+            mocked_client.update_port.return_value = None
+        with mock.patch.object(neutronapi, 'get_client',
+                return_value=mocked_client) as mock_get_client:
+            if expected_exc:
+                self.assertRaises(expected_exc,
+                                  self.api.migrate_instance_finish,
+                                  self.context, instance, migration, {})
+            else:
+                self.api.migrate_instance_finish(
+                    self.context, instance, migration, {})
+
+        mock_get_client.assert_called_with(mock.ANY, admin=True)
+        self.assertEqual(list_ports_call_count,
+                         mocked_client.list_ports.call_count)
+        self.assertEqual(update_port_call_count,
+                         mocked_client.update_port.call_count)
+
+    def test_migrate_instance_finish_internal_server_error_do_not_raise(
+            self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            [exceptions.NeutronClientException(status_code=500), None],
+            None, 2, list_ports_call_count=2)
+
+    def test_migrate_instance_finish_gateway_timeout_do_not_raise(self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            [exceptions.NeutronClientException(status_code=504), None],
+            None, 2, list_ports_call_count=2)
+
+    def test_migrate_instance_finish_service_unavailable_no_retry(self):
+        # 503 signals an overloaded service; retrying without backoff
+        # would hammer it, so it is deliberately not retried here.
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            exceptions.ServiceUnavailable(),
+            exceptions.ServiceUnavailable, 1,
+            list_ports_call_count=1)
+
+    def test_migrate_instance_finish_internal_server_error(self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            exceptions.NeutronClientException(status_code=500),
+            exceptions.NeutronClientException, 5,
+            list_ports_call_count=5)
+
+    def test_migrate_instance_finish_client_error_no_retry(self):
+        ports = {'ports': [{'id': 'test1'}]}
+        self._test_migrate_instance_finish_retry(
+            ports,
+            exceptions.NeutronClientException(status_code=400),
+            exceptions.NeutronClientException, 1)
+
+    def test_migrate_instance_finish_list_ports_500_do_not_raise(self):
+        self._test_migrate_instance_finish_retry(
+            [exceptions.NeutronClientException(status_code=500),
+             {'ports': [{'id': 'test1'}]}],
+            None,
+            None, 1, list_ports_call_count=2)
+
     def test_setup_instance_network_on_host_true(self):
         instance = self._fake_instance_object(self.instance)
         self._test_update_port_binding_true('fake_host',
