@@ -36,6 +36,7 @@ the `API guide <https://docs.openstack.org/api-guide/compute/index.html>`_.
 .. include:: flavors.inc
 .. include:: os-flavor-access.inc
 .. include:: os-flavor-extra-specs.inc
+.. include:: os-flavor-permission-rules.inc
 .. include:: os-keypairs.inc
 .. include:: limits.inc
 .. include:: os-aggregates.inc

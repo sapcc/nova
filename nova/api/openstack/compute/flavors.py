@@ -26,8 +26,10 @@ from nova.compute import flavors
 from nova import exception
 from nova.i18n import _
 from nova import objects
+from nova.objects import fields
 from nova.policies import flavor_extra_specs as fes_policies
 from nova.policies import flavor_manage as fm_policies
+from nova.policies import flavor_permission_rules as fpr_policies
 from nova import utils
 
 
@@ -137,9 +139,10 @@ class FlavorsController(wsgi.Controller):
         return self._view_builder.show(req, flavor, include_description=True,
                                        include_extra_specs=include_extra_specs)
 
-    @wsgi.expected_errors(400)
+    @wsgi.expected_errors((400, 403))
     @validation.query_schema(schema.index_query, '2.0', '2.74')
-    @validation.query_schema(schema.index_query_275, '2.75')
+    @validation.query_schema(schema.index_query_275, '2.75', '2.99')
+    @validation.query_schema(schema.index_query_v2100, '2.100')
     @validation.response_body_schema(schema.index_response, '2.0', '2.54')
     @validation.response_body_schema(schema.index_response_v255, '2.55')
     def index(self, req):
@@ -147,12 +150,14 @@ class FlavorsController(wsgi.Controller):
         limited_flavors = self._get_flavors(req)
         return self._view_builder.index(req, limited_flavors)
 
-    @wsgi.expected_errors(400)
+    @wsgi.expected_errors((400, 403))
     @validation.query_schema(schema.index_query, '2.0', '2.74')
-    @validation.query_schema(schema.index_query_275, '2.75')
+    @validation.query_schema(schema.index_query_275, '2.75', '2.99')
+    @validation.query_schema(schema.index_query_v2100, '2.100')
     @validation.response_body_schema(schema.detail_response, '2.0', '2.54')
     @validation.response_body_schema(schema.detail_response_v255, '2.55', '2.60')  # noqa: E501
-    @validation.response_body_schema(schema.detail_response_v261, '2.61')
+    @validation.response_body_schema(schema.detail_response_v261, '2.61', '2.99')  # noqa: E501
+    @validation.response_body_schema(schema.detail_response_v2100, '2.100')
     def detail(self, req):
         """Return all flavors in detail."""
         context = req.environ['nova.context']
@@ -162,20 +167,50 @@ class FlavorsController(wsgi.Controller):
                 req, flavors_view.FLAVOR_EXTRA_SPECS_MICROVERSION):
             include_extra_specs = context.can(
                 fes_policies.POLICY_ROOT % 'index', fatal=False)
+        include_domain = False
+        include_project = False
+        if api_version_request.is_supported(
+                req, flavors_view.FLAVOR_PERMISSION_RULES_MICROVERSION):
+            include_domain = context.can(
+                fpr_policies.POLICY_ROOT % 'index:domain', fatal=False)
+            include_project = include_domain or context.can(
+                fpr_policies.POLICY_ROOT % 'index:project', fatal=False)
+        flavor_permissions = None
+        if include_domain or include_project:
+            flavor_permissions = limited_flavors.get_permissions(
+                include_domain=include_domain,
+                include_project=include_project)
         return self._view_builder.detail(
-            req, limited_flavors, include_extra_specs=include_extra_specs)
+            req, limited_flavors, include_extra_specs=include_extra_specs,
+            flavor_permissions=flavor_permissions)
 
     @wsgi.expected_errors(404)
     @validation.query_schema(schema.show_query)
     @validation.response_body_schema(schema.show_response, '2.0', '2.54')
     @validation.response_body_schema(schema.show_response_v255, '2.55', '2.60')
     @validation.response_body_schema(schema.show_response_v261, '2.61', '2.74')
-    @validation.response_body_schema(schema.show_response_v275, '2.75')
+    @validation.response_body_schema(schema.show_response_v275, '2.75', '2.99')
+    @validation.response_body_schema(schema.show_response_v2100, '2.100')
     def show(self, req, id):
         """Return data about the given flavor id."""
         context = req.environ['nova.context']
+        include_domain = False
+        include_project = False
+        if api_version_request.is_supported(
+                req, flavors_view.FLAVOR_PERMISSION_RULES_MICROVERSION):
+            include_domain = context.can(
+                fpr_policies.POLICY_ROOT % 'index:domain', fatal=False)
+            include_project = include_domain or context.can(
+                fpr_policies.POLICY_ROOT % 'index:project', fatal=False)
         try:
-            flavor = flavors.get_flavor_by_flavor_id(id, ctxt=context)
+            flavor = flavors.get_flavor_by_flavor_id(
+                id, ctxt=context,
+                domain_permission=(
+                    None if include_domain
+                    else fields.FlavorPermissionRuleEffect.ALLOW),
+                project_permission=(
+                    None if include_project
+                    else fields.FlavorPermissionRuleEffect.ALLOW))
         except exception.FlavorNotFound as e:
             raise webob.exc.HTTPNotFound(explanation=e.format_message())
 
@@ -186,9 +221,15 @@ class FlavorsController(wsgi.Controller):
                 fes_policies.POLICY_ROOT % 'index', fatal=False)
         include_description = api_version_request.is_supported(
             req, flavors_view.FLAVOR_DESCRIPTION_MICROVERSION)
+        flavor_permission = None
+        if include_domain or include_project:
+            flavor_permission = flavor.get_permission(
+                include_domain=include_domain,
+                include_project=include_project)
         return self._view_builder.show(
             req, flavor, include_description=include_description,
-            include_extra_specs=include_extra_specs)
+            include_extra_specs=include_extra_specs,
+            flavor_permission=flavor_permission)
 
     def _parse_is_public(self, is_public):
         """Parse is_public into something usable."""
@@ -236,10 +277,49 @@ class FlavorsController(wsgi.Controller):
                        req.params['minDisk'])
                 raise webob.exc.HTTPBadRequest(explanation=msg)
 
+        if api_version_request.is_supported(
+                req, flavors_view.FLAVOR_PERMISSION_RULES_MICROVERSION):
+            can_filter_domain = context.can(
+                fpr_policies.POLICY_ROOT % 'index:domain', fatal=False)
+            domain_permission = req.params.get('domain_permission')
+            if domain_permission and not can_filter_domain:
+                raise webob.exc.HTTPForbidden(
+                    explanation="Policy doesn't allow filtering by "
+                                "domain_permission.")
+
+            can_filter_project = can_filter_domain or context.can(
+                fpr_policies.POLICY_ROOT % 'index:project', fatal=False)
+            project_permission = req.params.get('project_permission')
+            if project_permission and not can_filter_project:
+                raise webob.exc.HTTPForbidden(
+                    explanation="Policy doesn't allow filtering by "
+                                "project_permission.")
+
+            # Force permission filtering for admin users when explicitly
+            # requested
+            force_permission_filter = bool(domain_permission or
+                                           project_permission)
+            # Map 'all' to None and default to enforcing permission rules.
+            domain_permission = (
+                None if domain_permission == 'all'
+                else domain_permission or
+                fields.FlavorPermissionRuleEffect.ALLOW)
+            project_permission = (
+                None if project_permission == 'all'
+                else project_permission or
+                fields.FlavorPermissionRuleEffect.ALLOW)
+        else:
+            domain_permission = fields.FlavorPermissionRuleEffect.ALLOW
+            project_permission = fields.FlavorPermissionRuleEffect.ALLOW
+            force_permission_filter = False
+
         try:
             limited_flavors = objects.FlavorList.get_all(
                 context, filters=filters, sort_key=sort_key, sort_dir=sort_dir,
-                limit=limit, marker=marker)
+                limit=limit, marker=marker,
+                domain_permission=domain_permission,
+                project_permission=project_permission,
+                force_permission_filter=force_permission_filter)
         except exception.MarkerNotFound:
             msg = _('marker [%s] not found') % marker
             raise webob.exc.HTTPBadRequest(explanation=msg)

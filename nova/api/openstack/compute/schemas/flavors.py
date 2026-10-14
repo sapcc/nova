@@ -15,6 +15,7 @@
 import copy
 
 from nova.api.validation import parameter_types
+from nova.objects.fields import FlavorPermissionRuleEffect
 
 # NOTE(takashin): The following sort keys are defined for backward
 # compatibility. If they are changed, the API microversion should be bumped.
@@ -25,6 +26,8 @@ VALID_SORT_KEYS = [
 ]
 
 VALID_SORT_DIR = ['asc', 'desc']
+
+VALID_PERMISSION_VALUES = [*FlavorPermissionRuleEffect.ALL, 'all']
 
 create = {
     'type': 'object',
@@ -127,7 +130,7 @@ index_query = {
         'sort_key': parameter_types.multi_params({'type': 'string',
                                                   'enum': VALID_SORT_KEYS}),
         'sort_dir': parameter_types.multi_params({'type': 'string',
-                                                  'enum': VALID_SORT_DIR})
+                                                  'enum': VALID_SORT_DIR}),
     },
     # NOTE(gmann): This is kept True to keep backward compatibility.
     # As of now Schema validation stripped out the additional parameters and
@@ -138,6 +141,14 @@ index_query = {
 
 index_query_275 = copy.deepcopy(index_query)
 index_query_275['additionalProperties'] = False
+
+index_query_v2100 = copy.deepcopy(index_query_275)
+index_query_v2100['properties']['domain_permission'] = (
+    parameter_types.multi_params(
+        {'type': 'string', 'enum': VALID_PERMISSION_VALUES}))
+index_query_v2100['properties']['project_permission'] = (
+    parameter_types.multi_params(
+        {'type': 'string', 'enum': VALID_PERMISSION_VALUES}))
 
 # TODO(stephenfin): Remove additionalProperties in a future API version
 show_query = {
@@ -235,6 +246,16 @@ _flavor_v275 = copy.deepcopy(_flavor_v261)
 # we completely overwrite this since the new variant is much simpler
 _flavor_v275['properties']['swap'] = {'type': 'integer'}
 
+_flavor_v2100 = copy.deepcopy(_flavor_v275)
+_flavor_v2100['properties']['permissions'] = {
+    'type': 'object',
+    'properties': {
+        'domain': {'type': 'string', 'enum': ['allow', 'deny']},
+        'project': {'type': 'string', 'enum': ['allow', 'deny']},
+    },
+    'additionalProperties': False,
+}
+
 _flavors_links = {
     'type': 'array',
     'items': {
@@ -325,6 +346,9 @@ detail_response_v261['properties']['flavors']['items'] = _flavor_v261
 detail_response_v275 = copy.deepcopy(detail_response_v261)
 detail_response_v275['properties']['flavors']['items'] = _flavor_v275
 
+detail_response_v2100 = copy.deepcopy(detail_response_v275)
+detail_response_v2100['properties']['flavors']['items'] = _flavor_v2100
+
 show_response = {
     'type': 'object',
     'properties': {
@@ -342,3 +366,6 @@ show_response_v261['properties']['flavor'] = copy.deepcopy(_flavor_v261)
 
 show_response_v275 = copy.deepcopy(show_response_v261)
 show_response_v275['properties']['flavor'] = copy.deepcopy(_flavor_v275)
+
+show_response_v2100 = copy.deepcopy(show_response_v275)
+show_response_v2100['properties']['flavor'] = copy.deepcopy(_flavor_v2100)
