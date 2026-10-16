@@ -1997,6 +1997,34 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_rename.assert_called_once()
         mock_power_on.assert_called_once()
 
+    def test_finish_revert_removes_destination_added_sysmeta_keys(self):
+        # An absent journal entry (the CROSS_HV_JOURNAL_ABSENT sentinel)
+        # means the key was absent pre-resize (added on the destination);
+        # revert must delete it.
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        mig_ctx.old_image_properties = {
+            'image_hw_serial_port_count':
+                compute_utils.CROSS_HV_JOURNAL_ABSENT,
+        }
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true',
+            'image_hw_serial_port_count': '1',
+        }
+
+        # Match the compute manager revert site restore call.
+        changed = compute_utils.restore_image_props_from_cross_hv_journal(
+            sysmeta=self._instance.system_metadata,
+            old_image_properties=mig_ctx.old_image_properties)
+
+        self.assertTrue(changed)
+        self.assertNotIn('image_hw_serial_port_count',
+                         self._instance.system_metadata)
+        self.assertEqual('true',
+                         self._instance.system_metadata['cross_hv_resize'])
+
     def test_sanitize_removes_vmware_adaptertype_legacy_mapping(self):
         # After source prep removes the raw legacy alias,
         # boot-from-sysmeta (as on a post-resize reboot) reconstructs an
