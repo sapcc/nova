@@ -317,6 +317,21 @@ CROSS_HV_SANITIZE_PROPS = (
     ('img_hv_requested_version', None),
 )
 
+# Raw legacy image_* system_metadata keys that ImageMetaProps
+# maps back into modern fields on any KVM lifecycle action
+# (reboot/rebuild). They bypass CROSS_HV_SANITIZE_PROPS because
+# they are not ImageMetaProps fields on the reqspec side.
+CROSS_HV_SANITIZE_SYSMETA_LEGACY_KEYS = (
+    'image_vmware_adaptertype',
+    'image_hypervisor_type',
+    'image_hypervisor_version_requires',
+)
+
+# Sentinel journal value recording that a journaled key was absent
+# pre-resize (destination-added); the restore deletes such keys on
+# revert. Follows the ComputeManager BDM-journal __NONE__ precedent.
+CROSS_HV_JOURNAL_ABSENT = '__NONE__'
+
 
 def is_supported_cross_hypervisor_resize(source_hypervisor_type,
                                          dest_hypervisor_type):
@@ -331,19 +346,29 @@ def is_supported_cross_hypervisor_resize(source_hypervisor_type,
             extra_specs_ops.match('CH', dest_hypervisor_type))
 
 
-def sanitize_image_props_for_kvm(request_spec):
+def sanitize_image_props_for_kvm(request_spec, flavor=None):
     """Sanitize VMware-specific image properties for KVM/CH scheduling.
 
     Mutates request_spec.image.properties in place to remove or replace
     VMware-pinning values so the scheduler can select KVM/CH hosts.
 
+    It also applies guest-specific mutations: Windows guests get
+    hw_serial_port_count=1 and os_type normalized to 'windows';
+    non-Windows guests get hw_vif_multiqueue_enabled=True when absent
+    (skipped when the flavor pins hw:vif_multiqueue_enabled, to avoid
+    FlavorImageConflict at spawn).
+
     Returns a dict of original values that were overwritten or removed,
     suitable for storage in MigrationContext.old_image_properties as a
-    rollback journal.
+    rollback journal. The CROSS_HV_JOURNAL_ABSENT sentinel records that
+    the key was absent pre-resize; the restore deletes such keys on
+    revert.
 
     Precondition: only valid for VMware-to-KVM/CH cross-hypervisor resize.
 
     :param request_spec: nova.objects.RequestSpec to sanitize in place
+    :param flavor: nova.objects.Flavor of the resize destination, used
+                   for the multiqueue flavor guard; may be None
     :returns: dict of {field_name: original_value} for rollback, or
               empty dict if nothing was changed
     """
@@ -367,6 +392,48 @@ def sanitize_image_props_for_kvm(request_spec):
         else:
             setattr(props, field, replacement)
 
+    # Guest-specific mutations, journaled for revert. Journal value
+    # convention (must match restore_image_props_from_cross_hv_journal):
+    # CROSS_HV_JOURNAL_ABSENT = key was absent pre-resize (delete on
+    # revert); any other string = original value (re-set on revert).
+    os_type = (props.os_type if props.obj_attr_is_set('os_type')
+               else None)
+    os_distro = (props.os_distro if props.obj_attr_is_set('os_distro')
+                 else None)
+    if (os_type is not None and os_type.lower() == 'windows'):
+        is_windows = True
+    elif (os_distro is not None and
+            os_distro.lower().startswith('win')):
+        is_windows = True
+    else:
+        is_windows = False
+
+    if is_windows:
+        if not props.obj_attr_is_set('hw_serial_port_count'):
+            old['hw_serial_port_count'] = CROSS_HV_JOURNAL_ABSENT
+        else:
+            old['hw_serial_port_count'] = str(
+                props.hw_serial_port_count)
+        props.hw_serial_port_count = 1
+        if not props.obj_attr_is_set('os_type'):
+            old['os_type'] = CROSS_HV_JOURNAL_ABSENT
+        else:
+            old['os_type'] = props.os_type
+        props.os_type = 'windows'
+    else:
+        flavor_pins_multiqueue = (
+            flavor is not None and
+            flavor.obj_attr_is_set('extra_specs') and
+            flavor.extra_specs.get('hw:vif_multiqueue_enabled'))
+        if not flavor_pins_multiqueue:
+            if not props.obj_attr_is_set('hw_vif_multiqueue_enabled'):
+                old['hw_vif_multiqueue_enabled'] = CROSS_HV_JOURNAL_ABSENT
+                props.hw_vif_multiqueue_enabled = True
+            elif not props.hw_vif_multiqueue_enabled:
+                old['hw_vif_multiqueue_enabled'] = str(
+                    props.hw_vif_multiqueue_enabled).lower()
+                props.hw_vif_multiqueue_enabled = True
+
     # Force change tracking: OVO delattr does not propagate changes up
     # to the parent RequestSpec. Without this, request_spec.save() may
     # skip persisting the mutations when only deletions occurred.
@@ -379,6 +446,11 @@ def sanitize_image_props_for_kvm(request_spec):
 def restore_image_props_from_cross_hv_journal(request_spec=None, sysmeta=None,
                                              old_image_properties=None):
     """Restore image properties from MigrationContext.old_image_properties.
+
+    Journal entries with the CROSS_HV_JOURNAL_ABSENT sentinel mean the
+    key was absent pre-resize (destination-added); they are deleted
+    rather than re-set. Other string values are the original values;
+    field coerce() handles round-tripping them into typed reqspec props.
     """
     if not old_image_properties:
         return False
@@ -395,12 +467,22 @@ def restore_image_props_from_cross_hv_journal(request_spec=None, sysmeta=None,
         if field.startswith('image_'):
             if sysmeta is None:
                 continue
+            if value == CROSS_HV_JOURNAL_ABSENT:
+                if field in sysmeta:
+                    sysmeta.pop(field, None)
+                    changed = True
+                continue
             if sysmeta.get(field) != value:
                 sysmeta[field] = value
                 changed = True
             continue
 
         if props is None:
+            continue
+        if value == CROSS_HV_JOURNAL_ABSENT:
+            if props.obj_attr_is_set(field):
+                delattr(props, field)
+                changed = True
             continue
         if (not props.obj_attr_is_set(field) or
                 getattr(props, field) != value):

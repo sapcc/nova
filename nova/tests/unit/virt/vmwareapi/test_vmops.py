@@ -27,6 +27,7 @@ from oslo_vmware import vim_util as vutil
 
 from nova.compute import power_state
 import nova.conf
+from nova.compute import utils as compute_utils
 from nova import context
 from nova import exception
 from nova.network import model as network_model
@@ -1610,6 +1611,10 @@ class VMwareVMOpsTestCase(test.TestCase):
             'image_hw_scsi_model': 'lsilogic',
             'image_hw_vif_model': 'vmxnet3',
             'image_hw_video_model': 'vmvga',
+            # Raw legacy aliases must also be removed.
+            'image_vmware_adaptertype': 'paraVirtual',
+            'image_hypervisor_type': 'vmware',
+            'image_hypervisor_version_requires': '>=6.0',
         }
         self._instance.save = mock.Mock()
 
@@ -1631,6 +1636,23 @@ class VMwareVMOpsTestCase(test.TestCase):
         self.assertEqual('virtio', sys_meta['image_hw_video_model'])
         self.assertEqual('true', sys_meta['cross_hv_resize'])
         self.assertEqual('true', sys_meta['cross_hv_source_prepared'])
+        # Legacy keys removed from system_metadata
+        self.assertNotIn('image_vmware_adaptertype', sys_meta)
+        self.assertNotIn('image_hypervisor_type', sys_meta)
+        self.assertNotIn('image_hypervisor_version_requires', sys_meta)
+        # journal merges the raw legacy originals into the existing
+        # MigrationContext.old_image_properties
+        self.assertEqual({
+            'img_hv_type': 'vmware',
+            'image_img_hv_type': 'vmware',
+            'image_hw_disk_bus': 'scsi',
+            'image_hw_scsi_model': 'lsilogic',
+            'image_hw_vif_model': 'vmxnet3',
+            'image_hw_video_model': 'vmvga',
+            'image_vmware_adaptertype': 'paraVirtual',
+            'image_hypervisor_type': 'vmware',
+            'image_hypervisor_version_requires': '>=6.0',
+        }, mig_ctx.old_image_properties)
         # Operations called
         mock_detach.assert_called_once_with(
             self._instance, mock.sentinel.bdi)
@@ -1640,6 +1662,34 @@ class VMwareVMOpsTestCase(test.TestCase):
             self._context, self._instance, 'source-ref',
             uuid=migration.uuid)
         self._instance.save.assert_called()
+
+    def test_sanitize_system_metadata_legacy_keys_idempotent(self):
+        instance = fake_instance.fake_instance_obj(
+            self._context, uuid=uuids.instance,
+            expected_attrs=['system_metadata'])
+        instance.system_metadata = {
+            'image_vmware_adaptertype': 'paraVirtual',
+            'image_hypervisor_type': 'vmware',
+            'image_hypervisor_version_requires': '>=6.0',
+            'image_os_distro': 'ubuntu',
+        }
+
+        originals = self._vmops._sanitize_system_metadata_for_kvm(instance)
+        self.assertEqual({
+            'image_vmware_adaptertype': 'paraVirtual',
+            'image_hypervisor_type': 'vmware',
+            'image_hypervisor_version_requires': '>=6.0',
+        }, originals)
+        self.assertEqual({'image_os_distro': 'ubuntu'},
+                         instance.system_metadata)
+
+        # Re-attempt (after a migration failure/retry): the legacy keys are
+        # already gone, so nothing is journaled again and no KeyError.
+        originals_again = self._vmops._sanitize_system_metadata_for_kvm(
+            instance)
+        self.assertEqual({}, originals_again)
+        self.assertEqual({'image_os_distro': 'ubuntu'},
+                         instance.system_metadata)
 
     @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
                        return_value='existing-shell')
@@ -1899,6 +1949,11 @@ class VMwareVMOpsTestCase(test.TestCase):
         mig_ctx.old_image_properties = {
             'image_img_hv_type': 'vmware',
             'image_hw_disk_bus': 'scsi',
+            # Raw legacy aliases journaled at source prep must be
+            # restored on revert.
+            'image_vmware_adaptertype': 'paraVirtual',
+            'image_hypervisor_type': 'vmware',
+            'image_hypervisor_version_requires': '>=6.0',
         }
         self._instance.migration_context = mig_ctx
         self._instance.system_metadata = {
@@ -1906,6 +1961,24 @@ class VMwareVMOpsTestCase(test.TestCase):
             'cross_hv_source_prepared': 'true',
             'image_hw_disk_bus': 'virtio',
         }
+        # Match the compute manager revert site: the journal is restored into
+        # instance.system_metadata before the driver is invoked.
+        restored = compute_utils.restore_image_props_from_cross_hv_journal(
+            sysmeta=self._instance.system_metadata,
+            old_image_properties=mig_ctx.old_image_properties)
+        self.assertTrue(restored)
+        self.assertEqual('scsi',
+                         self._instance.system_metadata['image_hw_disk_bus'])
+        self.assertEqual(
+            'paraVirtual',
+            self._instance.system_metadata['image_vmware_adaptertype'])
+        self.assertEqual(
+            'vmware',
+            self._instance.system_metadata['image_hypervisor_type'])
+        self.assertEqual(
+            '>=6.0',
+            self._instance.system_metadata[
+                'image_hypervisor_version_requires'])
         self._instance.save = mock.Mock()
         mock_net_spec.return_value = mock.MagicMock()
         vi_mock = mock.MagicMock()
@@ -1923,6 +1996,71 @@ class VMwareVMOpsTestCase(test.TestCase):
         mock_attach.assert_called_once()
         mock_rename.assert_called_once()
         mock_power_on.assert_called_once()
+
+    def test_finish_revert_removes_destination_added_sysmeta_keys(self):
+        # An absent journal entry (the CROSS_HV_JOURNAL_ABSENT sentinel)
+        # means the key was absent pre-resize (added on the destination);
+        # revert must delete it.
+        mig_ctx = objects.MigrationContext(
+            instance_uuid=self._instance.uuid, migration_id=101)
+        mig_ctx.old_image_properties = {
+            'image_hw_serial_port_count':
+                compute_utils.CROSS_HV_JOURNAL_ABSENT,
+        }
+        self._instance.migration_context = mig_ctx
+        self._instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'cross_hv_source_prepared': 'true',
+            'image_hw_serial_port_count': '1',
+        }
+
+        # Match the compute manager revert site restore call.
+        changed = compute_utils.restore_image_props_from_cross_hv_journal(
+            sysmeta=self._instance.system_metadata,
+            old_image_properties=mig_ctx.old_image_properties)
+
+        self.assertTrue(changed)
+        self.assertNotIn('image_hw_serial_port_count',
+                         self._instance.system_metadata)
+        self.assertEqual('true',
+                         self._instance.system_metadata['cross_hv_resize'])
+
+    def test_sanitize_removes_vmware_adaptertype_legacy_mapping(self):
+        # After source prep removes the raw legacy alias,
+        # boot-from-sysmeta (as on a post-resize reboot) reconstructs an
+        # ImageMeta with no hw_scsi_model/hw_disk_bus, so libvirt cannot
+        # emit the vmpvscsi SCSI controller that Cloud Hypervisor rejects.
+        instance = fake_instance.fake_instance_obj(
+            self._context, uuid=uuids.instance,
+            expected_attrs=['system_metadata'])
+        instance.system_metadata = {
+            'image_vmware_adaptertype': 'paraVirtual',
+            'image_os_distro': 'windows-2019',
+        }
+
+        originals = self._vmops._sanitize_system_metadata_for_kvm(instance)
+        self.assertEqual({'image_vmware_adaptertype': 'paraVirtual'},
+                         originals)
+        self.assertEqual({'image_os_distro': 'windows-2019'},
+                         instance.system_metadata)
+
+        props = utils.get_image_from_system_metadata(
+            instance.system_metadata)
+        image_meta = objects.ImageMeta.from_dict(props)
+        self.assertFalse(
+            image_meta.properties.obj_attr_is_set('hw_scsi_model'))
+        self.assertFalse(
+            image_meta.properties.obj_attr_is_set('hw_disk_bus'))
+
+    def test_legacy_vmware_adaptertype_maps_back_to_scsi_model(self):
+        # Pre-fix chain: the raw alias left in system_metadata maps
+        # back into a scsi bus with a vmpvscsi controller on any KVM
+        # action, which is the pre-fix failure mode.
+        props = utils.get_image_from_system_metadata(
+            {'image_vmware_adaptertype': 'paraVirtual'})
+        image_meta = objects.ImageMeta.from_dict(props)
+        self.assertEqual('scsi', image_meta.properties.hw_disk_bus)
+        self.assertEqual('vmpvscsi', image_meta.properties.hw_scsi_model)
 
     @mock.patch.object(vm_util, 'search_vm_ref_by_identifier',
                        return_value=None)
