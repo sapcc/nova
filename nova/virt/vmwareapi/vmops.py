@@ -462,6 +462,16 @@ class VMwareVMOps(object):
                 else:
                     sys_meta[key] = replacement
 
+        # Raw legacy keys: ImageMetaProps maps these back into
+        # modern fields (hw_disk_bus/hw_scsi_model, img_hv_type,
+        # img_hv_requested_version) on any KVM lifecycle action, e.g. a
+        # post-resize hard reboot reconstructing hw_scsi_model=vmpvscsi,
+        # which Cloud Hypervisor rejects. Always remove, never replace:
+        # the journal records the raw value for revert.
+        for key in compute_utils.CROSS_HV_SANITIZE_SYSMETA_LEGACY_KEYS:
+            if key in sys_meta and sys_meta[key] is not None:
+                originals[key] = sys_meta.pop(key)
+
         return originals
 
     def _is_cross_hv_source_prepared(self, instance):

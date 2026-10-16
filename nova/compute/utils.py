@@ -317,6 +317,16 @@ CROSS_HV_SANITIZE_PROPS = (
     ('img_hv_requested_version', None),
 )
 
+# Raw legacy image_* system_metadata keys that ImageMetaProps
+# maps back into modern fields on any KVM lifecycle action
+# (reboot/rebuild). They bypass CROSS_HV_SANITIZE_PROPS because
+# they are not ImageMetaProps fields on the reqspec side.
+CROSS_HV_SANITIZE_SYSMETA_LEGACY_KEYS = (
+    'image_vmware_adaptertype',
+    'image_hypervisor_type',
+    'image_hypervisor_version_requires',
+)
+
 
 def is_supported_cross_hypervisor_resize(source_hypervisor_type,
                                          dest_hypervisor_type):
