@@ -7332,7 +7332,8 @@ class LibvirtDriver(driver.ComputeDriver):
         else:
             guest.os_boot_dev = blockinfo.get_boot_order(disk_info)
 
-    def _create_consoles(self, guest_cfg, instance, flavor, image_meta):
+    def _create_consoles(self, guest_cfg, instance, flavor, image_meta,
+                         rescue=False):
         # NOTE(markus_z): Beware! Below are so many conditionals that it is
         # easy to lose track. Use this chart to figure out your case:
         #
@@ -7353,15 +7354,16 @@ class LibvirtDriver(driver.ComputeDriver):
                 guest_cfg, vconfig.LibvirtConfigGuestConsole,
                 log_path=log_path)
         elif CONF.libvirt.virt_type == "ch":
-            self._create_consoles_ch(guest_cfg, instance, flavor, image_meta)
+            self._create_consoles_ch(
+                guest_cfg, instance, flavor, image_meta, rescue=rescue)
 
         else:  # qemu, kvm
             if self._is_s390x_guest(image_meta):
                 self._create_consoles_s390x(
-                    guest_cfg, instance, flavor, image_meta)
+                    guest_cfg, instance, flavor, image_meta, rescue=rescue)
             else:
                 self._create_consoles_qemu_kvm(
-                    guest_cfg, instance, flavor, image_meta)
+                    guest_cfg, instance, flavor, image_meta, rescue=rescue)
 
     def _is_mipsel_guest(self, image_meta: 'objects.ImageMeta') -> bool:
         archs = (fields.Architecture.MIPSEL, fields.Architecture.MIPS64EL)
@@ -7384,7 +7386,7 @@ class LibvirtDriver(driver.ComputeDriver):
         return self._check_emulation_arch(image_meta) in archs
 
     def _create_consoles_ch(self, guest_cfg, instance, flavor,
-                            image_meta):
+                            image_meta, rescue=False):
         """Create a serial device definition for a CH guest.
 
         If `CONF.serial_console` is enabled, the web serial console feature is
@@ -7396,7 +7398,7 @@ class LibvirtDriver(driver.ComputeDriver):
         char_dev_cls = vconfig.LibvirtConfigGuestSerial
         log_path = self._get_console_log_path(instance)
         if CONF.serial_console.enabled:
-            if not self._serial_ports_already_defined(instance):
+            if rescue or not self._serial_ports_already_defined(instance):
                 num_ports = hardware.get_number_of_serial_ports(flavor,
                                                                 image_meta)
                 self._check_number_of_serial_console(num_ports)
@@ -7407,11 +7409,11 @@ class LibvirtDriver(driver.ComputeDriver):
                                     log_path=log_path)
 
     def _create_consoles_qemu_kvm(self, guest_cfg, instance, flavor,
-                                  image_meta):
+                                  image_meta, rescue=False):
         char_dev_cls = vconfig.LibvirtConfigGuestSerial
         log_path = self._get_console_log_path(instance)
         if CONF.serial_console.enabled:
-            if not self._serial_ports_already_defined(instance):
+            if rescue or not self._serial_ports_already_defined(instance):
                 num_ports = hardware.get_number_of_serial_ports(flavor,
                                                                 image_meta)
                 self._check_number_of_serial_console(num_ports)
@@ -7421,11 +7423,12 @@ class LibvirtDriver(driver.ComputeDriver):
             self._create_pty_device(guest_cfg, char_dev_cls,
                                     log_path=log_path)
 
-    def _create_consoles_s390x(self, guest_cfg, instance, flavor, image_meta):
+    def _create_consoles_s390x(self, guest_cfg, instance, flavor, image_meta,
+                               rescue=False):
         char_dev_cls = vconfig.LibvirtConfigGuestConsole
         log_path = self._get_console_log_path(instance)
         if CONF.serial_console.enabled:
-            if not self._serial_ports_already_defined(instance):
+            if rescue or not self._serial_ports_already_defined(instance):
                 num_ports = hardware.get_number_of_serial_ports(flavor,
                                                                 image_meta)
                 self._create_serial_consoles(guest_cfg, num_ports,
@@ -7732,7 +7735,10 @@ class LibvirtDriver(driver.ComputeDriver):
             )
             guest.add_device(config)
 
-        self._create_consoles(guest, instance, flavor, image_meta)
+        # Rescue builds new XML before destroying the original domain, so its
+        # existing serial ports must not suppress console device creation.
+        self._create_consoles(
+            guest, instance, flavor, image_meta, rescue=bool(rescue))
 
         self._guest_add_spice_channel(guest)
 
