@@ -6427,6 +6427,53 @@ class LibvirtConnTestCase(test.NoDBTestCase,
             self.assertIsInstance(console_device, device_type)
             self.assertEqual("tcp", console_device.type)
 
+    @ddt.data(('ch', fields.Architecture.X86_64),
+              ('qemu', fields.Architecture.X86_64),
+              ('kvm', fields.Architecture.X86_64),
+              ('kvm', fields.Architecture.S390X))
+    @ddt.unpack
+    @mock.patch.object(host.Host, 'get_guest')
+    @mock.patch('nova.console.serial.acquire_port', return_value=11111)
+    def test_create_consoles_rescue_existing_serial(
+        self, virt_type, arch, mock_acquire_port, mock_get_guest,
+    ):
+        """Check rescue console creation across virt types and architectures.
+
+        Exercise console creation directly: an existing TCP device suppresses
+        creation outside rescue, but rescue must create a serial or console
+        device with a newly allocated port.
+        """
+        self.flags(virt_type=virt_type, group='libvirt')
+        self.flags(enabled=True, group='serial_console')
+        self.mock_uname.return_value = fakelibvirt.os_uname(
+            'Linux', '', '5.4.0-0-generic', '', arch)
+        device_type = ('console' if arch == fields.Architecture.S390X
+                       else 'serial')
+        mock_get_guest.return_value.get_xml_desc.return_value = (
+            "<domain><devices><%(device)s type='tcp'>"
+            "<source mode='bind' host='127.0.0.1' service='10000'/>"
+            "</%(device)s></devices></domain>" % {'device': device_type})
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+        instance = objects.Instance(**self.test_instance)
+        image_meta = objects.ImageMeta.from_dict(self.test_image_meta)
+
+        # Keep the existing-port guard for operations other than rescue.
+        cfg = vconfig.LibvirtConfigGuest()
+        drvr._create_consoles(cfg, instance, instance.flavor, image_meta)
+        self.assertEqual([], cfg.devices)
+        mock_acquire_port.assert_not_called()
+
+        cfg = vconfig.LibvirtConfigGuest()
+        drvr._create_consoles(
+            cfg, instance, instance.flavor, image_meta, rescue=True)
+        self.assertEqual(1, len(cfg.devices))
+        device = etree.fromstring(cfg.devices[0].to_xml())
+        self.assertEqual(device_type, device.tag)
+        self.assertEqual('tcp', device.get('type'))
+        self.assertEqual('11111', device.find('source').get('service'))
+        mock_acquire_port.assert_called_once_with(
+            CONF.serial_console.proxyclient_address)
+
     @mock.patch.object(host.Host, 'get_guest')
     @mock.patch.object(libvirt_driver.LibvirtDriver,
                        '_get_serial_ports_from_guest')
@@ -27076,6 +27123,31 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
         self.assertEqual(
             [uuids.mdev1],
             doc.xpath("devices/*[@type='mdev']/source/address/@uuid"))
+
+    @mock.patch.object(host.Host, 'get_guest')
+    @mock.patch('nova.console.serial.acquire_port', return_value=11111)
+    def test_rescue_with_existing_serial(self, mock_acquire, mock_get_guest):
+        """Check that rescue propagates its flag through XML generation.
+
+        Unlike the direct console creation test, this calls rescue() with
+        external operations mocked and checks the resulting domain XML.
+        It catches a missing rescue flag between guest configuration and
+        console creation even when the console helpers work correctly.
+        """
+        self.flags(enabled=True, group='serial_console')
+        mock_get_guest.return_value.get_xml_desc.return_value = (
+            "<domain><devices><serial type='tcp'>"
+            "<source mode='bind' host='127.0.0.1' service='10000'/>"
+            "</serial></devices></domain>")
+        instance = self._create_instance({'config_drive': None})
+        with mock.patch.object(self.drvr, '_destroy'):
+            backend, doc = self._test_rescue(instance)
+
+        sources = doc.xpath("devices/serial[@type='tcp']/source")
+        self.assertEqual(1, len(sources))
+        self.assertEqual('11111', sources[0].get('service'))
+        mock_acquire.assert_called_once_with(
+            CONF.serial_console.proxyclient_address)
 
     def test_rescue_with_different_hw_disk_bus(self):
         params = {'config_drive': None, 'root_device_name': '/dev/vda'}
