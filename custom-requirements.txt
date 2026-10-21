@@ -3,7 +3,7 @@ python-memcached
 pymemcache
 statsd  # MIT
 
--e git+https://github.com/sapcc/raven-python.git@ccloud#egg=raven
+-e git+https://github.com/sapcc/sentrylogger.git@main#egg=sapcc_sentrylogger
 -e git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
 -e git+https://github.com/sapcc/openstack-audit-middleware.git#egg=audit-middleware
 -e git+https://github.com/sapcc/python-agentliveness.git#egg=agentliveness
