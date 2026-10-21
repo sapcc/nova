@@ -1403,6 +1403,38 @@ class ResourceTracker(object):
             # compute service to start
             raise exception.PlacementPciException(error=str(e))
 
+        if CONF.compute.sync_placement_aggregates:
+            self._sync_placement_aggregates(context, compute_node, prov_tree)
+
+    def _sync_placement_aggregates(self, context, compute_node, prov_tree):
+        """Add the compute node's provider to its host's aggregates."""
+        rp_uuid = compute_node.uuid
+        try:
+            aggregates = objects.AggregateList.get_by_host(
+                context, compute_node.host)
+        except Exception as e:
+            LOG.warning("Failed to look up the aggregates of host %s to sync "
+                        "them to placement: %s", compute_node.host, e)
+            return
+
+        missing = ({agg.uuid for agg in aggregates} -
+                   prov_tree.data(rp_uuid).aggregates)
+        for agg_uuid in sorted(missing):
+            # Our cache might be outdated, but aggregate_add_host() fetches
+            # the provider's aggregates from placement and doesn't write if
+            # the aggregate is already set.
+            try:
+                self.reportclient.aggregate_add_host(
+                    context, agg_uuid, rp_uuid=rp_uuid)
+            except (exception.NovaException, ks_exc.ClientException) as e:
+                LOG.warning("Failed to add resource provider %s to "
+                            "aggregate %s in placement: %s",
+                            rp_uuid, agg_uuid, e)
+            else:
+                LOG.debug("Ensured resource provider %s is in aggregate %s "
+                          "of host %s in placement",
+                          rp_uuid, agg_uuid, compute_node.host)
+
     def _update(self, context, compute_node, startup=False):
         """Update partial stats locally and populate them to Scheduler."""
 
