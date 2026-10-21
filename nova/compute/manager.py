@@ -11755,6 +11755,9 @@ class ComputeManager(manager.Manager):
                             "Failed to delete compute node resource provider "
                             "for compute node %s: %s", cn.uuid, str(e))
 
+        if 'ironic' in CONF.compute_driver.lower():
+            self.rt.refresh_host_aggregates(context)
+
         for nodename in nodenames:
             self._update_available_resource_for_node(context, nodename,
                                                      startup=startup)
