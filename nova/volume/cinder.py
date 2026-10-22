@@ -123,6 +123,13 @@ def _get_server_version(context, url):
     _load_session()
     auth = _get_auth(context)
 
+    retriable_exceptions = (keystone_exception.ConnectionError,
+        keystone_exception.RequestTimeout,
+        keystone_exception.GatewayTimeout,
+        keystone_exception.ServiceUnavailable,
+        keystone_exception.BadGateway,
+        keystone_exception.InternalServerError)
+
     try:
         u = urllib.parse.urlparse(url)
         version_url = None
@@ -146,7 +153,17 @@ def _get_server_version(context, url):
             # leave as is without cropping.
             version_url = url
 
-        response = _SESSION.get(version_url, auth=auth)
+        # Since we're not using a cinderclient here, we need to manually add
+        # some retries if configured.
+        retry = retrying.Retrying(
+            # need to plus 1 here, because the config contains only the retries
+            stop_max_attempt_number=CONF.cinder.http_retries + 1,
+            retry_on_exception=lambda e: isinstance(e, retriable_exceptions),
+            # this is what cinderclient aka keystoneauth would use by default
+            wait_exponential_multiplier=500,
+            wait_exponential_max=60000)
+        response = retry.call(_SESSION.get, version_url, auth=auth)
+
         data = jsonutils.loads(response.text)
         versions = data['versions']
         for version in versions:
@@ -157,6 +174,10 @@ def _get_server_version(context, url):
     except cinder_exception.ClientException as e:
         LOG.warning("Error in server version query:%s\n"
                     "Returning APIVersion 2.0", str(e.message))
+    except retriable_exceptions as e:
+        LOG.warning("Error in server version query even after %d retries: %s"
+                    " - Returning APIVersion 2.0", CONF.cinder.http_retries,
+                    str(e.message))
     return (cinder_api_versions.APIVersion(min_version),
             cinder_api_versions.APIVersion(current_version))
 
