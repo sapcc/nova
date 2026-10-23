@@ -27,6 +27,7 @@ from eventlet import timeout as eventlet_timeout
 from keystoneauth1 import exceptions as keystone_exception
 import netaddr
 from openstack import exceptions as sdk_exc
+from oslo_db import exception as db_exc
 from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
@@ -828,6 +829,22 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
         self.assertRaises(exception.InvalidVolume,
             self.compute.reserve_block_device_name,
                 self.context, instance, None, "myinstanceuuid",
+                None, None, 'foo', False)
+
+    @mock.patch.object(compute_utils, 'add_instance_fault_from_exc',
+                       new=mock.Mock())
+    @mock.patch.object(objects.BlockDeviceMapping, 'create')
+    @mock.patch.object(objects.BlockDeviceMappingList, 'get_by_instance_uuid')
+    def test_reserve_block_device_name_raises_on_duplicate_db(self, mock_get,
+                                                              mock_create):
+        instance = fake_instance.fake_instance_obj(self.context)
+
+        mock_get.return_value = objects.BlockDeviceMappingList(objects=[])
+        mock_create.side_effect = db_exc.DBDuplicateEntry
+
+        self.assertRaises(exception.InvalidVolume,
+            self.compute.reserve_block_device_name,
+                self.context, instance, None, uuids.volume_id,
                 None, None, 'foo', False)
 
     @mock.patch.object(objects.Instance, 'save')

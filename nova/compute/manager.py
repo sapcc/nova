@@ -49,6 +49,7 @@ from keystoneauth1 import exceptions as keystone_exception
 from openstack import exceptions as sdk_exc
 import os_traits
 from oslo_concurrency import lockutils
+from oslo_db import exception as db_exc
 from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
@@ -8305,7 +8306,11 @@ class ComputeManager(manager.Manager):
                     instance, bdms, new_bdm)
 
             # NOTE(vish): create bdm here to avoid race condition
-            new_bdm.create()
+            try:
+                new_bdm.create()
+            except db_exc.DBDuplicateEntry:
+                msg = _("volume %s already attached in parallel") % volume_id
+                raise exception.InvalidVolume(reason=msg)
             return new_bdm
 
         return do_reserve()

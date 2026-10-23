@@ -694,6 +694,8 @@ class BlockDeviceMapping(BASE, NovaBase, models.SoftDeleteMixin):
               'instance_uuid', 'volume_id'),
         sa.Index('block_device_mapping_instance_uuid_idx', 'instance_uuid'),
         schema.UniqueConstraint('uuid', name='uniq_block_device_mapping0uuid'),
+        schema.UniqueConstraint('instance_uuid', 'volume_id', 'deleted',
+            name='uniq_block_device_mapping0instance_uuid0volume_id0deleted'),
     )
     id = sa.Column(sa.Integer, primary_key=True, autoincrement=True)
 

@@ -21,6 +21,7 @@ import ddt
 import fixtures
 import iso8601
 import os_traits as ot
+from oslo_db import exception as db_exc
 from oslo_limit import exception as limit_exceptions
 from oslo_messaging import exceptions as oslo_exceptions
 from oslo_serialization import jsonutils
@@ -485,6 +486,15 @@ class _ComputeAPIUnitTestMixIn(object):
         self.assertIsNone(result.device_name)
         self.assertEqual(result.volume_id, bdm.volume_id)
         self.assertTrue(bdm_create.called)
+
+    @mock.patch.object(objects.BlockDeviceMapping, 'create')
+    def test_create_volume_bdm_local_creation_duplicate(self, bdm_create):
+        instance = self._create_instance_obj()
+        bdm_create.side_effect = db_exc.DBDuplicateEntry
+        self.assertRaises(exception.InvalidVolume,
+            self.compute_api._create_volume_bdm, self.context, instance,
+            '/dev/vda', {'id': 'fake-vol-id'}, None, None,
+            is_local_creation=True)
 
     @mock.patch.object(compute_api.API, '_record_action_start')
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'reserve_block_device_name')

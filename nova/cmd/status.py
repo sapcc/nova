@@ -23,6 +23,7 @@ import traceback
 from keystoneauth1 import exceptions as ks_exc
 import microversion_parse
 from oslo_config import cfg
+from oslo_db import exception as db_exc
 from oslo_upgradecheck import common_checks
 from oslo_upgradecheck import upgradecheck
 import sqlalchemy as sa
@@ -280,6 +281,34 @@ https://docs.openstack.org/nova/latest/admin/configuration/service-user-token.ht
             return upgradecheck.Result(upgradecheck.Code.FAILURE, msg)
         return upgradecheck.Result(upgradecheck.Code.SUCCESS)
 
+    def _check_multiple_not_deleted_bdms(self):
+        admin_ctxt = nova_context.get_admin_context()
+
+        try:
+            cells = self._get_cell_mappings()
+        except db_exc.DBError:
+            msg = _('Unable to get cell list from API DB. Is it configured?')
+            return upgradecheck.Result(upgradecheck.Code.FAILURE, msg)
+
+        msg = (_("""
+There are multiple, not deleted block_device_mapping entries for the same
+(instance_uuid, volume_id) pair.  This will prohibit adding a unique
+constraint. Please clean them up."""))
+        error = False
+        for cell in cells:
+            identity = _('Cell %s') % cell.identity
+            with nova_context.target_cell(admin_ctxt, cell) as cctxt:
+                duplicates = \
+                    len(main_db_api.block_device_mapping_get_duplicates(cctxt))
+                if duplicates:
+                    msg += f"\n{identity}: {duplicates}"
+                    error = True
+
+        if error:
+            return upgradecheck.Result(upgradecheck.Code.FAILURE, msg)
+
+        return upgradecheck.Result(upgradecheck.Code.SUCCESS)
+
     # The format of the check functions is to return an upgradecheck.Result
     # object with the appropriate upgradecheck.Code and details set. If the
     # check hits warnings or failures then those should be stored in the
@@ -305,6 +334,8 @@ https://docs.openstack.org/nova/latest/admin/configuration/service-user-token.ht
         (_('hw_machine_type unset'), _check_machine_type_set),
         # Added in Bobcat
         (_('Service User Token Configuration'), _check_service_user_token),
+        # Added in TODO(jkulik): add name
+        (_('Multiple BDMs'), _check_multiple_not_deleted_bdms),
     )
 
 
