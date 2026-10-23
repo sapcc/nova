@@ -740,6 +740,10 @@ class API(object):
         return _untranslate_volume_summary_view(context, item)
 
     @translate_volume_exception
+    @retrying.retry(stop_max_attempt_number=5,
+                    retry_on_exception=lambda e:
+                    (isinstance(e, cinder_exception.ClientException) and
+                     e.code in (500, 504)))
     def delete(self, context, volume_id):
         try:
             cinderclient(context).volumes.delete(volume_id)
@@ -809,6 +813,10 @@ class API(object):
         return _untranslate_snapshot_summary_view(context, item)
 
     @translate_snapshot_exception
+    @retrying.retry(stop_max_attempt_number=5,
+                    retry_on_exception=lambda e:
+                    (isinstance(e, cinder_exception.ClientException) and
+                     e.code in (500, 504)))
     def delete_snapshot(self, context, snapshot_id):
         try:
             cinderclient(context).volume_snapshots.delete(snapshot_id)
