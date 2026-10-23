@@ -5217,10 +5217,17 @@ class API:
             # the attachment as nobody will ever pick it up again.
             with excutils.save_and_reraise_exception():
                 try:
-                    objects.BlockDeviceMapping.get_by_volume_and_instance(
-                        context, volume['id'], instance.uuid).destroy()
-                    LOG.debug("Delete BDM after compute did not respond to "
-                              f"attachment request for volume {volume['id']}")
+                    bdm = objects.BlockDeviceMapping.\
+                        get_by_volume_and_instance(context, volume['id'],
+                                                   instance.uuid)
+                    # If the BDM we find has an attachment_id, it got further
+                    # in the process than _create_volume_bdm() through a
+                    # parallel call. Therefore, we may not delete it.
+                    if not bdm.attachmend_id:
+                        bdm.destroy()
+                        LOG.debug("Delete BDM after compute did not respond "
+                                  "to attachment request for volume %s",
+                                  volume['id'])
                 except exception.VolumeBDMNotFound:
                     LOG.debug("BDM not found, ignoring removal. "
                               f"Error attaching volume {volume['id']}")
