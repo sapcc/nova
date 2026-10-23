@@ -15,6 +15,7 @@
 import copy
 
 from nova.api.validation import parameter_types
+from nova.objects.fields import FlavorPermissionRuleEffect
 
 # NOTE(takashin): The following sort keys are defined for backward
 # compatibility. If they are changed, the API microversion should be bumped.
@@ -25,6 +26,8 @@ VALID_SORT_KEYS = [
 ]
 
 VALID_SORT_DIR = ['asc', 'desc']
+
+VALID_PERMISSION_VALUES = [*FlavorPermissionRuleEffect.ALL, 'all']
 
 create = {
     'type': 'object',
@@ -118,12 +121,16 @@ update = {
 index_query = {
     'type': 'object',
     'properties': {
+        'domain_permission': parameter_types.multi_params(
+            {'type': 'string', 'enum': VALID_PERMISSION_VALUES}),
         'limit': parameter_types.multi_params(
              parameter_types.non_negative_integer),
         'marker': parameter_types.multi_params({'type': 'string'}),
         'is_public': parameter_types.multi_params({'type': 'string'}),
         'minRam': parameter_types.multi_params({'type': 'string'}),
         'minDisk': parameter_types.multi_params({'type': 'string'}),
+        'project_permission': parameter_types.multi_params(
+            {'type': 'string', 'enum': VALID_PERMISSION_VALUES}),
         'sort_key': parameter_types.multi_params({'type': 'string',
                                                   'enum': VALID_SORT_KEYS}),
         'sort_dir': parameter_types.multi_params({'type': 'string',
@@ -139,10 +146,20 @@ index_query = {
 index_query_275 = copy.deepcopy(index_query)
 index_query_275['additionalProperties'] = False
 
+detail_query = copy.deepcopy(index_query)
+detail_query['properties']['with_permissions'] = parameter_types.multi_params(
+    parameter_types.boolean)
+
+detail_query_275 = copy.deepcopy(detail_query)
+detail_query_275['additionalProperties'] = False
+
 # TODO(stephenfin): Remove additionalProperties in a future API version
 show_query = {
     'type': 'object',
-    'properties': {},
+    'properties': {
+        'with_permissions': parameter_types.multi_params(
+            parameter_types.boolean)
+    },
     'additionalProperties': True,
 }
 
@@ -190,6 +207,14 @@ _flavor = {
         },
         'name': {'type': 'string'},
         'os-flavor-access:is_public': {},
+        'permissions': {
+            'type': 'object',
+            'properties': {
+                'domain': {'type': 'string', 'enum': ['allow', 'deny']},
+                'project': {'type': 'string', 'enum': ['allow', 'deny']},
+            },
+            'additionalProperties': False,
+        },
         'ram': {'type': 'integer'},
         'rxtx_factor': {},
         'swap': {
