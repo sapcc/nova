@@ -741,7 +741,19 @@ class API(object):
 
     @translate_volume_exception
     def delete(self, context, volume_id):
-        cinderclient(context).volumes.delete(volume_id)
+        try:
+            cinderclient(context).volumes.delete(volume_id)
+        except cinder_exception.ClientException as ex:
+            if ex.code == 404:
+                LOG.warning('Volume %(id)s does not exist. Ignoring.',
+                            {'id': volume_id})
+            else:
+                with excutils.save_and_reraise_exception():
+                    LOG.error('Delete volume failed for volume '
+                              '%(id)s. Error: %(msg)s Code: %(code)s',
+                              {'id': volume_id,
+                               'msg': str(ex),
+                               'code': getattr(ex, 'code', None)})
 
     @translate_volume_exception
     def update(self, context, volume_id, fields):
@@ -798,7 +810,19 @@ class API(object):
 
     @translate_snapshot_exception
     def delete_snapshot(self, context, snapshot_id):
-        cinderclient(context).volume_snapshots.delete(snapshot_id)
+        try:
+            cinderclient(context).volume_snapshots.delete(snapshot_id)
+        except cinder_exception.ClientException as ex:
+            if ex.code == 404:
+                LOG.warning('Snapshot %(id)s does not exist. Ignoring.',
+                            {'id': snapshot_id})
+            else:
+                with excutils.save_and_reraise_exception():
+                    LOG.error('Delete snapshot failed for snapshot '
+                              '%(id)s. Error: %(msg)s Code: %(code)s',
+                              {'id': snapshot_id,
+                               'msg': str(ex),
+                               'code': getattr(ex, 'code', None)})
 
     @translate_volume_manage_exception
     def manage_existing(self, context, host, ref, volume_type, name=None,
