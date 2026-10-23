@@ -459,7 +459,8 @@ class MigrationTaskTestCase(test.NoDBTestCase):
         cn_mock.side_effect = set_migration_uuid
         task.execute()
 
-        self.sanitize_mock.assert_called_once_with(self.request_spec)
+        self.sanitize_mock.assert_called_once_with(
+            self.request_spec, flavor=self.flavor)
         self.assertEqual(fake_journal, task._old_image_properties)
         self.assertEqual(
             'true', task.instance.system_metadata['cross_hv_resize'])
@@ -554,7 +555,8 @@ class CrossHvResizeTestCase(test.NoDBTestCase):
                 return_value={'img_hv_type': 'vmware'})
     def test_prep_vmware_to_ch_passes_and_sanitizes(self, mock_sanitize):
         self.task._prep_cross_hv_resize(self.HV_VMWARE, self.HV_CH)
-        mock_sanitize.assert_called_once_with(self.task.request_spec)
+        mock_sanitize.assert_called_once_with(
+            self.task.request_spec, flavor=self.task.flavor)
         self.assertEqual({'img_hv_type': 'vmware'},
                          self.task._old_image_properties)
         self.assertEqual('true',
@@ -578,7 +580,8 @@ class CrossHvResizeTestCase(test.NoDBTestCase):
         mock_raise.assert_called_once_with(
             self.task.context, self.instance, self.task.request_spec,
             self.HV_VMWARE, self.HV_CH)
-        mock_sanitize.assert_called_once_with(self.task.request_spec)
+        mock_sanitize.assert_called_once_with(
+            self.task.request_spec, flavor=self.task.flavor)
 
     def test_persist_image_properties_journal_saves_empty_journal(self):
         self.task._old_image_properties = {}
@@ -609,7 +612,8 @@ class CrossHvResizeTestCase(test.NoDBTestCase):
         self.task.request_spec.is_bfv = False
         # Should NOT raise
         self.task._prep_cross_hv_resize(self.HV_VMWARE, self.HV_CH)
-        mock_sanitize.assert_called_once_with(self.task.request_spec)
+        mock_sanitize.assert_called_once_with(
+            self.task.request_spec, flavor=self.task.flavor)
         self.assertEqual('true',
                          self.instance.system_metadata['cross_hv_resize'])
 
@@ -1397,6 +1401,50 @@ class CrossHvExecuteIntegrationTestCase(test.NoDBTestCase):
             old_image_properties={'hw_disk_bus': 'ide'})
         self.assertEqual(
             'ide', self.request_spec.image.properties.hw_disk_bus)
+        # In-memory only: the sanitized spec was never persisted, so
+        # rollback must not write the abandoned resize's spec back.
+        self.request_spec.save.assert_not_called()
+
+    def test_rollback_deletes_destination_added_image_props_from_journal(
+            self):
+        """rollback() deletes destination-added image properties whose
+        journal value is the CROSS_HV_JOURNAL_ABSENT sentinel (key was
+        absent pre-resize, e.g. hw_vif_multiqueue_enabled added for a
+        non-Windows guest) while restoring original string values, so
+        the request_spec reverts exactly to its pre-resize state.
+        """
+        root_bdm = self._make_bdm('image', 'local')
+        self.mock_compute_rpcapi.prep_cross_hv_conversion.side_effect = (
+            exception.UnsupportedRPCVersion(api='compute',
+                                             required='6.2.1'))
+        self.request_spec.image.properties = objects.ImageMetaProps(
+            hw_disk_bus='virtio', hw_vif_multiqueue_enabled=True)
+        self.request_spec.save = mock.Mock()
+        self.instance.migration_context = objects.MigrationContext(
+            old_image_properties={
+                'hw_vif_multiqueue_enabled':
+                    compute_utils.CROSS_HV_JOURNAL_ABSENT,
+                'hw_disk_bus': 'ide'})
+
+        with mock.patch.object(
+                compute_utils, 'restore_image_props_from_cross_hv_journal',
+                wraps=compute_utils.restore_image_props_from_cross_hv_journal
+        ) as mock_restore:
+            self.assertRaises(
+                exception.UnsupportedRPCVersion,
+                self._execute_with_mocks, root_bdm)
+
+        mock_restore.assert_called_once_with(
+            request_spec=self.request_spec,
+            old_image_properties={
+                'hw_vif_multiqueue_enabled':
+                    compute_utils.CROSS_HV_JOURNAL_ABSENT,
+                'hw_disk_bus': 'ide'})
+        props = self.request_spec.image.properties
+        # Sentinel-journaled (destination-added) key is deleted...
+        self.assertFalse(props.obj_attr_is_set('hw_vif_multiqueue_enabled'))
+        # ...and the original value is restored.
+        self.assertEqual('ide', props.hw_disk_bus)
         # In-memory only: the sanitized spec was never persisted, so
         # rollback must not write the abandoned resize's spec back.
         self.request_spec.save.assert_not_called()
