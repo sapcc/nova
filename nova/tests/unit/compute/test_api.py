@@ -1540,7 +1540,8 @@ class _ComputeAPIUnitTestMixIn(object):
                 bdms, instance, self.context)
 
             mock_attach_delete.assert_called_once_with(
-                self.context, vol_bdm.attachment_id)
+                self.context, vol_bdm.attachment_id,
+                volume_id=vol_bdm.volume_id)
             mock_delete.assert_called_once_with(
                 self.context, vol_bdm.volume_id)
             mock_destroy.assert_called_once_with()

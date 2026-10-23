@@ -1243,7 +1243,7 @@ class API(object):
                     retry_on_exception=lambda e:
                     (isinstance(e, cinder_exception.ClientException) and
                      e.code in (500, 504)))
-    def attachment_delete(self, context, attachment_id):
+    def attachment_delete(self, context, attachment_id, volume_id=None):
         try:
             cinderclient(
                 context, '3.44', skip_version_check=True).attachments.delete(
@@ -1252,6 +1252,19 @@ class API(object):
             if ex.code == 404:
                 LOG.warning('Attachment %(id)s does not exist. Ignoring.',
                             {'id': attachment_id})
+                if volume_id:
+                    try:
+                        LOG.info(
+                            'Attachment %(id)s does not exist. Volume '
+                            '%(vol)s might be stuck in reserved/attaching '
+                            'state. Attempting to unreserve.',
+                            {'id': attachment_id, 'vol': volume_id})
+                        self.unreserve_volume(context, volume_id)
+                    except exception.VolumeNotFound as unreserve_exc:
+                        LOG.debug(
+                            'Failed to unreserve volume %(vol)s as it is '
+                            'already gone: %(exc)s',
+                            {'vol': volume_id, 'exc': unreserve_exc})
             else:
                 with excutils.save_and_reraise_exception():
                     LOG.error('Delete attachment failed for attachment '
