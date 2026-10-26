@@ -379,6 +379,13 @@ class NovaMigrationsWalk(
                                 'console_auth_tokens',
                                 'tls_port')
 
+    def _check_0323731eca40(self, connection):
+        self.assertIndexExists(
+            connection,
+            'instance_actions_events',
+            'ix_instance_actions_events_finish_time',
+        )
+
     def test_single_base_revision(self):
         """Ensure we only have a single base revision.
 

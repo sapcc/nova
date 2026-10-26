@@ -1078,7 +1078,9 @@ class InstanceAction(BASE, NovaBase, models.SoftDeleteMixin):
 class InstanceActionEvent(BASE, NovaBase, models.SoftDeleteMixin):
     """Track events that occur during an InstanceAction."""
     __tablename__ = 'instance_actions_events'
-    __table_args__ = ()
+    __table_args__ = (
+        sa.Index('ix_instance_actions_events_finish_time', 'finish_time'),
+    )
 
     id = sa.Column(
         sa.Integer, primary_key=True, nullable=False, autoincrement=True)
