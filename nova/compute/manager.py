@@ -3251,7 +3251,8 @@ class ComputeManager(manager.Manager):
             try:
                 if bdm.attachment_id:
                     self.volume_api.attachment_delete(context,
-                                                      bdm.attachment_id)
+                                                      bdm.attachment_id,
+                                                      volume_id=bdm.volume_id)
                 else:
                     # NOTE(vish): actual driver detach done in driver.destroy,
                     #             so just tell cinder that we are done with it.
@@ -8355,7 +8356,8 @@ class ComputeManager(manager.Manager):
                     # VolumeAttachmentNotFound.
                     try:
                         self.volume_api.attachment_delete(
-                            context, bdm['attachment_id'])
+                            context, bdm['attachment_id'],
+                            volume_id=bdm.volume_id)
                     except exception.VolumeAttachmentNotFound as exc:
                         LOG.debug('Ignoring VolumeAttachmentNotFound: %s',
                                   exc, instance=instance)
@@ -10528,8 +10530,9 @@ class ComputeManager(manager.Manager):
                     # attachment used by the bdm and reset it to that of
                     # the original bdm.
                     try:
-                        self.volume_api.attachment_delete(context,
-                                                          bdm.attachment_id)
+                        self.volume_api.attachment_delete(
+                            context, bdm.attachment_id,
+                            volume_id=bdm.volume_id)
                     except cinder_exception.ClientException:
                         LOG.warning("Ignoring cinderclient exception when "
                                     "attempting to delete attachment %s for "
