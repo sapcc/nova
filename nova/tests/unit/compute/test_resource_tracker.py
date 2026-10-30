@@ -2322,6 +2322,114 @@ class TestUpdateComputeNode(BaseTestCase):
             self.assertEqual(1.0, changes[attr_name])
 
 
+class TestSyncPlacementAggregates(BaseTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._setup_rt()
+        self.ptree = provider_tree.ProviderTree()
+        self.ptree.new_root(self.compute.hypervisor_hostname,
+                            self.compute.uuid)
+        self.ptree.update_aggregates(self.compute.uuid, [uuids.agg1])
+
+    @staticmethod
+    def _aggregates(*agg_uuids):
+        return objects.AggregateList(
+            objects=[objects.Aggregate(uuid=agg_uuid)
+                     for agg_uuid in agg_uuids])
+
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_sync_placement_aggregates')
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_sync_compute_service_disabled_trait', new=mock.Mock())
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_resource_change', new=mock.Mock(return_value=False))
+    def test_update_disabled(self, mock_sync):
+        compute = self.compute.obj_clone()
+        self.rt.compute_nodes[_NODENAME] = compute
+        self.rt.old_resources[_NODENAME] = compute
+
+        self.rt._update(mock.sentinel.ctx, compute)
+
+        self.rt.reportclient.update_from_provider_tree.assert_called_once()
+        mock_sync.assert_not_called()
+
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_sync_placement_aggregates')
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_sync_compute_service_disabled_trait', new=mock.Mock())
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_resource_change', new=mock.Mock(return_value=False))
+    def test_update_enabled(self, mock_sync):
+        self.flags(sync_placement_aggregates=True, group='compute')
+        compute = self.compute.obj_clone()
+        self.rt.compute_nodes[_NODENAME] = compute
+        self.rt.old_resources[_NODENAME] = compute
+        ptree = self._setup_ptree(compute)
+
+        self.rt._update(mock.sentinel.ctx, compute)
+
+        self.rt.reportclient.update_from_provider_tree.assert_called_once()
+        mock_sync.assert_called_once_with(mock.sentinel.ctx, compute, ptree)
+
+    @mock.patch.object(objects.AggregateList, 'get_by_host')
+    def test_sync_adds_missing(self, mock_get_by_host):
+        mock_get_by_host.return_value = self._aggregates(
+            uuids.agg1, uuids.agg2, uuids.agg3)
+
+        self.rt._sync_placement_aggregates(
+            mock.sentinel.ctx, self.compute, self.ptree)
+
+        mock_get_by_host.assert_called_once_with(
+            mock.sentinel.ctx, self.compute.host)
+        add_host = self.rt.reportclient.aggregate_add_host
+        add_host.assert_has_calls([
+            mock.call(mock.sentinel.ctx, agg_uuid, rp_uuid=self.compute.uuid)
+            for agg_uuid in sorted([uuids.agg2, uuids.agg3])])
+        self.assertEqual(2, add_host.call_count)
+
+    @mock.patch.object(objects.AggregateList, 'get_by_host')
+    def test_sync_nothing_missing(self, mock_get_by_host):
+        for aggregates in (self._aggregates(),
+                           self._aggregates(uuids.agg1)):
+            mock_get_by_host.return_value = aggregates
+
+            self.rt._sync_placement_aggregates(
+                mock.sentinel.ctx, self.compute, self.ptree)
+
+        self.assertEqual(2, mock_get_by_host.call_count)
+        self.rt.reportclient.aggregate_add_host.assert_not_called()
+
+    @mock.patch.object(resource_tracker.LOG, 'warning')
+    @mock.patch.object(objects.AggregateList, 'get_by_host')
+    def test_sync_lookup_fails(self, mock_get_by_host, mock_log):
+        mock_get_by_host.side_effect = Exception('boom')
+
+        self.rt._sync_placement_aggregates(
+            mock.sentinel.ctx, self.compute, self.ptree)
+
+        self.rt.reportclient.aggregate_add_host.assert_not_called()
+        mock_log.assert_called_once()
+
+    @mock.patch.object(resource_tracker.LOG, 'warning')
+    @mock.patch.object(objects.AggregateList, 'get_by_host')
+    def test_sync_placement_fails(self, mock_get_by_host, mock_log):
+        mock_get_by_host.return_value = self._aggregates(
+            uuids.agg1, uuids.agg2, uuids.agg3)
+        add_host = self.rt.reportclient.aggregate_add_host
+        add_host.side_effect = [
+            exc.ResourceProviderUpdateConflict(
+                uuid=self.compute.uuid, generation=42, error='error'),
+            ks_exc.ConnectFailure()]
+
+        self.rt._sync_placement_aggregates(
+            mock.sentinel.ctx, self.compute, self.ptree)
+
+        # A failure for one aggregate doesn't stop the others
+        self.assertEqual(2, add_host.call_count)
+        self.assertEqual(2, mock_log.call_count)
+
+
 class TestInstanceClaim(BaseTestCase):
 
     def setUp(self):
