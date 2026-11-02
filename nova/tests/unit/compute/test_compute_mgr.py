@@ -11629,6 +11629,92 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
                       uuids.data_volume, '/dev/sdb')],
             attachment_update.call_args_list)
 
+    def test_finish_revert_resize_cross_hv_removes_destination_added_props(
+            self):
+        """Cross-HV revert deletes destination-added sysmeta keys.
+
+        Journal entries with the CROSS_HV_JOURNAL_ABSENT sentinel mean
+        the key was absent on the source (destination-added);
+        _finish_revert_resize must remove them from instance.
+        system_metadata, while other journal strings restore the
+        original values.
+        """
+        self.instance.system_metadata['cross_hv_resize'] = 'true'
+        self.instance.system_metadata.update({
+            'cross_hv_orig_root_device_name': '/dev/sda',
+            'cross_hv_orig_bdm_device_name_%s' % uuids.root_volume:
+                '/dev/sda',
+            'cross_hv_orig_bdm_device_name_%s' % uuids.data_volume:
+                '/dev/sdb',
+            'cross_hv_orig_bdm_disk_bus_%s' % uuids.root_volume:
+                '__NONE__',
+            'cross_hv_orig_bdm_disk_bus_%s' % uuids.data_volume:
+                '__NONE__',
+            # Destination-added (journal sentinel -> delete on revert)
+            'image_hw_vif_multiqueue_enabled': 'True',
+            # Original source value (journal string -> re-set on revert)
+            'image_hw_disk_bus': 'virtio',
+        })
+        self.instance.root_device_name = '/dev/vda'
+        self.instance.migration_context = objects.MigrationContext(
+            old_image_properties={
+                'image_hw_vif_multiqueue_enabled':
+                    compute_utils.CROSS_HV_JOURNAL_ABSENT,
+                'image_hw_disk_bus': 'scsi',
+            })
+        self.instance.old_flavor = fake_flavor.fake_flavor_obj(self.context)
+        self.migration.source_compute = self.instance.host
+        self.migration.source_node = self.instance.node
+        self.compute.rt.compute_nodes[self.migration.source_node] = (
+            mock.MagicMock(id=123,
+                           hypervisor_hostname=self.migration.source_node))
+
+        root_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.root_attachment,
+            volume_id=uuids.root_volume, device_name='/dev/vda',
+            disk_bus='virtio')
+        data_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.data_attachment,
+            volume_id=uuids.data_volume, device_name='/dev/vdb',
+            disk_bus='virtio')
+        bdms = objects.BlockDeviceMappingList(objects=[root_bdm, data_bdm])
+        for bdm in bdms:
+            bdm.save = mock.Mock()
+
+        with test.nested(
+            mock.patch.object(objects.BlockDeviceMappingList,
+                              'get_by_instance_uuid', return_value=bdms),
+            mock.patch.object(self.compute, '_revert_allocation',
+                              return_value={}),
+            mock.patch.object(self.compute.network_api,
+                              'setup_networks_on_host'),
+            mock.patch.object(self.compute.network_api,
+                              'migrate_instance_finish'),
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info', return_value='nw'),
+            mock.patch.object(self.compute, '_get_instance_block_device_info',
+                              return_value='bdi'),
+            mock.patch.object(self.compute.driver, 'finish_revert_migration'),
+            mock.patch.object(self.compute.driver, 'get_volume_connector',
+                              return_value='connector'),
+            mock.patch.object(self.compute.volume_api, 'attachment_update'),
+            mock.patch.object(self.compute.volume_api, 'attachment_complete'),
+            mock.patch.object(self.instance, 'save'),
+            mock.patch.object(self.instance, 'drop_migration_context')
+        ) as (_get_bdms, _revert_alloc, _setup_networks, _migrate_finish,
+              _get_nw, _get_bdi, _finish_revert, _get_connector,
+              attachment_update, _attachment_complete, _instance_save,
+              _drop_migration_context):
+            self.compute._finish_revert_resize(
+                self.context, self.instance, self.migration,
+                request_spec=objects.RequestSpec())
+
+        # Destination-added key removed; original value restored.
+        self.assertNotIn('image_hw_vif_multiqueue_enabled',
+                         self.instance.system_metadata)
+        self.assertEqual('scsi',
+                         self.instance.system_metadata['image_hw_disk_bus'])
+
     def _journal_and_sanitize_cross_hv_bdms(self, bdms):
         self.compute._journal_cross_hv_bdms(self.instance, bdms)
         self.compute._sanitize_cross_hv_bdms(

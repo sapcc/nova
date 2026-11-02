@@ -405,7 +405,8 @@ class MigrationTask(base.TaskBase):
         # Sanitize VMware-pinning image properties so the scheduler
         # can select KVM/CH hosts.
         self._old_image_properties = (
-            compute_utils.sanitize_image_props_for_kvm(self.request_spec))
+            compute_utils.sanitize_image_props_for_kvm(
+                self.request_spec, flavor=self.flavor))
         self.instance.system_metadata['cross_hv_resize'] = 'true'
         self.instance.system_metadata['cross_hv_source_prepared'] = 'false'
 

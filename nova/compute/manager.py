@@ -6052,6 +6052,8 @@ class ComputeManager(manager.Manager):
             # For cross-HV resize, restore system_metadata image properties
             # from the MigrationContext journal before volume attachments and
             # driver calls, so both see the original VMware-era values.
+            # Journal entries with the __NONE__ sentinel delete
+            # destination-added keys.
             # NOTE: Do NOT remove cross_hv_resize marker here, the VMware
             # driver needs it to route to the cross-HV revert branch.
             # Markers are cleaned by the driver's confirm/revert handlers.
@@ -6836,11 +6838,13 @@ class ComputeManager(manager.Manager):
 
     @staticmethod
     def _cross_hv_journal_value(value):
-        return value if value is not None else '__NONE__'
+        return (value if value is not None
+                else compute_utils.CROSS_HV_JOURNAL_ABSENT)
 
     @staticmethod
     def _cross_hv_restore_journal_value(value):
-        return None if value == '__NONE__' else value
+        return (None if value == compute_utils.CROSS_HV_JOURNAL_ABSENT
+                else value)
 
     @staticmethod
     def _original_cross_hv_bdm_device_name(sysmeta, bdm):
