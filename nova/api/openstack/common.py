@@ -30,6 +30,7 @@ import nova.conf
 from nova import exception
 from nova.i18n import _
 from nova import objects
+from nova.objects import fields
 from nova import quota
 from nova import utils
 
@@ -499,9 +500,14 @@ def raise_feature_not_supported(msg=None):
     raise webob.exc.HTTPNotImplemented(explanation=msg)
 
 
-def get_flavor(context, flavor_id):
+def get_flavor(context, flavor_id,
+               domain_permission=fields.FlavorPermissionRuleEffect.ALLOW,
+               project_permission=fields.FlavorPermissionRuleEffect.ALLOW):
     try:
-        return objects.Flavor.get_by_flavor_id(context, flavor_id)
+        return objects.Flavor.get_by_flavor_id(
+            context, flavor_id,
+            domain_permission=domain_permission,
+            project_permission=project_permission)
     except exception.FlavorNotFound as error:
         raise exc.HTTPNotFound(explanation=error.format_message())
 

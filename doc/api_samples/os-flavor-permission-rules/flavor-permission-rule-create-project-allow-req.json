@@ -1,0 +1,8 @@
+{
+    "flavor_permission_rule": {
+        "domain_id": "abcdef01-2345-6789-abcd-ef0123456789",
+        "effect": "allow",
+        "flavor_id": null,
+        "project_id": "6f70656e-7374-6163-6b20-342065766572"
+    }
+}

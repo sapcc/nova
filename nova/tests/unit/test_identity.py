@@ -130,3 +130,130 @@ class IdentityValidationTest(test.NoDBTestCase):
                           identity.verify_project_id,
                           mock.MagicMock(), "foo")
         self.validate_common()
+
+
+class VerifyDomainIdTest(test.NoDBTestCase):
+
+    def setUp(self):
+        super().setUp()
+        get_adap_p = mock.patch('nova.utils.get_ksa_adapter')
+        self.addCleanup(get_adap_p.stop)
+        self.mock_get_adap = get_adap_p.start()
+        self.mock_adap = mock.create_autospec(Adapter)
+        self.mock_get_adap.return_value = self.mock_adap
+        self.domain = 'dom1'
+
+    def _validate_common(self):
+        self.mock_get_adap.assert_called_once_with(
+            'identity', ksa_auth=mock.ANY,
+            min_version=(3, 0), max_version=(3, 'latest'))
+        self.mock_adap.get.assert_called_once_with(f'/domains/{self.domain}')
+
+    def test_domain_exists(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(200)
+        self.assertTrue(identity.verify_domain_id(
+            mock.MagicMock(), self.domain))
+        self._validate_common()
+
+    def test_domain_not_found(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(404)
+        self.assertRaises(webob.exc.HTTPBadRequest, identity.verify_domain_id,
+                          mock.MagicMock(), self.domain)
+        self._validate_common()
+
+    def test_insufficient_permissions(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(403)
+        self.assertTrue(identity.verify_domain_id(
+            mock.MagicMock(), self.domain))
+        self._validate_common()
+
+    def test_unexpected_response(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(
+            500, content="Oh noes!")
+        self.assertTrue(identity.verify_domain_id(
+            mock.MagicMock(), self.domain))
+        self._validate_common()
+
+    def test_client_exception(self):
+        self.mock_adap.get.side_effect = kse.ConnectionError()
+        self.assertTrue(identity.verify_domain_id(
+            mock.MagicMock(), self.domain))
+        self._validate_common()
+
+    def test_endpoint_not_found(self):
+        self.mock_adap.get.side_effect = kse.EndpointNotFound()
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          identity.verify_domain_id,
+                          mock.MagicMock(), self.domain)
+        self._validate_common()
+
+
+class VerifyProjectInDomainTest(test.NoDBTestCase):
+
+    def setUp(self):
+        super().setUp()
+        get_adap_p = mock.patch('nova.utils.get_ksa_adapter')
+        self.addCleanup(get_adap_p.stop)
+        self.mock_get_adap = get_adap_p.start()
+        self.mock_adap = mock.create_autospec(Adapter)
+        self.mock_get_adap.return_value = self.mock_adap
+        self.domain = 'dom1'
+        self.project = 'proj1'
+
+    def _validate_common(self):
+        self.mock_get_adap.assert_called_once_with(
+            'identity', ksa_auth=mock.ANY,
+            min_version=(3, 0), max_version=(3, 'latest'))
+        self.mock_adap.get.assert_called_once_with(f'/projects/{self.project}')
+
+    def test_project_in_domain(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(
+            200, content=f'{{"project": {{"domain_id": "{self.domain}"}}}}')
+        self.assertTrue(
+            identity.verify_project_in_domain(
+                mock.MagicMock(), self.project, self.domain))
+        self._validate_common()
+
+    def test_project_wrong_domain(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(
+            200, content='{"project": {"domain_id": "other-domain"}}')
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          identity.verify_project_in_domain,
+                          mock.MagicMock(), self.project, self.domain)
+        self._validate_common()
+
+    def test_project_not_found(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(404)
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          identity.verify_project_in_domain,
+                          mock.MagicMock(), self.project, self.domain)
+        self._validate_common()
+
+    def test_insufficient_permissions(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(403)
+        self.assertTrue(
+            identity.verify_project_in_domain(
+                mock.MagicMock(), self.project, self.domain))
+        self._validate_common()
+
+    def test_unexpected_response(self):
+        self.mock_adap.get.return_value = fake_requests.FakeResponse(
+            500, content="Oh noes!")
+        self.assertTrue(
+            identity.verify_project_in_domain(
+                mock.MagicMock(), self.project, self.domain))
+        self._validate_common()
+
+    def test_client_exception(self):
+        self.mock_adap.get.side_effect = kse.ConnectionError()
+        self.assertTrue(
+            identity.verify_project_in_domain(
+                mock.MagicMock(), self.project, self.domain))
+        self._validate_common()
+
+    def test_endpoint_not_found(self):
+        self.mock_adap.get.side_effect = kse.EndpointNotFound()
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          identity.verify_project_in_domain,
+                          mock.MagicMock(), self.project, self.domain)
+        self._validate_common()

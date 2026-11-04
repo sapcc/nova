@@ -29,6 +29,7 @@ from nova.db import constants as db_const
 from nova import exception
 from nova.i18n import _
 from nova import objects
+from nova.objects import fields
 from nova import utils
 
 CONF = nova.conf.CONF
@@ -128,7 +129,11 @@ def create(name, memory, vcpus, root_gb, ephemeral_gb=0, flavorid=None,
 
 # TODO(termie): flavor-specific code should probably be in the API that uses
 #               flavors.
-def get_flavor_by_flavor_id(flavorid, ctxt=None, read_deleted="yes"):
+def get_flavor_by_flavor_id(flavorid, ctxt=None, read_deleted="yes",
+                             domain_permission=(
+                                 fields.FlavorPermissionRuleEffect.ALLOW),
+                             project_permission=(
+                                 fields.FlavorPermissionRuleEffect.ALLOW)):
     """Retrieve flavor by flavorid.
 
     :raises: FlavorNotFound
@@ -136,7 +141,10 @@ def get_flavor_by_flavor_id(flavorid, ctxt=None, read_deleted="yes"):
     if ctxt is None:
         ctxt = context.get_admin_context(read_deleted=read_deleted)
 
-    return objects.Flavor.get_by_flavor_id(ctxt, flavorid, read_deleted)
+    return objects.Flavor.get_by_flavor_id(
+        ctxt, flavorid, read_deleted,
+        domain_permission=domain_permission,
+        project_permission=project_permission)
 
 
 # NOTE(danms): This method is deprecated, do not use it!
