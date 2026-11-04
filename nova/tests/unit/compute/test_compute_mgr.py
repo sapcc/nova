@@ -11553,6 +11553,110 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             'instance was not saved with the BDM journal keys before '
             'attachment_update was called')
 
+    def test_finish_resize_cross_hv_persists_guest_defaults(self):
+        self.instance.system_metadata = {
+            'cross_hv_resize': 'true',
+            'image_hw_vif_multiqueue_enabled': 'false'}
+        self.instance.root_device_name = '/dev/sda'
+        self.instance.migration_context = objects.MigrationContext(
+            old_image_properties={'hw_vif_multiqueue_enabled': 'false'})
+        self.instance.task_state = task_states.RESIZE_MIGRATED
+        self.migration.old_instance_type_id = self.instance.flavor.id
+        self.migration.new_instance_type_id = self.instance.flavor.id
+
+        root_bdm = objects.BlockDeviceMapping(
+            destination_type='volume', attachment_id=uuids.root_attachment,
+            volume_id=uuids.root_volume, device_name='/dev/sda',
+            disk_bus=None)
+        root_bdm.save = mock.Mock()
+        bdms = objects.BlockDeviceMappingList(objects=[root_bdm])
+        events = []
+
+        def record_save(*args, **kwargs):
+            mig_ctx = self.instance.migration_context
+            events.append(('save', dict(self.instance.system_metadata),
+                          dict(mig_ctx.old_image_properties or {})))
+
+        def record_finish_migration(*args, **kwargs):
+            events.append(('finish_migration',))
+
+        with test.nested(
+            mock.patch.object(self.compute.network_api,
+                              'setup_networks_on_host'),
+            mock.patch.object(self.compute.network_api,
+                              'migrate_instance_finish'),
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info', return_value='nw'),
+            mock.patch.object(self.compute,
+                              '_send_finish_resize_notifications'),
+            mock.patch.object(self.instance, 'save', side_effect=record_save),
+            mock.patch.object(self.compute, '_get_instance_block_device_info',
+                              return_value='bdi'),
+            mock.patch.object(self.compute.driver, 'finish_migration',
+                              side_effect=record_finish_migration),
+            mock.patch.object(self.compute.reportclient,
+                              'get_allocs_for_consumer',
+                              return_value={'allocations': {}}),
+            mock.patch.object(self.compute.driver, 'get_volume_connector',
+                              return_value='connector'),
+            mock.patch.object(self.compute.volume_api, 'attachment_update'),
+            mock.patch.object(self.compute.volume_api, 'attachment_complete')
+        ):
+            self.compute._finish_resize(
+                self.context, self.instance, self.migration, '[]',
+                objects.ImageMeta.from_dict(
+                    {'properties': {'hw_vif_multiqueue_enabled': True}}),
+                bdms, objects.RequestSpec())
+
+        finish_migration_index = next(
+            i for i, event in enumerate(events)
+            if event[0] == 'finish_migration')
+        self.assertTrue(any(
+            event[0] == 'save' and
+            event[1].get('image_hw_vif_multiqueue_enabled') == 'true' and
+            event[2].get('hw_vif_multiqueue_enabled') == 'false' and
+            event[2].get('image_hw_vif_multiqueue_enabled') == 'false'
+            for event in events[:finish_migration_index]))
+
+    def test_finish_resize_same_hv_does_not_touch_guest_default_sysmeta(self):
+        self.instance.system_metadata = {
+            'image_hw_vif_multiqueue_enabled': 'false'}
+        old_image_properties = {'hw_vif_multiqueue_enabled': 'false'}
+        self.instance.migration_context = objects.MigrationContext(
+            old_image_properties=dict(old_image_properties))
+        self.instance.task_state = task_states.RESIZE_MIGRATED
+        self.migration.old_instance_type_id = self.instance.flavor.id
+        self.migration.new_instance_type_id = self.instance.flavor.id
+
+        with test.nested(
+            mock.patch.object(self.compute.network_api,
+                              'setup_networks_on_host'),
+            mock.patch.object(self.compute.network_api,
+                              'migrate_instance_finish'),
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info', return_value='nw'),
+            mock.patch.object(self.compute,
+                              '_send_finish_resize_notifications'),
+            mock.patch.object(self.instance, 'save'),
+            mock.patch.object(self.compute, '_get_instance_block_device_info',
+                              return_value='bdi'),
+            mock.patch.object(self.compute.driver, 'finish_migration'),
+            mock.patch.object(self.compute.reportclient,
+                              'get_allocs_for_consumer',
+                              return_value={'allocations': {}})
+        ):
+            self.compute._finish_resize(
+                self.context, self.instance, self.migration, '[]',
+                objects.ImageMeta.from_dict(
+                    {'properties': {'hw_vif_multiqueue_enabled': True}}),
+                objects.BlockDeviceMappingList(objects=[]),
+                objects.RequestSpec())
+
+        self.assertEqual('false', self.instance.system_metadata[
+            'image_hw_vif_multiqueue_enabled'])
+        self.assertEqual(old_image_properties,
+                         self.instance.migration_context.old_image_properties)
+
     def test_finish_revert_resize_cross_hv_translates_bdm_device_names(self):
         self.instance.system_metadata['cross_hv_resize'] = 'true'
         self.instance.system_metadata.update({

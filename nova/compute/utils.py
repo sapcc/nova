@@ -333,6 +333,42 @@ CROSS_HV_SANITIZE_SYSMETA_LEGACY_KEYS = (
 CROSS_HV_JOURNAL_ABSENT = '__NONE__'
 
 
+def _cross_hv_string_value(value):
+    """Serialize a guest-default value for either cross-HV journal."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    return str(value)
+
+
+def _is_windows_image_props(props):
+    os_type = props.get('os_type')
+    os_distro = props.get('os_distro')
+    return bool((os_type is not None and os_type.lower() == 'windows') or
+                (os_distro is not None and
+                 os_distro.lower().startswith('win')))
+
+
+def cross_hv_guest_defaults(image_meta, flavor=None):
+    """Return the guest-default image properties for a cross-HV resize.
+
+    Windows guests get os_type='windows' and one serial port; other guests
+    get multiqueue enabled, unless the resize destination flavor pins
+    hw:vif_multiqueue_enabled (which would raise FlavorImageConflict at
+    spawn). The keys of the returned dict are the properties this resize
+    owns; both the request-spec sanitizer and the sysmeta writer iterate
+    them, so a new guest default is added here only.
+    """
+    if not image_meta.obj_attr_is_set('properties'):
+        return {}
+    props = image_meta.properties
+    if _is_windows_image_props(props):
+        return {'os_type': 'windows', 'hw_serial_port_count': 1}
+    if flavor is not None and flavor.extra_specs.get(
+            'hw:vif_multiqueue_enabled'):
+        return {}
+    return {'hw_vif_multiqueue_enabled': True}
+
+
 def is_supported_cross_hypervisor_resize(source_hypervisor_type,
                                          dest_hypervisor_type):
     """Return True if this cross-hypervisor resize is supported."""
@@ -392,45 +428,19 @@ def sanitize_image_props_for_kvm(request_spec, flavor=None):
         else:
             setattr(props, field, replacement)
 
-    # Guest-specific mutations, journaled for revert. Journal value
-    # convention (must match restore_image_props_from_cross_hv_journal):
-    # CROSS_HV_JOURNAL_ABSENT = key was absent pre-resize (delete on
-    # revert); any other string = original value (re-set on revert).
-    os_type = (props.os_type if props.obj_attr_is_set('os_type')
-               else None)
-    os_distro = (props.os_distro if props.obj_attr_is_set('os_distro')
-                 else None)
-    if (os_type is not None and os_type.lower() == 'windows'):
-        is_windows = True
-    elif (os_distro is not None and
-            os_distro.lower().startswith('win')):
-        is_windows = True
-    else:
-        is_windows = False
-
-    if is_windows:
-        if not props.obj_attr_is_set('hw_serial_port_count'):
-            old['hw_serial_port_count'] = CROSS_HV_JOURNAL_ABSENT
-        else:
-            old['hw_serial_port_count'] = str(
-                props.hw_serial_port_count)
-        props.hw_serial_port_count = 1
-        if not props.obj_attr_is_set('os_type'):
-            old['os_type'] = CROSS_HV_JOURNAL_ABSENT
-        else:
-            old['os_type'] = props.os_type
-        props.os_type = 'windows'
-    else:
-        flavor_pins_multiqueue = (
-            flavor is not None and
-            flavor.extra_specs.get('hw:vif_multiqueue_enabled'))
-        if not flavor_pins_multiqueue:
-            if not props.obj_attr_is_set('hw_vif_multiqueue_enabled'):
-                old['hw_vif_multiqueue_enabled'] = CROSS_HV_JOURNAL_ABSENT
-            elif not props.hw_vif_multiqueue_enabled:
-                old['hw_vif_multiqueue_enabled'] = str(
-                    props.hw_vif_multiqueue_enabled).lower()
-            props.hw_vif_multiqueue_enabled = True
+    # Guest-specific mutations from the shared cross-HV policy. Journal
+    # value convention (see restore_image_props_from_cross_hv_journal):
+    # CROSS_HV_JOURNAL_ABSENT = property was absent pre-resize (deleted on
+    # revert); any other string = original value (re-set on revert). A
+    # property already at its desired value is not journaled: revert has
+    # nothing to undo.
+    for field, value in cross_hv_guest_defaults(
+            image, flavor).items():
+        if not props.obj_attr_is_set(field):
+            old[field] = CROSS_HV_JOURNAL_ABSENT
+        elif getattr(props, field) != value:
+            old[field] = _cross_hv_string_value(getattr(props, field))
+        setattr(props, field, value)
 
     # Force change tracking: OVO delattr does not propagate changes up
     # to the parent RequestSpec. Without this, request_spec.save() may
@@ -490,6 +500,36 @@ def restore_image_props_from_cross_hv_journal(request_spec=None, sysmeta=None,
     if changed and request_spec is not None:
         request_spec.image = request_spec.image
     return changed
+
+
+def sync_cross_hv_guest_defaults(sysmeta, image_meta):
+    """Copy cross-HV guest-default properties into instance sysmeta.
+
+    The property set comes from cross_hv_guest_defaults(); the value copied
+    is the one the resize image actually carries, so a property the
+    sanitizer left alone (flavor-pinned multiqueue) keeps its image value.
+    Assigns sysmeta['image_' + field] and returns
+    {'image_' + field: original_or_CROSS_HV_JOURNAL_ABSENT} for changed keys
+    only, in the raw sysmeta journal namespace consumed by
+    restore_image_props_from_cross_hv_journal. Fields unset on the image are
+    left untouched (never deleted).
+    """
+    if not image_meta.obj_attr_is_set('properties'):
+        return {}
+
+    props = image_meta.properties
+    old = {}
+    for field in cross_hv_guest_defaults(image_meta):
+        if not props.obj_attr_is_set(field):
+            continue
+
+        key = 'image_' + field
+        serialized = _cross_hv_string_value(getattr(props, field))
+        if sysmeta.get(key) != serialized:
+            old[key] = sysmeta.get(key, CROSS_HV_JOURNAL_ABSENT)
+            sysmeta[key] = serialized
+
+    return old
 
 
 def cleanup_cross_hv_markers(sysmeta):
