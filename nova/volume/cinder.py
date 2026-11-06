@@ -299,6 +299,8 @@ def cinderclient(context, microversion=None, skip_version_check=False,
                                 endpoint_override=endpoint_override,
                                 connect_retries=CONF.cinder.http_retries,
                                 global_request_id=context.global_id,
+                                status_code_retries=CONF.cinder.status_retries,
+                                retriable_status_codes=[503, 429],
                                 **service_parameters)
 
 
@@ -759,8 +761,24 @@ class API(object):
         return _untranslate_volume_summary_view(context, item)
 
     @translate_volume_exception
+    @retrying.retry(stop_max_attempt_number=5,
+                    retry_on_exception=lambda e:
+                    (isinstance(e, cinder_exception.ClientException) and
+                     e.code in (500, 504)))
     def delete(self, context, volume_id):
-        cinderclient(context).volumes.delete(volume_id)
+        try:
+            cinderclient(context).volumes.delete(volume_id)
+        except cinder_exception.ClientException as ex:
+            if ex.code == 404:
+                LOG.warning('Volume %(id)s does not exist. Ignoring.',
+                            {'id': volume_id})
+            else:
+                with excutils.save_and_reraise_exception():
+                    LOG.error('Delete volume failed for volume '
+                              '%(id)s. Error: %(msg)s Code: %(code)s',
+                              {'id': volume_id,
+                               'msg': str(ex),
+                               'code': getattr(ex, 'code', None)})
 
     @translate_volume_exception
     def update(self, context, volume_id, fields):
@@ -816,8 +834,24 @@ class API(object):
         return _untranslate_snapshot_summary_view(context, item)
 
     @translate_snapshot_exception
+    @retrying.retry(stop_max_attempt_number=5,
+                    retry_on_exception=lambda e:
+                    (isinstance(e, cinder_exception.ClientException) and
+                     e.code in (500, 504)))
     def delete_snapshot(self, context, snapshot_id):
-        cinderclient(context).volume_snapshots.delete(snapshot_id)
+        try:
+            cinderclient(context).volume_snapshots.delete(snapshot_id)
+        except cinder_exception.ClientException as ex:
+            if ex.code == 404:
+                LOG.warning('Snapshot %(id)s does not exist. Ignoring.',
+                            {'id': snapshot_id})
+            else:
+                with excutils.save_and_reraise_exception():
+                    LOG.error('Delete snapshot failed for snapshot '
+                              '%(id)s. Error: %(msg)s Code: %(code)s',
+                              {'id': snapshot_id,
+                               'msg': str(ex),
+                               'code': getattr(ex, 'code', None)})
 
     @translate_volume_manage_exception
     def manage_existing(self, context, host, ref, volume_type, name=None,
