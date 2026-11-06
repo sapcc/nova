@@ -712,6 +712,58 @@ class CinderApiTestCase(test.NoDBTestCase):
 
         self.assertEqual(1, mock_cinderclient.call_count)
 
+    @mock.patch.object(cinder.API, 'unreserve_volume')
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_attachment_delete_not_found_with_volume_id(
+            self, mock_cinderclient, mock_unreserve):
+        mock_cinderclient.return_value.attachments.delete.side_effect = (
+            cinder_exception.ClientException(404))
+
+        attachment_id = uuids.attachment
+        volume_id = uuids.volume
+        self.api.attachment_delete(
+            self.ctx, attachment_id, volume_id=volume_id)
+
+        self.assertEqual(1, mock_cinderclient.call_count)
+        mock_unreserve.assert_called_once_with(self.ctx, volume_id)
+
+    @mock.patch.object(cinder.API, 'unreserve_volume')
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_attachment_delete_not_found_with_volume_id_unreserve_failed_volume_not_found(  # noqa: E501
+            self, mock_cinderclient, mock_unreserve):
+        mock_cinderclient.return_value.attachments.delete.side_effect = (
+            cinder_exception.ClientException(404))
+        mock_unreserve.side_effect = exception.VolumeNotFound(
+            volume_id=uuids.volume)
+
+        attachment_id = uuids.attachment
+        volume_id = uuids.volume
+        # Should catch exception.VolumeNotFound and return normally
+        self.api.attachment_delete(
+            self.ctx, attachment_id, volume_id=volume_id)
+
+        self.assertEqual(1, mock_cinderclient.call_count)
+        mock_unreserve.assert_called_once_with(self.ctx, volume_id)
+
+    @mock.patch.object(cinder.API, 'unreserve_volume')
+    @mock.patch('nova.volume.cinder.cinderclient')
+    def test_attachment_delete_not_found_with_volume_id_unreserve_raises_other(
+            self, mock_cinderclient, mock_unreserve):
+        mock_cinderclient.return_value.attachments.delete.side_effect = (
+            cinder_exception.ClientException(404))
+        mock_unreserve.side_effect = exception.CinderConnectionFailed(
+            reason="conn failed")
+
+        attachment_id = uuids.attachment
+        volume_id = uuids.volume
+        # Should NOT catch other exceptions and let them bubble up
+        self.assertRaises(exception.CinderConnectionFailed,
+                          self.api.attachment_delete,
+                          self.ctx, attachment_id, volume_id=volume_id)
+
+        self.assertEqual(1, mock_cinderclient.call_count)
+        mock_unreserve.assert_called_once_with(self.ctx, volume_id)
+
     @mock.patch('nova.volume.cinder.cinderclient')
     def test_attachment_delete_internal_server_error(self, mock_cinderclient):
         mock_cinderclient.return_value.attachments.delete.side_effect = (

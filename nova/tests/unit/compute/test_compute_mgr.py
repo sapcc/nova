@@ -13482,8 +13482,10 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
 
         # Assert that we delete the current attachments
         mock_delete_attachment.assert_has_calls([
-                mock.call(self.context, uuids.vol1_attach),
-                mock.call(self.context, uuids.vol2_attach)])
+                mock.call(self.context, uuids.vol1_attach,
+                          volume_id=uuids.vol1),
+                mock.call(self.context, uuids.vol2_attach,
+                          volume_id=uuids.vol2)])
         # Assert that we switch the attachment ids and connection_info for each
         # bdm back to their original values
         self.assertEqual(uuids.vol1_attach_original,
@@ -13627,7 +13629,8 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             mock_remove_conn.assert_called_once_with(self.context, instance,
                                                      bdm.volume_id, None)
             mock_attach_delete.assert_called_once_with(self.context,
-                                                       new_attachment_id)
+                                                       new_attachment_id,
+                                                       volume_id=volume_id)
             self.assertEqual(bdm.attachment_id, orig_attachment_id)
             self.assertEqual(orig_attachment_id, bdm.connection_info)
             bdm.save.assert_called_once_with()
