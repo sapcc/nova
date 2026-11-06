@@ -126,6 +126,8 @@ class ResourceTracker(object):
         # are not found on the provider tree. These are tracked to facilitate
         # smarter logging.
         self.absent_providers = set()
+        # Set of UUIDs of the aggregates of this host
+        self.host_aggregates = set()
 
     def set_service_ref(self, service_ref):
         # NOTE(danms): Neither of these should ever happen, but sanity check
@@ -1386,6 +1388,9 @@ class ResourceTracker(object):
         # This merges in changes from the provider config files loaded in init
         self._merge_provider_configs(self.provider_configs, prov_tree)
 
+        if CONF.compute.sync_placement_aggregates:
+            prov_tree.add_aggregates(compute_node.uuid, *self.host_aggregates)
+
         try:
             # Flush any changes. If we either processed ReshapeNeeded above or
             # update_provider_tree_for_pci did reshape, then we need to pass
@@ -1402,6 +1407,16 @@ class ResourceTracker(object):
             # existing allocations. Translate the exception to prevent the
             # compute service to start
             raise exception.PlacementPciException(error=str(e))
+
+    def refresh_host_aggregates(self, context):
+        """Look up the aggregates of this host to sync them to placement."""
+        try:
+            aggregates = objects.AggregateList.get_by_host(context, self.host)
+        except Exception as e:
+            LOG.warning("Failed to look up the aggregates of host %s to sync "
+                        "them to placement: %s", self.host, e)
+            aggregates = []
+        self.host_aggregates = {agg.uuid for agg in aggregates}
 
     def _update(self, context, compute_node, startup=False):
         """Update partial stats locally and populate them to Scheduler."""

@@ -11755,6 +11755,10 @@ class ComputeManager(manager.Manager):
                             "Failed to delete compute node resource provider "
                             "for compute node %s: %s", cn.uuid, str(e))
 
+        # Look the aggregates up once, not for each of the nodes
+        if CONF.compute.sync_placement_aggregates:
+            self.rt.refresh_host_aggregates(context)
+
         for nodename in nodenames:
             self._update_available_resource_for_node(context, nodename,
                                                      startup=startup)

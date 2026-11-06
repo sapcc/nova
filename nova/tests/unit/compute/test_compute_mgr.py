@@ -595,6 +595,24 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase,
         rc_mock.invalidate_resource_provider.assert_not_called()
         mock_deleted.assert_called_once_with('node1')
 
+    @mock.patch.object(manager.ComputeManager,
+                       '_update_available_resource_for_node')
+    @mock.patch.object(fake_driver.FakeDriver, 'get_available_nodes',
+                       return_value={'node1', 'node2'})
+    @mock.patch.object(manager.ComputeManager, '_get_compute_nodes_in_db',
+                       return_value=[])
+    def test_update_available_resource_refresh_host_aggregates(
+            self, get_db_nodes, get_avail_nodes, update_mock):
+        mock_rt = self._mock_rt()
+
+        self.compute.update_available_resource(self.context)
+        mock_rt.refresh_host_aggregates.assert_not_called()
+
+        self.flags(sync_placement_aggregates=True, group='compute')
+        self.compute.update_available_resource(self.context)
+        mock_rt.refresh_host_aggregates.assert_called_once_with(self.context)
+        self.assertEqual(4, update_mock.call_count)
+
     @mock.patch('nova.context.get_admin_context')
     def test_pre_start_hook(self, get_admin_context):
         """Very simple test just to make sure update_available_resource is

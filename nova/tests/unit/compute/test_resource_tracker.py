@@ -2322,6 +2322,55 @@ class TestUpdateComputeNode(BaseTestCase):
             self.assertEqual(1.0, changes[attr_name])
 
 
+class TestSyncPlacementAggregates(BaseTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self._setup_rt()
+
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_sync_compute_service_disabled_trait', new=mock.Mock())
+    @mock.patch('nova.compute.resource_tracker.ResourceTracker.'
+                '_resource_change', new=mock.Mock(return_value=False))
+    def test_update(self):
+        compute = self.compute.obj_clone()
+        self.rt.compute_nodes[_NODENAME] = compute
+        self.rt.old_resources[_NODENAME] = compute
+        ptree = self._setup_ptree(compute)
+        ptree.update_aggregates(compute.uuid, [uuids.agg1])
+        self.rt.host_aggregates = {uuids.agg1, uuids.agg2}
+        flushed = []
+        self.rt.reportclient.update_from_provider_tree.side_effect = (
+            lambda ctx, tree, allocations: flushed.append(
+                tree.data(compute.uuid).aggregates))
+
+        self.rt._update(mock.sentinel.ctx, compute)
+        self.flags(sync_placement_aggregates=True, group='compute')
+        self.rt._update(mock.sentinel.ctx, compute)
+
+        self.assertEqual([{uuids.agg1}, {uuids.agg1, uuids.agg2}], flushed)
+
+    @mock.patch.object(resource_tracker.LOG, 'warning')
+    @mock.patch.object(objects.AggregateList, 'get_by_host')
+    def test_refresh_host_aggregates(self, mock_get_by_host, mock_log):
+        mock_get_by_host.return_value = [
+            objects.Aggregate(uuid=uuids.agg1),
+            objects.Aggregate(uuid=uuids.agg2)]
+
+        self.rt.refresh_host_aggregates(mock.sentinel.ctx)
+
+        mock_get_by_host.assert_called_once_with(
+            mock.sentinel.ctx, self.rt.host)
+        self.assertEqual({uuids.agg1, uuids.agg2}, self.rt.host_aggregates)
+
+        mock_get_by_host.side_effect = Exception('boom')
+
+        self.rt.refresh_host_aggregates(mock.sentinel.ctx)
+
+        self.assertEqual(set(), self.rt.host_aggregates)
+        mock_log.assert_called_once()
+
+
 class TestInstanceClaim(BaseTestCase):
 
     def setUp(self):

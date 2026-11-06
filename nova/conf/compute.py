@@ -849,6 +849,27 @@ Possible values:
 
 * Any positive integer in seconds, or zero to disable refresh.
 """),
+    cfg.BoolOpt('sync_placement_aggregates',
+        default=False,
+        help="""
+Add the compute node resource providers to the aggregates of their host.
+
+Nova puts a host's resource providers into placement aggregates only when the
+host is added to an aggregate. That is enough as long as a host has a single,
+long living compute node. Ironic hosts have a compute node per Ironic node
+though, and nodes join a host long after it was added to its aggregates, e.g.
+when they are imported or moved over from another conductor group. Their
+resource providers then lack the host's aggregates until someone runs
+``nova-manage placement sync_aggregates``.
+
+When enabled, the resource tracker does what ``nova-manage placement
+sync_aggregates`` does for its own compute nodes, every time it updates their
+resource providers: it adds each provider to the host's aggregates missing in
+placement. Like that command, it never removes aggregates, so a node moved
+over from a host in other aggregates stays in those, too.
+
+This is meant for Ironic compute services only.
+"""),
    cfg.StrOpt('cpu_shared_set',
         help="""
 Mask of host CPUs that can be used for ``VCPU`` resources and offloaded
