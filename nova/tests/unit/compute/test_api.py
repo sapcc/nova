@@ -566,7 +566,8 @@ class _ComputeAPIUnitTestMixIn(object):
         mock_get_by_volume.side_effect = exception.VolumeBDMNotFound(
             volume_id='fake-volume-id')
 
-        fake_bdm = mock.MagicMock(spec=objects.BlockDeviceMapping)
+        fake_bdm = mock.MagicMock(attachment_id=None,
+                                  spec=objects.BlockDeviceMapping)
         mock_get_by_volume_and_instance.return_value = fake_bdm
         instance = self._create_instance_obj()
         volume = fake_volume.fake_volume(1, 'test-vol', 'test-vol',
