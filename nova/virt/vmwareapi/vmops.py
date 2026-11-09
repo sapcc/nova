@@ -4339,22 +4339,21 @@ class VMwareVMOps(object):
         task_filter_spec.entity.entity = templ_vm_folder_ref
         task_filter_spec.entity.recursion = "children"
 
-        templ_tasks = vm_util.TaskHistoryCollectorItems(
-            self._session, task_filter_spec, reverse_page_order=True)
-
-        for ti in templ_tasks:
-            # Look for template creation or clone from template
-            if ti.descriptionId in ["ResourcePool.ImportVAppLRO",
-                                    "VirtualMachine.clone"]:
-                templ_vm_ref = ti.entity
-                if timeutils.is_older_than(ti.queueTime,
-                    CONF.image_cache.
-                        remove_unused_original_minimum_age_seconds):
-                    break
-                else:
-                    expired_templ_vms.pop(templ_vm_ref.value, None)
-                    if not expired_templ_vms:
+        with vm_util.TaskHistoryCollectorItems(self._session,
+                task_filter_spec, reverse_page_order=True) as templ_tasks:
+            for ti in templ_tasks:
+                # Look for template creation or clone from template
+                if ti.descriptionId in ["ResourcePool.ImportVAppLRO",
+                                        "VirtualMachine.clone"]:
+                    templ_vm_ref = ti.entity
+                    if timeutils.is_older_than(ti.queueTime,
+                        CONF.image_cache.
+                            remove_unused_original_minimum_age_seconds):
                         break
+                    else:
+                        expired_templ_vms.pop(templ_vm_ref.value, None)
+                        if not expired_templ_vms:
+                            break
 
         if not expired_templ_vms:
             return
