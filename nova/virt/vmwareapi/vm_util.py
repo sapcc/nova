@@ -206,11 +206,18 @@ class HistoryCollectorItems:
 
         self._page_items = vim_util.get_array_items(latest_page)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.destroy_collector()
+
     def destroy_collector(self):
         if self.history_collector:
             self.session._call_method(self.session.vim,
                                       "DestroyCollector",
                                       self.history_collector)
+            self.history_collector = None
 
 
 class TaskHistoryCollectorItems(HistoryCollectorItems):
@@ -231,9 +238,6 @@ class TaskHistoryCollectorItems(HistoryCollectorItems):
                                                         max_page_size,
                                                         page_sort_key_func)
 
-    def __del__(self):
-        self.destroy_collector()
-
 
 class EventHistoryCollectorItems(HistoryCollectorItems):
     def __init__(self, session, event_filter_spec, reverse_page_order=False,
@@ -252,9 +256,6 @@ class EventHistoryCollectorItems(HistoryCollectorItems):
                                                          reverse_page_order,
                                                          max_page_size,
                                                          page_sort_key_func)
-
-    def __del__(self):
-        self.destroy_collector()
 
 
 def vm_refs_cache_reset():

@@ -2642,10 +2642,12 @@ class VMwareVMOpsTestCase(test.TestCase):
              not EXPIRED)
         ]
 
-        mock_task_it.return_value = []
+        # Instantiate it, then use it as contextmanager and iterate over that
+        mock_task_it.return_value = mock_task_it
+        mock_task_it.__enter__.return_value = []
         mock_older_than_results = []
         for task, expired in tasks_and_expirations:
-            mock_task_it.return_value.append(task)
+            mock_task_it.__enter__.return_value.append(task)
             mock_older_than_results.append(expired)
         mock_older_than.side_effect = mock_older_than_results
 
