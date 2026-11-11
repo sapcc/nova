@@ -484,6 +484,18 @@ class FlavorPermissionRulesControllerTest(test.NoDBTestCase):
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self.controller.create, req, body=body)
 
+    @mock.patch('nova.api.openstack.identity.verify_project_in_domain',
+        side_effect=webob.exc.HTTPServiceUnavailable)
+    def test_create_project_scope_verification_unavailable(self, mock_verify):
+        req = self._req('create:project')
+        body = {'flavor_permission_rule': {
+            'domain_id': DOMAIN_ID,
+            'project_id': OTHER_PROJECT_ID,
+            'effect': ALLOW,
+        }}
+        self.assertRaises(webob.exc.HTTPServiceUnavailable,
+                          self.controller.create, req, body=body)
+
     @mock.patch('nova.objects.FlavorPermissionRule.save')
     @mock.patch('nova.objects.FlavorPermissionRule.get_by_uuid')
     def test_update_success(self, mock_get, mock_save):

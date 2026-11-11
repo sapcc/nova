@@ -66,7 +66,7 @@ Creates a flavor permission rule.
 Normal response codes: 201
 
 Error response codes: badRequest(400), unauthorized(401), forbidden(403),
-itemNotFound(404), conflict(409)
+itemNotFound(404), conflict(409), serviceUnavailable(503)
 
 Request
 -------

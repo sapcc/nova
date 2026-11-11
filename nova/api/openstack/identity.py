@@ -126,10 +126,11 @@ def verify_domain_id(context, domain_id):
 def verify_project_in_domain(context, project_id, domain_id):
     """Verify that a project_id belongs to a given domain_id.
 
-    This attempts to verify that a project id exists and belongs to a given
-    domain id. If it does not, an HTTPBadRequest is emitted. Also
-    HTTPBadRequest is emitted if Keystone identity service version 3 is not
-    found.
+    Unlike ``verify_project_id``, this does not fail open: callers need the
+    project/domain relationship to store consistent data. An HTTPBadRequest
+    is raised if the project does not exist or belongs to another domain, an
+    HTTPForbidden if Keystone permissions are insufficient, and an
+    HTTPServiceUnavailable if the relationship cannot be verified.
     """
     adap = utils.get_ksa_adapter(
         'identity', ksa_auth=context.get_auth_plugin(),
@@ -143,11 +144,12 @@ def verify_project_in_domain(context, project_id, domain_id):
             "might be caused by Nova misconfiguration or Keystone "
             "problems.")
         msg = _("Nova was unable to find Keystone service endpoint.")
-        raise webob.exc.HTTPBadRequest(explanation=msg)
+        raise webob.exc.HTTPServiceUnavailable(explanation=msg)
     except kse.ClientException:
-        LOG.info("Unable to contact keystone to verify project_id belongs to "
-                 "domain_id")
-        return True
+        LOG.warning("Unable to contact keystone to verify project_id belongs "
+                    "to domain_id")
+        msg = _("Unable to verify the project domain with Keystone.")
+        raise webob.exc.HTTPServiceUnavailable(explanation=msg)
 
     if resp:
         actual_domain = resp.json().get('project', {}).get('domain_id')
@@ -165,10 +167,14 @@ def verify_project_in_domain(context, project_id, domain_id):
         LOG.info(
             f"Insufficient permissions for user {context.user_id} to verify "
             f"project_id {project_id} belongs to domain {domain_id}")
-        return True
+        msg = _("Insufficient Keystone permissions to verify that project "
+                "%(project_id)s belongs to domain %(domain_id)s.") % {
+                    'project_id': project_id, 'domain_id': domain_id}
+        raise webob.exc.HTTPForbidden(explanation=msg)
     else:
         LOG.warning(
             f"Unexpected response from keystone trying to verify project_id "
             f"{project_id} belongs to domain {domain_id} - resp: "
             f"{resp.status_code} {resp.content}")
-        return True
+        msg = _("Unable to verify the project domain with Keystone.")
+        raise webob.exc.HTTPServiceUnavailable(explanation=msg)

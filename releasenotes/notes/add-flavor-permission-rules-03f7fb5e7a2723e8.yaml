@@ -30,6 +30,12 @@ features:
     ``os_compute_api:os-flavor-permission-rules`` namespace. These policies
     also restrict the access to the new flavor API query parameters and
     response values. Only administrators have access by default.
+
+    When creating a rule for a project outside the caller's own project, the
+    API verifies with Keystone that the project belongs to the specified
+    domain. The request fails with HTTP 403 if Keystone permissions are
+    insufficient for that check, and with HTTP 503 if the check cannot be
+    completed.
 upgrade:
   - |
     A new database migration adds the ``flavor_permission_rules`` table to the
