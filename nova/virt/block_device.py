@@ -407,6 +407,55 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
                 LOG.info('preserve multipath_id %s',
                          connection_info['data']['multipath_id'])
 
+    def _preserve_device_path(self, connection_info):
+        if self['connection_info'] and 'data' in self['connection_info']:
+            if 'device_path' in self['connection_info']['data']:
+                connection_info['data']['device_path'] =\
+                    self['connection_info']['data']['device_path']
+
+    def _get_attachment_connection_info(self, context, volume_api):
+        attachment_ref = volume_api.attachment_get(context,
+                                                   self['attachment_id'])
+        connection_info = attachment_ref['connection_info']
+        # The _volume_attach method stashes a 'multiattach' flag in the
+        # BlockDeviceMapping.connection_info which is not persisted back
+        # in cinder so before we overwrite the BDM.connection_info, we need to
+        # make sure and preserve the multiattach flag if it's set. Note that
+        # this is safe to do across refreshes because the multiattach
+        # capability of a volume cannot be changed while the volume is in-use.
+        if connection_info and self['connection_info'].get('multiattach',
+                                                           False):
+            connection_info['multiattach'] = True
+        return connection_info
+
+    def _refresh_connection_info_for_detach(self, context, instance,
+                                            volume_api):
+        """Use the connection_info of the cinder attachment for the detach.
+
+        The one stored in the BDM can be outdated.
+        """
+        if not self['attachment_id'] or not self['connection_info']:
+            return
+        try:
+            connection_info = self._get_attachment_connection_info(
+                context, volume_api)
+        except Exception as e:
+            LOG.warning('Failed to get the connection_info of attachment %s, '
+                        'using the one of the BDM: %s', self['attachment_id'],
+                        e, instance=instance)
+            return
+        if not connection_info:
+            return
+
+        # Cinder doesn't return the serial that get_volume_id() falls back to.
+        if 'serial' not in connection_info:
+            connection_info['serial'] = self.volume_id
+        # device_path and multipath_id come from os-brick on this host and are
+        # unknown to cinder, so keep the ones from the BDM.
+        self._preserve_device_path(connection_info)
+        self._preserve_multipath_id(connection_info)
+        self['connection_info'] = connection_info
+
     def driver_detach(self, context, instance, volume_api, virt_driver):
         connection_info = self['connection_info']
         mp = self['mount_device']
@@ -505,6 +554,8 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
         # Only attempt to detach and disconnect from the volume if the instance
         # is currently associated with the local compute host.
         if CONF.host == instance.host:
+            self._refresh_connection_info_for_detach(context, instance,
+                                                     volume_api)
             self.driver_detach(context, instance, volume_api, virt_driver)
         elif not destroy_bdm:
             LOG.debug("Skipping driver_detach during remote rebuild.",
@@ -826,19 +877,8 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
                                                                self.volume_id,
                                                                connector)
         else:
-            attachment_ref = volume_api.attachment_get(context,
-                                                       self['attachment_id'])
-            # The _volume_attach method stashes a 'multiattach' flag in the
-            # BlockDeviceMapping.connection_info which is not persisted back
-            # in cinder so before we overwrite the BDM.connection_info (via
-            # the update_db decorator on this method), we need to make sure
-            # and preserve the multiattach flag if it's set. Note that this
-            # is safe to do across refreshes because the multiattach capability
-            # of a volume cannot be changed while the volume is in-use.
-            multiattach = self['connection_info'].get('multiattach', False)
-            connection_info = attachment_ref['connection_info']
-            if multiattach:
-                connection_info['multiattach'] = True
+            connection_info = self._get_attachment_connection_info(
+                context, volume_api)
 
         if 'serial' not in connection_info:
             connection_info['serial'] = self.volume_id
