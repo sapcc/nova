@@ -85,6 +85,12 @@ class FlavorPermissionRulesPolicyTest(base.BasePolicyTest):
             'nova.objects.FlavorPermissionRule.destroy'))
         self.useFixture(fixtures.MockPatch(
             'nova.objects.FlavorPermissionRule.save'))
+        # Rule creation validates request-body IDs with Keystone when they
+        # differ from the context. These tests focus on policy enforcement.
+        self.useFixture(fixtures.MockPatch(
+            'nova.api.openstack.identity.verify_domain_id'))
+        self.useFixture(fixtures.MockPatch(
+            'nova.api.openstack.identity.verify_project_in_domain'))
         # Ensure all contexts have project_domain_id and project_id
         for ctx in self.all_contexts:
             if ctx.project_domain_id is None:

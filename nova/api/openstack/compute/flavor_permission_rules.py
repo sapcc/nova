@@ -179,7 +179,7 @@ class FlavorPermissionRulesController(wsgi.Controller):
         return self._view_builder.show(req, rule, flavor_ref)
 
     @wsgi.response(201)
-    @wsgi.expected_errors((400, 403, 404, 409))
+    @wsgi.expected_errors((400, 403, 404, 409, 503))
     @validation.schema(schema.create)
     @validation.response_body_schema(schema.create_show_update_response)
     def create(

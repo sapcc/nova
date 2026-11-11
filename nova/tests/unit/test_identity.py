@@ -231,29 +231,29 @@ class VerifyProjectInDomainTest(test.NoDBTestCase):
 
     def test_insufficient_permissions(self):
         self.mock_adap.get.return_value = fake_requests.FakeResponse(403)
-        self.assertTrue(
-            identity.verify_project_in_domain(
-                mock.MagicMock(), self.project, self.domain))
+        self.assertRaises(webob.exc.HTTPForbidden,
+                          identity.verify_project_in_domain,
+                          mock.MagicMock(), self.project, self.domain)
         self._validate_common()
 
     def test_unexpected_response(self):
         self.mock_adap.get.return_value = fake_requests.FakeResponse(
             500, content="Oh noes!")
-        self.assertTrue(
-            identity.verify_project_in_domain(
-                mock.MagicMock(), self.project, self.domain))
+        self.assertRaises(webob.exc.HTTPServiceUnavailable,
+                          identity.verify_project_in_domain,
+                          mock.MagicMock(), self.project, self.domain)
         self._validate_common()
 
     def test_client_exception(self):
         self.mock_adap.get.side_effect = kse.ConnectionError()
-        self.assertTrue(
-            identity.verify_project_in_domain(
-                mock.MagicMock(), self.project, self.domain))
+        self.assertRaises(webob.exc.HTTPServiceUnavailable,
+                          identity.verify_project_in_domain,
+                          mock.MagicMock(), self.project, self.domain)
         self._validate_common()
 
     def test_endpoint_not_found(self):
         self.mock_adap.get.side_effect = kse.EndpointNotFound()
-        self.assertRaises(webob.exc.HTTPBadRequest,
+        self.assertRaises(webob.exc.HTTPServiceUnavailable,
                           identity.verify_project_in_domain,
                           mock.MagicMock(), self.project, self.domain)
         self._validate_common()
