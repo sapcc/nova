@@ -626,6 +626,72 @@ class TestDriverBlockDevice(test.NoDBTestCase):
             delete_attachment_raises=exception.VolumeAttachmentNotFound(
                 attachment_id=uuids.attachment_id))
 
+    def test_refresh_connection_info_for_detach(self):
+        driver_bdm = self.driver_classes['volume'](self.volume_bdm)
+        driver_bdm['attachment_id'] = ATTACHMENT_ID
+        driver_bdm['connection_info'] = {
+            'driver_volume_type': 'iscsi', 'multiattach': True,
+            'data': {'target_lun': 0, 'device_path': '/dev/dm-1',
+                     'multipath_id': 'fake-multipath-id'}}
+        self.volume_api.attachment_get.return_value = {'connection_info': {
+            'driver_volume_type': 'fibre_channel', 'data': {'target_lun': 1}}}
+
+        driver_bdm._refresh_connection_info_for_detach(
+            self.context, fake_instance.fake_instance_obj(self.context),
+            self.volume_api)
+
+        self.volume_api.attachment_get.assert_called_once_with(
+            self.context, ATTACHMENT_ID)
+        self.assertEqual(
+            {'driver_volume_type': 'fibre_channel', 'multiattach': True,
+             'serial': driver_bdm.volume_id,
+             'data': {'target_lun': 1, 'device_path': '/dev/dm-1',
+                      'multipath_id': 'fake-multipath-id'}},
+            driver_bdm['connection_info'])
+
+    @ddt.data((None, None),
+              (ATTACHMENT_ID, None),
+              (ATTACHMENT_ID, exception.VolumeAttachmentNotFound(
+                  attachment_id=ATTACHMENT_ID)))
+    @ddt.unpack
+    def test_refresh_connection_info_for_detach_keeps_bdm(self, attachment_id,
+                                                          get_raises):
+        connection_info = {'driver_volume_type': 'iscsi',
+                           'data': {'target_lun': 0}}
+        driver_bdm = self.driver_classes['volume'](self.volume_bdm)
+        driver_bdm['attachment_id'] = attachment_id
+        driver_bdm['connection_info'] = connection_info
+        self.volume_api.attachment_get.side_effect = get_raises
+        self.volume_api.attachment_get.return_value = {'connection_info': None}
+
+        driver_bdm._refresh_connection_info_for_detach(
+            self.context, fake_instance.fake_instance_obj(self.context),
+            self.volume_api)
+
+        self.assertEqual(connection_info, driver_bdm['connection_info'])
+        self.assertEqual(attachment_id is not None,
+                         self.volume_api.attachment_get.called)
+
+    def test_detach_refreshes_connection_info(self):
+        self.flags(host='fake-host')
+        instance = fake_instance.fake_instance_obj(self.context,
+                                                   host='fake-host')
+        driver_bdm = self.driver_classes['volume'](self.volume_bdm)
+        volume = {'id': driver_bdm.volume_id, 'attach_status': 'attached',
+                  'status': 'in-use'}
+        with test.nested(
+            mock.patch.object(driver_bdm, '_get_volume', return_value=volume),
+            mock.patch.object(driver_bdm,
+                              '_refresh_connection_info_for_detach'),
+            mock.patch.object(driver_bdm, 'driver_detach'),
+        ) as (_, mock_refresh, mock_driver_detach):
+            driver_bdm.detach(self.context, instance, self.volume_api,
+                              self.virt_driver)
+
+        mock_refresh.assert_called_once_with(self.context, instance,
+                                             self.volume_api)
+        mock_driver_detach.assert_called_once()
+
     @mock.patch.object(encryptors, 'get_encryption_metadata')
     @mock.patch.object(driver_block_device,
         '_get_volume_create_scheduler_hints',
