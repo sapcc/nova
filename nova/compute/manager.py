@@ -7040,6 +7040,19 @@ class ComputeManager(manager.Manager):
         # refresh_conn_info=True will update the BDM.connection_info value
         # in the database so we must do this before calling that method.
         if instance.system_metadata.get('cross_hv_resize') == 'true':
+            # Hard reboot/start rebuild instance.image_meta from
+            # system_metadata, so persist the guest defaults applied to the
+            # spawn image there as well. Journal raw originals for revert.
+            guest_defaults = compute_utils.sync_cross_hv_guest_defaults(
+                instance.system_metadata, image_meta)
+            mig_ctx = instance.migration_context
+            if guest_defaults and mig_ctx:
+                journal = dict(mig_ctx.old_image_properties or {}) if (
+                    mig_ctx.obj_attr_is_set('old_image_properties')) else {}
+                for key, original in guest_defaults.items():
+                    # First-recorded original wins.
+                    journal.setdefault(key, original)
+                mig_ctx.old_image_properties = journal
             if self._journal_cross_hv_bdms(instance, bdms):
                 # Save the original names and buses before BDM saves
                 # replace them with KVM values for failure tolerance.

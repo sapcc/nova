@@ -2366,10 +2366,11 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
         old = compute_utils.sanitize_image_props_for_kvm(reqspec)
         self.assertEqual(1, reqspec.image.properties.hw_serial_port_count)
         self.assertEqual('windows', reqspec.image.properties.os_type)
+        # os_type already held its desired value, so only the added
+        # serial port count needs a journal entry.
         self.assertEqual(
             {'hw_serial_port_count':
-                compute_utils.CROSS_HV_JOURNAL_ABSENT,
-             'os_type': 'windows'}, old)
+                compute_utils.CROSS_HV_JOURNAL_ABSENT}, old)
 
     def test_windows_via_os_distro_prefix(self):
         for os_distro in ('windows-2022', 'Windows-2019'):
@@ -2415,13 +2416,22 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
             'hw_vif_multiqueue_enabled'))
         self.assertEqual({}, old)
 
-    def test_windows_existing_values_journaled(self):
+    def test_windows_serial_port_count_2_journaled(self):
         reqspec = self._make_request_spec(
             os_type='windows', hw_serial_port_count=2)
         old = compute_utils.sanitize_image_props_for_kvm(reqspec)
         self.assertEqual(1, reqspec.image.properties.hw_serial_port_count)
-        self.assertEqual(
-            {'hw_serial_port_count': '2', 'os_type': 'windows'}, old)
+        self.assertEqual('windows', reqspec.image.properties.os_type)
+        # Only the property the sanitizer actually changed is journaled.
+        self.assertEqual({'hw_serial_port_count': '2'}, old)
+
+    def test_windows_already_at_defaults_not_journaled(self):
+        reqspec = self._make_request_spec(
+            os_type='windows', hw_serial_port_count=1)
+        old = compute_utils.sanitize_image_props_for_kvm(reqspec)
+        self.assertEqual({}, old)
+        self.assertEqual(1, reqspec.image.properties.hw_serial_port_count)
+        self.assertEqual('windows', reqspec.image.properties.os_type)
 
     def test_restore_image_props_from_cross_hv_journal(self):
         reqspec = self._make_request_spec(
@@ -2442,6 +2452,46 @@ class TestSanitizeImagePropsForKvm(test.NoDBTestCase):
         self.assertEqual('scsi', reqspec.image.properties.hw_disk_bus)
         self.assertEqual('vmware', sysmeta['image_img_hv_type'])
         self.assertEqual('scsi', sysmeta['image_hw_disk_bus'])
+
+
+class TestCrossHvGuestDefaults(test.NoDBTestCase):
+    """Tests for cross_hv_guest_defaults."""
+
+    def _make_image(self, **properties):
+        return objects.ImageMeta.from_dict({'properties': properties})
+
+    def test_windows_via_os_type(self):
+        self.assertEqual(
+            {'os_type': 'windows', 'hw_serial_port_count': 1},
+            compute_utils.cross_hv_guest_defaults(
+                self._make_image(os_type='windows')))
+
+    def test_windows_via_os_distro_prefix(self):
+        for os_distro in ('windows-2022', 'Windows-2019'):
+            with self.subTest(os_distro=os_distro):
+                self.assertEqual(
+                    {'os_type': 'windows', 'hw_serial_port_count': 1},
+                    compute_utils.cross_hv_guest_defaults(
+                        self._make_image(os_distro=os_distro)))
+
+    def test_linux_gets_multiqueue(self):
+        self.assertEqual(
+            {'hw_vif_multiqueue_enabled': True},
+            compute_utils.cross_hv_guest_defaults(
+                self._make_image(os_type='linux')))
+
+    def test_no_properties_is_non_windows(self):
+        self.assertEqual(
+            {}, compute_utils.cross_hv_guest_defaults(objects.ImageMeta()))
+
+    def test_pinned_flavor_suppresses_multiqueue(self):
+        flavor = objects.Flavor(
+            vcpus=1, memory_mb=512,
+            extra_specs={'hw:vif_multiqueue_enabled': 'true'})
+        self.assertEqual(
+            {},
+            compute_utils.cross_hv_guest_defaults(
+                self._make_image(os_type='linux'), flavor=flavor))
 
 
 class TestRestoreImageProps(test.NoDBTestCase):
@@ -2505,6 +2555,163 @@ class TestRestoreImageProps(test.NoDBTestCase):
 
         self.assertEqual(2, reqspec.image.properties.hw_serial_port_count)
         self.assertEqual('windows', reqspec.image.properties.os_type)
+
+
+class TestSyncCrossHvGuestDefaults(test.NoDBTestCase):
+    """Tests for sync_cross_hv_guest_defaults."""
+
+    def _make_image_meta(self, **properties):
+        return objects.ImageMeta.from_dict({'properties': properties})
+
+    def _restored_image(self, sysmeta):
+        return objects.ImageMeta.from_dict({
+            'properties':
+                utils.get_image_from_system_metadata(sysmeta)['properties']})
+
+    def test_linux_absent_gets_true_and_absent_journal(self):
+        sysmeta = {'image_os_type': 'linux'}
+        image_meta = self._make_image_meta(
+            os_type='linux', hw_vif_multiqueue_enabled=True)
+
+        originals = compute_utils.sync_cross_hv_guest_defaults(
+            sysmeta, image_meta)
+
+        self.assertEqual('true', sysmeta['image_hw_vif_multiqueue_enabled'])
+        self.assertEqual('linux', sysmeta['image_os_type'])
+        self.assertNotIn('image_os_type', originals)
+        self.assertEqual({
+            'image_hw_vif_multiqueue_enabled':
+                compute_utils.CROSS_HV_JOURNAL_ABSENT}, originals)
+
+    def test_linux_false_overwritten_and_journaled(self):
+        sysmeta = {'image_hw_vif_multiqueue_enabled': 'false'}
+        image_meta = self._make_image_meta(
+            hw_vif_multiqueue_enabled=True)
+
+        originals = compute_utils.sync_cross_hv_guest_defaults(
+            sysmeta, image_meta)
+
+        self.assertEqual('true', sysmeta['image_hw_vif_multiqueue_enabled'])
+        self.assertEqual(
+            {'image_hw_vif_multiqueue_enabled': 'false'}, originals)
+
+    def test_value_already_equal_not_journaled(self):
+        sysmeta = {
+            'image_hw_vif_multiqueue_enabled': 'true',
+            'image_os_type': 'windows'}
+        original_sysmeta = sysmeta.copy()
+        image_meta = self._make_image_meta(
+            hw_vif_multiqueue_enabled=True, os_type='windows')
+
+        originals = compute_utils.sync_cross_hv_guest_defaults(
+            sysmeta, image_meta)
+
+        self.assertEqual(original_sysmeta, sysmeta)
+        self.assertEqual({}, originals)
+
+    def test_field_unset_on_image_leaves_sysmeta(self):
+        sysmeta = {'image_hw_vif_multiqueue_enabled': 'false'}
+        original_sysmeta = sysmeta.copy()
+        image_meta = self._make_image_meta(hw_disk_bus='virtio')
+
+        originals = compute_utils.sync_cross_hv_guest_defaults(
+            sysmeta, image_meta)
+
+        self.assertEqual(original_sysmeta, sysmeta)
+        self.assertEqual({}, originals)
+
+    def test_field_set_comes_from_policy(self):
+        sysmeta = {}
+        image_meta = self._make_image_meta(hw_disk_bus='virtio')
+        with mock.patch.object(
+                compute_utils, 'cross_hv_guest_defaults',
+                return_value={'hw_disk_bus': 'virtio'}):
+            originals = compute_utils.sync_cross_hv_guest_defaults(
+                sysmeta, image_meta)
+        self.assertEqual('virtio', sysmeta['image_hw_disk_bus'])
+        self.assertEqual(
+            {'image_hw_disk_bus': compute_utils.CROSS_HV_JOURNAL_ABSENT},
+            originals)
+
+    def test_windows_serial_2_reset_to_1(self):
+        sysmeta = {
+            'image_os_type': 'windows',
+            'image_hw_serial_port_count': '2'}
+        image_meta = self._make_image_meta(
+            os_type='windows', hw_serial_port_count=1)
+
+        originals = compute_utils.sync_cross_hv_guest_defaults(
+            sysmeta, image_meta)
+
+        self.assertEqual('windows', sysmeta['image_os_type'])
+        self.assertEqual('1', sysmeta['image_hw_serial_port_count'])
+        self.assertEqual({'image_hw_serial_port_count': '2'}, originals)
+
+    def test_windows_distro_only_gets_type_and_serial(self):
+        sysmeta = {'image_vmware_ostype': 'windows9Server64Guest'}
+        image_meta = self._make_image_meta(
+            os_type='windows', hw_serial_port_count=1)
+
+        originals = compute_utils.sync_cross_hv_guest_defaults(
+            sysmeta, image_meta)
+
+        self.assertEqual('windows', sysmeta['image_os_type'])
+        self.assertEqual('1', sysmeta['image_hw_serial_port_count'])
+        self.assertEqual('windows9Server64Guest',
+                         sysmeta['image_vmware_ostype'])
+        self.assertNotIn('image_hw_vif_multiqueue_enabled', sysmeta)
+        self.assertEqual({
+            'image_os_type': compute_utils.CROSS_HV_JOURNAL_ABSENT,
+            'image_hw_serial_port_count':
+                compute_utils.CROSS_HV_JOURNAL_ABSENT}, originals)
+
+    def test_round_trip_with_restore(self):
+        cases = (
+            ({}, {'hw_vif_multiqueue_enabled': True}),
+            ({'image_hw_vif_multiqueue_enabled': 'false'},
+             {'hw_vif_multiqueue_enabled': True}),
+            ({'image_os_type': 'windows',
+              'image_hw_serial_port_count': '2'},
+             {'os_type': 'windows', 'hw_serial_port_count': 1}),
+        )
+        for source, image_props in cases:
+            with self.subTest(source=source, image_props=image_props):
+                sysmeta = source.copy()
+                image_meta = self._make_image_meta(**image_props)
+                originals = compute_utils.sync_cross_hv_guest_defaults(
+                    sysmeta, image_meta)
+
+                compute_utils.restore_image_props_from_cross_hv_journal(
+                    sysmeta=sysmeta, old_image_properties=originals)
+
+                self.assertEqual(source, sysmeta)
+
+    def test_bool_serialized_value_parses_back(self):
+        # Non-Windows guests carry the multiqueue default, so the boolean
+        # survives sysmeta serialization as 'true'.
+        sysmeta = {}
+        image_meta = self._make_image_meta(
+            os_type='linux', hw_vif_multiqueue_enabled=True)
+
+        compute_utils.sync_cross_hv_guest_defaults(sysmeta, image_meta)
+
+        self.assertEqual('true', sysmeta['image_hw_vif_multiqueue_enabled'])
+        self.assertIs(True,
+                      self._restored_image(
+                          sysmeta).properties.hw_vif_multiqueue_enabled)
+
+    def test_serial_port_count_serialized_value_parses_back(self):
+        # Windows guests carry the serial port default instead.
+        sysmeta = {}
+        image_meta = self._make_image_meta(
+            os_type='windows', hw_serial_port_count=1)
+
+        compute_utils.sync_cross_hv_guest_defaults(sysmeta, image_meta)
+
+        self.assertEqual('1', sysmeta['image_hw_serial_port_count'])
+        self.assertEqual(1,
+                         self._restored_image(
+                             sysmeta).properties.hw_serial_port_count)
 
 
 class TestCleanupCrossHvMarkers(test.NoDBTestCase):
