@@ -46,9 +46,11 @@ class TestDeleteWhileBuildingBDMNotFound(
     before destroying the instance row in instance.destroy(). If the
     compute is still in _build_resources in that window, the root BDM
     save in _default_block_device_names raises BDMNotFound while the
-    instance row is still alive. This test reproduces the race
-    deterministically and asserts the behavior of the build in that
-    window.
+    instance row is still alive. That exception has to be handled as a
+    signal that the instance was deleted concurrently, like
+    InstanceNotFound, so that the build exits cleanly instead of
+    wrapping the error in a BuildAbortException and setting the still
+    visible instance to ERROR state with a fault.
     """
 
     def setUp(self):
@@ -192,24 +194,18 @@ class TestDeleteWhileBuildingBDMNotFound(
         # BDMNotFound.
         self.assertEqual(1, len(bdm_not_found))
 
-        # This is bug 2161769: BDMNotFound is not handled as a deletion
-        # signal like InstanceNotFound, so the build falls through to
-        # the generic exception handler, gets wrapped in a
-        # BuildAbortException, and sets the still visible instance to
-        # ERROR state with a recorded fault instead of exiting cleanly
-        # and letting the delete finish. The delete is still blocked
-        # before instance.destroy() here, so the instance row is still
-        # visible.
+        # The build exited cleanly: it did not set the still visible
+        # instance to ERROR state and did not record a fault for it.
+        # The delete is still blocked before instance.destroy() here,
+        # so the instance row is still visible.
         ctxt = nova_context.get_admin_context()
         with nova_context.target_cell(
                 ctxt, self.cell_mappings['cell1']) as cctxt:
             instance = objects.Instance.get_by_uuid(cctxt, server['id'])
-            self.assertEqual(vm_states.ERROR, instance.vm_state)
+            self.assertEqual(vm_states.BUILDING, instance.vm_state)
             faults = objects.InstanceFaultList.get_by_instance_uuids(
                 cctxt, [server['id']])
-            self.assertEqual(1, len(faults.objects))
-            self.assertIn('Failure prepping block device',
-                          faults.objects[0].message)
+            self.assertEqual([], faults.objects)
 
         # Let the delete finish destroying the instance row.
         let_destroy_continue.set()

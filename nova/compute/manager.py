@@ -2555,7 +2555,8 @@ class ComputeManager(manager.Manager):
 
             return build_results.RESCHEDULED
         except (exception.InstanceNotFound,
-                exception.UnexpectedDeletingTaskStateError):
+                exception.UnexpectedDeletingTaskStateError,
+                exception.BDMNotFound):
             msg = 'Instance disappeared during build.'
             LOG.debug(msg, instance=instance)
             self._cleanup_allocated_networks(context, instance,
@@ -2694,7 +2695,8 @@ class ComputeManager(manager.Manager):
                              'the hypervisor.', timer.elapsed(),
                              instance=instance)
         except (exception.InstanceNotFound,
-                exception.UnexpectedDeletingTaskStateError) as e:
+                exception.UnexpectedDeletingTaskStateError,
+                exception.BDMNotFound) as e:
             with excutils.save_and_reraise_exception():
                 self._notify_about_instance_usage(context, instance,
                     'create.error', fault=e)
@@ -2920,6 +2922,7 @@ class ComputeManager(manager.Manager):
             resources['block_device_info'] = block_device_info
         except (exception.InstanceNotFound,
                 exception.UnexpectedDeletingTaskStateError,
+                exception.BDMNotFound,
                 exception.ComputeResourcesUnavailable):
             with excutils.save_and_reraise_exception():
                 self._build_resources_cleanup(instance, network_info)
@@ -2944,7 +2947,8 @@ class ComputeManager(manager.Manager):
             with excutils.save_and_reraise_exception() as ctxt:
                 if not isinstance(exc, (
                         exception.InstanceNotFound,
-                        exception.UnexpectedDeletingTaskStateError)):
+                        exception.UnexpectedDeletingTaskStateError,
+                        exception.BDMNotFound)):
                     LOG.exception('Instance failed to spawn',
                                   instance=instance)
                 # Make sure the async call finishes

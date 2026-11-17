@@ -9631,6 +9631,9 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
         self._test_build_and_run_exceptions(exception.InstanceNotFound(
             instance_id=''))
 
+    def test_build_and_run_bdm_not_found_exception(self):
+        self._test_build_and_run_exceptions(exception.BDMNotFound(id=1))
+
     def test_build_and_run_unexpecteddeleting_exception(self):
         self._test_build_and_run_exceptions(
                 exception.UnexpectedDeletingTaskStateError(
