@@ -1545,3 +1545,16 @@ class CinderClientTestCase(test.NoDBTestCase):
         params = cinder._get_cinderclient_parameters(admin_ctx)
         self.assertEqual(mock_admin_auth, params[0].user_auth)
         self.assertEqual(mock_service_auth, params[0].service_auth)
+
+    @mock.patch('nova.volume.cinder._get_auth')
+    def test_get_server_version_none_http_retries(self, mock_get_auth):
+        self.flags(http_retries=None, group='cinder')
+        self.mock_session.get.return_value = mock.Mock(
+            text='{"versions": [{"version": "3.0", "min_version": "3.0"}]}')
+
+        min_ver, cur_ver = cinder._get_server_version(
+            self.ctxt, 'http://localhost:8776/v3')
+
+        self.assertEqual(cinder_api_versions.APIVersion('3.0'), min_ver)
+        self.assertEqual(cinder_api_versions.APIVersion('3.0'), cur_ver)
+        self.mock_session.get.assert_called_once()
