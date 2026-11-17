@@ -319,6 +319,10 @@ class MigrateServerTests(admin_only_action_common.CommonTests):
             expected_exc=webob.exc.HTTPInternalServerError,
             check_response=False)
 
+    def test_migrate_live_invalid_volume(self):
+        self._test_migrate_live_failed_with_exception(
+            exception.InvalidVolume(reason='volume status must be in-use'))
+
     @mock.patch('nova.compute.api.API.live_migrate',
                 side_effect=exception.ForbiddenWithAccelerators)
     def test_live_migration_raises_badrequest_for_accelerators(
