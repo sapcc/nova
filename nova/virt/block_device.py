@@ -609,7 +609,22 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
 
     def detach(self, context, instance, volume_api, virt_driver,
                attachment_id=None, destroy_bdm=False):
-        volume = self._get_volume(context, volume_api, self.volume_id)
+        try:
+            volume = self._get_volume(context, volume_api, self.volume_id)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception(
+                    f"Volume detach failed for volume {self.volume_id} "
+                    f"and attachment {self['attachment_id']}",
+                    instance=instance
+                )
+                try:
+                    volume_api.roll_detaching(context, self.volume_id)
+                except Exception:
+                    LOG.exception(
+                        f"Failed to roll back volume {self.volume_id} status",
+                        instance=instance
+                    )
         # Let OS-Brick handle high level locking that covers the local os-brick
         # detach and the Cinder call to call unmap the volume.  Not all volume
         # backends or hosts require locking.
