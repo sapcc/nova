@@ -12029,6 +12029,27 @@ class ComputeAPITestCase(BaseTestCase):
         mock_record.assert_called_once_with(
             self.context, instance, instance_actions.DETACH_VOLUME)
 
+    @mock.patch('nova.servicegroup.api.API.service_is_up',
+                new=mock.Mock(return_value=True))
+    @mock.patch('nova.compute.api.API._record_action_start')
+    @mock.patch.object(nova.volume.cinder.API, 'roll_detaching')
+    @mock.patch.object(nova.volume.cinder.API, 'begin_detaching')
+    @mock.patch('nova.compute.rpcapi.ComputeAPI.detach_volume',
+                side_effect=test.TestingException)
+    def test_detach_volume_rpc_raises(self, mock_rpc_detach,
+                                      mock_begin_detaching,
+                                      mock_roll_detaching, mock_record):
+        instance = self._create_fake_instance_obj()
+        volume = {'id': uuids.volume, 'attach_status': 'fake'}
+
+        self.assertRaises(test.TestingException,
+                          self.compute_api.detach_volume,
+                          self.context, instance, volume)
+        mock_begin_detaching.assert_called_once_with(
+            self.context, uuids.volume)
+        mock_roll_detaching.assert_called_once_with(
+            self.context, uuids.volume)
+
     @mock.patch('nova.compute.api.API._record_action_start')
     @mock.patch.object(compute_utils, 'EventReporter')
     @mock.patch.object(nova.volume.cinder.API, 'begin_detaching')
