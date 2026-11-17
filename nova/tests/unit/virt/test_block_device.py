@@ -344,6 +344,23 @@ class TestDriverBlockDevice(test.NoDBTestCase):
         self.volume_api.roll_detaching.assert_called_once_with(
             self.context, driver_bdm['volume_id'])
 
+    def test_driver_detach_get_volume_raises_exception(self):
+        self.volume_api.get.side_effect = cinder_exception.ClientException(500)
+        self.volume_api.roll_detaching.side_effect = RuntimeError('boom')
+
+        driver_bdm = self.driver_classes['volume'](self.volume_bdm)
+        instance = mock.Mock()
+        virt_driver = mock.Mock()
+
+        self.assertRaises(
+            cinder_exception.ClientException, driver_bdm.detach,
+            self.context, instance, self.volume_api, virt_driver
+        )
+
+        self.volume_api.roll_detaching.assert_called_once_with(
+            self.context, driver_bdm['volume_id'])
+        virt_driver.detach_volume.assert_not_called()
+
     def test_no_device_raises(self):
         for name, cls in self.driver_classes.items():
             bdm = fake_block_device.fake_bdm_object(
