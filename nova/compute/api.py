@@ -5392,8 +5392,12 @@ class API:
             attachment_id = attachments[instance.uuid]['attachment_id']
         self._record_action_start(
             context, instance, instance_actions.DETACH_VOLUME)
-        self.compute_rpcapi.detach_volume(context, instance=instance,
-                volume_id=volume['id'], attachment_id=attachment_id)
+        try:
+            self.compute_rpcapi.detach_volume(context, instance=instance,
+                    volume_id=volume['id'], attachment_id=attachment_id)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                self.volume_api.roll_detaching(context, volume['id'])
 
     @check_instance_lock
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.PAUSED,
