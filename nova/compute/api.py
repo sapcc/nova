@@ -2660,8 +2660,9 @@ class API:
             if bdm.is_volume:
                 try:
                     if bdm.attachment_id:
-                        self.volume_api.attachment_delete(context,
-                                                          bdm.attachment_id)
+                        self.volume_api.attachment_delete(
+                            context, bdm.attachment_id,
+                            volume_id=bdm.volume_id)
                     else:
                         connector = compute_utils.get_stashed_volume_connector(
                             bdm, instance)

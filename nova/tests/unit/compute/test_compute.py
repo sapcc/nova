@@ -6746,7 +6746,7 @@ class ComputeTestCase(BaseTestCase,
         # All the fake BDMs we've generated, in order
         fake_bdms = []
 
-        # A list of the attachment_ids returned by gen_fake_bdms
+        # A list of attachment and volume IDs returned by gen_fake_bdms
         fake_attachment_ids = []
 
         def gen_fake_bdms(obj, instance):
@@ -6773,7 +6773,8 @@ class ComputeTestCase(BaseTestCase,
             ])
             for bdm in bdms:
                 bdm.save = mock.Mock()
-                fake_attachment_ids.append(bdm.attachment_id)
+                fake_attachment_ids.append(
+                    (bdm.attachment_id, bdm.volume_id))
             fake_bdms.append(bdms)
             return bdms
 
@@ -6846,8 +6847,9 @@ class ComputeTestCase(BaseTestCase,
         # Assert that the final attachment_ids returned by
         # BlockDeviceMappingList.get_by_instance_uuid are then deleted.
         mock_attachment_delete.assert_has_calls([
-            mock.call(c, fake_attachment_ids.pop()),
-            mock.call(c, fake_attachment_ids.pop())], any_order=True)
+            mock.call(c, attachment_id, volume_id=volume_id)
+            for attachment_id, volume_id in fake_attachment_ids[-2:]],
+            any_order=True)
 
     @mock.patch.object(compute_rpcapi.ComputeAPI, 'pre_live_migration')
     @mock.patch.object(compute_rpcapi.ComputeAPI,
@@ -12257,7 +12259,8 @@ class ComputeAPITestCase(BaseTestCase):
         mock_elevated.return_value = admin
         self.compute._shutdown_instance(admin, instance, bdms)
 
-        mock_attach_delete.assert_called_once_with(admin, attachment_id)
+        mock_attach_delete.assert_called_once_with(
+            admin, attachment_id, volume_id=vol_bdm.volume_id)
         # we shouldn't try to get a connector for a cinder v3-style attachment
         mock_get_connector.assert_not_called()
 

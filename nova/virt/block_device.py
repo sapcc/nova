@@ -580,7 +580,8 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
                 raise
         else:
             try:
-                volume_api.attachment_delete(context, self['attachment_id'])
+                volume_api.attachment_delete(context, self['attachment_id'],
+                                             volume_id=volume_id)
             except exception.VolumeAttachmentNotFound:
                 LOG.info(
                     "Ignoring a volume attachment deletion failure as the "
@@ -744,8 +745,8 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
                                   {'volume_id': volume_id,
                                    'mountpoint': self['mount_device']},
                                   instance=instance)
-                    volume_api.attachment_delete(context,
-                                                 attachment_id)
+                    volume_api.attachment_delete(
+                        context, attachment_id, volume_id=volume_id)
 
         # NOTE(mriedem): save our current state so connection_info is in
         # the database before the volume status goes to 'in-use' because
@@ -779,7 +780,8 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
                                      'mount_point': self['mount_device']},
                                     exc_info=True, instance=instance)
                 # Delete the attachment to mark the volume as "available".
-                volume_api.attachment_delete(context, self['attachment_id'])
+                volume_api.attachment_delete(
+                    context, self['attachment_id'], volume_id=volume_id)
 
     def _do_attach(self, context, instance, volume, volume_api, virt_driver,
                    do_driver_attach):

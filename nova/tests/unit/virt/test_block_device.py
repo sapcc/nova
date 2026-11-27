@@ -616,7 +616,7 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
             mock_guard.assert_called_once_with(volume)
             self.volume_api.attachment_delete.assert_called_once_with(
-                elevated_context, attachment_id)
+                elevated_context, attachment_id, volume_id=volume['id'])
 
     def test_volume_delete_attachment_with_shared_targets(self):
         self.test_volume_delete_attachment(include_shared_targets=True)
@@ -798,7 +798,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                     else:
                         mock_att_delete = self.volume_api.attachment_delete
                         mock_att_delete.assert_called_once_with(
-                            elevated_context, self.attachment_id)
+                            elevated_context, self.attachment_id,
+                            volume_id=fake_volume['id'])
                     # Exit assert calls
                     raise test.TestingException()
 
@@ -828,7 +829,8 @@ class TestDriverBlockDevice(test.NoDBTestCase):
                             elevated_context, self.attachment_id)
                         mock_att_delete = self.volume_api.attachment_delete
                         mock_att_delete.assert_called_once_with(
-                            elevated_context, self.attachment_id)
+                            elevated_context, self.attachment_id,
+                            volume_id=fake_volume['id'])
         except test.TestingException:
             pass
 
@@ -946,7 +948,7 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
         if self.attachment_id:
             mock_volume_api.attachment_delete.assert_called_once_with(
-                self.context, self.attachment_id)
+                self.context, self.attachment_id, volume_id=volume['id'])
         else:
             mock_volume_api.terminate_connection.assert_called_once_with(
                 self.context, volume['id'],

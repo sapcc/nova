@@ -1540,7 +1540,8 @@ class _ComputeAPIUnitTestMixIn(object):
                 bdms, instance, self.context)
 
             mock_attach_delete.assert_called_once_with(
-                self.context, vol_bdm.attachment_id)
+                self.context, vol_bdm.attachment_id,
+                volume_id=vol_bdm.volume_id)
             mock_delete.assert_called_once_with(
                 self.context, vol_bdm.volume_id)
             mock_destroy.assert_called_once_with()
@@ -1805,7 +1806,8 @@ class _ComputeAPIUnitTestMixIn(object):
             _local_delete_cleanup.assert_called_once_with(
                 self.context, instance.uuid)
             _mock_attachment_delete.assert_called_once_with(
-                self.context, uuids.attachment_id)
+                self.context, uuids.attachment_id,
+                volume_id=bdm.volume_id)
             notify_mock.assert_called_once_with(
                 self.compute_api.notifier, self.context, instance)
             instance_destroy.assert_called_once_with()
