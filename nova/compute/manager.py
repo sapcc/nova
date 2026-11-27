@@ -2561,6 +2561,8 @@ class ComputeManager(manager.Manager):
             LOG.debug(msg, instance=instance)
             self._cleanup_allocated_networks(context, instance,
                     requested_networks)
+            self._cleanup_volumes(context, instance,
+                    block_device_mapping, raise_exc=False)
             return build_results.FAILED
         except Exception as e:
             if isinstance(e, exception.BuildAbortException):
@@ -3102,7 +3104,8 @@ class ComputeManager(manager.Manager):
         instance.system_metadata['network_allocated'] = 'False'
         try:
             instance.save()
-        except exception.InstanceNotFound:
+        except (exception.InstanceNotFound,
+                exception.InstanceInfoCacheNotFound):
             # NOTE(alaski): It's possible that we're cleaning up the networks
             # because the instance was deleted.  If that's the case then this
             # exception will be raised by instance.save()
@@ -9606,9 +9609,10 @@ class ComputeManager(manager.Manager):
                     except Exception:
                         with excutils.save_and_reraise_exception():
                             self.volume_api.attachment_delete(
-                                migrate_data.old_vol_attachment_ids[
-                                    bdm.volume_id
-                                ])
+                                context, bdm.attachment_id)
+                            bdm.attachment_id = (
+                                migrate_data.old_vol_attachment_ids.pop(
+                                    bdm.volume_id))
 
             # Retrieve connection_info for the destination. Note that it is not
             # saved back to the database yet.
