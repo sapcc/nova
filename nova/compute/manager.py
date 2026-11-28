@@ -2555,11 +2555,14 @@ class ComputeManager(manager.Manager):
 
             return build_results.RESCHEDULED
         except (exception.InstanceNotFound,
-                exception.UnexpectedDeletingTaskStateError):
+                exception.UnexpectedDeletingTaskStateError,
+                exception.BDMNotFound):
             msg = 'Instance disappeared during build.'
             LOG.debug(msg, instance=instance)
             self._cleanup_allocated_networks(context, instance,
                     requested_networks)
+            self._cleanup_volumes(context, instance,
+                    block_device_mapping, raise_exc=False)
             return build_results.FAILED
         except Exception as e:
             if isinstance(e, exception.BuildAbortException):
@@ -2694,7 +2697,8 @@ class ComputeManager(manager.Manager):
                              'the hypervisor.', timer.elapsed(),
                              instance=instance)
         except (exception.InstanceNotFound,
-                exception.UnexpectedDeletingTaskStateError) as e:
+                exception.UnexpectedDeletingTaskStateError,
+                exception.BDMNotFound) as e:
             with excutils.save_and_reraise_exception():
                 self._notify_about_instance_usage(context, instance,
                     'create.error', fault=e)
@@ -2920,6 +2924,7 @@ class ComputeManager(manager.Manager):
             resources['block_device_info'] = block_device_info
         except (exception.InstanceNotFound,
                 exception.UnexpectedDeletingTaskStateError,
+                exception.BDMNotFound,
                 exception.ComputeResourcesUnavailable):
             with excutils.save_and_reraise_exception():
                 self._build_resources_cleanup(instance, network_info)
@@ -2944,7 +2949,8 @@ class ComputeManager(manager.Manager):
             with excutils.save_and_reraise_exception() as ctxt:
                 if not isinstance(exc, (
                         exception.InstanceNotFound,
-                        exception.UnexpectedDeletingTaskStateError)):
+                        exception.UnexpectedDeletingTaskStateError,
+                        exception.BDMNotFound)):
                     LOG.exception('Instance failed to spawn',
                                   instance=instance)
                 # Make sure the async call finishes
@@ -3098,7 +3104,8 @@ class ComputeManager(manager.Manager):
         instance.system_metadata['network_allocated'] = 'False'
         try:
             instance.save()
-        except exception.InstanceNotFound:
+        except (exception.InstanceNotFound,
+                exception.InstanceInfoCacheNotFound):
             # NOTE(alaski): It's possible that we're cleaning up the networks
             # because the instance was deleted.  If that's the case then this
             # exception will be raised by instance.save()
@@ -9597,7 +9604,15 @@ class ComputeManager(manager.Manager):
 
                     # update the bdm with the new attachment_id.
                     bdm.attachment_id = attach_ref['id']
-                    bdm.save()
+                    try:
+                        bdm.save()
+                    except Exception:
+                        with excutils.save_and_reraise_exception():
+                            self.volume_api.attachment_delete(
+                                context, bdm.attachment_id)
+                            bdm.attachment_id = (
+                                migrate_data.old_vol_attachment_ids.pop(
+                                    bdm.volume_id))
 
             # Retrieve connection_info for the destination. Note that it is not
             # saved back to the database yet.

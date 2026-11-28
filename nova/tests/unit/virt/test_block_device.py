@@ -956,6 +956,50 @@ class TestDriverBlockDevice(test.NoDBTestCase):
 
         self.assertEqual(2, mock_bdm_save.call_count)
 
+    @mock.patch('nova.objects.BlockDeviceMapping.save',
+                side_effect=exception.BDMNotFound(id=1))
+    @mock.patch('nova.volume.cinder.API')
+    @mock.patch('os_brick.encryptors.get_encryption_metadata',
+                return_value={})
+    def test_volume_attach_bdm_save_fails(self, mock_get_encryption,
+                                          mock_volume_api, mock_bdm_save):
+        """Tests that BDM save failure rolls back the attachment."""
+        if not self.attachment_id:
+            return
+        test_bdm = self.driver_classes['volume'](
+            self.volume_bdm)
+        volume = {'id': 'fake-volume-id-1',
+                  'attach_status': 'detached'}
+        mock_volume_api.get.return_value = volume
+        instance = fake_instance.fake_instance_obj(self.context)
+        virt_driver = fake_virt.SmallFakeDriver(virtapi=mock.MagicMock())
+
+        fake_conn_info = {
+            'serial': volume['id'],
+            'data': {
+                'foo': 'bar'
+            }
+        }
+        mock_volume_api.attachment_update.return_value = {
+            'connection_info': fake_conn_info
+        }
+
+        with mock.patch.object(virt_driver, 'detach_volume') as drvr_detach:
+            with mock.patch.object(self.context, 'elevated',
+                                   return_value=self.context):
+                self.assertRaises(exception.BDMNotFound, test_bdm.attach,
+                                  self.context, instance, mock_volume_api,
+                                  virt_driver, do_driver_attach=True)
+
+        drvr_detach.assert_called_once_with(
+            self.context, fake_conn_info, instance,
+            self.volume_bdm.device_name,
+            encryption=mock_get_encryption.return_value)
+        mock_volume_api.attachment_complete.assert_not_called()
+        mock_volume_api.attachment_delete.assert_called_once_with(
+            self.context, self.attachment_id)
+        self.assertEqual(2, mock_bdm_save.call_count)
+
     def test_volume_attach_no_driver_attach_volume_attach_fails(self):
         test_bdm = self.driver_classes['volume'](
             self.volume_bdm)

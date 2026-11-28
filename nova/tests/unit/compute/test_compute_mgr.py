@@ -9628,13 +9628,20 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 self.requested_networks)
 
     def test_build_and_run_notfound_exception(self):
-        self._test_build_and_run_exceptions(exception.InstanceNotFound(
-            instance_id=''))
+        self._test_build_and_run_exceptions(
+            exception.InstanceNotFound(instance_id=''),
+            cleanup_volumes=True)
+
+    def test_build_and_run_bdm_not_found_exception(self):
+        self._test_build_and_run_exceptions(
+            exception.BDMNotFound(id=1),
+            cleanup_volumes=True)
 
     def test_build_and_run_unexpecteddeleting_exception(self):
         self._test_build_and_run_exceptions(
                 exception.UnexpectedDeletingTaskStateError(
-                    instance_uuid=uuids.instance, expected={}, actual={}))
+                    instance_uuid=uuids.instance, expected={}, actual={}),
+                cleanup_volumes=True)
 
     @mock.patch('nova.compute.manager.LOG.error')
     def test_build_and_run_buildabort_exception(self, mock_le):
@@ -10538,6 +10545,30 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 side_effect=exception.InstanceNotFound(instance_id=''))
         ) as (mock_nwinfo, mock_unplug, mock_deallocate_network, mock_save):
             # Testing that this doesn't raise an exception
+            self.compute._cleanup_allocated_networks(
+                self.context, self.instance, self.requested_networks)
+
+        mock_nwinfo.assert_called_once_with(
+            self.context, self.instance)
+        mock_unplug.assert_called_once_with(
+            self.instance, mock_nwinfo.return_value)
+        mock_deallocate_network.assert_called_once_with(
+            self.context, self.instance, self.requested_networks)
+        mock_save.assert_called_once_with()
+        self.assertEqual(
+            'False', self.instance.system_metadata['network_allocated'])
+
+    def test__cleanup_allocated_networks__info_cache_not_found(self):
+        with test.nested(
+            mock.patch.object(self.compute.network_api,
+                              'get_instance_nw_info'),
+            mock.patch.object(self.compute.driver, 'unplug_vifs'),
+            mock.patch.object(self.compute, '_deallocate_network'),
+            mock.patch.object(
+                self.instance, 'save',
+                side_effect=exception.InstanceInfoCacheNotFound(
+                    instance_uuid=self.instance.uuid))
+        ) as (mock_nwinfo, mock_unplug, mock_deallocate_network, mock_save):
             self.compute._cleanup_allocated_networks(
                 self.context, self.instance, self.requested_networks)
 
@@ -12691,6 +12722,46 @@ class ComputeManagerMigrationTestCase(test.NoDBTestCase,
             # Meta: ensure un-asserted mocks are still required
             for m in (mock_net_api, mock_compute_utils):
                 self.assertGreater(len(m.mock_calls), 0)
+        _test()
+
+    @mock.patch('nova.objects.InstanceGroup.get_by_instance_uuid', mock.Mock(
+        side_effect=exception.InstanceGroupNotFound(group_uuid='')))
+    def test_pre_live_migration_bdm_save_fails_deletes_attachment(self):
+        compute = manager.ComputeManager()
+
+        instance = fake_instance.fake_instance_obj(self.context,
+                                                   uuid=uuids.instance)
+        vol1_bdm = fake_block_device.fake_bdm_object(
+            self.context,
+            {'source_type': 'volume', 'destination_type': 'volume',
+             'volume_id': uuids.vol1, 'device_name': '/dev/vdb',
+             'instance_uuid': instance.uuid,
+             'connection_info': '{"test": "test"}'})
+        vol1_bdm.attachment_id = uuids.vol1_attach_orig
+
+        migrate_data = migrate_data_obj.LiveMigrateData()
+        migrate_data.old_vol_attachment_ids = {}
+
+        @mock.patch.object(manager, 'compute_utils', autospec=True)
+        @mock.patch.object(compute, 'network_api', autospec=True)
+        @mock.patch.object(compute, 'volume_api', autospec=True)
+        @mock.patch.object(objects.BlockDeviceMapping, 'save',
+                           side_effect=exception.BDMNotFound(id=1))
+        @mock.patch.object(objects.BlockDeviceMappingList,
+                           'get_by_instance_uuid',
+                           return_value=[vol1_bdm])
+        def _test(mock_bdms_get, mock_bdm_save, mock_vol_api,
+                  mock_net_api, mock_compute_utils):
+            mock_vol_api.attachment_create.return_value = {
+                'id': uuids.vol1_attach_new}
+
+            self.assertRaises(exception.BDMNotFound,
+                              compute.pre_live_migration,
+                              self.context, instance, {}, migrate_data)
+
+            mock_vol_api.attachment_delete.assert_called_once_with(
+                self.context, uuids.vol1_attach_new)
+            self.assertEqual(uuids.vol1_attach_orig, vol1_bdm.attachment_id)
         _test()
 
     def test_get_neutron_events_for_live_migration_empty(self):

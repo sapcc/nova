@@ -757,9 +757,10 @@ class DriverVolumeBlockDevice(DriverBlockDevice):
         # Therefore we should phase out code that relies on the
         # BDM.connection_info and get it from Cinder if it's needed.
         self['connection_info'] = connection_info
-        self.save()
 
         try:
+            # Roll back attachment when the bdm save fails
+            self.save()
             # This marks the volume as "in-use".
             volume_api.attachment_complete(context, attachment_id)
         except Exception:

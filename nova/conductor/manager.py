@@ -647,7 +647,13 @@ class ComputeTaskManager:
                     attachment = self.volume_api.attachment_create(
                         context, bdm.volume_id, instance.uuid)
                     bdm.attachment_id = attachment['id']
-                    bdm.save()
+                    try:
+                        bdm.save()
+                    except Exception:
+                        with excutils.save_and_reraise_exception():
+                            # Delete attachment again if bdm save fails
+                            self.volume_api.attachment_delete(
+                                context, attachment['id'])
 
     def _cleanup_when_reschedule_fails(
             self, context, instance, exception, legacy_request_spec,
